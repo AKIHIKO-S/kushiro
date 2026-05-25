@@ -1,0 +1,33 @@
+# KTTA Platform - systemd service unit
+# /etc/systemd/system/ktta.service にコピー
+# sudo systemctl daemon-reload && sudo systemctl enable --now ktta
+
+[Unit]
+Description=KTTA Platform (Kushiro Table Tennis Association)
+Documentation=https://github.com/your-org/tabletennis
+After=network.target
+
+[Service]
+Type=simple
+User=ktta
+WorkingDirectory=/opt/ktta
+ExecStart=/usr/bin/node /opt/ktta/server.js
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+Environment=PORT=3000
+# 管理キーは /etc/ktta.env から読み込む (chmod 600)
+EnvironmentFile=-/etc/ktta.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ktta
+
+# セキュリティ強化
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ktta
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

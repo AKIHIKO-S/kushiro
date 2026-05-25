@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1440" />
+<title>案A｜湿原の静寂 – Kushiro Table Tennis Association</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Cormorant+Garamond:wght@300;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --green-deep:#2A4A3A;   /* 湿原の深緑 */
+    --green-moss:#5C7A65;   /* モスグリーン */
+    --green-pale:#D6DFD2;   /* 朝靄の若草 */
+    --fog:#EEF1ED;          /* 霧 */
+    --paper:#FAFAF7;        /* 紙 */
+    --ink:#1C2620;          /* 墨 */
+    --sub:#6B7771;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--paper);color:var(--ink);font-family:"Noto Sans JP",sans-serif;font-weight:400;line-height:1.7;-webkit-font-smoothing:antialiased}
+  .serif{font-family:"Cormorant Garamond",serif;font-weight:300;letter-spacing:.02em}
+  .wrap{max-width:1280px;margin:0 auto;padding:0 64px}
+  /* nav */
+  nav{position:sticky;top:0;background:rgba(250,250,247,.85);backdrop-filter:blur(12px);z-index:10;border-bottom:1px solid #E8E8E2}
+  nav .wrap{display:flex;align-items:center;justify-content:space-between;height:80px}
+  .logo{display:flex;align-items:center;gap:14px}
+  .logo-mark{width:36px;height:36px;border:1.5px solid var(--green-deep);border-radius:50%;display:grid;place-items:center;font-family:"Cormorant Garamond",serif;font-size:14px;color:var(--green-deep)}
+  .logo-text{font-size:13px;letter-spacing:.18em;line-height:1.3}
+  .logo-text small{display:block;font-size:10px;color:var(--sub);letter-spacing:.3em;margin-top:2px}
+  nav ul{display:flex;gap:36px;list-style:none;font-size:13px;letter-spacing:.1em}
+  nav a{color:var(--ink);text-decoration:none}
+  nav a:hover{color:var(--green-moss)}
+  .nav-cta{font-size:12px;letter-spacing:.15em;padding:10px 22px;border:1px solid var(--green-deep);color:var(--green-deep);text-decoration:none;border-radius:999px}
+
+  /* hero */
+  .hero{padding:120px 0 160px;position:relative;overflow:hidden}
+  .hero-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:80px;align-items:center}
+  .eyebrow{font-size:11px;letter-spacing:.4em;color:var(--green-moss);margin-bottom:32px}
+  .eyebrow::before{content:"";display:inline-block;width:32px;height:1px;background:var(--green-moss);vertical-align:middle;margin-right:14px}
+  h1.hero-title{font-size:68px;line-height:1.25;font-weight:300;letter-spacing:.02em;margin-bottom:36px}
+  h1.hero-title em{font-style:normal;color:var(--green-moss);font-family:"Cormorant Garamond",serif;font-size:74px}
+  .hero-lead{font-size:15px;color:var(--sub);max-width:440px;margin-bottom:48px}
+  .hero-cta{display:flex;gap:16px}
+  .btn-primary{padding:18px 36px;background:var(--green-deep);color:var(--paper);text-decoration:none;font-size:13px;letter-spacing:.2em;border-radius:2px}
+  .btn-ghost{padding:18px 32px;color:var(--green-deep);text-decoration:none;font-size:13px;letter-spacing:.2em;border-bottom:1px solid var(--green-deep)}
+  .hero-visual{aspect-ratio:4/5;background:
+    radial-gradient(ellipse at 30% 40%, rgba(214,223,210,.6) 0%, transparent 60%),
+    linear-gradient(180deg, #B7C5B3 0%, #5C7A65 50%, #2A4A3A 100%);
+    border-radius:2px;position:relative;overflow:hidden}
+  .hero-visual::after{content:"";position:absolute;inset:0;background:
+    radial-gradient(ellipse at 70% 80%, rgba(255,255,255,.15), transparent 50%);
+  }
+  .hero-visual .label{position:absolute;left:24px;bottom:24px;color:#fff;font-size:11px;letter-spacing:.3em}
+  .hero-meta{position:absolute;right:64px;top:140px;writing-mode:vertical-rl;font-size:11px;color:var(--sub);letter-spacing:.4em}
+
+  /* section */
+  section{padding:140px 0}
+  .sec-title{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:80px}
+  .sec-title h2{font-size:14px;letter-spacing:.3em;font-weight:500}
+  .sec-title h2 .serif{display:block;font-size:48px;letter-spacing:.02em;margin-top:12px;color:var(--green-deep)}
+  .sec-link{font-size:12px;letter-spacing:.2em;color:var(--sub);text-decoration:none;border-bottom:1px solid var(--sub)}
+
+  /* news */
+  .news-list{display:grid;gap:0}
+  .news-item{display:grid;grid-template-columns:140px 120px 1fr 120px;gap:32px;padding:28px 0;border-top:1px solid #E0E3DE;align-items:center}
+  .news-item:last-child{border-bottom:1px solid #E0E3DE}
+  .news-date{font-family:"Cormorant Garamond",serif;font-size:22px;color:var(--green-moss)}
+  .news-cat{font-size:11px;letter-spacing:.2em;color:var(--sub);border:1px solid #C8CEC6;padding:6px 12px;border-radius:999px;text-align:center;width:fit-content}
+  .news-title{font-size:16px;font-weight:500}
+  .news-arrow{justify-self:end;color:var(--green-moss);font-size:20px}
+
+  /* about */
+  .about{background:var(--fog);padding:160px 0}
+  .about-grid{display:grid;grid-template-columns:1fr 1.2fr;gap:120px;align-items:start}
+  .about-img{aspect-ratio:3/4;background:linear-gradient(160deg,#7A8E7A,#2A4A3A);border-radius:2px}
+  .about-text h3{font-size:34px;line-height:1.6;font-weight:400;margin-bottom:40px;letter-spacing:.05em}
+  .about-text p{font-size:14px;color:var(--sub);margin-bottom:24px}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:40px;margin-top:64px;padding-top:48px;border-top:1px solid #C8CEC6}
+  .stat .num{font-family:"Cormorant Garamond",serif;font-size:56px;color:var(--green-deep);line-height:1}
+  .stat .lbl{font-size:11px;letter-spacing:.2em;color:var(--sub);margin-top:8px}
+
+  /* events */
+  .events-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:32px}
+  .event{padding:40px 32px;border:1px solid #E0E3DE;border-radius:2px;background:#fff;transition:.3s}
+  .event:hover{border-color:var(--green-moss)}
+  .event-date{font-family:"Cormorant Garamond",serif;font-size:42px;color:var(--green-deep);line-height:1;margin-bottom:8px}
+  .event-month{font-size:11px;letter-spacing:.3em;color:var(--sub);margin-bottom:32px}
+  .event h4{font-size:18px;font-weight:500;margin-bottom:16px;line-height:1.5}
+  .event-meta{font-size:12px;color:var(--sub);line-height:2}
+
+  /* footer */
+  footer{background:var(--green-deep);color:var(--green-pale);padding:120px 0 60px}
+  .foot-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:80px;margin-bottom:80px}
+  footer h5{font-size:11px;letter-spacing:.3em;margin-bottom:24px;color:#fff}
+  footer ul{list-style:none}
+  footer li{font-size:13px;margin-bottom:12px;opacity:.7}
+  footer .brand{font-size:14px;letter-spacing:.2em;margin-bottom:16px}
+  footer .brand .serif{display:block;font-size:32px;margin-top:8px}
+  .copy{padding-top:40px;border-top:1px solid rgba(255,255,255,.1);font-size:11px;letter-spacing:.2em;opacity:.5}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="logo">
+      <div class="logo-mark">K</div>
+      <div class="logo-text">釧路卓球協会<small>KUSHIRO TABLE TENNIS</small></div>
+    </div>
+    <ul>
+      <li><a href="#">協会について</a></li>
+      <li><a href="#">大会情報</a></li>
+      <li><a href="#">教室・練習</a></li>
+      <li><a href="#">お知らせ</a></li>
+      <li><a href="#">会員</a></li>
+    </ul>
+    <a class="nav-cta" href="#">入会案内</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow">SINCE 1952 / KUSHIRO HOKKAIDO</div>
+      <h1 class="hero-title">霧の街で、<br/>静かに<em>磨く</em>。</h1>
+      <p class="hero-lead">釧路の自然のように、ゆるやかに、しなやかに。<br/>世代を越えて続く、地域の卓球文化を未来へ。</p>
+      <div class="hero-cta">
+        <a class="btn-primary" href="#">大会スケジュール</a>
+        <a class="btn-ghost" href="#">協会について →</a>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <div class="label">KUSHIRO MARSHLAND / EST.1952</div>
+    </div>
+  </div>
+  <div class="hero-meta">KUSHIRO TABLE TENNIS ASSOCIATION — VOL.74</div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="sec-title">
+      <h2>NEWS<span class="serif">お知らせ</span></h2>
+      <a class="sec-link" href="#">すべて見る →</a>
+    </div>
+    <div class="news-list">
+      <div class="news-item"><div class="news-date">05.18</div><div class="news-cat">大会</div><div class="news-title">第74回 釧路市民卓球選手権大会 要項を公開しました</div><div class="news-arrow">→</div></div>
+      <div class="news-item"><div class="news-date">05.10</div><div class="news-cat">教室</div><div class="news-title">夏季ジュニア卓球教室 参加者募集（6/1〜）</div><div class="news-arrow">→</div></div>
+      <div class="news-item"><div class="news-date">04.28</div><div class="news-cat">結果</div><div class="news-title">道東ブロック春季大会 結果速報</div><div class="news-arrow">→</div></div>
+      <div class="news-item"><div class="news-date">04.15</div><div class="news-cat">協会</div><div class="news-title">2026年度 総会開催のお知らせ</div><div class="news-arrow">→</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="about">
+  <div class="wrap about-grid">
+    <div class="about-img"></div>
+    <div class="about-text">
+      <div class="eyebrow">ABOUT US</div>
+      <h3>湿原に育まれた、<br/>東北海道の卓球の拠点として。</h3>
+      <p>釧路卓球協会は1952年の創立以来、釧路市・釧路町を中心に、ジュニアからシニアまで幅広い層に卓球の楽しさを伝えてきました。</p>
+      <p>四季の厳しさと美しさが共存するこの地で、私たちは「続けられる卓球」を大切に、競技と地域コミュニティの両輪を支えています。</p>
+      <div class="stats">
+        <div class="stat"><div class="num">74</div><div class="lbl">YEARS</div></div>
+        <div class="stat"><div class="num">28</div><div class="lbl">CLUBS</div></div>
+        <div class="stat"><div class="num">1,200+</div><div class="lbl">MEMBERS</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-title">
+      <h2>EVENTS<span class="serif">大会・行事</span></h2>
+      <a class="sec-link" href="#">年間スケジュール →</a>
+    </div>
+    <div class="events-grid">
+      <div class="event">
+        <div class="event-date">06</div><div class="event-month">JUNE / 第74回</div>
+        <h4>釧路市民卓球選手権大会</h4>
+        <div class="event-meta">日時：6月15日（日）<br/>会場：釧路市民体育館<br/>締切：5月31日</div>
+      </div>
+      <div class="event">
+        <div class="event-date">07</div><div class="event-month">JULY / ジュニア</div>
+        <h4>道東ジュニアオープン</h4>
+        <div class="event-meta">日時：7月20日（日）<br/>会場：阿寒湖アリーナ<br/>締切：7月5日</div>
+      </div>
+      <div class="event">
+        <div class="event-date">09</div><div class="event-month">SEPTEMBER / 団体</div>
+        <h4>秋季リーグ戦</h4>
+        <div class="event-meta">日時：9月7日（日）<br/>会場：釧路市民体育館<br/>締切：8月20日</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <div class="brand">KUSHIRO T.T.A.<span class="serif">釧路卓球協会</span></div>
+        <p style="font-size:12px;opacity:.6;line-height:2;margin-top:24px">〒085-0000<br/>北海道釧路市××町1-2-3<br/>TEL: 0154-XX-XXXX</p>
+      </div>
+      <div><h5>ABOUT</h5><ul><li>協会概要</li><li>役員紹介</li><li>沿革</li></ul></div>
+      <div><h5>EVENTS</h5><ul><li>大会情報</li><li>結果・記録</li><li>申込書</li></ul></div>
+      <div><h5>CONTACT</h5><ul><li>お問合せ</li><li>入会案内</li><li>会員ログイン</li></ul></div>
+    </div>
+    <div class="copy">© 2026 KUSHIRO TABLE TENNIS ASSOCIATION. ALL RIGHTS RESERVED.</div>
+  </div>
+</footer>
+
+</body>
+</html>

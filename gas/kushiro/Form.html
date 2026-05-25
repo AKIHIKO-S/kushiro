@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<base target="_top">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>釧路卓球協会 大会申込フォーム</title>
+<style>
+  :root {
+    --primary: #0f4c81;
+    --accent: #7c3aed;
+    --bg: #f7f9fc;
+    --border: #d1d5db;
+    --text: #111827;
+    --muted: #6b7280;
+    --error: #dc2626;
+    --success: #059669;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif;
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .container {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+  header {
+    background: linear-gradient(135deg, var(--primary), #1e6bb8);
+    color: #fff;
+    padding: 24px 16px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+  }
+  header h1 { margin: 0 0 8px; font-size: 22px; }
+  header .meta { font-size: 14px; opacity: 0.92; }
+  .card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .card h2 {
+    margin: 0 0 16px;
+    font-size: 17px;
+    border-left: 4px solid var(--accent);
+    padding-left: 10px;
+  }
+  label.field {
+    display: block;
+    margin-bottom: 14px;
+  }
+  label.field > .lbl {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 4px;
+    font-size: 14px;
+  }
+  label.field .req {
+    color: var(--error);
+    margin-left: 4px;
+    font-size: 12px;
+  }
+  input[type="text"], input[type="tel"], input[type="email"], textarea, select {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 15px;
+    font-family: inherit;
+    background: #fff;
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(15,76,129,0.15);
+  }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 600px) { .row { grid-template-columns: 1fr; } }
+  .event-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .event-head {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    background: #f3f4f6;
+    cursor: pointer;
+    gap: 10px;
+  }
+  .event-head:hover { background: #e5e7eb; }
+  .event-head input[type="checkbox"] { width: 18px; height: 18px; }
+  .event-head .name { flex: 1; font-weight: 600; }
+  .event-head .fee { color: var(--primary); font-weight: 600; font-size: 14px; }
+  .event-body { padding: 12px; display: none; background: #fafbfc; }
+  .event-body.open { display: block; }
+  .player-row {
+    display: grid;
+    grid-template-columns: 2fr 2fr 90px 110px;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  @media (max-width: 600px) {
+    .player-row { grid-template-columns: 1fr 1fr; }
+  }
+  .player-row input, .player-row select {
+    padding: 6px 8px;
+    font-size: 14px;
+  }
+  .player-num {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 8px 0 4px;
+  }
+  button {
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 6px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  button:hover { background: #0c3d6a; }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+  button.secondary { background: #fff; color: var(--primary); border: 1px solid var(--primary); }
+  .total-bar {
+    position: sticky;
+    bottom: 0;
+    background: #fff;
+    border-top: 2px solid var(--primary);
+    padding: 14px 16px;
+    margin: 0 -16px;
+    box-shadow: 0 -2px 8px rgba(0,0,0,0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .total-bar .total {
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .total-bar .total span { color: var(--primary); font-size: 22px; }
+  .alert {
+    padding: 12px 14px;
+    border-radius: 6px;
+    margin-bottom: 12px;
+    font-size: 14px;
+  }
+  .alert-error { background: #fef2f2; color: var(--error); border: 1px solid #fecaca; }
+  .alert-success { background: #f0fdf4; color: var(--success); border: 1px solid #bbf7d0; }
+  .closed-notice {
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    color: #92400e;
+    padding: 20px;
+    border-radius: 8px;
+    text-align: center;
+    font-size: 16px;
+  }
+  .summary-box {
+    background: #f0fdf4;
+    border: 2px solid var(--success);
+    padding: 20px;
+    border-radius: 8px;
+    white-space: pre-wrap;
+    font-family: "BIZ UDPGothic", monospace;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1 id="title">釧路卓球協会 大会申込フォーム</h1>
+  <div class="meta" id="meta"></div>
+</header>
+
+<div id="closed" style="display:none">
+  <div class="closed-notice">
+    🛑 現在、申込受付を停止しています。<br>
+    お問い合わせは釧路卓球協会までお願いいたします。
+  </div>
+</div>
+
+<div id="formArea" style="display:none">
+  <div id="alertBox"></div>
+
+  <div class="card">
+    <h2>① 申込者情報</h2>
+    <label class="field">
+      <span class="lbl">団体名（所属）<span class="req">必須</span></span>
+      <input type="text" id="team" placeholder="例：釧路○○クラブ／○○高校卓球部">
+    </label>
+    <label class="field">
+      <span class="lbl">代表者名<span class="req">必須</span></span>
+      <input type="text" id="rep" placeholder="例：山田 太郎">
+    </label>
+    <div class="row">
+      <label class="field">
+        <span class="lbl">電話番号</span>
+        <input type="tel" id="phone" placeholder="0154-XX-XXXX">
+      </label>
+      <label class="field">
+        <span class="lbl">メールアドレス（確認メール送付先）</span>
+        <input type="email" id="email" placeholder="example@example.com">
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>② 申込種目・選手</h2>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 12px">
+      申込む種目にチェックを入れて、選手名を入力してください。
+      1団体で複数種目・複数組のお申込みが可能です。
+    </p>
+    <div id="events"></div>
+  </div>
+
+  <div class="card">
+    <h2>③ 備考</h2>
+    <textarea id="notes" rows="3" placeholder="連絡事項があればご記入ください"></textarea>
+  </div>
+
+  <div class="total-bar">
+    <div class="total">合計参加費：<span id="totalFee">¥0</span></div>
+    <div>
+      <button type="button" id="submitBtn" onclick="submitForm()">この内容で申込む</button>
+    </div>
+  </div>
+</div>
+
+<div id="doneArea" style="display:none">
+  <div class="card">
+    <h2 style="color:var(--success);border-color:var(--success)">✅ 申込を受け付けました</h2>
+    <div class="summary-box" id="summary"></div>
+    <p style="margin-top:16px;font-size:14px;color:var(--muted)">
+      確認のメールをお送りしています（メールアドレス入力時）。<br>
+      参加費のお支払い方法については、別途ご連絡いたします。
+    </p>
+    <p style="margin-top:12px">
+      <button type="button" class="secondary" onclick="location.reload()">続けて別の団体の申込を行う</button>
+    </p>
+  </div>
+</div>
+
+</div>
+
+<script>
+const BOOT = <?!= JSON.stringify(bootstrap) ?>;
+
+(function init() {
+  const titleEl = document.getElementById('title');
+  const metaEl = document.getElementById('meta');
+  const cfg = BOOT.config || {};
+  if (cfg['大会名']) titleEl.textContent = cfg['大会名'];
+  const metas = [];
+  if (cfg['開催日']) metas.push('📅 ' + cfg['開催日']);
+  if (cfg['会場']) metas.push('🏟 ' + cfg['会場']);
+  if (cfg['申込締切']) metas.push('⏰ 締切：' + cfg['申込締切']);
+  if (cfg['主催']) metas.push('主催：' + cfg['主催']);
+  metaEl.innerHTML = metas.join('　');
+
+  if (!BOOT.open) {
+    document.getElementById('closed').style.display = 'block';
+    return;
+  }
+  document.getElementById('formArea').style.display = 'block';
+  renderEvents(BOOT.events || []);
+})();
+
+function renderEvents(events) {
+  const wrap = document.getElementById('events');
+  events.forEach(ev => {
+    const card = document.createElement('div');
+    card.className = 'event-card';
+    card.dataset.eventId = ev.id;
+    card.dataset.fee = ev.fee;
+    card.dataset.size = ev.size;
+    card.dataset.type = ev.type;
+
+    const head = document.createElement('div');
+    head.className = 'event-head';
+    head.innerHTML =
+      '<input type="checkbox" class="ev-check">' +
+      '<div class="name">' + escapeHtml(ev.name) + '</div>' +
+      '<div class="fee">¥' + ev.fee.toLocaleString() + ' / 1組</div>';
+    card.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'event-body';
+    body.innerHTML = playerEntryHtml(ev);
+    card.appendChild(body);
+
+    head.addEventListener('click', e => {
+      if (e.target.tagName === 'INPUT') return;
+      const cb = head.querySelector('.ev-check');
+      cb.checked = !cb.checked;
+      onToggle(card);
+    });
+    head.querySelector('.ev-check').addEventListener('change', () => onToggle(card));
+    wrap.appendChild(card);
+  });
+  attachAddRowHandlers();
+}
+
+function playerEntryHtml(ev) {
+  const baseSize = ev.size;
+  const extra = ev.type === 'team' ? 2 : 0; // 団体は補欠2名分
+  const total = baseSize + extra;
+  let html = '<div class="entries" data-base="' + baseSize + '">';
+  html += renderEntryGroup(0, total, ev);
+  html += '</div>';
+  if (ev.type !== 'team') {
+    html += '<button type="button" class="secondary add-group" style="padding:6px 12px;font-size:13px;margin-top:8px">＋ もう1組追加</button>';
+  }
+  return html;
+}
+
+function renderEntryGroup(groupIdx, count, ev) {
+  let h = '<fieldset style="border:1px dashed #cbd5e1;border-radius:6px;padding:10px;margin-bottom:8px">';
+  h += '<legend style="font-size:13px;color:var(--muted);padding:0 6px">第' + (groupIdx+1) + '組</legend>';
+  for (let i = 0; i < count; i++) {
+    const isReserve = ev.type === 'team' && i >= ev.size;
+    h += '<div class="player-num">選手' + (i+1) + (isReserve ? '（補欠）' : '') + '</div>';
+    h += '<div class="player-row">';
+    h += '<input type="text" class="p-name" placeholder="氏名">';
+    h += '<input type="text" class="p-kana" placeholder="ふりがな">';
+    h += '<select class="p-gender"><option value="">性別</option><option>男</option><option>女</option></select>';
+    h += '<input type="text" class="p-age" placeholder="学年/年代">';
+    h += '</div>';
+  }
+  h += '</fieldset>';
+  return h;
+}
+
+function attachAddRowHandlers() {
+  document.querySelectorAll('.add-group').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.event-card');
+      const ev = {
+        id: card.dataset.eventId,
+        fee: Number(card.dataset.fee),
+        size: Number(card.dataset.size),
+        type: card.dataset.type,
+        name: card.querySelector('.name').textContent
+      };
+      const wrap = card.querySelector('.entries');
+      const groupCount = wrap.querySelectorAll('fieldset').length;
+      wrap.insertAdjacentHTML('beforeend', renderEntryGroup(groupCount, ev.size, ev));
+      updateTotal();
+    });
+  });
+}
+
+function onToggle(card) {
+  const cb = card.querySelector('.ev-check');
+  const body = card.querySelector('.event-body');
+  if (cb.checked) body.classList.add('open');
+  else body.classList.remove('open');
+  updateTotal();
+}
+
+function updateTotal() {
+  let total = 0;
+  document.querySelectorAll('.event-card').forEach(card => {
+    const cb = card.querySelector('.ev-check');
+    if (!cb.checked) return;
+    const fee = Number(card.dataset.fee);
+    const groups = card.querySelectorAll('.entries fieldset').length;
+    total += fee * groups;
+  });
+  document.getElementById('totalFee').textContent = '¥' + total.toLocaleString();
+}
+
+document.addEventListener('input', e => {
+  if (e.target.classList.contains('p-name')) updateTotal();
+});
+
+function collectPayload() {
+  const team = document.getElementById('team').value.trim();
+  const rep = document.getElementById('rep').value.trim();
+  const phone = document.getElementById('phone').value.trim();
+  const email = document.getElementById('email').value.trim();
+  const notes = document.getElementById('notes').value.trim();
+  const entries = [];
+
+  document.querySelectorAll('.event-card').forEach(card => {
+    const cb = card.querySelector('.ev-check');
+    if (!cb.checked) return;
+    const eventId = card.dataset.eventId;
+    card.querySelectorAll('.entries fieldset').forEach(fs => {
+      const players = [];
+      const rows = fs.querySelectorAll('.player-row');
+      rows.forEach(r => {
+        const name = r.querySelector('.p-name').value.trim();
+        if (!name) return;
+        players.push({
+          name,
+          kana: r.querySelector('.p-kana').value.trim(),
+          gender: r.querySelector('.p-gender').value,
+          age: r.querySelector('.p-age').value.trim()
+        });
+      });
+      if (players.length > 0) entries.push({ event_id: eventId, players });
+    });
+  });
+
+  return { team, rep, phone, email, notes, entries };
+}
+
+function showAlert(msg, type) {
+  const box = document.getElementById('alertBox');
+  box.innerHTML = '<div class="alert alert-' + type + '">' + escapeHtml(msg) + '</div>';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function submitForm() {
+  const payload = collectPayload();
+  if (!payload.team) return showAlert('団体名を入力してください', 'error');
+  if (!payload.rep) return showAlert('代表者名を入力してください', 'error');
+  if (payload.entries.length === 0) return showAlert('種目を1つ以上選択し、選手名を入力してください', 'error');
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = '送信中...';
+
+  fetch(window.location.href, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload)
+  })
+  .then(r => r.json())
+  .then(res => {
+    btn.disabled = false;
+    btn.textContent = 'この内容で申込む';
+    if (!res.ok) {
+      showAlert('エラー：' + (res.error || '送信に失敗しました'), 'error');
+      return;
+    }
+    document.getElementById('formArea').style.display = 'none';
+    document.getElementById('doneArea').style.display = 'block';
+    document.getElementById('summary').textContent =
+      '【申込内容】\n' +
+      '団体：' + payload.team + '\n' +
+      '代表：' + payload.rep + '\n\n' +
+      res.summary + '\n\n' +
+      '合計参加費：¥' + (res.total || 0).toLocaleString();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  })
+  .catch(err => {
+    btn.disabled = false;
+    btn.textContent = 'この内容で申込む';
+    showAlert('通信エラー：' + err.message, 'error');
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+</script>
+</body>
+</html>

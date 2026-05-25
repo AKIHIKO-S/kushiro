@@ -1,0 +1,45 @@
+# Node
+node_modules/
+npm-debug.log
+*.log
+
+# SQLite データベース (本番では永続ディスクに保存・git追跡不要)
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# バックアップ (本番のみ生成)
+backups/
+
+# 環境変数
+.env
+.env.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# アップロード一時ディレクトリ
+uploads/
+public/shared/assets/seal.png
+public/shared/assets/seal.jpg
+
+# Python (Excel パーサー用 venv)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Render.com
+.render/
+
+# Claude Code (ローカル開発設定)
+.claude/

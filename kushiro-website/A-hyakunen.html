@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1440" />
+<title>案A｜百年譜 – 釧路卓球協会</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;700&family=Cormorant+Garamond:wght@300;400;500&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:#1A2C4E;       /* 釧路港の藍 */
+    --navy-dark:#0F1B33;
+    --gold:#A88B4A;       /* 100年金 */
+    --gold-pale:#D9C792;
+    --paper:#F5F1E8;      /* 和紙 */
+    --paper-2:#EDE7D8;
+    --ink:#1A1A1A;
+    --sub:#5C5C5C;
+    --line:#D4CDB8;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--paper);color:var(--ink);font-family:"Shippori Mincho","Noto Sans JP",serif;line-height:1.8;-webkit-font-smoothing:antialiased}
+  .sans{font-family:"Noto Sans JP",sans-serif}
+  .latin{font-family:"Cormorant Garamond",serif}
+  .wrap{max-width:1320px;margin:0 auto;padding:0 56px}
+
+  /* accessibility bar */
+  .a11y{background:var(--navy-dark);color:#fff;font-size:12px}
+  .a11y .wrap{display:flex;justify-content:space-between;align-items:center;height:36px;font-family:"Noto Sans JP",sans-serif}
+  .a11y-left{opacity:.7;letter-spacing:.05em}
+  .a11y-right{display:flex;gap:16px;align-items:center}
+  .a11y-right span{opacity:.6;font-size:11px}
+  .a11y-right button{background:transparent;border:1px solid rgba(255,255,255,.3);color:#fff;font-size:11px;padding:3px 10px;cursor:pointer;font-family:inherit}
+  .a11y-right button:hover{background:rgba(255,255,255,.1)}
+
+  /* header */
+  header.top{background:var(--paper);border-bottom:1px solid var(--line)}
+  header.top .wrap{display:flex;justify-content:space-between;align-items:center;height:96px}
+  .brand{display:flex;align-items:center;gap:20px}
+  .brand-seal{width:60px;height:60px;border:2px solid var(--navy);border-radius:50%;display:grid;place-items:center;position:relative;background:var(--paper)}
+  .brand-seal::after{content:"";position:absolute;inset:4px;border:1px solid var(--gold);border-radius:50%}
+  .brand-seal span{font-family:"Shippori Mincho",serif;font-size:22px;font-weight:600;color:var(--navy);z-index:1}
+  .brand-name{font-family:"Shippori Mincho",serif}
+  .brand-name .full{font-size:21px;letter-spacing:.15em;font-weight:600;color:var(--navy)}
+  .brand-name .en{font-size:10px;color:var(--sub);letter-spacing:.3em;margin-top:6px;font-family:"Cormorant Garamond",serif;letter-spacing:.25em}
+  .nav-right{display:flex;align-items:center;gap:32px}
+  nav.main{display:flex;gap:32px;font-size:14px}
+  nav.main a{color:var(--ink);text-decoration:none;padding:6px 0;border-bottom:2px solid transparent}
+  nav.main a:hover{border-bottom-color:var(--gold)}
+  .nav-cta{background:var(--navy);color:#fff;font-size:12px;letter-spacing:.15em;padding:14px 22px;text-decoration:none;font-family:"Noto Sans JP",sans-serif}
+
+  /* 100th banner */
+  .hyakunen-bar{background:linear-gradient(90deg,var(--navy) 0%,var(--navy-dark) 100%);color:var(--paper);position:relative;overflow:hidden}
+  .hyakunen-bar::before{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,transparent 0,transparent 60px,rgba(168,139,74,.08) 60px,rgba(168,139,74,.08) 61px)}
+  .hyakunen-bar .wrap{display:flex;align-items:center;justify-content:space-between;padding:14px 56px;position:relative}
+  .hb-left{display:flex;align-items:center;gap:16px;font-size:12px;letter-spacing:.2em}
+  .hb-left .gold-line{width:32px;height:1px;background:var(--gold)}
+  .hb-num{font-family:"Cormorant Garamond",serif;font-size:18px;color:var(--gold-pale);letter-spacing:.1em}
+
+  /* hero */
+  .hero{padding:100px 0 120px;position:relative;background:
+    radial-gradient(ellipse 600px 400px at 85% 30%, rgba(168,139,74,.12) 0%, transparent 60%),
+    var(--paper)}
+  .hero-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:80px;align-items:center}
+  .anniv-mark{display:inline-flex;align-items:baseline;gap:14px;margin-bottom:48px;padding:8px 0;border-top:1px solid var(--gold);border-bottom:1px solid var(--gold)}
+  .anniv-mark .anniv-num{font-family:"Cormorant Garamond",serif;font-size:38px;color:var(--gold);font-weight:400;line-height:1;letter-spacing:.02em;padding:0 20px}
+  .anniv-mark .anniv-label{font-size:12px;letter-spacing:.3em;color:var(--navy);padding-right:20px}
+  h1.hero-title{font-family:"Shippori Mincho",serif;font-size:78px;line-height:1.3;font-weight:500;letter-spacing:.05em;margin-bottom:48px;color:var(--navy)}
+  h1.hero-title .gold{color:var(--gold)}
+  .hero-lead{font-size:16px;line-height:2.2;max-width:520px;margin-bottom:48px}
+  .hero-meta{display:flex;gap:32px;padding-top:32px;border-top:1px solid var(--line);font-size:13px;color:var(--sub);font-family:"Noto Sans JP",sans-serif;letter-spacing:.05em}
+  .hero-meta b{color:var(--navy);font-weight:500;margin-right:6px}
+  .hero-cta{display:flex;gap:20px;margin-bottom:48px}
+  .btn{padding:18px 36px;text-decoration:none;font-size:13px;letter-spacing:.2em;font-family:"Noto Sans JP",sans-serif;font-weight:500}
+  .btn-navy{background:var(--navy);color:#fff}
+  .btn-gold{border:1px solid var(--gold);color:var(--navy)}
+
+  /* hero visual - 100th seal */
+  .seal-100{aspect-ratio:1;position:relative;display:grid;place-items:center}
+  .seal-ring{position:absolute;inset:0;border:1px solid var(--gold);border-radius:50%}
+  .seal-ring.r2{inset:30px;border:2px solid var(--navy)}
+  .seal-ring.r3{inset:60px;border:1px solid var(--gold-pale)}
+  .seal-inner{position:relative;text-align:center;padding:40px}
+  .seal-num{font-family:"Cormorant Garamond",serif;font-size:160px;font-weight:300;color:var(--navy);line-height:1;letter-spacing:-.02em}
+  .seal-num .th{font-size:48px;vertical-align:super;color:var(--gold);letter-spacing:0}
+  .seal-jp{font-family:"Shippori Mincho",serif;font-size:22px;letter-spacing:.4em;color:var(--navy);margin-top:8px}
+  .seal-en{font-family:"Cormorant Garamond",serif;font-size:13px;letter-spacing:.4em;color:var(--gold);margin-top:14px;text-transform:uppercase}
+  .seal-year{position:absolute;bottom:80px;font-family:"Cormorant Garamond",serif;font-size:14px;letter-spacing:.3em;color:var(--sub)}
+
+  /* section common */
+  section{padding:120px 0}
+  .sec-head{margin-bottom:64px;border-bottom:1px solid var(--line);padding-bottom:24px;display:flex;justify-content:space-between;align-items:end}
+  .sec-head h2{font-family:"Shippori Mincho",serif;font-size:36px;font-weight:500;color:var(--navy);letter-spacing:.1em}
+  .sec-head h2 .en{display:block;font-family:"Cormorant Garamond",serif;font-size:14px;color:var(--gold);letter-spacing:.3em;margin-bottom:8px;text-transform:uppercase}
+  .sec-link{font-family:"Noto Sans JP",sans-serif;font-size:13px;letter-spacing:.2em;color:var(--navy);text-decoration:none}
+  .sec-link::after{content:" →"}
+
+  /* news */
+  .news-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:0 80px}
+  .news-row{display:grid;grid-template-columns:90px 100px 1fr;gap:20px;padding:22px 0;border-bottom:1px dashed var(--line);font-family:"Noto Sans JP",sans-serif;font-size:14px;align-items:center}
+  .news-row .d{font-family:"Cormorant Garamond",serif;font-size:18px;color:var(--gold);letter-spacing:.05em}
+  .news-row .c{font-size:11px;border:1px solid var(--navy);color:var(--navy);padding:4px 8px;text-align:center;letter-spacing:.1em}
+  .news-row .t a{color:var(--ink);text-decoration:none}
+  .news-row .t a:hover{color:var(--gold)}
+
+  /* timeline */
+  .timeline-sec{background:linear-gradient(180deg,var(--paper) 0%,var(--paper-2) 100%);position:relative}
+  .timeline-sec::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:var(--line)}
+  .tl-intro{text-align:center;margin-bottom:80px;font-family:"Shippori Mincho",serif;font-size:24px;line-height:2;letter-spacing:.1em;color:var(--navy)}
+  .tl-intro::before,.tl-intro::after{content:"";display:block;width:40px;height:1px;background:var(--gold);margin:24px auto}
+  .timeline{position:relative;padding-left:0}
+  .tl-line{position:absolute;left:140px;top:0;bottom:0;width:1px;background:var(--line)}
+  .tl-item{display:grid;grid-template-columns:140px 1fr;gap:80px;padding:28px 0;position:relative}
+  .tl-item::before{content:"";position:absolute;left:135px;top:36px;width:11px;height:11px;background:var(--gold);border-radius:50%;border:2px solid var(--paper)}
+  .tl-item.major::before{background:var(--navy);width:15px;height:15px;left:133px}
+  .tl-year{font-family:"Cormorant Garamond",serif;font-size:32px;color:var(--navy);text-align:right;line-height:1.1}
+  .tl-year .era{display:block;font-family:"Shippori Mincho",serif;font-size:13px;color:var(--sub);margin-top:4px;letter-spacing:.1em}
+  .tl-content h4{font-family:"Shippori Mincho",serif;font-size:18px;font-weight:600;color:var(--navy);margin-bottom:6px;letter-spacing:.05em}
+  .tl-content p{font-size:14px;color:var(--sub);font-family:"Noto Sans JP",sans-serif}
+
+  /* events */
+  .events-list{display:grid;grid-template-columns:repeat(2,1fr);gap:32px}
+  .event-card{background:#fff;border:1px solid var(--line);padding:36px 36px;display:grid;grid-template-columns:auto 1fr;gap:32px;align-items:start}
+  .ev-date-box{text-align:center;border-right:1px solid var(--line);padding-right:32px}
+  .ev-month{font-family:"Cormorant Garamond",serif;font-size:14px;letter-spacing:.2em;color:var(--gold);text-transform:uppercase}
+  .ev-day{font-family:"Cormorant Garamond",serif;font-size:56px;color:var(--navy);line-height:1;margin:6px 0}
+  .ev-dow{font-size:11px;letter-spacing:.2em;color:var(--sub);font-family:"Noto Sans JP",sans-serif}
+  .ev-info h4{font-family:"Shippori Mincho",serif;font-size:18px;font-weight:600;color:var(--navy);margin-bottom:12px;line-height:1.6}
+  .ev-info .badge{display:inline-block;font-size:10px;background:var(--navy);color:#fff;padding:3px 10px;letter-spacing:.15em;margin-bottom:14px;font-family:"Noto Sans JP",sans-serif}
+  .ev-info dl{font-family:"Noto Sans JP",sans-serif;font-size:13px;line-height:2.1;color:var(--sub)}
+  .ev-info dl b{color:var(--ink);font-weight:500;display:inline-block;width:60px}
+
+  /* disclosure (情報公開) */
+  .disclosure{background:#fff;border-top:4px solid var(--navy)}
+  .disc-intro{display:grid;grid-template-columns:1fr 2fr;gap:80px;margin-bottom:60px;align-items:start}
+  .disc-intro h3{font-family:"Shippori Mincho",serif;font-size:24px;color:var(--navy);letter-spacing:.1em;line-height:1.8}
+  .disc-intro p{font-family:"Noto Sans JP",sans-serif;font-size:14px;line-height:2;color:var(--sub)}
+  .disc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
+  .disc-cell{background:#fff;padding:32px 28px;font-family:"Noto Sans JP",sans-serif}
+  .disc-cell .cat{font-family:"Cormorant Garamond",serif;font-size:13px;color:var(--gold);letter-spacing:.2em;margin-bottom:12px;text-transform:uppercase}
+  .disc-cell h4{font-family:"Shippori Mincho",serif;font-size:17px;color:var(--navy);font-weight:600;margin-bottom:16px;letter-spacing:.05em}
+  .disc-cell ul{list-style:none;font-size:12px;line-height:2}
+  .disc-cell li::before{content:"PDF ";color:var(--gold);font-size:10px;letter-spacing:.1em;margin-right:6px;font-family:"Cormorant Garamond",serif}
+  .disc-cell li a{color:var(--ink);text-decoration:none;border-bottom:1px solid transparent}
+  .disc-cell li a:hover{border-bottom-color:var(--gold)}
+
+  /* registration */
+  .reg{background:var(--navy);color:var(--paper);position:relative;overflow:hidden}
+  .reg::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(168,139,74,.1),transparent 50%)}
+  .reg .wrap{position:relative}
+  .reg-grid{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center}
+  .reg h3{font-family:"Shippori Mincho",serif;font-size:42px;line-height:1.5;letter-spacing:.08em;margin-bottom:24px;color:#fff}
+  .reg h3 .gold{color:var(--gold-pale)}
+  .reg p{font-family:"Noto Sans JP",sans-serif;font-size:14px;line-height:2;opacity:.85;margin-bottom:40px}
+  .reg-list{display:grid;gap:1px;background:rgba(255,255,255,.1)}
+  .reg-row{background:var(--navy);padding:24px 28px;display:flex;justify-content:space-between;align-items:center;font-family:"Noto Sans JP",sans-serif}
+  .reg-row .l{font-size:14px}
+  .reg-row .l .en{font-family:"Cormorant Garamond",serif;font-size:11px;color:var(--gold-pale);letter-spacing:.2em;display:block;margin-bottom:4px;text-transform:uppercase}
+  .reg-row .r{font-size:11px;letter-spacing:.2em;opacity:.6}
+
+  /* affiliations */
+  .affil-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:24px}
+  .aff{background:#fff;border:1px solid var(--line);padding:28px;text-align:center;font-family:"Noto Sans JP",sans-serif}
+  .aff .name{font-family:"Shippori Mincho",serif;font-size:15px;color:var(--navy);margin-bottom:8px;font-weight:600}
+  .aff .meta{font-size:12px;color:var(--sub)}
+
+  /* footer */
+  footer{background:var(--navy-dark);color:var(--paper);padding:100px 0 40px}
+  .foot-top{display:grid;grid-template-columns:1.6fr repeat(3,1fr);gap:60px;margin-bottom:80px}
+  .foot-brand .full{font-family:"Shippori Mincho",serif;font-size:24px;letter-spacing:.15em;margin-bottom:8px;color:#fff}
+  .foot-brand .en{font-family:"Cormorant Garamond",serif;font-size:11px;letter-spacing:.3em;color:var(--gold-pale);text-transform:uppercase}
+  .foot-brand .addr{font-family:"Noto Sans JP",sans-serif;font-size:12px;line-height:2;margin-top:24px;opacity:.7}
+  footer h5{font-family:"Shippori Mincho",serif;font-size:13px;letter-spacing:.2em;color:var(--gold-pale);margin-bottom:20px;font-weight:600}
+  footer ul{list-style:none;font-family:"Noto Sans JP",sans-serif}
+  footer li{font-size:13px;margin-bottom:10px;opacity:.75}
+  footer li a{color:inherit;text-decoration:none}
+  .foot-copy{padding-top:32px;border-top:1px solid rgba(255,255,255,.1);display:flex;justify-content:space-between;font-family:"Noto Sans JP",sans-serif;font-size:11px;letter-spacing:.15em;opacity:.5}
+  .foot-copy ul{display:flex;gap:24px;list-style:none}
+</style>
+</head>
+<body>
+
+<!-- accessibility bar -->
+<div class="a11y">
+  <div class="wrap">
+    <div class="a11y-left">公益財団法人 釧路卓球協会 ／ 創立大正14年（1925年）</div>
+    <div class="a11y-right">
+      <span>文字サイズ</span>
+      <button>小</button><button>中</button><button>大</button>
+      <span style="margin-left:12px">色</span>
+      <button>標準</button><button>反転</button>
+      <span style="margin-left:12px">English</span>
+    </div>
+  </div>
+</div>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <div class="brand-seal"><span>釧</span></div>
+      <div class="brand-name">
+        <div class="full">釧路卓球協会</div>
+        <div class="en">KUSHIRO TABLE TENNIS ASSOCIATION ／ EST. 1925</div>
+      </div>
+    </div>
+    <div class="nav-right">
+      <nav class="main">
+        <a href="#">協会案内</a>
+        <a href="#">大会・行事</a>
+        <a href="#">登録・申請</a>
+        <a href="#">情報公開</a>
+        <a href="#">お知らせ</a>
+      </nav>
+      <a class="nav-cta" href="#">お問合せ</a>
+    </div>
+  </div>
+</header>
+
+<!-- 100th banner -->
+<div class="hyakunen-bar">
+  <div class="wrap">
+    <div class="hb-left">
+      <span class="gold-line"></span>
+      <span>CELEBRATING ONE HUNDRED YEARS</span>
+      <span class="hb-num">1925 — 2026</span>
+    </div>
+    <div class="hb-left">
+      <span style="opacity:.7">創立百周年 記念事業 開催中</span>
+      <span class="gold-line"></span>
+    </div>
+  </div>
+</div>
+
+<!-- hero -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="anniv-mark">
+        <span class="anniv-num">101<sup style="font-size:.5em;color:var(--gold)">st</sup></span>
+        <span class="anniv-label">YEAR / 百年の系譜、次の一球へ。</span>
+      </div>
+      <h1 class="hero-title">霧の街に、<br/>百年。<br/>変わらぬ<span class="gold">一打</span>を。</h1>
+      <p class="hero-lead">大正十四年（1925年）、釧路の地に産声をあげた本会は、<br/>二度の戦争、北の長き冬を越え、地域の卓球文化を百年にわたり育んでまいりました。<br/>本会は公益法人として、競技力向上と生涯スポーツの普及に努めております。</p>
+      <div class="hero-cta">
+        <a class="btn btn-navy" href="#">百年史を読む</a>
+        <a class="btn btn-gold" href="#">大会情報を見る</a>
+      </div>
+      <div class="hero-meta">
+        <div><b>創立</b>大正14年（1925年）</div>
+        <div><b>法人格</b>公益財団法人</div>
+        <div><b>加盟</b>日本卓球協会／北海道卓球連盟</div>
+      </div>
+    </div>
+    <div class="seal-100">
+      <div class="seal-ring"></div>
+      <div class="seal-ring r2"></div>
+      <div class="seal-ring r3"></div>
+      <div class="seal-inner">
+        <div class="seal-num">100<span class="th">th</span></div>
+        <div class="seal-jp">百周年</div>
+        <div class="seal-en">— 1925 / 2026 —</div>
+      </div>
+      <div class="seal-year">KUSHIRO · HOKKAIDO</div>
+    </div>
+  </div>
+</section>
+
+<!-- news -->
+<section style="background:#fff;border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2><span class="en">News & Notice</span>お知らせ</h2>
+      <a class="sec-link" href="#">一覧</a>
+    </div>
+    <div class="news-grid">
+      <div>
+        <div class="news-row"><div class="d">05.18</div><div class="c">大会</div><div class="t"><a href="#">第101回 釧路市民卓球選手権大会 開催要項を公開</a></div></div>
+        <div class="news-row"><div class="d">05.10</div><div class="c">普及</div><div class="t"><a href="#">夏季ジュニア卓球教室 参加者募集（6月開講）</a></div></div>
+        <div class="news-row"><div class="d">04.28</div><div class="c">結果</div><div class="t"><a href="#">道東ブロック春季大会 結果速報を掲載</a></div></div>
+        <div class="news-row"><div class="d">04.15</div><div class="c">協会</div><div class="t"><a href="#">令和8年度 定時評議員会 開催のお知らせ</a></div></div>
+      </div>
+      <div>
+        <div class="news-row"><div class="d">04.01</div><div class="c">公開</div><div class="t"><a href="#">令和7年度 事業報告・決算書を公開いたしました</a></div></div>
+        <div class="news-row"><div class="d">03.25</div><div class="c">記念</div><div class="t"><a href="#">創立100周年記念誌『百年譜』刊行のお知らせ</a></div></div>
+        <div class="news-row"><div class="d">03.10</div><div class="c">登録</div><div class="t"><a href="#">令和8年度 チーム登録の受付を開始しました</a></div></div>
+        <div class="news-row"><div class="d">02.28</div><div class="c">審判</div><div class="t"><a href="#">公認審判員 講習会 申込受付（3月20日締切）</a></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- timeline -->
+<section class="timeline-sec">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2><span class="en">Our History</span>百年の歩み</h2>
+      <a class="sec-link" href="#">沿革の詳細</a>
+    </div>
+    <p class="tl-intro">霧深き釧路の地に、卓球の音が響いて百年。<br/>世代を越えて受け継がれた、技と志の系譜。</p>
+    <div class="timeline">
+      <div class="tl-line"></div>
+      <div class="tl-item major">
+        <div class="tl-year">1925<span class="era">大正14年</span></div>
+        <div class="tl-content"><h4>釧路卓球倶楽部 創立</h4><p>有志13名により創立。初代会長に故・山田太郎氏就任。</p></div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year">1948<span class="era">昭和23年</span></div>
+        <div class="tl-content"><h4>戦後再建・釧路卓球協会へ改組</h4><p>戦災を経て、市民の手により再建。第1回市民選手権を開催。</p></div>
+      </div>
+      <div class="tl-item major">
+        <div class="tl-year">1965<span class="era">昭和40年</span></div>
+        <div class="tl-content"><h4>北海道卓球連盟 釧路支部 公認</h4><p>道東地区の中核団体として、広域大会の主管を担う。</p></div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year">1989<span class="era">平成元年</span></div>
+        <div class="tl-content"><h4>ジュニア育成事業 本格始動</h4><p>釧路ジュニアクラブを設立、全道ジュニア出場者を多数輩出。</p></div>
+      </div>
+      <div class="tl-item major">
+        <div class="tl-year">2014<span class="era">平成26年</span></div>
+        <div class="tl-content"><h4>公益財団法人へ移行</h4><p>公益性の高い事業を行う団体として認定。情報公開を強化。</p></div>
+      </div>
+      <div class="tl-item major">
+        <div class="tl-year">2026<span class="era">令和8年</span></div>
+        <div class="tl-content"><h4>創立100周年</h4><p>記念誌刊行、記念大会開催、次の100年への礎を築く。</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- events -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <h2><span class="en">Tournaments</span>大会・行事</h2>
+      <a class="sec-link" href="#">年間スケジュール</a>
+    </div>
+    <div class="events-list">
+      <div class="event-card">
+        <div class="ev-date-box"><div class="ev-month">JUN</div><div class="ev-day">15</div><div class="ev-dow">SUN・日</div></div>
+        <div class="ev-info">
+          <span class="badge">100周年記念大会</span>
+          <h4>第101回 釧路市民卓球選手権大会</h4>
+          <dl><b>会場</b>釧路市民体育館<br/><b>部門</b>一般男女・年齢別・ジュニア<br/><b>締切</b>令和8年5月31日</dl>
+        </div>
+      </div>
+      <div class="event-card">
+        <div class="ev-date-box"><div class="ev-month">JUL</div><div class="ev-day">20</div><div class="ev-dow">SUN・日</div></div>
+        <div class="ev-info">
+          <span class="badge">ジュニア</span>
+          <h4>道東ジュニアオープン</h4>
+          <dl><b>会場</b>阿寒湖アリーナ<br/><b>部門</b>U12／U15／U18<br/><b>締切</b>令和8年7月5日</dl>
+        </div>
+      </div>
+      <div class="event-card">
+        <div class="ev-date-box"><div class="ev-month">SEP</div><div class="ev-day">07</div><div class="ev-dow">SUN・日</div></div>
+        <div class="ev-info">
+          <span class="badge">団体戦</span>
+          <h4>秋季団体リーグ戦</h4>
+          <dl><b>会場</b>釧路市民体育館<br/><b>形式</b>3部リーグ・入替戦あり<br/><b>締切</b>令和8年8月20日</dl>
+        </div>
+      </div>
+      <div class="event-card">
+        <div class="ev-date-box"><div class="ev-month">OCT</div><div class="ev-day">26</div><div class="ev-dow">SUN・日</div></div>
+        <div class="ev-info">
+          <span class="badge">記念</span>
+          <h4>創立100周年 記念式典・記念対戦</h4>
+          <dl><b>会場</b>釧路市生涯学習センター<br/><b>内容</b>記念式典／OB対戦／祝賀会<br/><b>申込</b>事務局まで</dl>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- disclosure -->
+<section class="disclosure">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2><span class="en">Disclosure</span>情報公開</h2>
+      <a class="sec-link" href="#">過去年度の資料</a>
+    </div>
+    <div class="disc-intro">
+      <h3>公益財団法人として、<br/>透明性のある運営を。</h3>
+      <p>本会は公益財団法人として、公益認定等委員会の定める情報公開基準に基づき、定款・事業計画・事業報告・財務諸表・役員名簿等を毎年度公開しております。閲覧をご希望の方は、各PDFリンクよりダウンロードいただけます。</p>
+    </div>
+    <div class="disc-grid">
+      <div class="disc-cell">
+        <div class="cat">01 / Foundation</div>
+        <h4>定款・規程</h4>
+        <ul>
+          <li><a href="#">定款（令和6年改訂）</a></li>
+          <li><a href="#">評議員会規程</a></li>
+          <li><a href="#">理事会規程</a></li>
+          <li><a href="#">事務局規程</a></li>
+        </ul>
+      </div>
+      <div class="disc-cell">
+        <div class="cat">02 / Finance</div>
+        <h4>事業計画・予算</h4>
+        <ul>
+          <li><a href="#">令和8年度 事業計画書</a></li>
+          <li><a href="#">令和8年度 収支予算書</a></li>
+          <li><a href="#">令和7年度 事業計画</a></li>
+          <li><a href="#">令和7年度 予算書</a></li>
+        </ul>
+      </div>
+      <div class="disc-cell">
+        <div class="cat">03 / Report</div>
+        <h4>事業報告・決算</h4>
+        <ul>
+          <li><a href="#">令和7年度 事業報告書</a></li>
+          <li><a href="#">令和7年度 計算書類</a></li>
+          <li><a href="#">令和7年度 財産目録</a></li>
+          <li><a href="#">監査報告書</a></li>
+        </ul>
+      </div>
+      <div class="disc-cell">
+        <div class="cat">04 / Members</div>
+        <h4>役員・組織</h4>
+        <ul>
+          <li><a href="#">役員名簿（理事・監事）</a></li>
+          <li><a href="#">評議員名簿</a></li>
+          <li><a href="#">専門委員会一覧</a></li>
+          <li><a href="#">組織図</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- registration -->
+<section class="reg">
+  <div class="wrap">
+    <div class="sec-head" style="border-bottom-color:rgba(255,255,255,.15)">
+      <h2 style="color:#fff"><span class="en" style="color:var(--gold-pale)">Registration</span>登録・申請</h2>
+      <a class="sec-link" style="color:#fff" href="#">申請の手引き</a>
+    </div>
+    <div class="reg-grid">
+      <div>
+        <h3>会員登録・<br/>各種手続きを<br/><span class="gold">オンラインで</span>。</h3>
+        <p>本会では、選手登録・チーム登録・大会申込・審判員・指導者の各種申請をオンラインで受け付けております。登録様式は所定のPDFをダウンロードのうえ、ご記入ください。</p>
+      </div>
+      <div class="reg-list">
+        <a class="reg-row" href="#"><div class="l"><span class="en">Player</span>選手・チーム登録</div><div class="r">様式DL →</div></a>
+        <a class="reg-row" href="#"><div class="l"><span class="en">Entry</span>大会エントリー</div><div class="r">申込フォーム →</div></a>
+        <a class="reg-row" href="#"><div class="l"><span class="en">Referee</span>審判員 登録・更新</div><div class="r">様式DL →</div></a>
+        <a class="reg-row" href="#"><div class="l"><span class="en">Coach</span>指導者 登録・講習</div><div class="r">様式DL →</div></a>
+        <a class="reg-row" href="#"><div class="l"><span class="en">Affiliate</span>加盟団体 新規申請</div><div class="r">様式DL →</div></a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- affiliations -->
+<section style="background:#fff">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2><span class="en">Affiliations</span>加盟団体・関連リンク</h2>
+    </div>
+    <div class="affil-grid">
+      <a class="aff" href="#"><div class="name">日本卓球協会</div><div class="meta">JTTA</div></a>
+      <a class="aff" href="#"><div class="name">北海道卓球連盟</div><div class="meta">HTTA</div></a>
+      <a class="aff" href="#"><div class="name">釧路市</div><div class="meta">市政連携</div></a>
+      <a class="aff" href="#"><div class="name">釧路市体育協会</div><div class="meta">スポーツ統括</div></a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-top">
+      <div class="foot-brand">
+        <div class="full">公益財団法人　釧路卓球協会</div>
+        <div class="en">KUSHIRO TABLE TENNIS ASSOCIATION / EST. 1925</div>
+        <div class="addr">〒085-0000 北海道釧路市××町1-2-3<br/>釧路市民体育館内<br/>TEL: 0154-XX-XXXX（平日 10:00–17:00）<br/>FAX: 0154-XX-XXXX<br/>E-mail: info@kushiro-tta.or.jp</div>
+      </div>
+      <div><h5>協会案内</h5><ul><li><a href="#">ご挨拶</a></li><li><a href="#">沿革・百年史</a></li><li><a href="#">役員・組織</a></li><li><a href="#">アクセス</a></li></ul></div>
+      <div><h5>活動・事業</h5><ul><li><a href="#">大会情報</a></li><li><a href="#">普及・教室</a></li><li><a href="#">登録・申請</a></li><li><a href="#">表彰・記録</a></li></ul></div>
+      <div><h5>情報公開</h5><ul><li><a href="#">定款・規程</a></li><li><a href="#">事業報告・決算</a></li><li><a href="#">役員名簿</a></li><li><a href="#">個人情報保護方針</a></li></ul></div>
+    </div>
+    <div class="foot-copy">
+      <span>© 1925-2026 KUSHIRO TABLE TENNIS ASSOCIATION. All Rights Reserved.</span>
+      <ul><li><a href="#">サイトポリシー</a></li><li><a href="#">プライバシー</a></li><li><a href="#">アクセシビリティ</a></li><li><a href="#">サイトマップ</a></li></ul>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

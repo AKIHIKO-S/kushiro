@@ -1,0 +1,49 @@
+# Render.com Infrastructure as Code (Blueprint)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# このファイルが GitHub にあれば Render が自動でサービスを構成します。
+#
+# 初回セットアップ:
+#   1. https://dashboard.render.com/ にログイン (GitHub で連携)
+#   2. New → "Blueprint" → GitHub リポジトリを選択
+#   3. 自動でこのファイルを認識してデプロイ開始
+#   4. デプロイ後、Dashboard で ADMIN_KEY を確認 → 管理画面に入力
+#
+# 注意:
+#   - free プランは 15分アクセス無いとスリープ (大会日は問題なし)
+#   - 永続ディスク (1GB) を有効化するため starter プラン以上推奨
+#     ※ free プランでも動くが、再起動でDBが消える可能性あり
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+services:
+  - type: web
+    name: ktta-platform
+    runtime: node
+    region: singapore   # 日本に最も近いリージョン (oregon/frankfurt も可)
+    plan: starter       # $7/month - 永続ディスク用 (常時稼働・スリープ無し)
+                        # ※ free プランも動作するが永続ディスク非対応
+    branch: main
+    buildCommand: npm install --production
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true    # main へのプッシュで自動デプロイ
+
+    # 永続ディスク (SQLite DB と印鑑画像を保存)
+    disk:
+      name: ktta-data
+      mountPath: /var/data
+      sizeGB: 1   # 1GB = 数万試合分
+
+    # 環境変数
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DB_PATH
+        value: /var/data/tournament.db
+      - key: SEAL_DIR
+        value: /var/data/seal
+      - key: ADMIN_KEY
+        generateValue: true   # Render が自動生成 (Dashboard で確認可)
+      - key: TZ
+        value: Asia/Tokyo

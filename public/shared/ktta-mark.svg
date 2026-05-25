@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="KTTA mark">
+  <!-- 円形フレーム (ダーク) -->
+  <circle cx="32" cy="32" r="30" fill="#09090b"/>
+
+  <!-- 卓球ボールの軌跡 (右上から左下へ弧) -->
+  <path d="M 50 14 Q 36 26, 22 44"
+        stroke="#dc2626" stroke-width="1.6" fill="none"
+        stroke-dasharray="2 2.5" opacity="0.85" stroke-linecap="round"/>
+
+  <!-- 卓球ボール (右上に大きく光る) -->
+  <circle cx="50" cy="14" r="5.2" fill="#fff"/>
+  <circle cx="48.5" cy="12.6" r="1.6" fill="#dc2626"/>
+
+  <!-- ===== 丹頂のシルエット (中央) ===== -->
+  <!-- 体: 左右に伸びる優雅なフォルム -->
+  <path d="M 16 38
+           C 16 32, 22 28, 30 28
+           L 40 28
+           C 46 28, 50 31, 50 36
+           L 47 41
+           L 18 41
+           Z"
+        fill="#fafafa" stroke="#27272a" stroke-width="0.8" stroke-linejoin="round"/>
+
+  <!-- 翼の流れ -->
+  <path d="M 20 36 L 32 33 L 44 36"
+        stroke="#a1a1aa" stroke-width="0.6" fill="none" opacity="0.6"/>
+
+  <!-- 尾羽 (左後方・黒) -->
+  <path d="M 16 38 L 9 36 L 11 42 L 18 41 Z"
+        fill="#09090b" stroke="#000" stroke-width="0.4"/>
+
+  <!-- 脚 (2本・地面) -->
+  <line x1="26" y1="41" x2="26" y2="52" stroke="#27272a" stroke-width="1.4" stroke-linecap="round"/>
+  <line x1="34" y1="41" x2="34" y2="52" stroke="#27272a" stroke-width="1.4" stroke-linecap="round"/>
+  <!-- 足の指 -->
+  <path d="M 23 52 L 26 52 L 29 52" stroke="#27272a" stroke-width="1" fill="none" stroke-linecap="round"/>
+  <path d="M 31 52 L 34 52 L 37 52" stroke="#27272a" stroke-width="1" fill="none" stroke-linecap="round"/>
+
+  <!-- 長い首 (S字優雅) -->
+  <path d="M 40 28
+           Q 38 19, 34 14
+           Q 31 9, 33 6"
+        stroke="#fafafa" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+  <path d="M 40 28
+           Q 38 19, 34 14
+           Q 31 9, 33 6"
+        stroke="#27272a" stroke-width="0.6" fill="none" stroke-linecap="round" opacity="0.3"/>
+
+  <!-- 頭 (球状) -->
+  <circle cx="33" cy="6" r="3.8" fill="#fafafa" stroke="#27272a" stroke-width="0.8"/>
+
+  <!-- 丹頂の象徴: 頭頂の赤 -->
+  <path d="M 30 4
+           Q 33 1, 36 4
+           L 36 6.5
+           L 30 6.5 Z"
+        fill="#dc2626"/>
+
+  <!-- くちばし (前方へ) -->
+  <path d="M 36.5 6.5
+           L 42 7
+           L 36.5 7.8 Z"
+        fill="#1c1917"/>
+
+  <!-- 目 -->
+  <circle cx="33" cy="6.2" r="0.7" fill="#09090b"/>
+</svg>

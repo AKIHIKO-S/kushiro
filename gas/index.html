@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>卓球大会 申込管理システム</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+input,select,textarea,button{font-family:inherit;font-size:14px}
+:root{
+  --pri:#1a56db;--pri-l:#3b82f6;--pri-bg:#eff6ff;
+  --ok:#16a34a;--ok-bg:#f0fdf4;--err:#dc2626;--err-bg:#fef2f2;
+  --warn:#d97706;--warn-bg:#fffbeb;
+  --purple:#7c3aed;--purple-bg:#f5f3ff;
+  --bg:#f8fafc;--card:#fff;--border:#e2e8f0;--txt:#1e293b;--sub:#64748b;
+  --radius:8px;--shadow:0 1px 3px rgba(0,0,0,.06)
+}
+body{font-family:'Noto Sans JP',system-ui,sans-serif;background:var(--bg);color:var(--txt);line-height:1.6}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--pri-l)!important;box-shadow:0 0 0 3px rgba(59,130,246,.15)!important}
+button{cursor:pointer;transition:all .15s}button:active{transform:scale(.97)}button:hover{opacity:.9}
+.fi{animation:fi .25s ease-out}@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:600;backdrop-filter:blur(3px)}
+.modal-box{max-width:700px;width:100%;max-height:92vh;overflow-y:auto;margin:0 12px;background:var(--card);border-radius:12px;border:1px solid var(--border);box-shadow:0 20px 60px rgba(0,0,0,.15)}
+.inp{width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius);background:#fff;color:var(--txt);font-weight:500}
+.inp:disabled{background:#f1f5f9;color:#94a3b8}
+textarea.inp{resize:vertical;min-height:50px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:8px 18px;border:none;border-radius:var(--radius);font-weight:700;font-size:13px}
+.btn-pri{background:var(--pri);color:#fff;box-shadow:0 1px 4px rgba(26,86,219,.25)}
+.btn-ok{background:var(--ok);color:#fff}
+.btn-err{background:var(--err);color:#fff}
+.btn-ghost{background:transparent;color:var(--sub);border:1.5px solid var(--border)}
+.btn-sm{padding:5px 10px;font-size:11px;border-radius:6px;font-weight:600}
+.card{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px;margin-bottom:10px;box-shadow:var(--shadow)}
+.fld{margin-bottom:10px}
+.fld>label{display:block;font-size:11px;font-weight:700;color:var(--sub);margin-bottom:3px;letter-spacing:.3px}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700}
+.check-card{border:2px solid var(--border);border-radius:var(--radius);padding:12px;cursor:pointer;transition:.2s;position:relative}
+.check-card.selected{border-color:var(--pri);background:var(--pri-bg)}
+.check-card.selected::after{content:'✓';position:absolute;top:6px;right:8px;color:var(--pri);font-weight:900;font-size:14px}
+.check-card.disabled{opacity:.4;cursor:not-allowed}
+.step-badge{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--pri);color:#fff;font-size:11px;font-weight:900;margin-right:6px}
+.grid-row{display:grid;padding:8px 10px;font-size:12px;align-items:center;border-bottom:1px solid #f1f5f9;gap:4px}
+.grid-row:hover{background:#f8fafc}
+.loading{display:flex;align-items:center;justify-content:center;padding:40px;color:var(--sub);gap:8px}
+.loading::before{content:'';width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--pri);border-radius:50%;animation:spin .5s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.tab-bar{display:flex;background:#fff;border-bottom:1.5px solid var(--border);overflow-x:auto}
+.tab-btn{flex:0 0 auto;padding:10px 16px;border:none;border-bottom:2px solid transparent;background:transparent;color:#94a3b8;font-weight:500;font-size:12px;white-space:nowrap}
+.tab-btn.active{border-bottom-color:var(--pri);color:var(--pri);font-weight:700}
+.confirm-section{background:#f8fafc;border-radius:var(--radius);padding:14px;margin-bottom:12px;border:1px solid var(--border)}
+.confirm-label{font-size:10px;color:var(--sub);font-weight:700;letter-spacing:.5px;margin-bottom:2px}
+.confirm-value{font-size:13px;font-weight:600}
+@media print{body{background:#fff!important}.no-print{display:none!important}.receipt-print{page-break-inside:avoid;border:2px solid #333!important}}
+@media(max-width:600px){.modal-box{margin:0 6px;max-height:95vh}.grid-row{font-size:10px}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// 卓球大会申込管理 - GAS連携版 v2
+// ═══════════════════════════════════════════════════════════════
+
+const GENDER_OPTIONS=[{v:"open",l:"男女混合"},{v:"male",l:"男子のみ"},{v:"female",l:"女子のみ"}];
+const AGE_CATS=[
+  {v:"general",l:"一般（制限なし）"},{v:"elementary",l:"小学生"},{v:"middle",l:"中学生"},{v:"high",l:"高校生"},
+  {v:"20s",l:"20代"},{v:"30s",l:"30代"},{v:"40s",l:"40代"},{v:"50s",l:"50代"},
+  {v:"60s",l:"60代"},{v:"70s",l:"70代"},{v:"80s",l:"80代"},{v:"90s",l:"90代"},
+  {v:"senior",l:"シニア（60歳以上）"},{v:"veteran",l:"ベテラン（50歳以上）"},
+  {v:"adult",l:"大人（18歳以上）"},{v:"youth",l:"ジュニア（18歳以下）"}
+];
+const EV_TYPES=[
+  {v:"singles",l:"シングルス",members:1},{v:"doubles",l:"ダブルス",members:2},
+  {v:"mixed_doubles",l:"混合ダブルス",members:2},{v:"team",l:"団体戦",members:5}
+];
+
+// ── GAS API ──────────────────────────────────────────
+const GAS_KEY='tabletennis_gas_url';
+const getGasUrl=()=>localStorage.getItem(GAS_KEY)||'';
+const setGasUrl=u=>localStorage.setItem(GAS_KEY,u);
+
+async function gasGet(action,params={}){
+  const url=getGasUrl();if(!url)throw new Error('GAS URL未設定');
+  const qs=new URLSearchParams({action,...params}).toString();
+  const r=await fetch(url+'?'+qs);return r.json();
+}
+async function gasPost(data){
+  const url=getGasUrl();if(!url)throw new Error('GAS URL未設定');
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(data)});
+  return r.json();
+}
+
+// ── State ────────────────────────────────────────────
+let S={
+  gasConnected:false, tab:'registrations',
+  config:null, events:[], registrations:[], stats:null,
+  regFilterEvent:'all',
+  // modals
+  showConfigForm:false, showEventForm:false,
+  showRegForm:false, editReg:null,
+  showReceipt:null, receiptDesc:'',
+  showEmbedCode:false,
+  // public form
+  publicMode:false, publicData:null,
+  pubStep:1, // 1=種目選択, 2=情報入力, 3=確認, 4=完了
+  pubForm:null, pubSelectedEvents:[], pubSubmittedData:null,
+  loading:false, toast:null
+};
+function setState(u){Object.assign(S,u);render();}
+function flash(msg,type='info'){setState({toast:{msg,type}});setTimeout(()=>setState({toast:null}),2800);}
+
+// ── Init ─────────────────────────────────────────────
+function checkMode(){
+  const p=new URLSearchParams(location.search);
+  if(p.get('mode')==='form'){S.publicMode=true;loadPublicData();}
+  else if(getGasUrl())testConnection();
+}
+
+async function testConnection(){
+  try{setState({loading:true});const r=await gasGet('ping');
+  if(r.ok){S.gasConnected=true;await loadAll();}}
+  catch(e){S.gasConnected=false;}
+  finally{setState({loading:false});}
+}
+
+async function loadAll(){
+  try{
+    const[config,events,regs,stats]=await Promise.all([
+      gasGet('getConfig'),gasGet('getEvents'),
+      gasGet('getRegistrations',{eventId:'all'}),gasGet('getStats')]);
+    setState({config,events,registrations:regs,stats,tab:'registrations'});
+  }catch(e){flash(e.message,'error');}
+}
+
+async function loadPublicData(){
+  try{setState({loading:true});const data=await gasGet('getPublicData');
+  setState({publicData:data,loading:false});}
+  catch(e){setState({publicData:null,loading:false});}
+}
+
+// ── Admin Actions ────────────────────────────────────
+async function saveConfig(data){
+  try{await gasPost({action:'saveConfig',...data});flash('保存しました','success');
+  const config=await gasGet('getConfig');setState({config,showConfigForm:false});}
+  catch(e){flash(e.message,'error');}
+}
+
+async function saveEvents(events){
+  try{await gasPost({action:'saveEvents',events});flash('種目を保存','success');
+  const ev=await gasGet('getEvents');setState({events:ev,showEventForm:false});}
+  catch(e){flash(e.message,'error');}
+}
+
+async function saveRegistration(data){
+  try{
+    if(data.id){await gasPost({action:'updateRegistration',...data});flash('更新しました','success');}
+    else{await gasPost({action:'addRegistration',...data});flash('登録しました','success');}
+    const regs=await gasGet('getRegistrations',{eventId:'all'});
+    const stats=await gasGet('getStats');
+    setState({registrations:regs,stats,showRegForm:false,editReg:null});
+  }catch(e){flash(e.message,'error');}
+}
+
+async function deleteRegistration(id){
+  if(!confirm('この申込を削除しますか？'))return;
+  try{await gasPost({action:'deleteRegistration',id});flash('削除しました');
+  const regs=await gasGet('getRegistrations',{eventId:'all'});const stats=await gasGet('getStats');
+  setState({registrations:regs,stats});}catch(e){flash(e.message,'error');}
+}
+
+async function togglePayment(id){
+  try{await gasPost({action:'togglePayment',id});
+  const regs=await gasGet('getRegistrations',{eventId:'all'});const stats=await gasGet('getStats');
+  setState({registrations:regs,stats});}catch(e){flash(e.message,'error');}
+}
+
+async function issueReceipt(id,description){
+  try{const r=await gasPost({action:'issueReceipt',id,description});
+  flash('領収書 '+r.receipt_number+' を発行','success');
+  const regs=await gasGet('getRegistrations',{eventId:'all'});
+  setState({registrations:regs,showReceipt:null});}catch(e){flash(e.message,'error');}
+}
+
+// ── Public Form Submit (一括) ────────────────────────
+async function submitPublicBulk(formData){
+  try{
+    setState({loading:true});
+    // 複数種目の一括登録
+    const results=[];
+    for(const evId of formData.event_ids){
+      const members=formData.members_per_event[evId]||[];
+      const ev=(S.publicData?.events||[]).find(e=>e.id===evId);
+      const r=await gasPost({
+        action:'addRegistration',
+        event_id:evId,
+        team_name:formData.team_name,
+        representative:formData.representative,
+        phone:formData.phone,
+        email:formData.email,
+        notes:formData.notes,
+        fee_amount:ev?ev.fee:0,
+        members
+      });
+      results.push({...r, event_name:ev?.event_name||''});
+    }
+    // メール送信
+    if(formData.email){
+      try{
+        const summaryText=buildSummaryText(formData);
+        await gasPost({action:'sendConfirmationEmail',email:formData.email,
+          subject:(S.publicData?.name||'卓球大会')+' 申込確認',body:summaryText});
+      }catch(e){/* メール送信失敗は無視 */}
+    }
+    const summaryText=buildSummaryText(formData);
+    setState({pubStep:4,pubSubmittedData:{...formData,summary:summaryText},loading:false});
+  }catch(e){flash('送信に失敗しました: '+e.message,'error');setState({loading:false});}
+}
+
+function buildSummaryText(formData){
+  const t=S.publicData||{};
+  const events=t.events||[];
+  let txt=`【${t.name||'卓球大会'} 申込内容】\n`;
+  txt+=`日時: ${t.date||''}\n`;
+  txt+=`会場: ${t.venue||''}\n`;
+  txt+=`─────────────────\n`;
+  txt+=`団体/所属: ${formData.team_name||'個人'}\n`;
+  txt+=`代表者: ${formData.representative}\n`;
+  txt+=`電話: ${formData.phone}\n`;
+  if(formData.email)txt+=`メール: ${formData.email}\n`;
+  txt+=`\n【エントリー種目】\n`;
+  let totalFee=0;
+  formData.event_ids.forEach(evId=>{
+    const ev=events.find(e=>e.id===evId);
+    if(!ev)return;
+    totalFee+=ev.fee;
+    txt+=`\n■ ${ev.event_name}（${ev.fee.toLocaleString()}円）\n`;
+    const members=formData.members_per_event[evId]||[];
+    members.forEach((m,i)=>{
+      if(!m.player_name)return;
+      txt+=`  ${i+1}. ${m.player_name}`;
+      if(m.furigana)txt+=`（${m.furigana}）`;
+      if(m.gender)txt+=` ${m.gender==='male'?'男':'女'}`;
+      if(m.notes)txt+=` [${m.notes}]`;
+      txt+='\n';
+    });
+  });
+  txt+=`\n─────────────────\n`;
+  txt+=`合計参加費: ${totalFee.toLocaleString()}円\n`;
+  if(formData.notes)txt+=`備考: ${formData.notes}\n`;
+  txt+=`\n申込日時: ${new Date().toLocaleString('ja-JP')}\n`;
+  return txt;
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDERING
+// ═══════════════════════════════════════════════════════
+
+function h(tag,attrs,...children){
+  const el=document.createElement(tag);
+  if(attrs)Object.entries(attrs).forEach(([k,v])=>{
+    if(k==="style"&&typeof v==="object")Object.assign(el.style,v);
+    else if(k.startsWith("on"))el.addEventListener(k.slice(2).toLowerCase(),v);
+    else if(k==="className")el.className=v;
+    else if(k==="innerHTML")el.innerHTML=v;
+    else if(k==="checked"||k==="disabled"||k==="selected"){if(v)el[k]=true;}
+    else el.setAttribute(k,v);
+  });
+  children.flat(Infinity).forEach(c=>{
+    if(c==null||c===false)return;
+    el.appendChild(typeof c==="string"||typeof c==="number"?document.createTextNode(String(c)):c);
+  });
+  return el;
+}
+function fld(label,child){const d=h("div",{className:"fld"});d.appendChild(h("label",null,label));d.appendChild(child);return d;}
+function makeSelect(options,current,onChange){
+  const sel=h("select",{className:"inp",onChange:e=>onChange(e.target.value)});
+  options.forEach(o=>{const opt=h("option",{value:o.v},o.l);if(String(o.v)===String(current))opt.selected=true;sel.appendChild(opt);});
+  return sel;
+}
+function ageCatLabel(v){return AGE_CATS.find(c=>c.v===v)?.l||v||"";}
+
+// ═══════════════════════════════════════════════════════
+// SETUP SCREEN
+// ═══════════════════════════════════════════════════════
+
+function renderSetup(){
+  const saved=getGasUrl();
+  const card=h("div",{className:"card fi",style:{maxWidth:"480px",margin:"60px auto",textAlign:"center",padding:"32px"}},
+    h("div",{style:{fontSize:"40px",marginBottom:"8px"}},"🏓"),
+    h("div",{style:{fontSize:"20px",fontWeight:"900",marginBottom:"4px"}},"卓球大会 申込管理"),
+    h("div",{style:{fontSize:"12px",color:"var(--sub)",marginBottom:"24px"}},"Google スプレッドシート連携")
+  );
+  const urlInp=h("input",{className:"inp",placeholder:"https://script.google.com/macros/s/XXXX/exec",value:saved||"",style:{marginBottom:"10px"}});
+  const connectBtn=h("button",{className:"btn btn-pri",style:{width:"100%",padding:"12px"},onClick:async()=>{
+    const url=urlInp.value.trim();if(!url){flash("URLを入力","error");return;}
+    setGasUrl(url);connectBtn.textContent="接続中...";connectBtn.disabled=true;
+    try{const r=await gasGet('ping');if(r.ok){S.gasConnected=true;await loadAll();flash("接続成功","success");}
+    else throw new Error("応答エラー");}
+    catch(e){flash("接続失敗: "+e.message,"error");connectBtn.textContent="接続";connectBtn.disabled=false;}
+  }},"接続");
+  card.append(fld("GAS ウェブアプリ URL",urlInp),connectBtn);
+  card.appendChild(h("div",{style:{marginTop:"20px",padding:"12px",background:"#f1f5f9",borderRadius:"var(--radius)",textAlign:"left",fontSize:"11px",lineHeight:"1.8",color:"var(--sub)"}},
+    h("div",{style:{fontWeight:"700",color:"var(--txt)",marginBottom:"4px"}},"セットアップ手順:"),
+    ...["Google スプレッドシートを新規作成","拡張機能 → Apps Script を開く","Code.gs にGASコードを貼り付けて保存",
+    "onOpen を実行（初回権限承認）","スプレッドシートの 🏓大会管理 → 初期設定 を実行",
+    "デプロイ → 新しいデプロイ → ウェブアプリ","「全員」がアクセスできるように設定","表示されたURLを上の欄に貼り付け"
+    ].map((t,i)=>h("div",null,(i+1)+". "+t))
+  ));
+  if(saved)card.appendChild(h("button",{className:"btn btn-ghost btn-sm",style:{marginTop:"8px"},
+    onClick:()=>{localStorage.removeItem(GAS_KEY);flash("URLクリア");render();}},"設定をリセット"));
+  return card;
+}
+
+// ═══════════════════════════════════════════════════════
+// ADMIN - Header & Tabs
+// ═══════════════════════════════════════════════════════
+
+function renderHeader(){
+  return h("header",{className:"no-print",style:{background:"var(--pri)",position:"sticky",top:"0",zIndex:"100",boxShadow:"0 1px 8px rgba(0,0,0,.1)"}},
+    h("div",{style:{maxWidth:"1000px",margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 16px"}},
+      h("div",{style:{display:"flex",alignItems:"center",gap:"8px"}},
+        h("span",{style:{fontSize:"18px"}},"🏓"),
+        h("span",{style:{fontSize:"13px",fontWeight:"700",color:"#fff"}},S.config?.name||"卓球大会管理")),
+      h("div",{style:{display:"flex",gap:"6px",alignItems:"center"}},
+        h("span",{style:{width:"6px",height:"6px",borderRadius:"50%",background:"#4ade80",display:"inline-block"}}),
+        h("span",{style:{fontSize:"10px",color:"rgba(255,255,255,.6)"}},"接続中"),
+        h("button",{className:"btn btn-sm",style:{background:"rgba(255,255,255,.15)",color:"rgba(255,255,255,.7)",border:"none"},
+          onClick:()=>{localStorage.removeItem(GAS_KEY);S.gasConnected=false;render();}},"切断"))
+    )
+  );
+}
+
+function renderTabs(){
+  const tabs=[{id:"registrations",l:"申込管理"},{id:"config",l:"大会設定"},{id:"events",l:"種目設定"},{id:"stats",l:"集計"}];
+  return h("nav",{className:"no-print tab-bar"},
+    h("div",{style:{maxWidth:"1000px",margin:"0 auto",display:"flex"}},
+      ...tabs.map(t=>h("button",{className:"tab-btn"+(S.tab===t.id?" active":""),onClick:()=>setState({tab:t.id})},t.l))
+    ));
+}
+
+// ═══════════════════════════════════════════════════════
+// ADMIN - 大会設定
+// ═══════════════════════════════════════════════════════
+
+function renderConfigTab(){
+  const c=S.config||{};
+  const card=h("div",{className:"card fi"});
+  card.appendChild(h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}},
+    h("h3",{style:{fontSize:"14px",fontWeight:"800"}},"大会設定"),
+    h("div",{style:{display:"flex",gap:"6px"}},
+      h("button",{className:"btn btn-pri btn-sm",onClick:()=>setState({showConfigForm:true})},"編集"),
+      h("button",{className:"btn btn-ghost btn-sm",onClick:()=>setState({showEmbedCode:true})},"埋込コード"))
+  ));
+  const fields=[["大会名",c.name],["開催日",c.date],["会場",c.venue],["コート数",c.court_count],
+    ["主催者",c.organizer],["申込締切",c.deadline],["備考",c.notes],
+    ["フォーム公開",c.form_open?"✅ 受付中":"⛔ 受付終了"],["領収書但し書き",c.receipt_template]];
+  const grid=h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0"}});
+  fields.forEach(([l,v])=>{
+    grid.appendChild(h("div",{style:{padding:"8px 0",borderBottom:"1px solid #f1f5f9",fontSize:"12px"}},
+      h("div",{style:{fontSize:"10px",color:"var(--sub)",fontWeight:"700"}},l),
+      h("div",{style:{fontWeight:"600",marginTop:"2px"}},v||"-")));
+  });
+  card.appendChild(grid);
+  if(c.form_open){
+    const formUrl=location.origin+location.pathname+'?mode=form';
+    card.appendChild(h("div",{style:{marginTop:"12px",padding:"10px",background:"var(--ok-bg)",borderRadius:"var(--radius)",fontSize:"11px"}},
+      h("div",{style:{fontWeight:"700",color:"var(--ok)",marginBottom:"3px"}},"公開フォームURL:"),
+      h("div",{style:{display:"flex",gap:"4px",alignItems:"center"}},
+        h("code",{style:{flex:"1",fontSize:"10px",wordBreak:"break-all",background:"#fff",padding:"4px 6px",borderRadius:"4px"}},formUrl),
+        h("button",{className:"btn btn-sm btn-pri",onClick:()=>{navigator.clipboard.writeText(formUrl);flash("コピーしました","success");}},"コピー"))
+    ));
+  }
+  return card;
+}
+
+function renderConfigForm(){
+  const c=S.config||{};
+  const close=()=>setState({showConfigForm:false});
+  const bg=h("div",{className:"modal-bg",onClick:close});
+  const box=h("div",{className:"modal-box fi",onClick:e=>e.stopPropagation()});bg.appendChild(box);
+  const header=h("div",{style:{padding:"16px 20px",borderBottom:"1px solid var(--border)"}},
+    h("div",{style:{fontSize:"16px",fontWeight:"900"}},"大会設定"));
+  const body=h("div",{style:{padding:"16px 20px"}});
+  const nameI=h("input",{className:"inp",value:c.name||""});
+  const dateI=h("input",{className:"inp",type:"date",value:c.date||""});
+  const venueI=h("input",{className:"inp",value:c.venue||""});
+  const courtI=h("input",{className:"inp",type:"number",min:"1",value:String(c.court_count||4)});
+  const orgI=h("input",{className:"inp",value:c.organizer||""});
+  const deadI=h("input",{className:"inp",type:"date",value:c.deadline||""});
+  const notesI=h("textarea",{className:"inp",value:c.notes||"",rows:"2"});
+  const receiptI=h("input",{className:"inp",value:c.receipt_template||""});
+  const formOpenVal={v:!!c.form_open};
+  const cb=h("input",{type:"checkbox",checked:formOpenVal.v?true:false,onChange:()=>{formOpenVal.v=cb.checked;}});
+  const grid=h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}});
+  grid.append(fld("大会名 *",nameI),fld("開催日",dateI),fld("会場",venueI),fld("コート数",courtI),fld("主催者",orgI),fld("申込締切",deadI));
+  body.append(grid,fld("備考",notesI),fld("領収書 但し書き",receiptI),
+    h("label",{style:{display:"flex",alignItems:"center",gap:"8px",fontSize:"13px",fontWeight:"600",margin:"10px 0",cursor:"pointer"}},cb,"申込フォームを公開する"),
+    h("div",{style:{display:"flex",gap:"8px",marginTop:"12px"}},
+      h("button",{className:"btn btn-pri",style:{flex:"1"},onClick:()=>{
+        saveConfig({name:nameI.value,date:dateI.value,venue:venueI.value,court_count:parseInt(courtI.value)||4,
+          organizer:orgI.value,deadline:deadI.value,notes:notesI.value,form_open:formOpenVal.v,receipt_template:receiptI.value});
+      }},"保存"),h("button",{className:"btn btn-ghost",onClick:close},"キャンセル")));
+  box.append(header,body);return bg;
+}
+
+// ── 埋込コード生成 ───────────────────────────────────
+function renderEmbedModal(){
+  const close=()=>setState({showEmbedCode:false});
+  const bg=h("div",{className:"modal-bg",onClick:close});
+  const box=h("div",{className:"modal-box fi",style:{maxWidth:"600px"},onClick:e=>e.stopPropagation()});bg.appendChild(box);
+  const formUrl=location.origin+location.pathname+'?mode=form';
+  const iframeCode=`<iframe src="${formUrl}" width="100%" height="800" frameborder="0" style="max-width:750px;margin:0 auto;display:block;border-radius:12px;border:1px solid #e2e8f0;"></iframe>`;
+  const linkHtml=`<a href="${formUrl}" target="_blank" style="display:inline-block;padding:12px 24px;background:#1a56db;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;font-family:sans-serif;">🏓 ${S.config?.name||'大会'} 参加申込</a>`;
+  const header=h("div",{style:{padding:"16px 20px",borderBottom:"1px solid var(--border)"}},
+    h("div",{style:{fontSize:"16px",fontWeight:"900"}},"WEBサイト埋込コード"));
+  const body=h("div",{style:{padding:"16px 20px"}});
+  const iframeArea=h("textarea",{className:"inp",rows:"4",value:iframeCode,style:{fontSize:"11px",fontFamily:"monospace"}});
+  iframeArea.readOnly=true;
+  const linkArea=h("textarea",{className:"inp",rows:"3",value:linkHtml,style:{fontSize:"11px",fontFamily:"monospace"}});
+  linkArea.readOnly=true;
+  const directArea=h("input",{className:"inp",value:formUrl,style:{fontSize:"11px",fontFamily:"monospace"}});
+  directArea.readOnly=true;
+  function copyTxt(txt){navigator.clipboard.writeText(txt);flash("コピーしました","success");}
+  body.append(
+    fld("iframe埋込コード（推奨）",h("div",null,iframeArea,h("button",{className:"btn btn-pri btn-sm",style:{marginTop:"4px"},onClick:()=>copyTxt(iframeCode)},"コピー"))),
+    fld("リンクボタン HTML",h("div",null,linkArea,h("button",{className:"btn btn-pri btn-sm",style:{marginTop:"4px"},onClick:()=>copyTxt(linkHtml)},"コピー"))),
+    fld("直接リンクURL",h("div",null,directArea,h("button",{className:"btn btn-pri btn-sm",style:{marginTop:"4px"},onClick:()=>copyTxt(formUrl)},"コピー"))),
+    h("div",{style:{marginTop:"12px",padding:"10px",background:"#f1f5f9",borderRadius:"var(--radius)",fontSize:"11px",color:"var(--sub)",lineHeight:"1.7"}},
+      h("div",{style:{fontWeight:"700",marginBottom:"4px"}},"使い方:"),
+      h("div",null,"・iframeコードをWEBサイトのHTMLに貼り付けると、フォームが埋め込まれます"),
+      h("div",null,"・リンクボタンをブログやお知らせページに貼ると申込ページに飛べます"),
+      h("div",null,"・直接URLはメールやSNSで共有できます")),
+    h("div",{style:{marginTop:"12px",textAlign:"right"}},h("button",{className:"btn btn-ghost",onClick:close},"閉じる"))
+  );
+  box.append(header,body);return bg;
+}
+
+// ═══════════════════════════════════════════════════════
+// ADMIN - 種目設定
+// ═══════════════════════════════════════════════════════
+
+function renderEventsTab(){
+  const card=h("div",{className:"card fi"});
+  card.appendChild(h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}},
+    h("h3",{style:{fontSize:"14px",fontWeight:"800"}},"種目設定 ("+S.events.length+"件)"),
+    h("button",{className:"btn btn-pri btn-sm",onClick:()=>setState({showEventForm:true})},"編集")));
+  if(S.events.length===0){
+    card.appendChild(h("div",{style:{textAlign:"center",padding:"24px",color:"#94a3b8",fontSize:"13px"}},"種目を追加してください"));
+  }else{
+    S.events.forEach(ev=>{
+      const evType=EV_TYPES.find(e=>e.v===ev.event_type);
+      card.appendChild(h("div",{style:{display:"flex",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f1f5f9",gap:"8px"}},
+        h("div",{style:{flex:"1"}},
+          h("div",{style:{fontWeight:"700",fontSize:"13px"}},ev.event_name),
+          h("div",{style:{fontSize:"10px",color:"var(--sub)"}},
+            (evType?.l||"")+" / "+(GENDER_OPTIONS.find(g=>g.v===ev.gender)?.l||"")+" / "+ageCatLabel(ev.age_category))),
+        h("div",{style:{fontWeight:"900",fontSize:"14px",color:"var(--pri)"}},ev.fee.toLocaleString()+"円"),
+        ev.max_players>0?h("div",{style:{fontSize:"10px",color:"var(--sub)"}},"定員"+ev.max_players):null
+      ));
+    });
+  }
+  return card;
+}
+
+function renderEventForm(){
+  const close=()=>setState({showEventForm:false});
+  const bg=h("div",{className:"modal-bg",onClick:close});
+  const box=h("div",{className:"modal-box fi",onClick:e=>e.stopPropagation()});bg.appendChild(box);
+  const header=h("div",{style:{padding:"16px 20px",borderBottom:"1px solid var(--border)"}},
+    h("div",{style:{fontSize:"16px",fontWeight:"900"}},"種目設定"));
+  const body=h("div",{style:{padding:"16px 20px"}});
+  const formEvents=[];
+  const evList=h("div");
+  function addRow(ev={}){
+    const d={event_type:ev.event_type||"singles",event_name:ev.event_name||"",gender:ev.gender||"open",
+      age_category:ev.age_category||"general",fee:ev.fee||0,max_players:ev.max_players||0,id:ev.id||""};
+    formEvents.push(d);
+    const row=h("div",{style:{background:"#f8fafc",border:"1px solid var(--border)",borderRadius:"var(--radius)",padding:"10px",marginBottom:"8px"}});
+    const typeSel=makeSelect(EV_TYPES,d.event_type,v=>{d.event_type=v;autoN();});typeSel.style.width="100%";
+    const nameI=h("input",{className:"inp",value:d.event_name,style:{fontSize:"12px"}});
+    nameI.addEventListener("input",e=>{d.event_name=e.target.value;nameI.dataset.manual="1";});
+    function autoN(){if(nameI.dataset.manual==="1"&&nameI.value)return;
+      nameI.value=[GENDER_OPTIONS.find(g=>g.v===d.gender)?.l||"",AGE_CATS.find(a=>a.v===d.age_category)?.l||"",EV_TYPES.find(t=>t.v===d.event_type)?.l||""].join(" ");d.event_name=nameI.value;}
+    const delBtn=h("button",{className:"btn btn-sm btn-err",onClick:()=>{const idx=formEvents.indexOf(d);if(idx>=0)formEvents.splice(idx,1);row.remove();}},"✕");
+    const r1=h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:"6px",alignItems:"end"}});
+    r1.append(fld("種別",typeSel),fld("種目名",nameI),delBtn);
+    const gSel=makeSelect(GENDER_OPTIONS,d.gender,v=>{d.gender=v;autoN();});gSel.style.width="100%";
+    const aSel=makeSelect(AGE_CATS,d.age_category,v=>{d.age_category=v;autoN();});aSel.style.width="100%";
+    const feeI=h("input",{className:"inp",type:"number",min:"0",step:"100",value:String(d.fee),style:{fontSize:"12px"}});
+    feeI.addEventListener("input",e=>{d.fee=parseInt(e.target.value)||0;});
+    const maxI=h("input",{className:"inp",type:"number",min:"0",value:String(d.max_players),style:{fontSize:"12px"},placeholder:"0=無制限"});
+    maxI.addEventListener("input",e=>{d.max_players=parseInt(e.target.value)||0;});
+    const r2=h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:"6px",marginTop:"4px"}});
+    r2.append(fld("性別",gSel),fld("年代",aSel),fld("参加費(円)",feeI),fld("定員",maxI));
+    row.append(r1,r2);evList.appendChild(row);if(!ev.event_name)autoN();
+  }
+  const qBtns=h("div",{style:{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"8px"}});
+  [{l:"男子シングルス",d:{event_type:"singles",gender:"male",fee:500}},
+   {l:"女子シングルス",d:{event_type:"singles",gender:"female",fee:500}},
+   {l:"男子ダブルス",d:{event_type:"doubles",gender:"male",fee:1000}},
+   {l:"女子ダブルス",d:{event_type:"doubles",gender:"female",fee:1000}},
+   {l:"混合ダブルス",d:{event_type:"mixed_doubles",gender:"open",fee:1000}},
+   {l:"団体戦",d:{event_type:"team",gender:"open",fee:3000}}
+  ].forEach(p=>{qBtns.appendChild(h("button",{className:"btn btn-sm",style:{background:"var(--purple-bg)",color:"var(--purple)",border:"none"},
+    onClick:()=>addRow({...p.d,event_name:p.l+" 一般"})},p.l));});
+  body.append(qBtns,evList,
+    h("button",{className:"btn btn-ghost btn-sm",style:{marginTop:"6px"},onClick:()=>addRow()},"＋ 種目追加"));
+  S.events.forEach(ev=>addRow(ev));
+  body.appendChild(h("div",{style:{display:"flex",gap:"8px",marginTop:"14px"}},
+    h("button",{className:"btn btn-pri",style:{flex:"1"},onClick:()=>{
+      formEvents.forEach((ev,i)=>ev.sort_order=i);saveEvents(formEvents);}},"保存"),
+    h("button",{className:"btn btn-ghost",onClick:close},"キャンセル")));
+  box.append(header,body);return bg;
+}
+
+// ═══════════════════════════════════════════════════════
+// ADMIN - 申込管理
+// ═══════════════════════════════════════════════════════
+
+function renderRegistrationsTab(){
+  const regs=S.registrations||[];const events=S.events||[];const stats=S.stats||{};
+  const filtered=S.regFilterEvent==="all"?regs:regs.filter(r=>String(r.event_id)===String(S.regFilterEvent));
+  const container=h("div",{className:"fi"});
+
+  // Stats row
+  const statGrid=h("div",{style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginBottom:"10px"}});
+  [{n:(stats.total_fee||0).toLocaleString()+"円",l:"合計",c:"var(--pri)"},{n:(stats.paid_fee||0).toLocaleString()+"円",l:"入金済",c:"var(--ok)"},
+   {n:(stats.unpaid_fee||0).toLocaleString()+"円",l:"未入金",c:"var(--err)"},{n:(stats.total_registrations||0)+"件",l:"申込数",c:"var(--purple)"}
+  ].forEach(x=>{statGrid.appendChild(h("div",{style:{textAlign:"center",padding:"8px",background:x.c+"08",borderRadius:"var(--radius)",border:"1px solid "+x.c+"15"}},
+    h("div",{style:{fontSize:"16px",fontWeight:"900",color:x.c}},x.n),h("div",{style:{fontSize:"9px",color:"var(--sub)",fontWeight:"600"}},x.l)));});
+  container.appendChild(statGrid);
+
+  // Filter + actions
+  const bar=h("div",{style:{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"8px",alignItems:"center"}});
+  bar.appendChild(h("button",{className:"btn btn-sm"+(S.regFilterEvent==="all"?" btn-pri":""),
+    style:S.regFilterEvent==="all"?{}:{background:"var(--pri-bg)",color:"var(--pri)",border:"none"},
+    onClick:()=>setState({regFilterEvent:"all"})},"全て("+regs.length+")"));
+  events.forEach(ev=>{
+    const cnt=regs.filter(r=>String(r.event_id)===String(ev.id)).length;
+    const sel=String(S.regFilterEvent)===String(ev.id);
+    bar.appendChild(h("button",{className:"btn btn-sm"+(sel?" btn-pri":""),
+      style:sel?{}:{background:"var(--purple-bg)",color:"var(--purple)",border:"none"},
+      onClick:()=>setState({regFilterEvent:ev.id})},ev.event_name+" ("+cnt+")"));
+  });
+  bar.appendChild(h("div",{style:{flex:"1"}}));
+  bar.appendChild(h("button",{className:"btn btn-pri btn-sm",onClick:()=>setState({showRegForm:true,editReg:null})},"＋ 新規"));
+  bar.appendChild(h("button",{className:"btn btn-ghost btn-sm",onClick:()=>loadAll()},"↻"));
+  container.appendChild(bar);
+
+  // List
+  const card=h("div",{className:"card",style:{padding:"0",overflow:"hidden"}});
+  if(filtered.length===0){
+    card.appendChild(h("div",{style:{textAlign:"center",padding:"24px",color:"#94a3b8",fontSize:"13px"}},"申込がありません"));
+  }else{
+    filtered.forEach((r,i)=>{
+      const mNames=[r.m1,r.m2,r.m3,r.m4,r.m5,r.m6].filter(Boolean).join(", ");
+      const row=h("div",{className:"grid-row",style:{gridTemplateColumns:"24px 1fr 60px 60px 60px 50px"}},
+        h("div",{style:{fontWeight:"700",textAlign:"center",color:"var(--sub)",fontSize:"10px"}},String(i+1)),
+        h("div",null,
+          h("div",{style:{fontWeight:"700",fontSize:"12px"}},r.team_name||r.m1||r.representative||"-"),
+          h("div",{style:{fontSize:"9px",color:"#94a3b8",marginTop:"1px"}},(r.event_name||"")+(mNames?" · "+mNames.substring(0,30):""))),
+        h("div",{style:{fontWeight:"700",textAlign:"right",fontSize:"11px"}},(r.fee_amount||0).toLocaleString()+"円"),
+        h("div",{style:{textAlign:"center"}},
+          h("button",{className:"btn btn-sm",
+            style:{background:r.fee_paid==="済"?"var(--ok-bg)":"var(--err-bg)",color:r.fee_paid==="済"?"var(--ok)":"var(--err)",border:"none",fontSize:"10px",padding:"3px 6px"},
+            onClick:e=>{e.stopPropagation();togglePayment(r.id);}},r.fee_paid==="済"?"済":"未")),
+        h("div",{style:{textAlign:"center"}},
+          r.receipt_number
+            ?h("button",{className:"btn btn-sm",style:{background:"var(--ok-bg)",color:"var(--ok)",border:"none",fontSize:"9px",padding:"3px 5px"},
+              onClick:e=>{e.stopPropagation();setState({showReceipt:r,receiptDesc:r.receipt_desc||""});}},r.receipt_number.replace(/R\d+-/,"#"))
+            :h("button",{className:"btn btn-sm",style:{background:"var(--warn-bg)",color:"var(--warn)",border:"none",fontSize:"10px",padding:"3px 5px"},
+              onClick:e=>{e.stopPropagation();setState({showReceipt:r,receiptDesc:S.config?.receipt_template||"参加費として"});}},"発行")),
+        h("div",{style:{display:"flex",gap:"2px"},onClick:e=>e.stopPropagation()},
+          h("button",{className:"btn btn-sm",style:{background:"var(--pri-bg)",color:"var(--pri)",border:"none",padding:"3px 5px"},
+            onClick:()=>setState({editReg:r,showRegForm:true})},"✏"),
+          h("button",{className:"btn btn-sm",style:{background:"var(--err-bg)",color:"var(--err)",border:"none",padding:"3px 5px"},
+            onClick:()=>deleteRegistration(r.id)},"✕"))
+      );
+      card.appendChild(row);
+    });
+  }
+  container.appendChild(card);
+  return container;
+}
+
+// ── 領収書モーダル ───────────────────────────────────
+function renderReceiptModal(){
+  const r=S.showReceipt;if(!r)return null;
+  const c=S.config||{};const isIssued=!!r.receipt_number;
+  const close=()=>setState({showReceipt:null});
+  const bg=h("div",{className:"modal-bg",onClick:close});
+  const box=h("div",{className:"modal-box fi",style:{maxWidth:"560px"},onClick:e=>e.stopPropagation()});bg.appendChild(box);
+
+  if(!isIssued){
+    const body=h("div",{style:{padding:"20px"}});
+    body.appendChild(h("div",{style:{fontSize:"16px",fontWeight:"900",marginBottom:"12px"}},"領収書を発行"));
+    body.appendChild(h("div",{style:{fontSize:"12px",color:"var(--sub)",marginBottom:"8px"}},"但し書きを確認してから発行してください"));
+    const descInp=h("input",{className:"inp",value:S.receiptDesc||""});
+    descInp.addEventListener("input",e=>{S.receiptDesc=e.target.value;});
+    body.append(fld("但し書き",descInp),
+      h("div",{style:{display:"flex",gap:"8px",marginTop:"12px"}},
+        h("button",{className:"btn btn-pri",style:{flex:"1"},onClick:()=>issueReceipt(r.id,descInp.value)},"発行する"),
+        h("button",{className:"btn btn-ghost",onClick:close},"キャンセル")));
+    box.appendChild(body);return bg;
+  }
+
+  const now=new Date();const ds=now.getFullYear()+"年"+(now.getMonth()+1)+"月"+now.getDate()+"日";
+  const receipt=h("div",{className:"receipt-print",style:{background:"#fff",padding:"32px"}});
+  receipt.append(
+    h("div",{style:{textAlign:"center",marginBottom:"20px"}},
+      h("div",{style:{fontSize:"9px",letterSpacing:"6px",color:"var(--sub)"}},"RECEIPT"),
+      h("div",{style:{fontSize:"24px",fontWeight:"900",letterSpacing:"6px"}},"領 収 書"),
+      h("div",{style:{fontSize:"10px",color:"var(--sub)",marginTop:"4px"}},"No. "+r.receipt_number)),
+    h("div",{style:{display:"flex",justifyContent:"space-between",borderBottom:"1px solid #333",paddingBottom:"8px",marginBottom:"16px"}},
+      h("div",null,h("div",{style:{fontSize:"18px",fontWeight:"900"}},r.team_name||r.representative||"様")),
+      h("div",{style:{fontSize:"11px",color:"var(--sub)"}},ds)),
+    h("div",{style:{textAlign:"center",margin:"20px 0",padding:"12px",border:"2px solid #333",borderRadius:"var(--radius)"}},
+      h("div",{style:{fontSize:"10px",color:"var(--sub)"}},"金額"),
+      h("div",{style:{fontSize:"28px",fontWeight:"900"}},"¥ "+(r.fee_amount||0).toLocaleString()+".-")),
+    h("div",{style:{margin:"16px 0",fontSize:"12px",lineHeight:"2"}},
+      h("div",null,h("span",{style:{color:"var(--sub)",fontWeight:"700"}},"但: "),r.receipt_desc||S.receiptDesc||""),
+      h("div",null,h("span",{style:{color:"var(--sub)",fontWeight:"700"}},"大会: "),c.name||""),
+      h("div",null,h("span",{style:{color:"var(--sub)",fontWeight:"700"}},"種目: "),r.event_name||"")),
+    h("div",{style:{marginTop:"24px",textAlign:"right",borderTop:"1px solid #ddd",paddingTop:"12px"}},
+      h("div",{style:{fontSize:"13px",fontWeight:"700"}},c.organizer||""),h("div",{style:{fontSize:"10px",color:"var(--sub)"}},"印"))
+  );
+  box.appendChild(receipt);
+  box.appendChild(h("div",{className:"no-print",style:{display:"flex",gap:"8px",padding:"12px",justifyContent:"center"}},
+    h("button",{className:"btn btn-pri",onClick:()=>window.print()},"印刷"),
+    h("button",{className:"btn btn-ghost",onClick:close},"閉じる")));
+  return bg;
+}
+
+// ── 管理者用 申込フォーム ─────────────────────────────
+function renderRegForm(){
+  const r=S.editReg||{};const isEdit=!!r.id;const events=S.events||[];
+  const form={event_id:r.event_id||events[0]?.id||"",team_name:r.team_name||"",representative:r.representative||"",
+    phone:r.phone||"",email:r.email||"",fee_amount:r.fee_amount||0,notes:r.notes||"",members:[]};
+  const close=()=>setState({showRegForm:false,editReg:null});
+  const bg=h("div",{className:"modal-bg",onClick:close});
+  const box=h("div",{className:"modal-box fi",onClick:e=>e.stopPropagation()});bg.appendChild(box);
+  const header=h("div",{style:{padding:"16px 20px",borderBottom:"1px solid var(--border)"}},
+    h("div",{style:{fontSize:"16px",fontWeight:"900"}},isEdit?"申込編集":"新規申込"));
+  const body=h("div",{style:{padding:"16px 20px"}});
+  const evSel=makeSelect(events.map(e=>({v:e.id,l:e.event_name+" ("+e.fee.toLocaleString()+"円)"})),form.event_id,v=>{
+    form.event_id=v;const ev=events.find(e=>String(e.id)===String(v));
+    if(ev){feeI.value=String(ev.fee);form.fee_amount=ev.fee;updateMembers(ev);}});
+  evSel.style.width="100%";
+  const teamI=h("input",{className:"inp",value:form.team_name});teamI.addEventListener("input",e=>{form.team_name=e.target.value;});
+  const repI=h("input",{className:"inp",value:form.representative});repI.addEventListener("input",e=>{form.representative=e.target.value;});
+  const phoneI=h("input",{className:"inp",value:form.phone});phoneI.addEventListener("input",e=>{form.phone=e.target.value;});
+  const emailI=h("input",{className:"inp",value:form.email});emailI.addEventListener("input",e=>{form.email=e.target.value;});
+  const feeI=h("input",{className:"inp",type:"number",min:"0",step:"100",value:String(form.fee_amount)});
+  feeI.addEventListener("input",e=>{form.fee_amount=parseInt(e.target.value)||0;});
+  const notesI=h("input",{className:"inp",value:form.notes});notesI.addEventListener("input",e=>{form.notes=e.target.value;});
+  const grid=h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px"}});
+  grid.append(fld("種目",evSel),fld("参加費(円)※手動変更可",feeI),fld("団体名/所属",teamI),fld("代表者名",repI),fld("電話番号",phoneI),fld("メール",emailI));
+  body.append(grid,fld("備考",notesI));
+  const mList=h("div");
+  function updateMembers(ev){
+    mList.innerHTML="";form.members=[];if(!ev)return;
+    const cnt=ev.event_type==="team"?6:(EV_TYPES.find(e=>e.v===ev.event_type)?.members||1);
+    for(let i=0;i<cnt;i++){
+      const existing={player_name:"",furigana:"",gender:"",age_category:""};
+      if(isEdit){const mi=i+1;existing.player_name=r["m"+mi]||"";existing.furigana=r["f"+mi]||"";existing.gender=r["g"+mi]||"";existing.age_category=r["a"+mi]||"";}
+      const mData={...existing};form.members.push(mData);
+      const label=ev.event_type==="team"?(i<5?"選手"+(i+1):"補欠"):(cnt===2?(i===0?"選手1":"選手2"):"選手");
+      const mRow=h("div",{style:{display:"grid",gridTemplateColumns:"44px 1fr 1fr 70px 90px",gap:"4px",marginBottom:"4px",alignItems:"end"}});
+      const nI=h("input",{className:"inp",placeholder:"選手名",value:mData.player_name,style:{fontSize:"12px"}});
+      nI.addEventListener("input",e=>{mData.player_name=e.target.value;});
+      const fI=h("input",{className:"inp",placeholder:"ふりがな",value:mData.furigana,style:{fontSize:"12px"}});
+      fI.addEventListener("input",e=>{mData.furigana=e.target.value;});
+      const gI=makeSelect([{v:"",l:"性別"},{v:"male",l:"男"},{v:"female",l:"女"}],mData.gender,v=>{mData.gender=v;});
+      gI.style.cssText="width:100%;font-size:12px;padding:7px";
+      const aI=makeSelect([{v:"",l:"年代"},...AGE_CATS],mData.age_category,v=>{mData.age_category=v;});
+      aI.style.cssText="width:100%;font-size:12px;padding:7px";
+      mRow.append(h("div",{style:{fontSize:"10px",fontWeight:"700",color:"var(--sub)",paddingBottom:"8px"}},label),fld("氏名",nI),fld("ふりがな",fI),fld("性別",gI),fld("年代",aI));
+      mList.appendChild(mRow);
+    }
+  }
+  body.appendChild(h("div",{style:{borderTop:"1px solid var(--border)",paddingTop:"10px",marginTop:"10px"}},
+    h("div",{style:{fontSize:"12px",fontWeight:"700",marginBottom:"6px"}},"選手情報"),mList));
+  const initEv=events.find(e=>String(e.id)===String(form.event_id));if(initEv)updateMembers(initEv);
+  body.appendChild(h("div",{style:{display:"flex",gap:"8px",marginTop:"12px"}},
+    h("button",{className:"btn btn-pri",style:{flex:"1"},onClick:()=>{
+      form.fee_amount=parseInt(feeI.value)||0;form.members=form.members.filter(m=>m.player_name.trim());
+      if(isEdit)form.id=r.id;saveRegistration(form);}},isEdit?"更新":"登録"),
+    h("button",{className:"btn btn-ghost",onClick:close},"キャンセル")));
+  box.append(header,body);return bg;
+}
+
+// ═══════════════════════════════════════════════════════
+// ADMIN - 集計
+// ═══════════════════════════════════════════════════════
+
+function renderStatsTab(){
+  const s=S.stats||{};
+  const card=h("div",{className:"card fi"});
+  card.appendChild(h("h3",{style:{fontSize:"14px",fontWeight:"800",marginBottom:"12px"}},"集計"));
+  const grid=h("div",{style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginBottom:"14px"}});
+  [{n:(s.total_registrations||0)+"件",l:"申込数",c:"var(--purple)"},{n:(s.total_fee||0).toLocaleString()+"円",l:"合計",c:"var(--pri)"},
+   {n:(s.paid_fee||0).toLocaleString()+"円",l:"入金済",c:"var(--ok)"},{n:(s.unpaid_fee||0).toLocaleString()+"円",l:"未入金",c:"var(--err)"}
+  ].forEach(x=>{grid.appendChild(h("div",{style:{textAlign:"center",padding:"10px",background:x.c+"08",borderRadius:"var(--radius)",border:"1px solid "+x.c+"15"}},
+    h("div",{style:{fontSize:"20px",fontWeight:"900",color:x.c}},x.n),h("div",{style:{fontSize:"9px",color:"var(--sub)",fontWeight:"600"}},x.l)));});
+  card.appendChild(grid);
+  if(s.by_event?.length>0){
+    card.appendChild(h("div",{style:{fontSize:"11px",fontWeight:"700",marginBottom:"6px"}},"種目別"));
+    s.by_event.forEach(ev=>{
+      const pct=ev.fee_total>0?Math.round(ev.fee_paid/ev.fee_total*100):0;
+      card.appendChild(h("div",{style:{display:"flex",alignItems:"center",gap:"6px",padding:"6px 0",borderBottom:"1px solid #f1f5f9",fontSize:"11px"}},
+        h("span",{style:{fontWeight:"600",flex:"1"}},ev.event_name),
+        h("span",{style:{color:"var(--sub)"}},ev.count+"件"),
+        h("span",{style:{fontWeight:"700"}},ev.fee_total.toLocaleString()+"円"),
+        h("div",{style:{width:"60px",height:"6px",background:"#e2e8f0",borderRadius:"3px",overflow:"hidden"}},
+          h("div",{style:{width:pct+"%",height:"100%",background:"var(--ok)"}})),
+        h("span",{style:{fontSize:"9px",color:"var(--ok)",fontWeight:"700",minWidth:"30px"}},pct+"%")));
+    });
+  }
+  return card;
+}
+
+// ═══════════════════════════════════════════════════════
+// PUBLIC FORM - 複数種目一括エントリー対応
+// ═══════════════════════════════════════════════════════
+
+function renderPublicForm(){
+  const t=S.publicData;
+  if(S.loading)return h("div",{className:"loading",style:{marginTop:"80px"}},"読み込み中...");
+  if(!t||t.error)return h("div",{style:{maxWidth:"500px",margin:"60px auto",textAlign:"center",padding:"32px"}},
+    h("div",{style:{fontSize:"40px",marginBottom:"12px"}},"🏓"),
+    h("div",{style:{fontSize:"18px",fontWeight:"900",marginBottom:"6px"}},"申込フォーム"),
+    h("div",{style:{fontSize:"13px",color:"var(--sub)"}},"この大会は受付終了しているか、見つかりません。"));
+
+  const wrap=h("div",{style:{maxWidth:"680px",margin:"0 auto",padding:"16px"}});
+
+  // Header
+  wrap.appendChild(h("div",{style:{background:"linear-gradient(135deg,#1e3a5f,var(--pri))",color:"#fff",borderRadius:"12px",padding:"28px 20px",textAlign:"center",marginBottom:"16px"}},
+    h("div",{style:{fontSize:"36px",marginBottom:"6px"}},"🏓"),
+    h("div",{style:{fontSize:"20px",fontWeight:"900"}},t.name),
+    h("div",{style:{fontSize:"12px",opacity:".7",marginTop:"6px"}},[t.date,t.venue].filter(Boolean).join(" · ")),
+    t.organizer?h("div",{style:{fontSize:"11px",opacity:".5",marginTop:"3px"}},"主催: "+t.organizer):null,
+    t.deadline?h("div",{style:{fontSize:"11px",opacity:".7",marginTop:"8px",background:"rgba(255,255,255,.15)",display:"inline-block",padding:"3px 12px",borderRadius:"16px"}},"締切: "+t.deadline):null
+  ));
+  if(t.notes)wrap.appendChild(h("div",{className:"card",style:{borderLeft:"3px solid var(--pri)",fontSize:"12px",lineHeight:"1.7",whiteSpace:"pre-wrap"}},t.notes));
+
+  // Steps
+  if(S.pubStep===1)wrap.appendChild(renderPubStep1(t));
+  else if(S.pubStep===2)wrap.appendChild(renderPubStep2(t));
+  else if(S.pubStep===3)wrap.appendChild(renderPubStep3(t));
+  else if(S.pubStep===4)wrap.appendChild(renderPubStep4());
+
+  wrap.appendChild(h("div",{style:{textAlign:"center",padding:"16px",fontSize:"9px",color:"#94a3b8"}},"卓球大会申込管理システム"));
+  return wrap;
+}
+
+// Step 1: 種目選択（複数選択可）
+function renderPubStep1(t){
+  const events=t.events||[];
+  // init selected
+  if(!S.pubSelectedEvents)S.pubSelectedEvents=[];
+  const selected=new Set(S.pubSelectedEvents);
+
+  const card=h("div",{className:"card"});
+  card.appendChild(h("div",{style:{display:"flex",alignItems:"center",marginBottom:"12px"}},
+    h("span",{className:"step-badge"},"1"),
+    h("span",{style:{fontSize:"14px",fontWeight:"800"}},"種目を選択"),
+    h("span",{style:{fontSize:"11px",color:"var(--sub)",marginLeft:"8px"}},"複数選択できます")));
+
+  const grid=h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:"8px"}});
+  events.forEach(ev=>{
+    const isFull=ev.max_players>0&&(ev.current_count||0)>=ev.max_players;
+    const evType=EV_TYPES.find(e=>e.v===ev.event_type);
+    const isSelected=selected.has(ev.id);
+    const btn=h("div",{className:"check-card"+(isSelected?" selected":"")+(isFull?" disabled":""),
+      onClick:()=>{
+        if(isFull)return;
+        if(selected.has(ev.id))selected.delete(ev.id);else selected.add(ev.id);
+        S.pubSelectedEvents=[...selected];render();
+      }},
+      h("div",{style:{fontWeight:"700",fontSize:"13px"}},ev.event_name),
+      h("div",{style:{fontSize:"10px",color:"var(--sub)",marginTop:"2px"}},evType?.l||""),
+      h("div",{style:{fontSize:"15px",fontWeight:"900",color:"var(--pri)",marginTop:"4px"}},ev.fee.toLocaleString()+"円"),
+      isFull?h("div",{style:{fontSize:"10px",color:"var(--err)",fontWeight:"700",marginTop:"2px"}},"定員"):
+        ev.max_players>0?h("div",{style:{fontSize:"10px",color:"var(--sub)",marginTop:"2px"}},"残り"+(ev.max_players-(ev.current_count||0))+"枠"):null
+    );
+    grid.appendChild(btn);
+  });
+  card.appendChild(grid);
+
+  if(selected.size>0){
+    const total=events.filter(e=>selected.has(e.id)).reduce((s,e)=>s+e.fee,0);
+    card.appendChild(h("div",{style:{marginTop:"12px",padding:"10px",background:"var(--pri-bg)",borderRadius:"var(--radius)",display:"flex",justifyContent:"space-between",alignItems:"center"}},
+      h("span",{style:{fontSize:"12px",fontWeight:"700"}},selected.size+"種目を選択"),
+      h("span",{style:{fontSize:"16px",fontWeight:"900",color:"var(--pri)"}},"合計 "+total.toLocaleString()+"円")));
+  }
+
+  card.appendChild(h("div",{style:{marginTop:"12px",textAlign:"right"}},
+    h("button",{className:"btn btn-pri",disabled:selected.size===0,
+      style:{opacity:selected.size===0?".5":"1"},
+      onClick:()=>{if(selected.size===0){flash("種目を選択してください","error");return;}setState({pubStep:2});}},"次へ →")));
+  return card;
+}
+
+// Step 2: 申込者情報 + 選手情報入力
+function renderPubStep2(t){
+  const events=t.events||[];
+  const selectedEvs=events.filter(e=>S.pubSelectedEvents.includes(e.id));
+
+  // Initialize form data
+  if(!S.pubForm){
+    S.pubForm={team_name:"",representative:"",phone:"",email:"",notes:"",members_per_event:{}};
+    selectedEvs.forEach(ev=>{
+      const cnt=ev.event_type==="team"?6:(EV_TYPES.find(e=>e.v===ev.event_type)?.members||1);
+      S.pubForm.members_per_event[ev.id]=Array.from({length:cnt},(_,i)=>({
+        player_name:"",furigana:"",gender:"",age_category:"",notes:"",
+        role:ev.event_type==="team"&&i===5?"reserve":"player"
+      }));
+    });
+  }
+  const form=S.pubForm;
+
+  const card=h("div",{className:"card"});
+
+  // Step 2a: 申込者情報
+  card.appendChild(h("div",{style:{display:"flex",alignItems:"center",marginBottom:"12px"}},
+    h("span",{className:"step-badge"},"2"),h("span",{style:{fontSize:"14px",fontWeight:"800"}},"申込情報")));
+  const infoGrid=h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"16px"}});
+  const tI=h("input",{className:"inp",placeholder:"クラブ・団体名（個人の場合は空欄可）",value:form.team_name});
+  tI.addEventListener("input",e=>{form.team_name=e.target.value;});
+  const rI=h("input",{className:"inp",placeholder:"申込者の氏名 *",value:form.representative});
+  rI.addEventListener("input",e=>{form.representative=e.target.value;});
+  const pI=h("input",{className:"inp",type:"tel",placeholder:"090-XXXX-XXXX *",value:form.phone});
+  pI.addEventListener("input",e=>{form.phone=e.target.value;});
+  const eI=h("input",{className:"inp",type:"email",placeholder:"確認メール送信先",value:form.email});
+  eI.addEventListener("input",e=>{form.email=e.target.value;});
+  const nI=h("textarea",{className:"inp",placeholder:"備考・連絡事項",value:form.notes,rows:"2"});
+  nI.addEventListener("input",e=>{form.notes=e.target.value;});
+  infoGrid.append(fld("所属/団体名",tI),fld("代表者名 *",rI),fld("電話番号 *",pI),fld("メールアドレス",eI));
+  card.append(infoGrid,fld("備考",nI));
+
+  // Step 2b: 各種目の選手情報
+  selectedEvs.forEach(ev=>{
+    card.appendChild(h("div",{style:{borderTop:"1.5px solid var(--border)",paddingTop:"12px",marginTop:"14px"}}));
+    card.appendChild(h("div",{style:{fontSize:"13px",fontWeight:"800",marginBottom:"8px",color:"var(--pri)"}},"■ "+ev.event_name+" の選手"));
+
+    const members=form.members_per_event[ev.id]||[];
+    members.forEach((m,i)=>{
+      const evType=EV_TYPES.find(e=>e.v===ev.event_type);
+      const cnt=ev.event_type==="team"?6:(evType?.members||1);
+      const label=ev.event_type==="team"?(i<5?"選手"+(i+1):"補欠"):(cnt===2?(i===0?"選手1":"選手2"):"選手");
+
+      const row=h("div",{style:{marginBottom:"6px"}});
+      const r1=h("div",{style:{display:"grid",gridTemplateColumns:"50px 1fr 1fr 80px",gap:"4px",alignItems:"end"}});
+      const nI2=h("input",{className:"inp",placeholder:"氏名 *",value:m.player_name,style:{fontSize:"13px"}});
+      nI2.addEventListener("input",e=>{m.player_name=e.target.value;});
+      const fI2=h("input",{className:"inp",placeholder:"ふりがな",value:m.furigana,style:{fontSize:"13px"}});
+      fI2.addEventListener("input",e=>{m.furigana=e.target.value;});
+      const gI2=makeSelect([{v:"",l:"性別"},{v:"male",l:"男子"},{v:"female",l:"女子"}],m.gender,v=>{m.gender=v;});
+      gI2.style.cssText="width:100%;font-size:13px";
+      r1.append(h("div",{style:{fontSize:"10px",fontWeight:"700",color:"var(--sub)",paddingBottom:"10px"}},label),
+        fld("氏名 *",nI2),fld("ふりがな",fI2),fld("性別",gI2));
+
+      const r2=h("div",{style:{display:"grid",gridTemplateColumns:"50px 120px 1fr",gap:"4px",marginTop:"2px",alignItems:"end"}});
+      const aI2=makeSelect([{v:"",l:"年代"},...AGE_CATS],m.age_category,v=>{m.age_category=v;});
+      aI2.style.cssText="width:100%;font-size:13px";
+      const notesI=h("input",{className:"inp",placeholder:"初心者、左利き 等",value:m.notes||"",style:{fontSize:"12px"}});
+      notesI.addEventListener("input",e=>{m.notes=e.target.value;});
+      r2.append(h("div"),fld("年代",aI2),fld("備考（個人）",notesI));
+      row.append(r1,r2);card.appendChild(row);
+    });
+  });
+
+  card.appendChild(h("div",{style:{display:"flex",gap:"8px",marginTop:"14px"}},
+    h("button",{className:"btn btn-ghost",onClick:()=>{setState({pubStep:1});}},"← 戻る"),
+    h("div",{style:{flex:"1"}}),
+    h("button",{className:"btn btn-pri",onClick:()=>{
+      if(!form.representative.trim()){flash("代表者名を入力してください","error");return;}
+      if(!form.phone.trim()){flash("電話番号を入力してください","error");return;}
+      // 選手名チェック
+      let hasPlayer=false;
+      selectedEvs.forEach(ev=>{
+        const members=form.members_per_event[ev.id]||[];
+        if(members.some(m=>m.player_name.trim()))hasPlayer=true;
+      });
+      if(!hasPlayer){flash("選手名を入力してください","error");return;}
+      setState({pubStep:3});
+    }},"確認画面へ →")));
+  return card;
+}
+
+// Step 3: 確認画面
+function renderPubStep3(t){
+  const events=t.events||[];
+  const form=S.pubForm;
+  const selectedEvs=events.filter(e=>S.pubSelectedEvents.includes(e.id));
+  let totalFee=0;
+
+  const card=h("div",{className:"card"});
+  card.appendChild(h("div",{style:{display:"flex",alignItems:"center",marginBottom:"14px"}},
+    h("span",{className:"step-badge"},"3"),h("span",{style:{fontSize:"14px",fontWeight:"800"}},"申込内容の確認")));
+  card.appendChild(h("div",{style:{fontSize:"12px",color:"var(--warn)",fontWeight:"700",marginBottom:"12px",padding:"8px 10px",background:"var(--warn-bg)",borderRadius:"var(--radius)"}},"以下の内容で申し込みます。よろしければ「申し込む」を押してください。"));
+
+  // 申込者情報
+  const infoSec=h("div",{className:"confirm-section"});
+  infoSec.appendChild(h("div",{style:{fontSize:"12px",fontWeight:"800",marginBottom:"8px"}},"申込者情報"));
+  const infoItems=[["所属/団体",form.team_name||"（個人）"],["代表者",form.representative],["電話番号",form.phone]];
+  if(form.email)infoItems.push(["メール",form.email]);
+  if(form.notes)infoItems.push(["備考",form.notes]);
+  infoItems.forEach(([l,v])=>{
+    infoSec.appendChild(h("div",{style:{display:"flex",gap:"8px",fontSize:"12px",marginBottom:"3px"}},
+      h("span",{className:"confirm-label",style:{minWidth:"70px"}},l+":"),h("span",{className:"confirm-value"},v)));
+  });
+  card.appendChild(infoSec);
+
+  // 種目ごと
+  selectedEvs.forEach(ev=>{
+    totalFee+=ev.fee;
+    const sec=h("div",{className:"confirm-section"});
+    sec.appendChild(h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}},
+      h("div",{style:{fontSize:"12px",fontWeight:"800"}},"■ "+ev.event_name),
+      h("div",{style:{fontSize:"14px",fontWeight:"900",color:"var(--pri)"}},ev.fee.toLocaleString()+"円")));
+    const members=(form.members_per_event[ev.id]||[]).filter(m=>m.player_name.trim());
+    members.forEach((m,i)=>{
+      let txt=(i+1)+". "+m.player_name;
+      if(m.furigana)txt+="（"+m.furigana+"）";
+      if(m.gender)txt+=" "+(m.gender==="male"?"男子":"女子");
+      const extra=[];
+      if(m.age_category)extra.push(ageCatLabel(m.age_category));
+      if(m.notes)extra.push(m.notes);
+      sec.appendChild(h("div",{style:{fontSize:"12px",marginBottom:"2px"}},txt,
+        extra.length>0?h("span",{style:{fontSize:"10px",color:"var(--sub)",marginLeft:"6px"}},"["+extra.join(", ")+"]"):null));
+    });
+    card.appendChild(sec);
+  });
+
+  // 合計
+  card.appendChild(h("div",{style:{textAlign:"center",padding:"14px",background:"var(--pri-bg)",borderRadius:"var(--radius)",margin:"12px 0"}},
+    h("div",{style:{fontSize:"11px",color:"var(--sub)",fontWeight:"700"}},"合計参加費"),
+    h("div",{style:{fontSize:"24px",fontWeight:"900",color:"var(--pri)"}},totalFee.toLocaleString()+"円")));
+
+  card.appendChild(h("div",{style:{display:"flex",gap:"8px",marginTop:"12px"}},
+    h("button",{className:"btn btn-ghost",onClick:()=>setState({pubStep:2})},"← 修正する"),
+    h("div",{style:{flex:"1"}}),
+    h("button",{className:"btn btn-pri",style:{padding:"10px 28px",fontSize:"15px"},onClick:()=>{
+      const submitData={event_ids:S.pubSelectedEvents,...form};
+      submitPublicBulk(submitData);
+    }},"申し込む")));
+  return card;
+}
+
+// Step 4: 完了画面
+function renderPubStep4(){
+  const data=S.pubSubmittedData||{};
+  const card=h("div",{className:"card",style:{textAlign:"center"}});
+  card.appendChild(h("div",{style:{fontSize:"40px",marginBottom:"8px"}},"🎉"));
+  card.appendChild(h("div",{style:{fontSize:"20px",fontWeight:"900",color:"var(--ok)",marginBottom:"6px"}},"申込完了"));
+  card.appendChild(h("div",{style:{fontSize:"12px",color:"var(--sub)",marginBottom:"4px"}},"お申し込みありがとうございます。"));
+  if(data.email){
+    card.appendChild(h("div",{style:{fontSize:"11px",color:"var(--sub)",marginBottom:"16px"}},"確認メールを "+data.email+" に送信しました。"));
+  }
+
+  // 申込内容テキスト表示
+  if(data.summary){
+    const pre=h("div",{style:{textAlign:"left",background:"#f1f5f9",padding:"12px",borderRadius:"var(--radius)",fontSize:"11px",lineHeight:"1.7",whiteSpace:"pre-wrap",fontFamily:"monospace",maxHeight:"280px",overflowY:"auto",marginBottom:"12px"}},data.summary);
+    card.appendChild(pre);
+  }
+
+  // コピーボタン
+  card.appendChild(h("div",{style:{display:"flex",gap:"8px",justifyContent:"center",flexWrap:"wrap"}},
+    h("button",{className:"btn btn-pri",onClick:()=>{
+      navigator.clipboard.writeText(data.summary||"");flash("申込内容をコピーしました","success");
+    }},"📋 申込内容をコピー"),
+    h("button",{className:"btn btn-ghost",onClick:()=>{
+      // LINEで共有
+      const text=encodeURIComponent(data.summary||"");
+      window.open("https://line.me/R/share?text="+text,"_blank");
+    }},"LINE共有"),
+    h("button",{className:"btn btn-ghost",onClick:()=>{
+      S.pubStep=1;S.pubSelectedEvents=[];S.pubForm=null;S.pubSubmittedData=null;render();
+    }},"別の種目を申し込む")
+  ));
+  return card;
+}
+
+// ── Toast ────────────────────────────────────────────
+function renderToast(){
+  if(!S.toast)return null;
+  const c={error:"var(--err)",success:"var(--ok)",info:"var(--pri)"}[S.toast.type]||"var(--pri)";
+  return h("div",{className:"fi",style:{position:"fixed",bottom:"16px",left:"50%",transform:"translateX(-50%)",background:c,color:"#fff",padding:"8px 20px",borderRadius:"10px",fontSize:"12px",fontWeight:"700",boxShadow:"0 4px 16px rgba(0,0,0,.2)",zIndex:"1000"}},S.toast.msg);
+}
+
+// ═══════════════════════════════════════════════════════
+// MAIN RENDER
+// ═══════════════════════════════════════════════════════
+
+function render(){
+  const app=document.getElementById("app");app.innerHTML="";
+
+  if(S.publicMode){
+    const pub=renderPublicForm();if(pub)app.appendChild(pub);
+    const toast=renderToast();if(toast)app.appendChild(toast);return;
+  }
+  if(!S.gasConnected){
+    app.appendChild(renderSetup());
+    const toast=renderToast();if(toast)app.appendChild(toast);return;
+  }
+  if(S.loading){
+    app.appendChild(h("div",{className:"loading",style:{marginTop:"80px"}},"接続中..."));return;
+  }
+
+  app.appendChild(renderHeader());
+  app.appendChild(renderTabs());
+  const main=h("main",{style:{maxWidth:"1000px",margin:"0 auto",padding:"10px 12px"}});
+  if(S.tab==="config")main.appendChild(renderConfigTab());
+  if(S.tab==="events")main.appendChild(renderEventsTab());
+  if(S.tab==="registrations")main.appendChild(renderRegistrationsTab());
+  if(S.tab==="stats")main.appendChild(renderStatsTab());
+  app.appendChild(main);
+
+  if(S.showConfigForm)app.appendChild(renderConfigForm());
+  if(S.showEventForm)app.appendChild(renderEventForm());
+  if(S.showRegForm)app.appendChild(renderRegForm());
+  if(S.showReceipt)app.appendChild(renderReceiptModal());
+  if(S.showEmbedCode)app.appendChild(renderEmbedModal());
+  const toast=renderToast();if(toast)app.appendChild(toast);
+}
+
+checkMode();
+render();
+</script>
+</body>
+</html>

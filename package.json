@@ -1,0 +1,22 @@
+{
+  "name": "ktta-platform",
+  "version": "1.0.0",
+  "description": "KTTA Platform - 釧路卓球協会 大会運営システム",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "dev": "node server.js",
+    "start": "NODE_ENV=production node server.js",
+    "build": "echo 'No build step needed - static files served directly'",
+    "backup": "bash deploy/backup.sh"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "compression": "^1.8.1",
+    "express": "^4.21.0",
+    "multer": "^2.1.1",
+    "xlsx": "^0.18.5"
+  }
+}
