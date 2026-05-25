@@ -60,6 +60,58 @@ app.use((req, res, next) => {
   next();
 });
 
+// ═══ 診断モジュール (本番デバッグ用) ═══
+// メモリ上にエラー・リクエスト履歴を保持し /api/diagnostics で確認可能に
+const DIAG = {
+  startedAt: new Date().toISOString(),
+  errors: [],         // { time, method, url, status, message, stack }
+  recentRequests: [], // { time, method, url, status, ms }
+  maxErrors: 100,
+  maxRequests: 200,
+  totalRequests: 0,
+  errorCount: 0,
+};
+function recordError(err, req, res, statusCode) {
+  const entry = {
+    time: new Date().toISOString(),
+    method: (req && req.method) || "",
+    url: (req && (req.originalUrl || req.url)) || "",
+    status: statusCode || 500,
+    message: String(err && err.message || err).slice(0, 500),
+    stack: String(err && err.stack || "").slice(0, 2000),
+  };
+  DIAG.errors.unshift(entry);
+  if (DIAG.errors.length > DIAG.maxErrors) DIAG.errors.length = DIAG.maxErrors;
+  DIAG.errorCount++;
+  console.error("[ERR]", entry.method, entry.url, "-", entry.message);
+}
+
+// リクエスト統計ミドルウェア
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  DIAG.totalRequests++;
+  res.on("finish", () => {
+    const ms = Date.now() - t0;
+    // ヘルスチェック等は履歴に含めない (ノイズ削減)
+    if (req.url === "/api/health" || req.url === "/api/diagnostics") return;
+    DIAG.recentRequests.unshift({
+      time: new Date().toISOString(),
+      method: req.method,
+      url: (req.originalUrl || req.url).slice(0, 200),
+      status: res.statusCode,
+      ms,
+    });
+    if (DIAG.recentRequests.length > DIAG.maxRequests) {
+      DIAG.recentRequests.length = DIAG.maxRequests;
+    }
+    // 5xx は errors にも記録
+    if (res.statusCode >= 500) {
+      recordError(new Error("HTTP " + res.statusCode), req, res, res.statusCode);
+    }
+  });
+  next();
+});
+
 // ADMIN_KEY 設定時のみ管理APIを保護
 function requireAdmin(req, res, next) {
   if (!ADMIN_KEY) return next();
@@ -950,7 +1002,78 @@ app.post("/api/import/players", requireAdmin, (req, res) => {
 // ═══ 統計 ═══════════════════════════════════════════════
 app.get("/api/stats", (req, res) => { res.json(db.getStats()); });
 app.get("/api/last-updated", (req, res) => { res.json({ t: db.getLastUpdated() }); });
-app.get("/api/health", (req, res) => { res.json({ ok: true, time: new Date().toISOString() }); });
+app.get("/api/health", (req, res) => {
+  // 拡張ヘルスチェック: DB 状態 + メモリ + アップタイム
+  let dbOk = false, dbInfo = null;
+  try {
+    const stats = db.getStats();
+    dbOk = true;
+    dbInfo = stats;
+  } catch (e) {
+    dbInfo = { error: String(e.message || e) };
+  }
+  res.json({
+    ok: dbOk,
+    time: new Date().toISOString(),
+    uptime_sec: Math.round(process.uptime()),
+    node_version: process.version,
+    memory_mb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+    db: dbInfo,
+    env: process.env.NODE_ENV || "development",
+  });
+});
+
+// ═══ 診断 API (admin 専用) ═══
+// 直近のエラー・リクエスト・サーバー状態を返す
+app.get("/api/diagnostics", requireAdmin, (req, res) => {
+  const mem = process.memoryUsage();
+  let dbStats = null, dbSize = null;
+  try { dbStats = db.getStats(); } catch (e) { dbStats = { error: String(e.message || e) }; }
+  try {
+    const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "tournament.db");
+    if (fs.existsSync(DB_PATH)) {
+      dbSize = fs.statSync(DB_PATH).size;
+    }
+  } catch {}
+
+  res.json({
+    server: {
+      started_at: DIAG.startedAt,
+      uptime_sec: Math.round(process.uptime()),
+      node_version: process.version,
+      platform: process.platform,
+      env: process.env.NODE_ENV || "development",
+      pid: process.pid,
+      memory_mb: {
+        rss: Math.round(mem.rss / 1024 / 1024),
+        heap_used: Math.round(mem.heapUsed / 1024 / 1024),
+        heap_total: Math.round(mem.heapTotal / 1024 / 1024),
+      },
+    },
+    db: {
+      ...dbStats,
+      file_size_mb: dbSize ? Math.round(dbSize / 1024 / 1024 * 100) / 100 : null,
+    },
+    traffic: {
+      total_requests: DIAG.totalRequests,
+      error_count: DIAG.errorCount,
+      error_rate: DIAG.totalRequests > 0
+        ? Math.round(DIAG.errorCount / DIAG.totalRequests * 10000) / 100 + "%"
+        : "0%",
+    },
+    recent_errors: DIAG.errors.slice(0, 50),
+    recent_requests: DIAG.recentRequests.slice(0, 50),
+  });
+});
+
+// 診断ログクリア (admin)
+app.post("/api/diagnostics/clear", requireAdmin, (req, res) => {
+  DIAG.errors = [];
+  DIAG.recentRequests = [];
+  DIAG.errorCount = 0;
+  DIAG.totalRequests = 0;
+  res.json({ ok: true });
+});
 
 // ═══ 静的ファイル ═══════════════════════════════════════
 const publicDir = path.join(__dirname, "public");
@@ -959,12 +1082,14 @@ app.use("/admin", express.static(path.join(publicDir, "admin")));
 app.use("/viewer", express.static(path.join(publicDir, "viewer")));
 
 // 運用マニュアル (Markdown)
-app.get("/OPERATIONS.md", (req, res) => {
-  const f = path.join(__dirname, "OPERATIONS.md");
-  if (!fs.existsSync(f)) return res.status(404).send("Not Found");
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.sendFile(f);
-});
+for (const docName of ["OPERATIONS.md", "RENDER_DEPLOY.md", "UPDATE_WORKFLOW.md", "HOSTING.md"]) {
+  app.get("/" + docName, (req, res) => {
+    const f = path.join(__dirname, docName);
+    if (!fs.existsSync(f)) return res.status(404).send("Not Found");
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.sendFile(f);
+  });
+}
 
 app.get(["/admin", "/admin/*"], (req, res) => {
   res.sendFile(path.join(publicDir, "admin", "index.html"));
@@ -974,6 +1099,30 @@ app.get(["/viewer", "/viewer/*"], (req, res) => {
 });
 app.get("/", (req, res) => { res.redirect("/viewer"); });
 app.get("*", (req, res) => { res.sendFile(path.join(publicDir, "viewer", "index.html")); });
+
+// ═══ グローバル エラーハンドラ ═══
+// 未捕捉のエラーを DIAG に記録 + 500 を返す
+app.use((err, req, res, next) => {
+  recordError(err, req, res, 500);
+  if (res.headersSent) return next(err);
+  res.status(500).json({
+    error: "サーバーエラー",
+    message: process.env.NODE_ENV === "production"
+      ? undefined  // 本番では内部詳細を返さない
+      : String(err.message || err),
+  });
+});
+
+// 未捕捉の Promise 例外 / 同期例外
+process.on("uncaughtException", (err) => {
+  recordError(err, null, null, 500);
+  console.error("[FATAL] uncaughtException:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  recordError(err, null, null, 500);
+  console.error("[FATAL] unhandledRejection:", reason);
+});
 
 app.listen(PORT, () => {
   console.log(`\n🏓 卓球大会運営アプリ 起動中`);

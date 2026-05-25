@@ -891,16 +891,19 @@ const A = {
  "領収書出力時に右下に押印画像として印字されます。背景透過 PNG を推奨。"),
  ),
  h("div", { className: "card", style: { padding: "14px" } },
- h("div", { className: "card-title", style: { marginBottom: "10px" } }, "システム情報"),
+ h("div", { className: "card-title", style: { marginBottom: "10px" } }, "システム情報 / 診断"),
  h("div", { style: { fontSize: "12px", fontFamily: "monospace", lineHeight: "1.8" } },
  "URL: " + location.origin, h("br", {}),
  "大会数: " + (A.state.tournaments.length) + " 件", h("br", {}),
  "選手数: " + (A.state.players.length) + " 名"),
- h("div", { className: "flex gap-2 mt-3" },
+ h("div", { className: "flex gap-2 mt-3", style: { flexWrap: "wrap" } },
+ h("button", { className: "btn btn-sm",
+ onClick: () => { document.querySelector(".modal-bg")?.remove();
+   A.openDiagnostics(); } }, "本番診断パネルを開く"),
  h("a", { className: "btn btn-sm btn-ghost",
  href: "/OPERATIONS.md", target: "_blank" }, "運用マニュアル"),
  h("a", { className: "btn btn-sm btn-ghost",
- href: "https://github.com/your-org/tabletennis", target: "_blank" }, "GitHub"),
+ href: "https://github.com/AKIHIKO-S/kushiro", target: "_blank" }, "GitHub"),
  ),
  ),
  );
@@ -915,6 +918,175 @@ const A = {
  onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"),
  );
  openModal("管理設定 / 本番運用チェック", body, foot);
+ },
+
+ // ── 本番診断パネル (リアルタイムサーバー状態+エラーログ) ──
+ async openDiagnostics() {
+ const body = h("div", {
+   style: { maxHeight: "75vh", overflow: "auto" } },
+   h("div", { id: "diagLoading",
+     style: { textAlign: "center", padding: "30px", color: "#71717a" } },
+     "診断データ取得中..."));
+ const foot = h("div", { className: "flex gap-2" },
+   h("button", { className: "btn btn-sm",
+     onClick: () => A.refreshDiagnostics() }, "更新"),
+   h("button", { className: "btn btn-sm btn-danger",
+     onClick: async () => {
+       if (!confirm("診断ログをクリアしますか?")) return;
+       await api.post("/api/diagnostics/clear", {});
+       A.refreshDiagnostics();
+     } }, "ログクリア"),
+   h("button", { className: "btn btn-sm btn-ghost",
+     onClick: () => { A._diagTimer && clearInterval(A._diagTimer);
+       document.querySelector(".modal-bg")?.remove(); } }, "閉じる"),
+ );
+ openModal("本番診断パネル (リアルタイム)", body, foot);
+ await A.refreshDiagnostics();
+ // 10秒ごと自動更新
+ if (A._diagTimer) clearInterval(A._diagTimer);
+ A._diagTimer = setInterval(() => A.refreshDiagnostics(), 10000);
+ },
+
+ async refreshDiagnostics() {
+ const r = await api.get("/api/diagnostics");
+ if (r.error) {
+   toast("診断データ取得失敗: " + r.error, "err");
+   return;
+ }
+ const wrap = document.querySelector(".modal-box .modal-body") ||
+              document.querySelector(".modal-box > div");
+ if (!wrap) return;
+
+ // セクション: サーバー
+ const fmtMin = (sec) => {
+   const h = Math.floor(sec / 3600);
+   const m = Math.floor((sec % 3600) / 60);
+   const s = sec % 60;
+   return h + "h " + m + "m " + s + "s";
+ };
+ const serverCard = h("div", { className: "card",
+   style: { padding: "12px", marginBottom: "10px",
+     background: r.server.env === "production" ? "#f0fdf4" : "#fffbeb",
+     border: "1.5px solid " + (r.server.env === "production" ? "#15803d" : "#d97706") } },
+   h("div", { className: "card-title", style: { marginBottom: "8px" } },
+     "サーバー状態 — " + (r.server.env === "production" ? "本番" : "開発")),
+   h("div", { style: { fontFamily: "monospace", fontSize: "12px", lineHeight: "1.7" } },
+     "稼働時間: " + fmtMin(r.server.uptime_sec) +
+       " (起動: " + new Date(r.server.started_at).toLocaleString("ja-JP") + ")", h("br", {}),
+     "Node: " + r.server.node_version + " on " + r.server.platform, h("br", {}),
+     "メモリ: RSS " + r.server.memory_mb.rss + "MB / Heap " +
+       r.server.memory_mb.heap_used + "/" + r.server.memory_mb.heap_total + "MB", h("br", {}),
+     "PID: " + r.server.pid));
+
+ // DB
+ const dbCard = h("div", { className: "card", style: { padding: "12px", marginBottom: "10px" } },
+   h("div", { className: "card-title", style: { marginBottom: "8px" } }, "データベース"),
+   h("div", { style: { fontFamily: "monospace", fontSize: "12px", lineHeight: "1.7" } },
+     "サイズ: " + (r.db.file_size_mb ? r.db.file_size_mb + " MB" : "不明"), h("br", {}),
+     "大会数: " + (r.db.tournaments || 0), h("br", {}),
+     "選手数: " + (r.db.players || 0), h("br", {}),
+     "試合数: " + (r.db.matches || 0)));
+
+ // トラフィック
+ const trafCard = h("div", { className: "card", style: { padding: "12px", marginBottom: "10px" } },
+   h("div", { className: "card-title", style: { marginBottom: "8px" } }, "トラフィック"),
+   h("div", { className: "es-stats" },
+     h("div", { className: "es-stat" },
+       h("div", { className: "es-stat-num" }, String(r.traffic.total_requests)),
+       h("div", { className: "es-stat-lbl" }, "総リクエスト")),
+     h("div", { className: "es-stat" },
+       h("div", { className: "es-stat-num",
+         style: { color: r.traffic.error_count > 0 ? "#b91c1c" : "" } },
+         String(r.traffic.error_count)),
+       h("div", { className: "es-stat-lbl" }, "エラー数")),
+     h("div", { className: "es-stat" },
+       h("div", { className: "es-stat-num" }, r.traffic.error_rate),
+       h("div", { className: "es-stat-lbl" }, "エラー率")),
+   ));
+
+ // 直近エラー
+ const errCard = h("div", { className: "card",
+   style: { padding: "12px", marginBottom: "10px",
+     background: r.recent_errors.length > 0 ? "#fef2f2" : "#fff",
+     border: "1px solid " + (r.recent_errors.length > 0 ? "#fca5a5" : "var(--border)") } },
+   h("div", { className: "card-title",
+     style: { marginBottom: "8px",
+       color: r.recent_errors.length > 0 ? "#991b1b" : "" } },
+     "直近のエラー (" + r.recent_errors.length + " 件)"));
+ if (!r.recent_errors.length) {
+   errCard.appendChild(h("div", { className: "text-sub text-sm",
+     style: { textAlign: "center", padding: "10px" } },
+     "エラーはありません"));
+ } else {
+   r.recent_errors.slice(0, 10).forEach(e => {
+     errCard.appendChild(h("div", {
+       style: { padding: "8px 10px", background: "#fff",
+         borderRadius: "4px", marginBottom: "6px",
+         border: "1px solid var(--border)",
+         fontFamily: "monospace", fontSize: "11px" } },
+       h("div", {
+         style: { color: "#991b1b", fontWeight: 700, marginBottom: "4px" } },
+         e.status + " " + e.method + " " + e.url),
+       h("div", { style: { marginBottom: "4px" } }, e.message),
+       h("div", { style: { color: "#71717a", fontSize: "10px" } },
+         new Date(e.time).toLocaleString("ja-JP")),
+       e.stack ? h("details", { style: { marginTop: "4px" } },
+         h("summary", { style: { cursor: "pointer", fontSize: "10px" } }, "stack trace"),
+         h("pre", { style: { fontSize: "10px", whiteSpace: "pre-wrap",
+           background: "#0f172a", color: "#e2e8f0", padding: "8px",
+           borderRadius: "3px", marginTop: "4px",
+           maxHeight: "150px", overflow: "auto" } }, e.stack)) : null,
+     ));
+   });
+ }
+
+ // 直近リクエスト
+ const reqCard = h("div", { className: "card", style: { padding: "12px" } },
+   h("div", { className: "card-title", style: { marginBottom: "8px" } },
+     "直近のリクエスト (" + r.recent_requests.length + " 件)"));
+ const reqTbl = h("table", { style: { width: "100%", fontSize: "11px",
+   fontFamily: "monospace", borderCollapse: "collapse" } });
+ reqTbl.appendChild(h("thead", {}, h("tr", {
+   style: { background: "#f4f4f5" } },
+   h("th", { style: { textAlign: "left", padding: "4px 6px" } }, "時刻"),
+   h("th", { style: { textAlign: "left", padding: "4px 6px" } }, "Method"),
+   h("th", { style: { textAlign: "left", padding: "4px 6px" } }, "URL"),
+   h("th", { style: { textAlign: "right", padding: "4px 6px" } }, "Status"),
+   h("th", { style: { textAlign: "right", padding: "4px 6px" } }, "ms"),
+ )));
+ const tbody = h("tbody", {});
+ r.recent_requests.slice(0, 30).forEach(rq => {
+   const statusColor = rq.status >= 500 ? "#b91c1c" :
+                       rq.status >= 400 ? "#d97706" :
+                       rq.status >= 300 ? "#71717a" : "#15803d";
+   tbody.appendChild(h("tr", {
+     style: { borderBottom: "1px solid var(--border)" } },
+     h("td", { style: { padding: "3px 6px", color: "#71717a" } },
+       new Date(rq.time).toLocaleTimeString("ja-JP", { hour12: false })),
+     h("td", { style: { padding: "3px 6px" } }, rq.method),
+     h("td", { style: { padding: "3px 6px",
+       maxWidth: "300px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, rq.url),
+     h("td", { style: { padding: "3px 6px", textAlign: "right",
+       color: statusColor, fontWeight: 700 } }, String(rq.status)),
+     h("td", { style: { padding: "3px 6px", textAlign: "right",
+       color: rq.ms > 500 ? "#d97706" : "" } }, rq.ms),
+   ));
+ });
+ reqTbl.appendChild(tbody);
+ reqCard.appendChild(reqTbl);
+
+ // 描画
+ wrap.innerHTML = "";
+ wrap.appendChild(serverCard);
+ wrap.appendChild(dbCard);
+ wrap.appendChild(trafCard);
+ wrap.appendChild(errCard);
+ wrap.appendChild(reqCard);
+ // 末尾に「自動更新中」表示
+ wrap.appendChild(h("div", {
+   style: { textAlign: "center", padding: "10px",
+     fontSize: "11px", color: "#71717a" } },
+   "10秒ごと自動更新 — 最終: " + new Date().toLocaleTimeString("ja-JP")));
  },
 
  // 本番運用準備チェック (settings ダイアログ上部に表示)
