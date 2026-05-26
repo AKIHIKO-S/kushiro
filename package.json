@@ -4,7 +4,7 @@
   "description": "KTTA Platform - 釧路卓球協会 大会運営システム",
   "private": true,
   "engines": {
-    "node": ">=18.0.0"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "node server.js",
