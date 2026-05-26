@@ -1040,15 +1040,19 @@ app.put("/api/matches/:id/referee-required", requireAdmin, (req, res) => {
 });
 
 // 再コール回数 設定 (admin)
+// body: { count: N, slot?: 1|2 } - slot 未指定/0 で両方同時設定
 app.put("/api/matches/:id/call-count", requireAdmin, (req, res) => {
   const count = req.body && req.body.count !== undefined ? req.body.count : null;
   if (count === null) return res.status(400).json({ error: "count が必要" });
-  res.json(db.setCallCount(req.params.id, count));
+  const slot = parseInt(req.body.slot);
+  res.json(db.setCallCount(req.params.id, count, slot === 1 || slot === 2 ? slot : null));
 });
 
 // 再コール +1 (admin)
+// body: { slot?: 1|2 } - slot 未指定で両方+1 (互換性)
 app.post("/api/matches/:id/recall", requireAdmin, (req, res) => {
-  res.json(db.bumpCallCount(req.params.id));
+  const slot = parseInt(req.body?.slot);
+  res.json(db.bumpCallCount(req.params.id, slot === 1 || slot === 2 ? slot : null));
 });
 
 // 試合の手動編集 (任意のフィールド)

@@ -236,7 +236,9 @@ try {
   // 団体戦の追加台 (2台同時使用): カンマ区切り "5,6" 等
   addMCol("extra_tables", "TEXT DEFAULT ''");
   // 再コール回数 (1=初回,2=再コール1回目=注意,3=再コール2回目=警告,4+ = 最終警告)
-  addMCol("call_count", "INTEGER DEFAULT 0");
+  addMCol("call_count", "INTEGER DEFAULT 0");  // 互換用 (累計)
+  addMCol("call_count_p1", "INTEGER DEFAULT 0");  // 選手1の再コール回数
+  addMCol("call_count_p2", "INTEGER DEFAULT 0");  // 選手2の再コール回数
   // entrants にブロック情報・大会固有番号追加
   const ecols = sqlite.prepare("PRAGMA table_info(entrants)").all();
   if (ecols.length && !ecols.find(c => c.name === "block")) {
@@ -1346,7 +1348,20 @@ const opStmts = {
   clearTable: sqlite.prepare(`UPDATE matches SET table_no=0, status='pending' WHERE id=?`),
   setCallCount: sqlite.prepare(`UPDATE matches SET call_count=? WHERE id=?`),
   bumpCallCount: sqlite.prepare(`UPDATE matches SET call_count = COALESCE(call_count,0) + 1 WHERE id=?`),
-  resetCallCount: sqlite.prepare(`UPDATE matches SET call_count=0 WHERE id=?`),
+  resetCallCount: sqlite.prepare(`
+    UPDATE matches SET call_count=0, call_count_p1=0, call_count_p2=0 WHERE id=?
+  `),
+  // 選手別 再コール
+  bumpCallCountP1: sqlite.prepare(`
+    UPDATE matches SET call_count_p1 = COALESCE(call_count_p1,0) + 1,
+                       call_count = COALESCE(call_count,0) + 1 WHERE id=?
+  `),
+  bumpCallCountP2: sqlite.prepare(`
+    UPDATE matches SET call_count_p2 = COALESCE(call_count_p2,0) + 1,
+                       call_count = COALESCE(call_count,0) + 1 WHERE id=?
+  `),
+  setCallCountP1: sqlite.prepare(`UPDATE matches SET call_count_p1=? WHERE id=?`),
+  setCallCountP2: sqlite.prepare(`UPDATE matches SET call_count_p2=? WHERE id=?`),
   setReferee: sqlite.prepare(`UPDATE matches SET referee_id=?, referee_name=? WHERE id=?`),
   setResult: sqlite.prepare(`
     UPDATE matches SET
@@ -2202,15 +2217,34 @@ function setRefereeRequired(matchId, required) {
 }
 
 // 再コール回数を設定 (manual override)
-function setCallCount(matchId, count) {
+// slot 引数で選手別: 1=選手1, 2=選手2, 'both'=両方リセット
+function setCallCount(matchId, count, slot) {
   const c = Math.max(0, Math.min(99, parseInt(count) || 0));
-  opStmts.setCallCount.run(c, matchId);
+  if (slot === 1) {
+    opStmts.setCallCountP1.run(c, matchId);
+  } else if (slot === 2) {
+    opStmts.setCallCountP2.run(c, matchId);
+  } else {
+    // 全体リセット (互換性: count=0 でクリア)
+    opStmts.setCallCount.run(c, matchId);
+    if (c === 0) {
+      opStmts.setCallCountP1.run(0, matchId);
+      opStmts.setCallCountP2.run(0, matchId);
+    }
+  }
   return stmts.getMatch.get(matchId);
 }
 
-// 再コール +1
-function bumpCallCount(matchId) {
-  opStmts.bumpCallCount.run(matchId);
+// 再コール +1 (slot で選手指定: 1=選手1, 2=選手2)
+function bumpCallCount(matchId, slot) {
+  if (slot === 2) {
+    opStmts.bumpCallCountP2.run(matchId);
+  } else if (slot === 1) {
+    opStmts.bumpCallCountP1.run(matchId);
+  } else {
+    // slot 未指定 (互換性): 両方+1
+    opStmts.bumpCallCount.run(matchId);
+  }
   return stmts.getMatch.get(matchId);
 }
 

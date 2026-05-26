@@ -333,10 +333,14 @@
 
  /* ─── 再コール バッジ ─── */
  .call-badge {
-   display: inline-flex; align-items: center; gap: 4px;
-   padding: 2px 8px; border-radius: 10px;
-   font-size: 10px; font-weight: 800;
-   letter-spacing: 0.04em;
+   display: inline-flex; align-items: center; gap: 3px;
+   padding: 1px 6px;
+   margin-left: 4px;
+   border-radius: 8px;
+   font-size: 9px; font-weight: 800;
+   letter-spacing: 0.02em;
+   vertical-align: middle;
+   white-space: nowrap;
  }
  .call-caution {
    background: #fef3c7; color: #92400e;
@@ -4811,25 +4815,37 @@ const O = {
 
  // ── 進行中の試合行 ──
  renderOnTableRow(m) {
- const cc = parseInt(m.call_count) || 0;
- const callBadge = O.renderCallBadge(cc);
+ const cc1 = parseInt(m.call_count_p1) || 0;
+ const cc2 = parseInt(m.call_count_p2) || 0;
+ const cc = Math.max(cc1, cc2);
  const num1 = m.player1_bracket_number || m.entrant1_bracket_number;
  const num2 = m.player2_bracket_number || m.entrant2_bracket_number;
+ // 選手別 再コール ボタン (色は当該選手の cc レベル)
+ const recallBtn = (slot, c, pname) => h("button", { className: "btn btn-sm",
+   style: { padding: "2px 8px", fontSize: "10px",
+     background: c >= 2 ? "#dc2626" : (c >= 1 ? "#d97706" : "var(--ink-700)"),
+     color: "#fff", whiteSpace: "nowrap" },
+   title: pname + " を再コール (+1)",
+   onClick: () => O.recallMatch(m, slot) },
+   "再コール " + (pname || ("選手" + slot)) +
+   (c > 0 ? " (" + c + ")" : ""));
  return h("div", { className: "on-table-row" },
  h("div", { className: "on-table-tno" }, "台" + m.table_no),
  h("div", {},
  h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
  h("span", { className: "round-badge" }, `${m.event} ${m.round}`),
- callBadge,
+ // 選手1 pill (badge付き)
  h("span", { className: "player-pill" },
    num1 ? h("span", { className: "pnum" }, "#" + num1) : null,
    " ", m.player1_name,
-   h("span", { className: "pteam" }, m.player1_team ? "(" + m.player1_team + ")" : "")),
+   h("span", { className: "pteam" }, m.player1_team ? "(" + m.player1_team + ")" : ""),
+   cc1 >= 1 ? O.renderCallBadge(cc1) : null),
  h("span", { className: "vs" }, "VS"),
  h("span", { className: "player-pill" },
    num2 ? h("span", { className: "pnum" }, "#" + num2) : null,
    " ", m.player2_name,
-   h("span", { className: "pteam" }, m.player2_team ? "(" + m.player2_team + ")" : "")),
+   h("span", { className: "pteam" }, m.player2_team ? "(" + m.player2_team + ")" : ""),
+   cc2 >= 1 ? O.renderCallBadge(cc2) : null),
  ),
  h("div", { className: "text-xs text-sub mt-1 flex gap-2",
  style: { alignItems: "center", flexWrap: "wrap" } },
@@ -4839,11 +4855,9 @@ const O = {
  h("button", { className: "btn btn-sm btn-ghost",
  style: { padding: "2px 8px", fontSize: "10px" },
  onClick: () => O.openChangeReferee(m) }, "変更"),
- h("span", {}, " · 呼出 " + cc + " 回"),
- h("button", { className: "btn btn-sm",
- style: { padding: "2px 10px", fontSize: "10px",
-   background: cc >= 3 ? "#dc2626" : (cc >= 2 ? "#d97706" : "var(--ink-700)") },
- onClick: () => O.recallMatch(m) }, "再コール (+1)"),
+ // 選手別 再コールボタン (どっちか分かりやすく)
+ recallBtn(1, cc1, m.player1_name),
+ recallBtn(2, cc2, m.player2_name),
  cc > 0 ? h("button", { className: "btn btn-sm btn-ghost",
  style: { padding: "2px 8px", fontSize: "10px" },
  onClick: () => O.setCallCount(m, 0) }, "クリア") : null,
@@ -4860,35 +4874,42 @@ const O = {
  );
  },
 
- // 再コール バッジ (注意/警告マーク)
+ // 再コール バッジ (注意/警告マーク・選手別 cc 入力)
+ // count = 個別選手の再コール回数 (0=表示なし, 1=注意, 2=警告, 3+=重大)
  renderCallBadge(count) {
- if (count <= 1) return null;
- if (count === 2) {
+ if (count <= 0) return null;
+ if (count === 1) {
  return h("span", { className: "call-badge call-caution",
    title: "再コール1回目 (注意)" }, "⚠ 再コール 1");
  }
- if (count === 3) {
+ if (count === 2) {
  return h("span", { className: "call-badge call-warning",
    title: "再コール2回目 (警告 - 不戦敗候補)" }, "⚠⚠ 再コール 2");
  }
  return h("span", { className: "call-badge call-critical",
-   title: "再コール超過" }, "❗ 再コール " + (count - 1));
+   title: "再コール超過" }, "❗ 再コール " + count);
  },
 
- async recallMatch(m) {
- const r = await api.post(`/api/matches/${m.id}/recall`, {});
+ async recallMatch(m, slot) {
+ const r = await api.post(`/api/matches/${m.id}/recall`,
+   slot ? { slot } : {});
  if (r.error) return toast(r.error, "err");
- const next = (parseInt(r.call_count) || 0);
- const msg = next === 2 ? "再コール 1回目 (注意マーク表示)"
-           : next === 3 ? "再コール 2回目 (警告マーク表示・最終)"
-           : next > 3 ? "再コール " + (next-1) + " 回目"
-           : "呼出回数 " + next + " 回";
- toast(msg, "ok");
+ const next = slot === 2 ? (parseInt(r.call_count_p2) || 0)
+            : slot === 1 ? (parseInt(r.call_count_p1) || 0)
+            : (parseInt(r.call_count) || 0);
+ const pname = slot === 2 ? r.player2_name : slot === 1 ? r.player1_name : "";
+ const lbl = next === 1 ? "再コール 1回目 (注意)"
+           : next === 2 ? "再コール 2回目 (警告・最終)"
+           : next > 2 ? "再コール " + next + " 回目"
+           : "呼出";
+ toast((pname ? pname + ": " : "") + lbl, "ok");
  O.reload();
  },
 
- async setCallCount(m, count) {
- const r = await api.put(`/api/matches/${m.id}/call-count`, { count });
+ async setCallCount(m, count, slot) {
+ const body = { count };
+ if (slot) body.slot = slot;
+ const r = await api.put(`/api/matches/${m.id}/call-count`, body);
  if (r.error) return toast(r.error, "err");
  toast("呼出回数を " + count + " に設定", "ok");
  O.reload();

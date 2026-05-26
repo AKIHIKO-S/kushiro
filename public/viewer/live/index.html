@@ -35,17 +35,17 @@
   }
   .lv-shell {
     max-width: 1600px; margin: 0 auto;
-    padding: 12px;
+    padding: 10px;
   }
 
-  /* ─── ヘッダー (濃紺ベース・上部のみ) ─── */
+  /* ─── ヘッダー (濃紺ベース・コンパクト化) ─── */
   .lv-header {
     background: var(--lv-header);
     color: #fff;
-    border-radius: 8px;
-    padding: 14px 18px;
-    margin-bottom: 12px;
-    display: flex; align-items: center; gap: 14px;
+    border-radius: 6px;
+    padding: 8px 14px;
+    margin-bottom: 8px;
+    display: flex; align-items: center; gap: 12px;
     flex-wrap: wrap;
     box-shadow: 0 2px 8px rgba(0,0,0,.08);
   }
@@ -59,7 +59,7 @@
     flex: 1; min-width: 220px;
   }
   .lv-brand-mark {
-    width: 44px; height: 44px;
+    width: 36px; height: 36px;
     background: url("/shared/ktta-mark.svg") center / contain no-repeat;
     flex-shrink: 0;
   }
@@ -124,39 +124,39 @@
     cursor: pointer;
   }
 
-  /* ─── 大会タイトル + ステータス ─── */
+  /* ─── 大会タイトル + ステータス (コンパクト) ─── */
   .lv-tournament-bar {
-    display: flex; align-items: center; gap: 14px;
-    padding: 12px 4px; margin-bottom: 10px;
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 4px 4px; margin-bottom: 6px;
     flex-wrap: wrap;
   }
   .lv-tournament-name {
     font-family: var(--font-display);
-    font-size: 22px; font-weight: 700;
+    font-size: 18px; font-weight: 700;
     letter-spacing: -0.02em;
   }
   .lv-tournament-meta {
-    font-size: 12px; color: var(--lv-sub);
+    font-size: 11px; color: var(--lv-sub);
   }
 
-  /* ─── 統計バー (大型カード) ─── */
+  /* ─── 統計バー (大型カード・コンパクト化) ─── */
   .lv-stats {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 10px; margin-bottom: 14px;
+    gap: 8px; margin-bottom: 10px;
   }
   .lv-stat {
     background: var(--lv-surface);
     border: 2px solid var(--lv-line);
-    border-radius: 8px;
-    padding: 14px 16px;
+    border-radius: 6px;
+    padding: 8px 12px;
     text-align: center;
     transition: transform .12s;
     box-shadow: 0 1px 3px rgba(0,0,0,.04);
   }
   .lv-stat-num {
     font-family: var(--font-mono);
-    font-size: 32px; font-weight: 800;
+    font-size: 24px; font-weight: 800;
     line-height: 1;
   }
   .lv-stat-num.red { color: var(--lv-accent); }
@@ -165,9 +165,10 @@
   .lv-stat-num.blue { color: var(--lv-blue); }
   .lv-stat-label {
     font-family: var(--font-body);
-    font-size: 12px; font-weight: 700;
+    font-size: 11px; font-weight: 700;
     color: var(--lv-text-2);
-    margin-top: 8px;
+    margin-top: 4px;
+    letter-spacing: 0.02em;
   }
   /* 進行中カードは赤帯付き */
   .lv-stat.highlight-red { border-color: var(--lv-accent); background: #fef2f2; }
@@ -180,28 +181,28 @@
     background: var(--lv-surface);
     border: 1px solid var(--lv-line);
     border-radius: 8px;
-    padding: 18px;
-    margin-bottom: 14px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
     box-shadow: 0 1px 3px rgba(0,0,0,.04);
   }
   .lv-section-title {
     font-family: var(--font-display);
-    font-size: 13px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.14em;
+    font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.12em;
     color: var(--lv-text);
-    margin-bottom: 14px;
-    display: flex; align-items: center; gap: 10px;
-    padding-bottom: 8px;
+    margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px;
+    padding-bottom: 6px;
     border-bottom: 2px solid var(--lv-line);
   }
 
   /* ─── ステータス凡例 (色の見方) ─── */
   .lv-legend {
-    display: flex; gap: 12px; flex-wrap: wrap;
-    margin-bottom: 12px; padding: 10px 12px;
+    display: flex; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 8px; padding: 6px 10px;
     background: var(--lv-surface-2);
-    border-radius: 6px; border: 1px solid var(--lv-line);
-    font-size: 11px;
+    border-radius: 5px; border: 1px solid var(--lv-line);
+    font-size: 10px;
   }
   .lv-legend-item {
     display: flex; align-items: center; gap: 6px;
@@ -219,19 +220,20 @@
     display: grid; gap: 8px;
   }
 
-  /* ─── 台 (コート) - ステータス別色分け強化 ─── */
+  /* ─── 台 (コート) - ステータス別色分け強化・コンパクト化 ─── */
   .lv-court {
     background: #fff;
     border: 2px solid var(--lv-line);
-    border-radius: 8px;
-    padding: 10px 8px;
-    min-height: 100px;
+    border-radius: 6px;
+    padding: 6px 5px 14px;
+    min-height: 88px;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     position: relative;
     cursor: pointer;
     transition: all .15s;
     overflow: hidden;
+    gap: 1px;
   }
 
   /* 空き台: 緑チェック・薄い緑背景 */
@@ -350,21 +352,21 @@
     letter-spacing: 0.22em;
   }
 
-  /* ─── 試合タブ ─── */
+  /* ─── 試合タブ (コンパクト) ─── */
   .lv-tabs {
     display: flex; gap: 0;
     border-bottom: 2px solid var(--lv-line);
-    margin-bottom: 14px;
+    margin-bottom: 8px;
     background: var(--lv-surface);
-    border-radius: 8px 8px 0 0;
-    padding: 0 8px;
+    border-radius: 6px 6px 0 0;
+    padding: 0 6px;
   }
   .lv-tab {
     background: transparent;
     color: var(--lv-sub);
     border: none;
-    padding: 13px 18px;
-    font-family: var(--font-body); font-size: 14px;
+    padding: 9px 14px;
+    font-family: var(--font-body); font-size: 13px;
     font-weight: 700; cursor: pointer;
     border-bottom: 3px solid transparent;
     margin-bottom: -2px;
@@ -388,16 +390,16 @@
     background: var(--lv-accent); color: #fff;
   }
 
-  /* ─── 進行中試合ロー ─── */
+  /* ─── 進行中試合ロー (コンパクト化) ─── */
   .lv-match {
     background: var(--lv-surface);
     border: 2px solid var(--lv-accent);
-    border-radius: 8px;
-    padding: 14px 16px;
-    margin-bottom: 8px;
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
     display: grid;
-    grid-template-columns: 70px 1fr auto;
-    gap: 16px;
+    grid-template-columns: 58px 1fr auto;
+    gap: 12px;
     align-items: center;
     cursor: pointer;
     transition: all .12s;
@@ -412,10 +414,10 @@
     background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
     color: #fff;
     font-family: var(--font-display);
-    font-size: 18px; font-weight: 800;
+    font-size: 16px; font-weight: 800;
     text-align: center;
-    padding: 8px;
-    border-radius: 6px;
+    padding: 6px 4px;
+    border-radius: 5px;
     letter-spacing: -0.01em;
     box-shadow: 0 2px 4px rgba(220,38,38,.3);
   }
@@ -453,16 +455,16 @@
     font-weight: 600;
   }
 
-  /* ─── 直近結果 (左右対比+勝敗強調) ─── */
+  /* ─── 直近結果 (左右対比+勝敗強調・コンパクト化) ─── */
   .lv-result {
     background: var(--lv-surface);
     border: 2px solid var(--lv-line);
-    border-radius: 8px;
-    padding: 14px 18px;
-    margin-bottom: 8px;
+    border-radius: 6px;
+    padding: 8px 14px;
+    margin-bottom: 6px;
     display: grid;
-    grid-template-columns: 1fr 110px 1fr;
-    gap: 14px;
+    grid-template-columns: 1fr 100px 1fr;
+    gap: 10px;
     align-items: center;
   }
   .lv-result-side {
@@ -557,18 +559,18 @@
   }
   .lv-next-content .vs-sep { color: var(--lv-sub); margin: 0 7px; font-size: 11px; }
 
-  /* ─── 検索 ─── */
+  /* ─── 検索 (コンパクト) ─── */
   .lv-search {
-    margin-bottom: 14px;
+    margin-bottom: 8px;
   }
   .lv-search input {
     width: 100%;
     background: var(--lv-surface);
     border: 2px solid var(--lv-line);
     color: var(--lv-text);
-    padding: 12px 18px;
-    border-radius: 8px;
-    font-family: inherit; font-size: 14px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-family: inherit; font-size: 13px;
     font-weight: 500;
   }
   .lv-search input::placeholder { color: var(--lv-sub); font-weight: 400; }
@@ -587,22 +589,22 @@
     color: var(--lv-text);
   }
 
-  /* ─── 再コール 注意/警告マーク (観戦者向け) ─── */
+  /* ─── 再コール 注意/警告マーク (観戦者向け・選手別 inline) ─── */
+  /* 台 (コート) セル内の選手名直下に表示 */
   .lv-call-badge {
-    position: absolute;
-    top: 4px; left: 50%;
-    transform: translateX(-50%);
+    display: inline-block;
     background: #fef3c7;
     color: #92400e;
-    border: 1.5px solid #f59e0b;
+    border: 1px solid #f59e0b;
     font-family: var(--font-display);
-    font-size: 9px; font-weight: 800;
-    padding: 1px 6px;
-    border-radius: 8px;
-    letter-spacing: 0.08em;
-    z-index: 2;
-    box-shadow: 0 1px 4px rgba(0,0,0,.15);
+    font-size: 8px; font-weight: 800;
+    padding: 0px 4px;
+    border-radius: 6px;
+    letter-spacing: 0.02em;
     white-space: nowrap;
+    line-height: 1.3;
+    margin-top: 1px;
+    vertical-align: middle;
   }
   .lv-call-badge.warning {
     background: #fed7aa;
@@ -617,22 +619,27 @@
     animation: lvCallPulse 1s infinite;
   }
   @keyframes lvCallPulse {
-    0%, 100% { opacity: 1; transform: translateX(-50%) scale(1); }
-    50%      { opacity: .6; transform: translateX(-50%) scale(1.08); }
+    0%, 100% { opacity: 1; }
+    50%      { opacity: .55; }
   }
-  /* 進行中ロー用 (テキスト並び) */
+  .lv-court.active .lv-call-badge {
+    background: #fef3c7;  /* 赤背景でも黄バッジが視認できるよう維持 */
+    box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  }
+  /* 進行中ロー用 (選手名 inline) */
   .lv-match-call-badge {
     display: inline-block;
     background: #fef3c7;
     color: #92400e;
-    border: 1.5px solid #f59e0b;
+    border: 1px solid #f59e0b;
     font-family: var(--font-display);
-    font-size: 10px; font-weight: 800;
-    padding: 2px 8px;
-    border-radius: 10px;
-    margin-left: 8px;
+    font-size: 9px; font-weight: 800;
+    padding: 1px 5px;
+    border-radius: 7px;
+    margin-left: 5px;
     vertical-align: middle;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
   }
   .lv-match-call-badge.warning {
     background: #fed7aa; color: #7c2d12; border-color: #ea580c;
@@ -1079,21 +1086,18 @@ const LV = {
       });
       cell.appendChild(h("div", { className: "lv-court-no" }, "台" + t.table_no));
       if (t.match) {
-        // 再コール 注意/警告マーク (観戦者向け)
-        const cc = parseInt(t.match.call_count) || 0;
-        if (cc >= 2) {
-          const cls = cc >= 4 ? "critical" : (cc >= 3 ? "warning" : "");
-          const label = cc >= 4 ? "再コール " + (cc-1) + "回!" :
-                        cc >= 3 ? "再コール 2回" : "再コール 1回";
-          cell.appendChild(h("div", { className: "lv-call-badge " + cls }, label));
-        }
+        const cc1 = parseInt(t.match.call_count_p1) || 0;
+        const cc2 = parseInt(t.match.call_count_p2) || 0;
         cell.appendChild(h("div", { className: "lv-court-round" },
           `${(t.match.event || "").slice(0, 8)}`));
-        // 選手1 + 番号 + 所属
+        // 選手1 + 番号 + 所属 + 再コールバッジ (該当選手の直下)
         cell.appendChild(LV.renderCourtPlayer(t.match.player1_name,
           t.match.player1_bracket_number));
         if (t.match.player1_team) {
           cell.appendChild(h("div", { className: "lv-court-team" }, t.match.player1_team));
+        }
+        if (cc1 >= 1) {
+          cell.appendChild(LV.callBadgeCourtEl(cc1));
         }
         cell.appendChild(h("div", { className: "lv-court-vs" },
           t.is_extra ? "団体追加" : "VS"));
@@ -1101,6 +1105,9 @@ const LV = {
           t.match.player2_bracket_number));
         if (t.match.player2_team) {
           cell.appendChild(h("div", { className: "lv-court-team" }, t.match.player2_team));
+        }
+        if (cc2 >= 1) {
+          cell.appendChild(LV.callBadgeCourtEl(cc2));
         }
       }
       grid.appendChild(cell);
@@ -1194,17 +1201,28 @@ const LV = {
     return el;
   },
 
-  // 再コール バッジ
+  // 再コール バッジ (選手別 cc)
+  //   cc=1: 再コール1 (黄/注意), cc=2: 再コール2 (オレンジ/警告),
+  //   cc=3+: 再コール3+ (赤/重大)
   callBadgeEl(count) {
     const cc = parseInt(count) || 0;
-    if (cc < 2) return null;
-    const cls = cc >= 4 ? "critical" : (cc >= 3 ? "warning" : "");
-    const label = cc >= 4 ? "再コール " + (cc-1) + "回!" :
-                  cc >= 3 ? "再コール 2回" : "再コール 1回";
+    if (cc <= 0) return null;
+    const cls = cc >= 3 ? "critical" : (cc >= 2 ? "warning" : "");
+    const label = "再コール " + cc;
     return h("span", { className: "lv-match-call-badge " + cls }, label);
+  },
+  // コートセル内用 (短い表記)
+  callBadgeCourtEl(count) {
+    const cc = parseInt(count) || 0;
+    if (cc <= 0) return null;
+    const cls = cc >= 3 ? "critical" : (cc >= 2 ? "warning" : "");
+    return h("div", { className: "lv-call-badge " + cls,
+      style: { alignSelf: "center" } }, "再コール " + cc);
   },
 
   renderOngoing(m) {
+    const cc1 = parseInt(m.call_count_p1) || 0;
+    const cc2 = parseInt(m.call_count_p2) || 0;
     return h("div", { className: "lv-match",
         onClick: () => LV.showMatchDetail(m) },
       h("div", { className: "lv-match-table" },
@@ -1213,16 +1231,17 @@ const LV = {
         h("div", { className: "lv-match-side" },
           LV.renderMatchPlayerName(m.player1_name, m.player1_bracket_number),
           h("div", { className: "lv-match-team" }, m.player1_team || ""),
+          cc1 >= 1 ? LV.callBadgeEl(cc1) : null,
         ),
         h("div", { className: "lv-match-vs" }, "VS"),
         h("div", { className: "lv-match-side right" },
           LV.renderMatchPlayerName(m.player2_name, m.player2_bracket_number),
           h("div", { className: "lv-match-team" }, m.player2_team || ""),
+          cc2 >= 1 ? LV.callBadgeEl(cc2) : null,
         ),
       ),
       h("div", { className: "lv-match-meta" },
-        h("div", {}, `${m.event || ""} ${m.round || ""}`,
-          LV.callBadgeEl(m.call_count)),
+        h("div", {}, `${m.event || ""} ${m.round || ""}`),
         m.referee_name
           ? h("div", { className: "ref" }, "審判: " + m.referee_name)
           : null,
@@ -1295,23 +1314,32 @@ const LV = {
       el.appendChild(h("div", { className: "team" }, team || ""));
       return el;
     };
-    const cc = parseInt(m.call_count) || 0;
+    const cc1 = parseInt(m.call_count_p1) || 0;
+    const cc2 = parseInt(m.call_count_p2) || 0;
+    // 選手の playerVal にバッジを追加するため、内部で結合
+    const playerValWithBadge = (name, num, team, ccPlayer) => {
+      const el = playerVal(name, num, team);
+      if (ccPlayer >= 1) {
+        const bd = LV.callBadgeEl(ccPlayer);
+        if (bd) el.appendChild(bd);
+      }
+      return el;
+    };
     const card = h("div", { className: "lv-overlay-card" },
       h("div", { className: "lv-overlay-head" },
         h("div", { className: "lv-overlay-title" },
           (headerExtra ? headerExtra + " · " : "") +
-          (m.event || "") + " " + (m.round || ""),
-          cc >= 2 ? LV.callBadgeEl(cc) : null),
+          (m.event || "") + " " + (m.round || "")),
         h("button", { className: "lv-overlay-close",
           onClick: closeFn }, "×"),
       ),
       h("div", { className: "lv-detail-row" },
         h("div", { className: "lv-detail-label" }, "選手1"),
-        playerVal(m.player1_name, p1Num, m.player1_team),
+        playerValWithBadge(m.player1_name, p1Num, m.player1_team, cc1),
       ),
       h("div", { className: "lv-detail-row" },
         h("div", { className: "lv-detail-label" }, "選手2"),
-        playerVal(m.player2_name, p2Num, m.player2_team),
+        playerValWithBadge(m.player2_name, p2Num, m.player2_team, cc2),
       ),
       m.referee_name ? h("div", { className: "lv-detail-row" },
         h("div", { className: "lv-detail-label" }, "審判"),
@@ -1325,10 +1353,12 @@ const LV = {
         h("div", { className: "lv-detail-val" },
           { waiting: "待機", pending: "呼出可能", on_table: "進行中", completed: "終了" }[m.status] || m.status),
       ),
-      cc >= 1 ? h("div", { className: "lv-detail-row" },
-        h("div", { className: "lv-detail-label" }, "呼出回数"),
+      (cc1 + cc2) >= 1 ? h("div", { className: "lv-detail-row" },
+        h("div", { className: "lv-detail-label" }, "再コール"),
         h("div", { className: "lv-detail-val" },
-          cc + " 回" + (cc >= 2 ? " (再コール中)" : ""))) : null,
+          (cc1 >= 1 ? (m.player1_name + ": " + cc1 + "回") : "") +
+          (cc1 >= 1 && cc2 >= 1 ? " / " : "") +
+          (cc2 >= 1 ? (m.player2_name + ": " + cc2 + "回") : ""))) : null,
       m.winner_name ? h("div", { className: "lv-detail-row" },
         h("div", { className: "lv-detail-label" }, "勝者"),
         h("div", { className: "lv-detail-val", style: { color: "var(--lv-warn)", fontWeight: 700 } },
