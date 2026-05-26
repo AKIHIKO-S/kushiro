@@ -22,8 +22,12 @@ services:
     plan: starter       # $7/month - 永続ディスク用 (常時稼働・スリープ無し)
                         # ※ free プランも動作するが永続ディスク非対応
     branch: main
-    buildCommand: npm install --production
-    startCommand: npm start
+    # Node + Python パッケージ両方インストール (Excel パーサーで openpyxl 必要)
+    # --target で隔離インストール → 起動時に PYTHONPATH で参照
+    buildCommand: |
+      npm install --production && \
+      python3 -m pip install --target=./.python-packages -r requirements.txt
+    startCommand: PYTHONPATH=./.python-packages npm start
     healthCheckPath: /api/health
     autoDeploy: true    # main へのプッシュで自動デプロイ
 

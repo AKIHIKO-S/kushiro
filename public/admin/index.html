@@ -1295,6 +1295,7 @@ const A = {
  venue: document.getElementById("tVenue").value.trim(),
  status: document.getElementById("tStatus").value,
  description: document.getElementById("tDesc").value.trim(),
+ organizer: "釧路卓球協会",   // 主催は釧路卓球協会で固定
  template_id: tplId || null,
  court_rows: tpl?.court_rows,
  court_cols: tpl?.court_cols,
@@ -1377,13 +1378,15 @@ const A = {
  ),
  ));
 
+ // 申込管理セクション (締切前は上位表示・団体名+選手名リスト)
+ // ① 種目設定 → ② 申込フォーム生成 という運用フローを明確化するため
+ //    申込管理 を上に、申込フォーム を下に配置
+ panel.appendChild(A.renderEntries(t));
+
  // 申込フォームセクション (scheduled or preparation 時に表示)
  if (t.status === "scheduled" || t.status === "preparation" || !t.status) {
    panel.appendChild(A.renderEntryFormSection(t));
  }
-
- // 申込管理セクション (締切前は上位表示・団体名+選手名リスト)
- panel.appendChild(A.renderEntries(t));
 
  // 観戦ビュー共有セクション (常に表示; cancelled 以外)
  if (t.status !== "cancelled") {
@@ -2768,7 +2771,27 @@ const A = {
  body: fd,
  });
  const r = await resp.json();
- if (r.error) return toast("取込失敗: " + r.error, "err");
+ if (r.error) {
+   // 詳細エラー (stderr 含む) を見られるようにモーダル表示
+   const eb = h("div", {},
+     h("div", { className: "text-sm mb-2", style: { color: "var(--accent)", fontWeight: 700 } },
+       r.error),
+     r.stderr ? h("div", {},
+       h("div", { className: "text-xs text-sub mb-1" }, "サーバー側エラー詳細:"),
+       h("pre", { style: { background: "#0f172a", color: "#fecaca",
+         padding: "10px", borderRadius: "4px", fontSize: "11px",
+         overflow: "auto", maxHeight: "260px", whiteSpace: "pre-wrap" } },
+         r.stderr)) : null,
+     h("div", { className: "text-xs text-sub mt-2" },
+       "Excel ファイルが標準フォーマット (罫線あり) か、")
+   );
+   const ef = h("button", { className: "btn",
+     onClick: () => document.querySelectorAll(".modal-bg").forEach(m => m.remove()) },
+     "閉じる");
+   document.querySelectorAll(".modal-bg").forEach(m => m.remove());
+   openModal("Excel取込失敗", eb, ef);
+   return;
+ }
  const summary = r.imported
  ? r.imported.map(x => `${x.event}: ${x.entrants_created || 0}名`).join(", ")
  : `${r.entrants_created || 0}名取込`;
@@ -3159,11 +3182,31 @@ const A = {
  },
 
  editEntrySettings(t) {
- // 既定種目リスト (カテゴリ別)
+ // 既定種目リスト (カテゴリ別) — 釧路卓球協会の網羅的なリスト
  const evGroups = {
- "個人戦": ["男子シングルス", "女子シングルス"],
- "ペア戦": ["男子ダブルス", "女子ダブルス", "混合ダブルス"],
- "団体戦": ["団体戦"],
+ "一般 個人": ["男子シングルス", "女子シングルス",
+              "男子ダブルス", "女子ダブルス", "混合ダブルス"],
+ "高校 個人": ["高校男子シングルス", "高校女子シングルス",
+              "高校男子ダブルス", "高校女子ダブルス"],
+ "中学 個人": ["中学男子シングルス", "中学女子シングルス",
+              "中学男子ダブルス", "中学女子ダブルス"],
+ "小学 個人": ["小学男子シングルス", "小学女子シングルス"],
+ "団体戦": ["男子団体戦", "女子団体戦",
+            "高校男子団体戦", "高校女子団体戦",
+            "中学男子団体戦", "中学女子団体戦",
+            "小学男子団体戦", "小学女子団体戦"],
+ "年代別選手権 男子": [
+   "サーティ男子", "フォーティ男子", "フィフティ男子",
+   "ローシックスティ男子", "ハイシックスティ男子",
+   "ローセブンティ男子", "ハイセブンティ男子",
+   "ローエイティ男子", "ハイエイティ男子", "ナインティ男子",
+ ],
+ "年代別選手権 女子": [
+   "サーティ女子", "フォーティ女子", "フィフティ女子",
+   "ローシックスティ女子", "ハイシックスティ女子",
+   "ローセブンティ女子", "ハイセブンティ女子",
+   "ローエイティ女子", "ハイエイティ女子", "ナインティ女子",
+ ],
  };
  let currentEvents = [];
  try { currentEvents = JSON.parse(t.entry_events || "[]"); } catch {}
@@ -3228,7 +3271,8 @@ const A = {
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "主催"),
  h("input", { className: "input", id: "esOrganizer",
-   value: t.organizer || "", placeholder: "釧路卓球協会 等" })),
+   value: t.organizer || "釧路卓球協会",
+   placeholder: "釧路卓球協会" })),
  ),
  ),
 
@@ -3818,10 +3862,10 @@ const A = {
 
  // ── 大会別 進行管理を開く (グローバルタブ不使用) ──
  openOperationsForTournament(tournamentId) {
+   try {
    // 進行管理パネルを別ウィンドウ風に展開する。既存の O モジュールを使う
    const overlay = h("div", { className: "modal-bg",
      style: { background: "rgba(9,9,11,.85)", backdropFilter: "blur(6px)" },
-     onClick: (e) => { if (e.target === overlay) overlay.remove(); }
    });
    const win = h("div", {
      style: { background: "var(--bg)", maxWidth: "1300px", width: "98vw",
@@ -3829,44 +3873,55 @@ const A = {
        margin: "auto", marginTop: "2vh", padding: "16px",
        border: "1px solid var(--border)" },
    });
+   const tName = ((A.state.tournaments || []).find(x => x.id === tournamentId) || {}).name || "";
+   const closeBtn = h("button", { className: "btn btn-ghost btn-sm" }, "閉じる");
    win.appendChild(h("div", { className: "flex gap-2 mb-3",
        style: { alignItems: "center" } },
-     h("div", { className: "card-title", style: { flex: 1 } },
-       "進行管理 - " +
-       ((A.state.tournaments.find(x => x.id === tournamentId) || {}).name || "")),
-     h("button", { className: "btn btn-ghost btn-sm",
-       onClick: () => overlay.remove() }, "閉じる"),
+     h("div", { className: "card-title", style: { flex: 1 } }, "進行管理 - " + tName),
+     closeBtn,
    ));
    const container = h("div", { id: "opEmbedHost" });
    win.appendChild(container);
    overlay.appendChild(win);
    document.body.appendChild(overlay);
 
-   // O モジュールに進行管理を描画させる (DOMを差し替え)
-   const origMain = document.getElementById("opMain");
-   if (origMain && origMain.parentNode) {
-     container.appendChild(origMain);
+   // O モジュールに進行管理を描画させる。
+   // 既存の #opMain を取得 (orig parent を覚えておく)。なければ新規に作成。
+   let origMain = document.getElementById("opMain");
+   let origParent = origMain ? origMain.parentNode : null;
+   if (!origMain) {
+     console.warn("[Operations] opMain が見つからないため新規作成");
+     origMain = h("div", { id: "opMain" });
    }
+   container.appendChild(origMain);
+
+   // クリーンアップ: 元の親に戻す。元が無ければ非表示のオペレーションタブへ
+   const cleanup = () => {
+     try {
+       const tabOps = document.getElementById("tab-operations");
+       const target = origParent || (tabOps ? tabOps.querySelector(".card") : null);
+       if (target && origMain && !target.contains(origMain)) {
+         target.appendChild(origMain);
+       }
+       if (O.poller) { clearInterval(O.poller); O.poller = null; }
+     } catch (cErr) { console.warn("[Operations cleanup]", cErr); }
+   };
+   const closeAll = () => { cleanup(); overlay.remove(); };
+   overlay.addEventListener("click", (e) => { if (e.target === overlay) closeAll(); });
+   closeBtn.addEventListener("click", closeAll);
+
+   // 読込開始
    if (typeof O !== "undefined" && O.selectTournament) {
      O.selectTournament(tournamentId);
+   } else {
+     container.appendChild(h("div", { className: "empty-state",
+       style: { padding: "30px", color: "var(--accent)" } },
+       "進行管理モジュールが読み込まれていません。ページを再読込してください。"));
    }
-   // 閉じる時 DOM を元に戻す
-   overlay.addEventListener("close-restore", () => {
-     const opsTab = document.getElementById("tab-operations");
-     if (opsTab && origMain) opsTab.querySelector(".card").appendChild(origMain);
-   });
-   const cleanup = () => {
-     const opsTab = document.getElementById("tab-operations");
-     if (opsTab && origMain && !opsTab.contains(origMain)) {
-       opsTab.querySelector(".card").appendChild(origMain);
-     }
-   };
-   overlay.addEventListener("click", (e) => {
-     if (e.target === overlay) cleanup();
-   });
-   // 閉じるボタンのときも cleanup
-   const closeBtn = win.querySelector("button.btn-ghost");
-   if (closeBtn) closeBtn.addEventListener("click", cleanup);
+   } catch (e) {
+     console.error("[Operations open error]", e);
+     toast("進行管理の起動に失敗: " + (e.message || e), "err");
+   }
  },
 
  // ── 手動で試合を作成 (表示されていない対戦の追加) ──
@@ -3911,31 +3966,68 @@ const A = {
  h("label", { for: "mmIsDoubles", style: { fontSize: "13px", fontWeight: 600 } },
  "ダブルス/団体戦"),
  ),
+ // 選手1
+ h("div", { className: "card", style: { padding: "10px", margin: "8px 0",
+   background: "var(--bg)", border: "1px solid var(--border)" } },
+ h("div", { className: "text-sm font-bold mb-2" }, "選手1"),
+ h("div", { className: "two-col" },
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "選手1 氏名"),
  h("input", { className: "input", id: "mmP1Name", placeholder: "選手名" })),
- h("div", { className: "two-col" },
- h("div", { className: "field" },
- h("label", { className: "field-label" }, "選手1 パートナー (ダブルス時)"),
- h("input", { className: "input", id: "mmP1Partner",
- placeholder: "パートナー氏名" })),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "選手1 所属"),
  h("input", { className: "input", id: "mmP1Team" })),
  ),
+ h("div", { className: "two-col", id: "mmP1PairBlock",
+   style: { display: "none" } },
+ h("div", { className: "field" },
+ h("label", { className: "field-label" }, "パートナー 氏名"),
+ h("input", { className: "input", id: "mmP1Partner",
+ placeholder: "ダブルス時のパートナー" })),
+ h("div", { className: "field" },
+ h("label", { className: "field-label" }, "パートナー 所属"),
+ h("input", { className: "input", id: "mmP1PartnerTeam",
+ placeholder: "未入力なら選手1と同じ" })),
+ ),
+ ),
+ // 選手2
+ h("div", { className: "card", style: { padding: "10px", margin: "8px 0",
+   background: "var(--bg)", border: "1px solid var(--border)" } },
+ h("div", { className: "text-sm font-bold mb-2" }, "選手2"),
+ h("div", { className: "two-col" },
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "選手2 氏名"),
  h("input", { className: "input", id: "mmP2Name", placeholder: "選手名" })),
- h("div", { className: "two-col" },
- h("div", { className: "field" },
- h("label", { className: "field-label" }, "選手2 パートナー (ダブルス時)"),
- h("input", { className: "input", id: "mmP2Partner",
- placeholder: "パートナー氏名" })),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "選手2 所属"),
  h("input", { className: "input", id: "mmP2Team" })),
  ),
+ h("div", { className: "two-col", id: "mmP2PairBlock",
+   style: { display: "none" } },
+ h("div", { className: "field" },
+ h("label", { className: "field-label" }, "パートナー 氏名"),
+ h("input", { className: "input", id: "mmP2Partner",
+ placeholder: "ダブルス時のパートナー" })),
+ h("div", { className: "field" },
+ h("label", { className: "field-label" }, "パートナー 所属"),
+ h("input", { className: "input", id: "mmP2PartnerTeam",
+ placeholder: "未入力なら選手2と同じ" })),
+ ),
+ ),
  );
+
+ // ダブルス チェックで パートナー行を表示/非表示
+ setTimeout(() => {
+   const dblCb = document.getElementById("mmIsDoubles");
+   const upd = () => {
+     const on = dblCb && dblCb.checked;
+     ["mmP1PairBlock", "mmP2PairBlock"].forEach(id => {
+       const el = document.getElementById(id);
+       if (el) el.style.display = on ? "" : "none";
+     });
+   };
+   if (dblCb) { dblCb.addEventListener("change", upd); upd(); }
+ }, 0);
 
  const foot = h("button", { className: "btn", onClick: async () => {
  const isDouble = document.getElementById("mmIsDoubles").checked;
@@ -3944,15 +4036,23 @@ const A = {
  const p2a = document.getElementById("mmP2Name").value.trim();
  const p2b = isDouble ? document.getElementById("mmP2Partner").value.trim() : "";
  if (!p1a || !p2a) return toast("選手1・選手2 の氏名を入力してください", "err");
+ // 所属表記: ダブルスでパートナーが異所属なら "選手所属 / パートナー所属"
+ const t1Main = document.getElementById("mmP1Team").value.trim();
+ const t1Pair = isDouble
+   ? (document.getElementById("mmP1PartnerTeam").value.trim() || t1Main) : "";
+ const t2Main = document.getElementById("mmP2Team").value.trim();
+ const t2Pair = isDouble
+   ? (document.getElementById("mmP2PartnerTeam").value.trim() || t2Main) : "";
+ const teamCombo = (a, b) => (b && b !== a) ? (a + " / " + b) : a;
  const data = {
  event: document.getElementById("mmEvent").value.trim() || "(手動追加)",
  round: document.getElementById("mmRound").value.trim() || "追加対戦",
  status: document.getElementById("mmStatus").value,
  table_no: parseInt(document.getElementById("mmTableNo").value) || 0,
  player1_name: p1b ? (p1a + " / " + p1b) : p1a,
- player1_team: document.getElementById("mmP1Team").value.trim(),
+ player1_team: isDouble ? teamCombo(t1Main, t1Pair) : t1Main,
  player2_name: p2b ? (p2a + " / " + p2b) : p2a,
- player2_team: document.getElementById("mmP2Team").value.trim(),
+ player2_team: isDouble ? teamCombo(t2Main, t2Pair) : t2Main,
  sets: [],
  };
  const r = await api.post(`/api/tournaments/${t.id}/matches`, data);
@@ -4316,16 +4416,49 @@ const O = {
 
  async reload(silent) {
  if (!O.tournamentId) return;
+ const main = document.getElementById("opMain");
  try {
  const state = await api.get("/api/tournaments/" + O.tournamentId + "/operations");
- if (state.error) return;
+ if (state.error) {
+   if (main) {
+     clear(main);
+     main.appendChild(h("div", { className: "empty-state",
+       style: { color: "var(--accent)", padding: "20px" } },
+       "進行管理データの取得に失敗しました: " + (state.error || "不明")));
+   }
+   return;
+ }
  O.state = state;
- O.render();
- } catch (e) { if (!silent) console.error(e); }
+ try {
+   O.render();
+ } catch (renderErr) {
+   console.error("[Operations render error]", renderErr);
+   if (main) {
+     clear(main);
+     main.appendChild(h("div", { className: "empty-state",
+       style: { color: "var(--accent)", padding: "20px" } },
+       h("div", { className: "font-bold mb-2" }, "進行管理の描画でエラーが発生しました"),
+       h("div", { className: "text-sm" }, String(renderErr.message || renderErr)),
+       h("div", { className: "text-xs text-sub mt-2" },
+         "ブラウザのコンソール (F12) でスタックトレースを確認してください。"),
+       h("button", { className: "btn btn-sm mt-2",
+         onClick: () => O.reload() }, "再読込")));
+   }
+ }
+ } catch (e) {
+   if (!silent) console.error("[Operations fetch error]", e);
+   if (main) {
+     clear(main);
+     main.appendChild(h("div", { className: "empty-state",
+       style: { color: "var(--accent)", padding: "20px" } },
+       "通信エラー: " + (e.message || e)));
+   }
+ }
  },
 
  render() {
  const main = document.getElementById("opMain");
+ if (!main) { console.error("[Operations] opMain element not found"); return; }
  if (!O.state) return;
  clear(main);
 

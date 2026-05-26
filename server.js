@@ -353,15 +353,22 @@ app.post("/api/tournaments/:id/kumiawase/upload",
   if (event) args.push("--event", event);
   if (mode) args.push("--mode", mode);
   if (sheet) args.push("--sheet", sheet);
-  const py = spawn("python3", args);
+  // Render では PYTHONPATH=./.python-packages で openpyxl をインストール
+  const pyEnv = Object.assign({}, process.env);
+  if (!pyEnv.PYTHONPATH) pyEnv.PYTHONPATH = path.join(__dirname, ".python-packages");
+  const py = spawn("python3", args, { env: pyEnv });
   let stdout = "", stderr = "";
   py.stdout.on("data", (d) => { stdout += d.toString(); });
   py.stderr.on("data", (d) => { stderr += d.toString(); });
   py.on("close", (code) => {
     try { fs.unlinkSync(xlsxPath); } catch {}
     if (code !== 0) {
+      // openpyxl が無い場合のエラーメッセージを明確化
+      const errMsg = stderr.includes("No module named 'openpyxl'")
+        ? "Excelパーサーが必要な Python パッケージ (openpyxl) が見つかりません。サーバーの再デプロイをお願いします。"
+        : "組合せ表解析失敗 (exit " + code + ")";
       return res.status(500).json({
-        error: "組合せ表解析失敗 (exit " + code + ")",
+        error: errMsg,
         stderr: stderr.slice(0, 500),
       });
     }
@@ -399,16 +406,21 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
     fs.unlinkSync(xlsxPath);
     return res.status(500).json({ error: "パーサースクリプトが見つかりません" });
   }
-  // Python パーサーを起動
-  const py = spawn("python3", [script, xlsxPath, "--all-sheets"]);
+  // Python パーサーを起動 (PYTHONPATH 経由で openpyxl をロード)
+  const pyEnv = Object.assign({}, process.env);
+  if (!pyEnv.PYTHONPATH) pyEnv.PYTHONPATH = path.join(__dirname, ".python-packages");
+  const py = spawn("python3", [script, xlsxPath, "--all-sheets"], { env: pyEnv });
   let stdout = "", stderr = "";
   py.stdout.on("data", (d) => { stdout += d.toString(); });
   py.stderr.on("data", (d) => { stderr += d.toString(); });
   py.on("close", (code) => {
     try { fs.unlinkSync(xlsxPath); } catch {}
     if (code !== 0) {
+      const errMsg = stderr.includes("No module named 'openpyxl'")
+        ? "Excelパーサーが必要な Python パッケージ (openpyxl) が見つかりません。サーバーの再デプロイをお願いします。"
+        : "パーサー失敗 (exit code " + code + ")";
       return res.status(500).json({
-        error: "パーサー失敗 (exit code " + code + ")",
+        error: errMsg,
         stderr: stderr.slice(0, 500),
       });
     }
@@ -637,9 +649,19 @@ const DEFAULT_EVENTS_CATALOG = [
 ];
 
 function _resolveEvents(tournament) {
+  const eventSet = new Set();
+  // 0. 申込管理セクションで設定した entry_events を最優先で反映
+  //    (まだ matches/entrants が登録されていない状態でも種目だけ確定できるように)
+  try {
+    const ee = tournament.entry_events
+      ? (typeof tournament.entry_events === "string"
+          ? JSON.parse(tournament.entry_events)
+          : tournament.entry_events)
+      : [];
+    if (Array.isArray(ee)) ee.forEach(n => { if (n) eventSet.add(n); });
+  } catch {}
   // 1. 大会内の matches から event 一覧
   const matches = db.getMatchesByTournament(tournament.id);
-  const eventSet = new Set();
   matches.forEach(m => { if (m.event) eventSet.add(m.event); });
   // 2. 既存 entrants からも event を集める
   const entrants = db.getEntrants(tournament.id);
