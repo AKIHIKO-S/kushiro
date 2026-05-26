@@ -395,21 +395,38 @@ app.post("/api/tournaments/:id/kumiawase/upload",
 });
 
 // Excel 直接アップロード → 解析 → 出場選手取込 (ワンステップ)
+// 新しい parse_ktta_bracket.py を使用。format を必ず受け取る。
 app.post("/api/tournaments/:id/entrants/upload-excel",
   requireAdmin, upload.single("file"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "ファイルが添付されていません" });
   const xlsxPath = req.file.path;
   const regenerate = req.body.regenerate === "1" || req.body.regenerate === "true";
   const autoLink = req.body.auto_link !== "0" && req.body.auto_link !== "false";
-  const script = path.join(__dirname, "tools", "parse_jtta_excel.py");
+  const format = req.body.format; // "singles" | "doubles" | "team" | undefined(auto)
+  const eventHint = req.body.event || ""; // 任意: 種目名指定 (○ヘッダー無いExcel用)
+
+  // 新パーサーを優先。fallback で旧 jtta パーサーも試す
+  const newParser = path.join(__dirname, "tools", "parse_ktta_bracket.py");
+  const oldParser = path.join(__dirname, "tools", "parse_jtta_excel.py");
+  const script = fs.existsSync(newParser) ? newParser : oldParser;
   if (!fs.existsSync(script)) {
-    fs.unlinkSync(xlsxPath);
+    try { fs.unlinkSync(xlsxPath); } catch {}
     return res.status(500).json({ error: "パーサースクリプトが見つかりません" });
   }
+
+  // 引数組み立て
+  const args = [script, xlsxPath, "--all-sheets"];
+  if (script === newParser) {
+    if (format && ["singles", "doubles", "team"].includes(format)) {
+      args.push("--format", format);
+    }
+    if (eventHint) args.push("--event", eventHint);
+  }
+
   // Python パーサーを起動 (PYTHONPATH 経由で openpyxl をロード)
   const pyEnv = Object.assign({}, process.env);
   if (!pyEnv.PYTHONPATH) pyEnv.PYTHONPATH = path.join(__dirname, ".python-packages");
-  const py = spawn("python3", [script, xlsxPath, "--all-sheets"], { env: pyEnv });
+  const py = spawn("python3", args, { env: pyEnv });
   let stdout = "", stderr = "";
   py.stdout.on("data", (d) => { stdout += d.toString(); });
   py.stderr.on("data", (d) => { stderr += d.toString(); });
@@ -422,18 +439,23 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
       return res.status(500).json({
         error: errMsg,
         stderr: stderr.slice(0, 500),
+        used_parser: path.basename(script),
       });
     }
     let data;
     try { data = JSON.parse(stdout); }
     catch (e) {
-      return res.status(500).json({ error: "JSON 解析失敗: " + e.message });
+      return res.status(500).json({ error: "JSON 解析失敗: " + e.message,
+        raw: stdout.slice(0, 500), used_parser: path.basename(script) });
+    }
+    if (data.error) {
+      return res.status(400).json({ ...data, used_parser: path.basename(script) });
     }
     // インポート
     data.regenerate = regenerate;
     data.auto_link_to_players = autoLink;
     const r = db.importBracket(req.params.id, data);
-    res.json(r);
+    res.json({ ...r, used_parser: path.basename(script) });
   });
   py.on("error", (err) => {
     try { fs.unlinkSync(xlsxPath); } catch {}

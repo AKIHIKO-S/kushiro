@@ -562,6 +562,7 @@
 <div class="tabs">
  <div class="tabs-in">
  <button class="tab active" data-tab="tournaments">大会管理</button>
+ <button class="tab" data-tab="operations">進行管理 (LIVE)</button>
  <button class="tab" data-tab="players">選手データベース</button>
  <button class="tab" data-tab="import">インポート/エクスポート</button>
  <button class="tab" data-tab="api">API連携</button>
@@ -598,17 +599,24 @@
  </div>
  </div>
 
- <!-- 進行管理 [非表示・内部用 — 大会詳細に組込] -->
- <div class="tab-panel hidden" id="tab-operations" style="display:none">
+ <!-- 進行管理 (独立タブ) -->
+ <div class="tab-panel hidden" id="tab-operations">
  <div class="card">
  <div class="card-head">
- <div class="card-title">進行管理</div>
- <div class="flex gap-2">
- <select class="input input-sm" id="opTournamentSel" onchange="O.selectTournament(this.value)" style="width:200px"></select>
+ <div class="card-title">進行管理 (LIVE)</div>
+ <div class="flex gap-2" style="flex-wrap:wrap;align-items:center">
+ <span class="text-xs text-sub">大会選択:</span>
+ <select class="input input-sm" id="opTournamentSel"
+         onchange="O.selectTournament(this.value)" style="width:280px"></select>
  <button class="btn btn-sm btn-ghost" onclick="O.reload()">更新</button>
+ <a class="btn btn-sm btn-ghost" id="opLiveLink" href="#" target="_blank">観戦ビュー</a>
  </div>
  </div>
- <div id="opMain"></div>
+ <div id="opMain">
+ <div class="empty-state" style="padding:30px">
+  進行中の大会を選択してください。
+ </div>
+ </div>
  </div>
  </div>
 
@@ -1399,21 +1407,31 @@ const A = {
  // 準備モードセクション (status=preparation 時に強調)
  panel.appendChild(A.renderPreparationSection(t));
 
- // 進行管理 (この大会専用) — 内部の opMain DOMを再利用するため、ボタンで開く
+ // 進行管理 (この大会専用) — 独立タブへ遷移
  const opCard = h("div", { className: "card",
  style: { borderLeft: "4px solid #dc2626", background: "#fef2f2" } });
  opCard.appendChild(h("div", { className: "card-head" },
  h("div", { className: "card-title" }, "進行管理 (LIVE)"),
  h("div", { className: "flex gap-2" },
  h("button", { className: "btn btn-sm",
- onClick: () => A.openOperationsForTournament(t.id) }, "進行管理を開く"),
+ onClick: () => {
+   // 進行管理タブに切り替え + この大会を選択
+   if (typeof O !== "undefined") O.tournamentId = t.id;
+   A.showTab("operations");
+   // O.init を呼ばずに直接 select (init が前のtournamentIdをクリアするため)
+   setTimeout(() => {
+     const sel = document.getElementById("opTournamentSel");
+     if (sel) { sel.value = t.id; }
+     if (typeof O !== "undefined") O.selectTournament(t.id);
+   }, 60);
+ } }, "進行管理を開く →"),
  h("a", { className: "btn btn-sm btn-ghost",
  href: "/viewer/live/?t=" + encodeURIComponent(t.id), target: "_blank" }, "観戦ビュー"),
  ),
  ));
  opCard.appendChild(h("div", { className: "text-sm text-sub" },
  "試合の呼出・台割当・審判アサイン・結果入力など。" +
- "同日に複数大会を並行運営する場合は、各大会の「進行管理を開く」から個別操作してください。"));
+ "「進行管理」タブから複数大会を切替えながら運営できます。"));
  panel.appendChild(opCard);
 
  // 試合入力フォーム
@@ -2736,12 +2754,46 @@ const A = {
  openExcelUpload(tournamentId) {
  const body = h("div", {},
  h("div", { className: "text-sm mb-3" },
- "卓球協会 標準形式の Excel ファイル (.xlsx) を選択してアップロードしてください。"),
- h("div", { className: "text-sm text-sub mb-3" },
- "全シート (種目別) を自動解析し、出場選手として登録します。シングルス・ダブルス両対応。"),
+ "釧路卓球協会 標準形式の組合せ表 Excel ファイル (.xlsx) を選択してアップロードしてください。"),
+
+ // ─── 種目形式の必須選択 ───
+ h("div", { className: "field",
+   style: { padding: "12px 14px", background: "#fffbeb",
+            border: "2px solid #f59e0b", borderRadius: "6px" } },
+ h("label", { className: "field-label",
+   style: { fontWeight: 700, fontSize: "13px", color: "#92400e" } },
+   "種目形式 (必須)"),
+ h("div", { className: "flex gap-2 flex-wrap", style: { marginTop: "6px" } },
+   h("label", { className: "flex gap-1", style: { alignItems: "center", cursor: "pointer" } },
+     h("input", { type: "radio", name: "xlsxFormat", value: "singles", checked: "" }),
+     h("span", {}, "シングルス")),
+   h("label", { className: "flex gap-1", style: { alignItems: "center", cursor: "pointer" } },
+     h("input", { type: "radio", name: "xlsxFormat", value: "doubles" }),
+     h("span", {}, "ダブルス")),
+   h("label", { className: "flex gap-1", style: { alignItems: "center", cursor: "pointer" } },
+     h("input", { type: "radio", name: "xlsxFormat", value: "team" }),
+     h("span", {}, "団体戦")),
+   h("label", { className: "flex gap-1", style: { alignItems: "center", cursor: "pointer" } },
+     h("input", { type: "radio", name: "xlsxFormat", value: "auto" }),
+     h("span", {}, "自動判定 (○種目名 から)")),
+ ),
+ h("div", { className: "text-xs",
+   style: { color: "#92400e", marginTop: "6px" } },
+   "選択した形式に応じてパーサーの解析ロジックが切り替わります。" +
+   "1シートに「○一般男子団体」「○一般男子シングルス」のような複数セクションがある場合は「自動判定」を選択してください。"),
+ ),
+
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "Excel ファイル (.xlsx)"),
  h("input", { type: "file", id: "xlsxFile", accept: ".xlsx,.xls", className: "input" })),
+
+ h("div", { className: "field" },
+ h("label", { className: "field-label" }, "種目名ヒント (任意)"),
+ h("input", { className: "input", id: "xlsxEventHint",
+   placeholder: "例: 高校男子シングルス (○ヘッダーが無いExcel用)" }),
+ h("div", { className: "text-xs text-sub mt-1" },
+   "Excel に『○種目名』のヘッダー行が無い場合は、ここに種目名を入力すると保存先が確定します。")),
+
  h("div", { className: "field mt-2" },
  h("label", { className: "flex gap-2", style: { alignItems: "center" } },
  h("input", { type: "checkbox", id: "xlsxReplace", checked: "" }),
@@ -2753,17 +2805,22 @@ const A = {
  h("span", {}, "氏名+所属の一致でマスタDB と自動連携 (推奨)"),
  )),
  h("div", { className: "text-xs text-sub mt-2" },
- "アップロード後、サーバーで Excel パーサーが実行されます。各種目のブロック構造を自動検出します。"),
+ "アップロード後、サーバー側で Excel パーサーが実行されます。"),
  );
  const foot = h("button", { className: "btn", onClick: async () => {
  const file = document.getElementById("xlsxFile").files[0];
  if (!file) return toast("Excel ファイルを選択してください", "err");
  const replace = document.getElementById("xlsxReplace").checked;
  const autoLink = document.getElementById("xlsxAutoLink").checked;
+ const fmtRadio = document.querySelector('input[name="xlsxFormat"]:checked');
+ const format = fmtRadio ? fmtRadio.value : "auto";
+ const eventHint = document.getElementById("xlsxEventHint").value.trim();
  const fd = new FormData();
  fd.append("file", file);
  fd.append("regenerate", replace ? "1" : "0");
  fd.append("auto_link", autoLink ? "1" : "0");
+ if (format && format !== "auto") fd.append("format", format);
+ if (eventHint) fd.append("event", eventHint);
  try {
  const resp = await fetch(`/api/tournaments/${tournamentId}/entrants/upload-excel`, {
  method: "POST",
@@ -4385,30 +4442,76 @@ const O = {
  selectedEvent: "",
 
  async init() {
- // 大会セレクタ
+ try {
+ // 大会セレクタ: 進行中 → 準備中 → 予定 → 終了 の順で並べる
  const sel = document.getElementById("opTournamentSel");
  const ts = await api.get("/api/tournaments");
  clear(sel);
  sel.appendChild(h("option", { value: "" }, "— 大会を選択 —"));
- ts.forEach(t => sel.appendChild(h("option", { value: t.id }, t.name)));
+ const order = { ongoing: 0, preparation: 1, scheduled: 2, completed: 3, cancelled: 4 };
+ const sorted = [...ts].sort((a, b) =>
+   (order[a.status] ?? 9) - (order[b.status] ?? 9));
+ const statusLabel = {
+   ongoing: "進行中", preparation: "準備中",
+   scheduled: "予定", completed: "終了", cancelled: "中止"
+ };
+ sorted.forEach(t => {
+   const sl = statusLabel[t.status] || "予定";
+   sel.appendChild(h("option", { value: t.id },
+     `[${sl}] ${t.name} (${t.date || ""})`));
+ });
 
- if (ts.length && !O.tournamentId) {
- // ongoing/scheduledの最新を選択
- const def = ts.find(t => t.status === "ongoing") || ts[0];
- sel.value = def.id;
- O.selectTournament(def.id);
- } else if (O.tournamentId) {
- sel.value = O.tournamentId;
- O.reload();
- } else {
- document.getElementById("opMain").innerHTML = '<div class="empty-state">大会を選択してください。</div>';
+ // 進行中があれば自動選択。それ以外は明示選択を促す。
+ const ongoing = sorted.find(t => t.status === "ongoing");
+ if (ongoing && !O.tournamentId) {
+   sel.value = ongoing.id;
+   O.selectTournament(ongoing.id);
+ } else if (O.tournamentId && ts.find(t => t.id === O.tournamentId)) {
+   sel.value = O.tournamentId;
+   O.reload();
+ } else if (sorted.length) {
+   // 進行中なし。最初の項目 (準備中 or 予定 or 終了) を選んでもらう
+   const main = document.getElementById("opMain");
+   if (main) {
+     clear(main);
+     main.appendChild(h("div", { className: "empty-state",
+       style: { padding: "30px" } },
+       h("div", { className: "text-sm mb-2" },
+         "進行中の大会がありません。"),
+       h("div", { className: "text-xs text-sub" },
+         "上のセレクタから大会を選択するか、大会管理タブでステータスを「進行中」に変更してください。")));
+   }
+ }
+ } catch (e) {
+   console.error("[Operations init error]", e);
+   const main = document.getElementById("opMain");
+   if (main) {
+     clear(main);
+     main.appendChild(h("div", { className: "empty-state",
+       style: { color: "var(--accent)", padding: "20px" } },
+       "進行管理初期化エラー: " + (e.message || e)));
+   }
  }
  },
 
  selectTournament(id) {
  O.tournamentId = id;
  if (O.poller) clearInterval(O.poller);
- if (!id) { document.getElementById("opMain").innerHTML = ""; return; }
+ const liveLink = document.getElementById("opLiveLink");
+ if (liveLink) {
+   liveLink.href = id ? ("/viewer/live/?t=" + encodeURIComponent(id)) : "#";
+   liveLink.style.opacity = id ? "1" : "0.4";
+   liveLink.style.pointerEvents = id ? "auto" : "none";
+ }
+ if (!id) {
+   const main = document.getElementById("opMain");
+   if (main) {
+     clear(main);
+     main.appendChild(h("div", { className: "empty-state",
+       style: { padding: "30px" } }, "大会を選択してください。"));
+   }
+   return;
+ }
  O.reload();
  // 自動更新 (4秒)
  O.poller = setInterval(() => O.reload(true), 4000);
