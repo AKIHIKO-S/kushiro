@@ -1368,7 +1368,6 @@ const A = {
  h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
  h("div", { className: "font-bold", style: { fontSize: "20px" } }, t.name),
  h("span", { className: "status-block status-" + curSt }, stLabel[curSt] || "予定"),
- t.entries_open ? h("span", { className: "badge badge-ok" }, "申込受付中") : null,
  ),
  h("div", { className: "text-sm text-sub mt-1" },
  `${fmtDate(t.date) || "日付未定"} ・ ${t.venue || "会場未定"}`),
@@ -1386,50 +1385,11 @@ const A = {
  ),
  ));
 
- // ─── 申込管理 ───
- panel.appendChild(h("div", { className: "card" },
- h("div", { className: "card-head" },
- h("div", { className: "card-title" }, "申込管理"),
- h("div", { className: "flex gap-2 flex-wrap" },
- h("button", { className: "btn btn-sm",
-   onClick: () => A.openEntriesFullView(t) }, "詳細編集"),
- h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.editEntrySettings(t) }, "種目/受付設定"),
- h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.addEntryManually(t) }, "申込追加"),
- ),
- ),
- h("div", { className: "text-sm text-sub" },
- players.length + " 名 / " + teams + " 団体"),
- ));
-
- // ─── 申込フォーム ───
- if (t.status === "scheduled" || t.status === "preparation" || !t.status) {
- panel.appendChild(h("div", { className: "card" },
- h("div", { className: "card-head" },
- h("div", { className: "card-title" }, "申込フォーム"),
- h("div", { className: "flex gap-2 flex-wrap" },
- h("button", { className: "btn btn-sm",
-   onClick: () => A.openEntryFormGenerator(t) }, "フォーム生成 / 埋込"),
- h("a", { className: "btn btn-sm btn-ghost",
-   href: `/api/tournaments/${t.id}/entry-form.html`, target: "_blank" },
-   "プレビュー"),
- h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.fetchGasStats(t) }, "GAS集計取得"),
- ),
- ),
- h("div", { className: "text-sm text-sub" },
- t.entries_open ? "受付中" : "停止中"),
- h("div", { id: "gasStats_" + t.id,
- style: { padding: "8px", background: "#f0fdf4", borderRadius: "4px",
- fontSize: "12px", marginTop: "8px", display: "none" } }),
- ));
- }
-
  // ─── トーナメント表 (Excel/PDF 取込) ───
+ // 申込・名簿・領収書・集計は GAS 側で処理。本システムは試合運営に特化。
  panel.appendChild(h("div", { className: "card" },
  h("div", { className: "card-head" },
- h("div", { className: "card-title" }, "トーナメント表"),
+ h("div", { className: "card-title" }, "トーナメント表 (取込)"),
  h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm",
    onClick: () => A.openExcelUpload(t.id) }, "Excel / PDF 取込"),
@@ -1438,7 +1398,7 @@ const A = {
  ),
  ),
  h("div", { className: "text-sm text-sub" },
- (t.matches || []).length + " 試合"),
+ (t.matches || []).length + " 試合 ・ 取込テンプレ / 標準Excel / PDF に対応"),
  ));
 
  // ─── 進行管理 ───
@@ -1459,27 +1419,30 @@ const A = {
  h("a", { className: "btn btn-sm btn-ghost",
  href: "/viewer/live/?t=" + encodeURIComponent(t.id), target: "_blank" },
  "観戦ビュー"),
+ h("button", { className: "btn btn-sm btn-ghost",
+   onClick: () => A.downloadMatchCards(t) }, "対戦票 (審判用)"),
  ),
  ),
  h("div", { className: "text-sm text-sub" },
- t.status === "ongoing" ? "進行中" : "未開始"),
+ t.status === "ongoing" ? "進行中" : "未開始" +
+ " ・ 試合呼出 / 台割当 / 審判アサイン / 結果入力"),
  ));
 
- // ─── レポート出力 ───
- panel.appendChild(h("div", { className: "card" },
+ // ─── 外部 (GAS) 連携の案内 ───
+ panel.appendChild(h("div", { className: "card",
+   style: { background: "#f8fafc", borderLeft: "4px solid #64748b" } },
  h("div", { className: "card-head" },
- h("div", { className: "card-title" }, "レポート出力"),
- h("div", { className: "flex gap-2 flex-wrap" },
- h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.downloadAggregation(t) }, "集計表"),
- h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.downloadMatchCards(t) }, "対戦票"),
- h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.openReceiptManager(t) }, "領収書"),
+ h("div", { className: "card-title", style: { color: "#475569" } },
+   "申込・名簿・集計・領収書"),
  ),
+ h("div", { className: "text-sm", style: { color: "#475569", lineHeight: "1.7" } },
+ "申込フォーム作成 / 申込内容のスプレッドシート転記 / 団体別集計 / " +
+ "種目別一覧表 / 領収書発行 は ",
+ h("strong", {}, "GAS (Google Apps Script)"),
+ " 側で処理してください。",
+ h("br", {}),
+ "完成した申込リスト/組合せ表を Excel で出力し、上の「Excel / PDF 取込」から取り込むことで本システムでの大会運営が開始できます。",
  ),
- h("div", { className: "text-sm text-sub" },
- "集計表 / 対戦票 / 領収書を Excel で出力"),
  ));
 
  // ─── 試合一覧 (折りたたみ・補助) ───
