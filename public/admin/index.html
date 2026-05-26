@@ -2722,7 +2722,7 @@ const A = {
  h("div", { className: "card-title" }, "出場選手登録 / 申込集計"),
  h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm",
- onClick: () => A.openExcelUpload(t.id) }, "Excel取込"),
+ onClick: () => A.openExcelUpload(t.id) }, "Excel / PDF 取込"),
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.openJsonImport(t.id) }, "JSON取込"),
  h("button", { className: "btn btn-sm btn-ghost",
@@ -2781,11 +2781,22 @@ const A = {
  return card;
  },
 
- // ── Excel 直接アップロード ──
+ // ── Excel/PDF 直接アップロード ──
  openExcelUpload(tournamentId) {
  const body = h("div", {},
  h("div", { className: "text-sm mb-3" },
- "釧路卓球協会 標準形式の組合せ表 Excel ファイル (.xlsx) を選択してアップロードしてください。"),
+ "釧路卓球協会 標準形式の組合せ表ファイルを選択してアップロードしてください。"),
+ h("div", { className: "text-xs text-sub mb-3",
+   style: { padding: "8px 10px", background: "#f0fdf4",
+            borderLeft: "3px solid #15803d", borderRadius: "0 4px 4px 0" } },
+   "対応形式: ",
+   h("strong", {}, ".xlsx / .xls (Excel) "),
+   "または ",
+   h("strong", {}, ".pdf (テキストPDF)"),
+   h("div", { className: "text-xs", style: { marginTop: "4px", color: "var(--sub)" } },
+     "※ PDF はテキストPDF (Excel→PDF / Word→PDF など) のみ対応。" +
+     "スキャンした画像PDFは読み取れません。"),
+ ),
 
  // ─── 種目形式の必須選択 ───
  h("div", { className: "field",
@@ -2815,8 +2826,10 @@ const A = {
  ),
 
  h("div", { className: "field" },
- h("label", { className: "field-label" }, "Excel ファイル (.xlsx)"),
- h("input", { type: "file", id: "xlsxFile", accept: ".xlsx,.xls", className: "input" })),
+ h("label", { className: "field-label" }, "Excel または PDF ファイル"),
+ h("input", { type: "file", id: "xlsxFile",
+   accept: ".xlsx,.xls,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+   className: "input" })),
 
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "種目名ヒント (任意)"),

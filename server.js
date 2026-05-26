@@ -394,26 +394,63 @@ app.post("/api/tournaments/:id/kumiawase/upload",
   });
 });
 
-// Excel 直接アップロード → 解析 → 出場選手取込 (ワンステップ)
-// 新版: Node.js 製 parse_ktta_bracket.js を直接 require (Python 依存ゼロ)
-// fallback で旧 Python パーサーも試す
+// Excel/PDF 直接アップロード → 解析 → 出場選手取込 (ワンステップ)
+// 新版: Node.js 製パーサー (Python 依存ゼロ)
 let kttaParser = null;
+let pdfParser = null;
 try {
   kttaParser = require("./tools/parse_ktta_bracket.js");
 } catch (e) {
   console.warn("[startup] parse_ktta_bracket.js のロード失敗:", e.message);
 }
+try {
+  pdfParser = require("./tools/parse_pdf_bracket.js");
+} catch (e) {
+  console.warn("[startup] parse_pdf_bracket.js のロード失敗:", e.message);
+}
 
 app.post("/api/tournaments/:id/entrants/upload-excel",
-  requireAdmin, upload.single("file"), (req, res) => {
+  requireAdmin, upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "ファイルが添付されていません" });
   const xlsxPath = req.file.path;
   const regenerate = req.body.regenerate === "1" || req.body.regenerate === "true";
   const autoLink = req.body.auto_link !== "0" && req.body.auto_link !== "false";
   const format = req.body.format;
   const eventHint = req.body.event || "";
+  const originalName = (req.file.originalname || "").toLowerCase();
+  const isPdf = originalName.endsWith(".pdf") || req.file.mimetype === "application/pdf";
 
-  // ── 1. Node.js パーサー (推奨・本番) ──
+  // ── 1a. PDF パーサー (テキストPDFのみ) ──
+  if (isPdf) {
+    if (!pdfParser || !pdfParser.parseWorkbook) {
+      try { fs.unlinkSync(xlsxPath); } catch {}
+      return res.status(500).json({ error: "PDF パーサーが利用できません" });
+    }
+    try {
+      const data = await pdfParser.parseWorkbook(xlsxPath, {
+        formatHint: format && ["singles", "doubles", "team"].includes(format) ? format : null,
+        eventHint: eventHint || null,
+      });
+      try { fs.unlinkSync(xlsxPath); } catch {}
+      if (data.error) {
+        return res.status(400).json({ ...data, used_parser: "parse_pdf_bracket.js" });
+      }
+      data.regenerate = regenerate;
+      data.auto_link_to_players = autoLink;
+      const r = db.importBracket(req.params.id, data);
+      return res.json({ ...r, used_parser: "parse_pdf_bracket.js" });
+    } catch (e) {
+      console.error("[parser] PDF parser failed:", e);
+      try { fs.unlinkSync(xlsxPath); } catch {}
+      return res.status(500).json({
+        error: "PDF パーサー失敗: " + e.message,
+        hint: "画像PDF (スキャンしたもの) は読み取れません。Excel または テキスト形式のPDF をお試しください。",
+        used_parser: "parse_pdf_bracket.js",
+      });
+    }
+  }
+
+  // ── 1b. Node.js Excel パーサー (推奨・本番) ──
   if (kttaParser && kttaParser.parseWorkbook) {
     try {
       const data = kttaParser.parseWorkbook(xlsxPath, {
