@@ -335,63 +335,71 @@ app.post("/api/entrants/:id/create-player", requireAdmin, (req, res) => {
   if (!player) return res.status(400).json({ error: "選手作成に失敗" });
   res.json(player);
 });
-// 組合せ表 Excel アップロード → 罫線解析 → bracket 自動生成 (準備モード用)
+// 組合せ表 Excel アップロード → Node.js パーサー (旧 Python 版から移行)
+// /entrants/upload-excel と同等のロジックを kumiawase エンドポイントでも提供
 app.post("/api/tournaments/:id/kumiawase/upload",
-  requireAdmin, upload.single("file"), (req, res) => {
+  requireAdmin, upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "ファイルが添付されていません" });
-  const xlsxPath = req.file.path;
+  const filePath = req.file.path;
   const event = req.body.event || "";
-  const mode = req.body.mode || "";
+  const mode = req.body.mode || "";  // 互換性保持 (未使用)
   const sheet = req.body.sheet || "";
   const dryRun = req.body.dry_run === "1" || req.body.dry_run === "true";
-  const script = path.join(__dirname, "tools", "parse_kumiawase_chart.py");
-  if (!fs.existsSync(script)) {
-    fs.unlinkSync(xlsxPath);
-    return res.status(500).json({ error: "パーサースクリプトが見つかりません" });
-  }
-  const args = [script, xlsxPath];
-  if (event) args.push("--event", event);
-  if (mode) args.push("--mode", mode);
-  if (sheet) args.push("--sheet", sheet);
-  // Render では PYTHONPATH=./.python-packages で openpyxl をインストール
-  const pyEnv = Object.assign({}, process.env);
-  if (!pyEnv.PYTHONPATH) pyEnv.PYTHONPATH = path.join(__dirname, ".python-packages");
-  const py = spawn("python3", args, { env: pyEnv });
-  let stdout = "", stderr = "";
-  py.stdout.on("data", (d) => { stdout += d.toString(); });
-  py.stderr.on("data", (d) => { stderr += d.toString(); });
-  py.on("close", (code) => {
-    try { fs.unlinkSync(xlsxPath); } catch {}
-    if (code !== 0) {
-      // openpyxl が無い場合のエラーメッセージを明確化
-      const errMsg = stderr.includes("No module named 'openpyxl'")
-        ? "Excelパーサーが必要な Python パッケージ (openpyxl) が見つかりません。サーバーの再デプロイをお願いします。"
-        : "組合せ表解析失敗 (exit " + code + ")";
+  const format = req.body.format;
+  const originalName = (req.file.originalname || "").toLowerCase();
+  const isPdf = originalName.endsWith(".pdf") || req.file.mimetype === "application/pdf";
+
+  // PDF 経由
+  if (isPdf) {
+    if (!pdfParser || !pdfParser.parseWorkbook) {
+      try { fs.unlinkSync(filePath); } catch {}
+      return res.status(500).json({ error: "PDF パーサーが利用できません" });
+    }
+    try {
+      const data = await pdfParser.parseWorkbook(filePath, {
+        formatHint: format && ["singles", "doubles", "team"].includes(format) ? format : null,
+        eventHint: event || null,
+      });
+      try { fs.unlinkSync(filePath); } catch {}
+      if (data.error) return res.status(400).json(data);
+      if (dryRun) return res.json({ preview: data, message: "解析プレビュー (まだ取込されていません)" });
+      data.regenerate = true;
+      data.auto_link_to_players = true;
+      const r = db.importBracket(req.params.id, data);
+      return res.json({ ...r, source: "kumiawase_chart", used_parser: "parse_pdf_bracket.js" });
+    } catch (e) {
+      try { fs.unlinkSync(filePath); } catch {}
       return res.status(500).json({
-        error: errMsg,
-        stderr: stderr.slice(0, 500),
+        error: "PDF 解析失敗: " + e.message,
+        hint: "画像PDF (スキャン) は読み取れません。Excel またはテキストPDFをご利用ください。",
       });
     }
-    let data;
-    try { data = JSON.parse(stdout); }
-    catch (e) {
-      return res.status(500).json({ error: "JSON 解析失敗: " + e.message });
-    }
+  }
+
+  // Excel 経由 (Node 製パーサー)
+  if (!kttaParser || !kttaParser.parseWorkbook) {
+    try { fs.unlinkSync(filePath); } catch {}
+    return res.status(500).json({ error: "Excel パーサーが利用できません" });
+  }
+  try {
+    const data = kttaParser.parseWorkbook(filePath, {
+      formatHint: format && ["singles", "doubles", "team"].includes(format) ? format : null,
+      eventHint: event || null,
+      sheet: sheet || null,
+      allSheets: !sheet,
+      verbose: false,
+    });
+    try { fs.unlinkSync(filePath); } catch {}
     if (data.error) return res.status(400).json(data);
-    // dry_run=true なら、解析結果のみ返す (import しない)
-    if (dryRun) {
-      return res.json({ preview: data, message: "解析プレビュー (まだ取込されていません)" });
-    }
-    // bracket 形式で import
+    if (dryRun) return res.json({ preview: data, message: "解析プレビュー (まだ取込されていません)" });
     data.regenerate = true;
     data.auto_link_to_players = true;
     const r = db.importBracket(req.params.id, data);
-    res.json({ ...r, source: "kumiawase_chart" });
-  });
-  py.on("error", (err) => {
-    try { fs.unlinkSync(xlsxPath); } catch {}
-    res.status(500).json({ error: "python3 起動失敗: " + err.message });
-  });
+    return res.json({ ...r, source: "kumiawase_chart", used_parser: "parse_ktta_bracket.js" });
+  } catch (e) {
+    try { fs.unlinkSync(filePath); } catch {}
+    return res.status(500).json({ error: "Excel 解析失敗: " + e.message });
+  }
 });
 
 // Excel/PDF 直接アップロード → 解析 → 出場選手取込 (ワンステップ)
