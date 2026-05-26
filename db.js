@@ -1211,16 +1211,8 @@ function validateEntrants(tournamentId, event) {
     }
   });
 
-  // ブロック未割当 (シングルスで)
-  all.filter(e => !e.is_doubles).forEach(e => {
-    if (!e.block) {
-      warnings.push({
-        type: "no_block",
-        message: `ブロック未割当: ${e.name}`,
-        entrant_ids: [e.id],
-      });
-    }
-  });
+  // ブロック未割当の警告は廃止 (ブロック指定は任意のため)
+  // 旧 no_block 警告で大量に出ていたが、運用上は不要
 
   return {
     total: all.length,

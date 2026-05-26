@@ -536,145 +536,6 @@
  .court-cell.extra::after { content: "+"; position: absolute; top: 2px; right: 4px;
    color: #7c3aed; font-weight: 700; font-size: 12px; }
 
- /* ═══ 大会詳細 ダッシュボード レイアウト ═══ */
- .td-hero {
-   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-   color: #fff;
-   border-radius: 10px;
-   padding: 16px 20px;
-   margin: 12px 0;
-   box-shadow: 0 2px 10px rgba(0,0,0,.08);
- }
- .td-hero-row {
-   display: flex; align-items: center; gap: 12px;
-   flex-wrap: wrap; margin-bottom: 8px;
- }
- .td-back {
-   color: #cbd5e1; text-decoration: none; font-size: 12px;
-   padding: 4px 10px; border-radius: 4px;
-   background: rgba(255,255,255,.08);
- }
- .td-back:hover { background: rgba(255,255,255,.16); color: #fff; }
- .td-title { display: flex; align-items: center; gap: 10px;
-   flex-wrap: wrap; flex: 1; }
- .td-name {
-   font-family: var(--font-display);
-   font-size: 22px; font-weight: 700;
-   letter-spacing: -0.01em;
- }
- .td-actions { display: flex; gap: 8px; }
- .td-actions .btn { background: rgba(255,255,255,.1); color: #fff;
-   border-color: rgba(255,255,255,.3); }
- .td-actions .btn:hover { background: rgba(255,255,255,.18); }
- .td-meta { font-size: 13px; color: #cbd5e1; margin-bottom: 12px; }
- .td-stats {
-   display: grid; grid-template-columns: repeat(3, 1fr);
-   gap: 8px;
-   background: rgba(255,255,255,.06); padding: 10px;
-   border-radius: 6px;
- }
- .td-stat { text-align: center; }
- .td-stat-num {
-   font-family: var(--font-mono); font-size: 22px;
-   font-weight: 800; color: #fff;
- }
- .td-stat-label { font-size: 11px; color: #cbd5e1; margin-top: 2px; }
-
- /* ─── ブロックグリッド (PCは横並び3列, スマホは1列) ─── */
- .td-blocks {
-   display: grid;
-   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-   gap: 12px;
-   margin-bottom: 12px;
- }
- .td-block {
-   background: #fff;
-   border: 1px solid var(--border);
-   border-radius: 10px;
-   padding: 14px 16px;
-   display: flex; flex-direction: column;
-   min-height: 170px;
-   transition: transform .15s, box-shadow .15s;
-   position: relative;
-   overflow: hidden;
- }
- .td-block:hover {
-   transform: translateY(-2px);
-   box-shadow: 0 4px 14px rgba(0,0,0,.08);
- }
- .td-block::before {
-   content: ""; position: absolute;
-   top: 0; left: 0; width: 100%; height: 4px;
-   background: var(--td-accent, var(--ink-300));
- }
- .td-block--blue   { --td-accent: #3b82f6; }
- .td-block--green  { --td-accent: #15803d; }
- .td-block--purple { --td-accent: #7c3aed; }
- .td-block--red    { --td-accent: #dc2626; }
- .td-block--indigo { --td-accent: #4f46e5; }
- .td-block--amber  { --td-accent: #d97706; }
- .td-block-icon {
-   font-size: 26px; line-height: 1;
-   margin-bottom: 6px; margin-top: 2px;
- }
- .td-block-title {
-   font-family: var(--font-display);
-   font-size: 14px; font-weight: 700;
-   letter-spacing: 0.02em;
-   color: var(--ink-900);
-   margin-bottom: 4px;
- }
- .td-block-stat {
-   font-size: 13px; color: var(--ink-700);
-   margin-bottom: 10px; min-height: 18px;
- }
- .td-block-num {
-   font-family: var(--font-mono); font-size: 22px;
-   font-weight: 800; color: var(--td-accent, var(--ink-900));
-   line-height: 1;
-   margin-right: 2px;
- }
- .td-block-actions {
-   display: flex; flex-direction: column; gap: 5px;
-   margin-top: auto;
- }
- .td-block-actions .btn {
-   width: 100%; justify-content: flex-start;
-   font-size: 12px; padding: 6px 10px;
-   text-align: left;
- }
- .td-block-actions .btn:first-child {
-   font-weight: 600;
- }
- .td-block-hint {
-   font-size: 10px; color: var(--sub);
-   margin-top: 6px; padding-top: 6px;
-   border-top: 1px dashed var(--border);
-   line-height: 1.4;
- }
-
- /* スマホ */
- @media (max-width: 640px) {
-   .td-hero { padding: 12px 14px; margin: 8px 0; }
-   .td-name { font-size: 18px; }
-   .td-stats { grid-template-columns: repeat(3, 1fr); padding: 6px; }
-   .td-stat-num { font-size: 18px; }
-   .td-stat-label { font-size: 9px; }
-   .td-blocks {
-     grid-template-columns: 1fr;  /* 1列 */
-     gap: 8px;
-   }
-   .td-block { padding: 10px 12px; min-height: 130px; }
-   .td-block-icon { font-size: 20px; }
-   .td-block-title { font-size: 13px; }
-   .td-block-num { font-size: 18px; }
- }
- /* タブレット (中サイズ) */
- @media (min-width: 641px) and (max-width: 960px) {
-   .td-blocks {
-     grid-template-columns: repeat(2, 1fr);  /* 2列 */
-   }
- }
 </style>
 </head>
 <body>
@@ -1487,192 +1348,144 @@ const A = {
  const panel = document.getElementById("tab-tournament-detail");
  clear(panel);
 
- // ─── ヘッダー (大会名 + ステータス + 統計) ───
+ // 戻るリンク
+ panel.appendChild(h("div", { className: "breadcrumb", style: { padding: "10px 0" } },
+ h("a", { href: "#", onClick: (e) => { e.preventDefault(); A.showTab("tournaments"); } },
+ "← 大会一覧に戻る"),
+ ));
+
+ // ─── 大会情報カード ───
  const stLabel = {
  scheduled: "予定", preparation: "準備中",
  ongoing: "進行中", completed: "終了", cancelled: "中止"
  };
  const curSt = t.status || "scheduled";
- panel.appendChild(h("div", { className: "td-hero" },
- h("div", { className: "td-hero-row" },
- h("a", { href: "#", className: "td-back",
- onClick: (e) => { e.preventDefault(); A.showTab("tournaments"); } },
- "← 大会一覧"),
- h("div", { className: "td-title" },
- h("div", { className: "td-name" }, t.name),
+ const players = t.players || [];
+ const teams = new Set(players.map(p => p.team).filter(Boolean)).size;
+ panel.appendChild(h("div", { className: "card" },
+ h("div", { className: "flex gap-3 mb-2", style: { alignItems: "flex-start", flexWrap: "wrap" } },
+ h("div", { className: "flex-1" },
+ h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
+ h("div", { className: "font-bold", style: { fontSize: "20px" } }, t.name),
  h("span", { className: "status-block status-" + curSt }, stLabel[curSt] || "予定"),
  t.entries_open ? h("span", { className: "badge badge-ok" }, "申込受付中") : null,
  ),
- h("div", { className: "td-actions" },
- h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.editTournament(t) }, "大会情報を編集"),
- ),
- ),
- h("div", { className: "td-meta" },
+ h("div", { className: "text-sm text-sub mt-1" },
  `${fmtDate(t.date) || "日付未定"} ・ ${t.venue || "会場未定"}`),
- h("div", { className: "td-stats" },
- h("div", { className: "td-stat" },
- h("div", { className: "td-stat-num" }, String((t.players || []).length)),
- h("div", { className: "td-stat-label" }, "出場選手")),
- h("div", { className: "td-stat" },
- h("div", { className: "td-stat-num" },
- String(new Set((t.players || []).map(p => p.team).filter(Boolean)).size)),
- h("div", { className: "td-stat-label" }, "団体")),
- h("div", { className: "td-stat" },
- h("div", { className: "td-stat-num" }, String((t.matches || []).length)),
- h("div", { className: "td-stat-label" }, "試合")),
+ ),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.editTournament(t) },
+ "大会情報を編集"),
+ ),
+ h("div", { className: "flex gap-4", style: { flexWrap: "wrap" } },
+ h("span", { className: "text-sm" }, "出場選手: ",
+   h("strong", {}, String(players.length)), " 名"),
+ h("span", { className: "text-sm" }, "団体: ",
+   h("strong", {}, String(teams))),
+ h("span", { className: "text-sm" }, "試合: ",
+   h("strong", {}, String((t.matches || []).length))),
  ),
  ));
 
- // ─── 操作ブロック群 (グリッド配置) ───
- const grid = h("div", { className: "td-blocks" });
- grid.appendChild(A.renderBlockEntries(t));
- if (t.status === "scheduled" || t.status === "preparation" || !t.status) {
-   grid.appendChild(A.renderBlockEntryForm(t));
- }
- grid.appendChild(A.renderBlockBracket(t));
- grid.appendChild(A.renderBlockOperations(t));
- if (t.status !== "cancelled") {
-   grid.appendChild(A.renderBlockLiveViewer(t));
- }
- grid.appendChild(A.renderBlockReports(t));
- panel.appendChild(grid);
-
- // ─── 試合一覧 (折りたたみ・補助) ───
- if (t.matches && t.matches.length) {
-   panel.appendChild(A.renderMatchListSection(t));
- }
- },
-
- // ─── ブロック: 申込管理 ───
- renderBlockEntries(t) {
- const players = t.players || [];
- const teams = new Set(players.map(p => p.team).filter(Boolean)).size;
- return h("div", { className: "td-block td-block--blue" },
- h("div", { className: "td-block-icon" }, "👥"),
- h("div", { className: "td-block-title" }, "申込管理"),
- h("div", { className: "td-block-stat" },
- h("span", { className: "td-block-num" }, String(players.length)),
- h("span", { className: "text-xs text-sub" }, " 名 / " + teams + " 団体")),
- h("div", { className: "td-block-actions" },
+ // ─── 申込管理 ───
+ panel.appendChild(h("div", { className: "card" },
+ h("div", { className: "card-head" },
+ h("div", { className: "card-title" }, "申込管理"),
+ h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm",
    onClick: () => A.openEntriesFullView(t) }, "詳細編集"),
  h("button", { className: "btn btn-sm btn-ghost",
    onClick: () => A.editEntrySettings(t) }, "種目/受付設定"),
  h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.addEntryManually(t) }, "+ 追加"),
+   onClick: () => A.addEntryManually(t) }, "申込追加"),
+ ),
+ ),
+ h("div", { className: "text-sm text-sub" },
+ players.length + " 名 / " + teams + " 団体"),
  ));
- },
 
- // ─── ブロック: 申込フォーム ───
- renderBlockEntryForm(t) {
- return h("div", { className: "td-block td-block--green" },
- h("div", { className: "td-block-icon" }, "📝"),
- h("div", { className: "td-block-title" }, "申込フォーム"),
- h("div", { className: "td-block-stat" },
- t.entries_open
-   ? h("span", { style: { color: "#15803d", fontWeight: 700 } }, "受付中")
-   : h("span", { style: { color: "#b91c1c" } }, "停止中")),
- h("div", { className: "td-block-actions" },
+ // ─── 申込フォーム ───
+ if (t.status === "scheduled" || t.status === "preparation" || !t.status) {
+ panel.appendChild(h("div", { className: "card" },
+ h("div", { className: "card-head" },
+ h("div", { className: "card-title" }, "申込フォーム"),
+ h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm",
    onClick: () => A.openEntryFormGenerator(t) }, "フォーム生成 / 埋込"),
  h("a", { className: "btn btn-sm btn-ghost",
-   href: `/api/tournaments/${t.id}/entry-form.html`, target: "_blank" }, "プレビュー"),
+   href: `/api/tournaments/${t.id}/entry-form.html`, target: "_blank" },
+   "プレビュー"),
  h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.fetchGasStats(t) }, "GAS集計"),
+   onClick: () => A.fetchGasStats(t) }, "GAS集計取得"),
  ),
+ ),
+ h("div", { className: "text-sm text-sub" },
+ t.entries_open ? "受付中" : "停止中"),
  h("div", { id: "gasStats_" + t.id,
-   style: { padding: "6px", background: "#f0fdf4", borderRadius: "4px",
-   fontSize: "11px", marginTop: "6px", display: "none" } }),
- );
- },
+ style: { padding: "8px", background: "#f0fdf4", borderRadius: "4px",
+ fontSize: "12px", marginTop: "8px", display: "none" } }),
+ ));
+ }
 
- // ─── ブロック: トーナメント表 (Excel/PDF取込 + シード自動生成) ───
- renderBlockBracket(t) {
- return h("div", { className: "td-block td-block--purple" },
- h("div", { className: "td-block-icon" }, "🏆"),
- h("div", { className: "td-block-title" }, "トーナメント表"),
- h("div", { className: "td-block-stat" },
- h("span", { className: "td-block-num" }, String((t.matches || []).length)),
- h("span", { className: "text-xs text-sub" }, " 試合")),
- h("div", { className: "td-block-actions" },
+ // ─── トーナメント表 (Excel/PDF 取込) ───
+ panel.appendChild(h("div", { className: "card" },
+ h("div", { className: "card-head" },
+ h("div", { className: "card-title" }, "トーナメント表"),
+ h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm",
-   style: { background: "#7c3aed" },
-   onClick: () => A.openExcelUpload(t.id) },
-   "📂 Excel/PDF取込"),
+   onClick: () => A.openExcelUpload(t.id) }, "Excel / PDF 取込"),
  h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.openSeedBracketGenerator(t) },
-   "✨ シード自動生成"),
- h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.openManualMatchCreate(t) },
-   "+ 試合追加"),
+   onClick: () => A.openManualMatchCreate(t) }, "試合追加"),
  ),
- h("div", { className: "td-block-hint" },
- "申込リスト → 自動生成 (シード指定可)"),
- );
- },
+ ),
+ h("div", { className: "text-sm text-sub" },
+ (t.matches || []).length + " 試合"),
+ ));
 
- // ─── ブロック: 進行管理 ───
- renderBlockOperations(t) {
- return h("div", { className: "td-block td-block--red" },
- h("div", { className: "td-block-icon" }, "▶"),
- h("div", { className: "td-block-title" }, "進行管理 (LIVE)"),
- h("div", { className: "td-block-stat" },
- (t.status === "ongoing")
-   ? h("span", { style: { color: "#dc2626", fontWeight: 700 } }, "● LIVE")
-   : h("span", { className: "text-sub" }, "未開始")),
- h("div", { className: "td-block-actions" },
+ // ─── 進行管理 ───
+ panel.appendChild(h("div", { className: "card" },
+ h("div", { className: "card-head" },
+ h("div", { className: "card-title" }, "進行管理 (LIVE)"),
+ h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm",
-   style: { background: "#dc2626" },
-   onClick: () => {
-     if (typeof O !== "undefined") O.tournamentId = t.id;
-     A.showTab("operations");
-     setTimeout(() => {
-       const sel = document.getElementById("opTournamentSel");
-       if (sel) sel.value = t.id;
-       if (typeof O !== "undefined") O.selectTournament(t.id);
-     }, 60);
-   } }, "進行管理を開く →"),
+ onClick: () => {
+   if (typeof O !== "undefined") O.tournamentId = t.id;
+   A.showTab("operations");
+   setTimeout(() => {
+     const sel = document.getElementById("opTournamentSel");
+     if (sel) sel.value = t.id;
+     if (typeof O !== "undefined") O.selectTournament(t.id);
+   }, 60);
+ } }, "進行管理を開く"),
+ h("a", { className: "btn btn-sm btn-ghost",
+ href: "/viewer/live/?t=" + encodeURIComponent(t.id), target: "_blank" },
+ "観戦ビュー"),
  ),
- h("div", { className: "td-block-hint" },
- "呼出・台割当・審判・結果"),
- );
- },
+ ),
+ h("div", { className: "text-sm text-sub" },
+ t.status === "ongoing" ? "進行中" : "未開始"),
+ ));
 
- // ─── ブロック: 観戦ビュー ───
- renderBlockLiveViewer(t) {
- const url = "/viewer/live/?t=" + encodeURIComponent(t.id);
- return h("div", { className: "td-block td-block--indigo" },
- h("div", { className: "td-block-icon" }, "📺"),
- h("div", { className: "td-block-title" }, "観戦ビュー"),
- h("div", { className: "td-block-stat" },
- h("span", { className: "text-xs text-sub" }, "観戦者向け公開")),
- h("div", { className: "td-block-actions" },
- h("a", { className: "btn btn-sm",
-   style: { background: "#4f46e5" },
-   href: url, target: "_blank" }, "🔗 開く"),
+ // ─── レポート出力 ───
+ panel.appendChild(h("div", { className: "card" },
+ h("div", { className: "card-head" },
+ h("div", { className: "card-title" }, "レポート出力"),
+ h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.openShareLiveViewer(t) }, "QR/共有"),
+   onClick: () => A.downloadAggregation(t) }, "集計表"),
+ h("button", { className: "btn btn-sm btn-ghost",
+   onClick: () => A.downloadMatchCards(t) }, "対戦票"),
+ h("button", { className: "btn btn-sm btn-ghost",
+   onClick: () => A.openReceiptManager(t) }, "領収書"),
  ),
- );
- },
+ ),
+ h("div", { className: "text-sm text-sub" },
+ "集計表 / 対戦票 / 領収書を Excel で出力"),
+ ));
 
- // ─── ブロック: レポート ───
- renderBlockReports(t) {
- return h("div", { className: "td-block td-block--amber" },
- h("div", { className: "td-block-icon" }, "📊"),
- h("div", { className: "td-block-title" }, "レポート出力"),
- h("div", { className: "td-block-stat" },
- h("span", { className: "text-xs text-sub" }, "集計・対戦票・領収書")),
- h("div", { className: "td-block-actions" },
- h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.downloadAggregation(t) }, "📑 集計表"),
- h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.downloadMatchCards(t) }, "📋 対戦票"),
- h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.openReceiptManager(t) }, "🧾 領収書"),
- ),
- );
+ // ─── 試合一覧 (折りたたみ・補助) ───
+ if (t.matches && t.matches.length) {
+   panel.appendChild(A.renderMatchListSection(t));
+ }
  },
 
  // ─── 試合一覧 (折りたたみ・補助) ───
@@ -1682,7 +1495,7 @@ const A = {
  listCard.appendChild(h("summary", {
    style: { padding: "10px 14px", cursor: "pointer", fontWeight: 700,
      fontSize: "13px", listStyle: "none" } },
-   "📋 試合一覧 (" + t.matches.length + " 試合) — クリックで開閉"));
+   "試合一覧 (" + t.matches.length + " 試合) — クリックで開閉"));
  const matchList = h("div", { style: { padding: "0 14px 10px" } });
  const groups = {};
  t.matches.forEach(m => {
@@ -4328,9 +4141,8 @@ const A = {
    }
  },
 
- // ── シード自動配置でトーナメント表を生成 ──
- // 申込リストから種目別に entrants を抽出 → seed 設定 → 標準シード配置で bracket 生成
- async openSeedBracketGenerator(t) {
+ // (廃止) シード自動配置でトーナメント生成は機能廃止
+ async __openSeedBracketGenerator_deprecated__(t) {
    try {
      // 種目別 entrants を取得
      let entrants = [];
@@ -4408,7 +4220,7 @@ const A = {
        h("div", { className: "text-sm mb-3",
          style: { padding: "10px 14px", background: "#f0fdf4",
            borderLeft: "3px solid #15803d", borderRadius: "0 4px 4px 0" } },
-         h("div", { className: "font-bold mb-1" }, "🏆 シード配置で自動トーナメント生成"),
+         h("div", { className: "font-bold mb-1" }, "シード配置で自動トーナメント生成"),
          h("div", { style: { fontSize: "12px" } },
            "申込リストから選手を抽出し、シード番号 (1 = 第1シード) を入力すると、" +
            "標準的な配置 (1番手 vs N、2番手 vs N-1 …) で自動的にトーナメント表を作成します。"),
@@ -4448,7 +4260,7 @@ const A = {
            } catch (err) {
              toast("生成失敗: " + err.message, "err");
            }
-         } }, "🏆 トーナメント生成"),
+         } }, "トーナメント生成"),
        h("button", { className: "btn btn-ghost",
          onClick: () => document.querySelector(".modal-bg")?.remove() }, "キャンセル"),
      );
@@ -5069,7 +4881,7 @@ const O = {
  main.appendChild(h("div", { className: "flex gap-2 mb-3 flex-wrap" },
  h("button", { className: "btn btn-sm",
    style: { background: "#7c3aed" },
-   onClick: () => O.openVisualBracket() }, "🏆 トーナメント表"),
+   onClick: () => O.openVisualBracket() }, "トーナメント表"),
  h("button", { className: "btn btn-sm", onClick: () => O.openBracketGen() }, "トーナメント生成"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openImportBracket() }, "JSON 読込"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.exportBracket() }, "JSON 書出"),
@@ -5168,12 +4980,12 @@ const O = {
  h("div", { className: "flex gap-1", style: { flexShrink: 0 } },
  h("button", { className: "btn btn-sm btn-ghost",
    style: { padding: "3px 8px", fontSize: "11px" },
-   onClick: () => O.openCorrectResult(m) }, "🔧 結果修正"),
+   onClick: () => O.openCorrectResult(m) }, "結果修正"),
  h("button", { className: "btn btn-sm",
    style: { padding: "3px 8px", fontSize: "11px",
      background: "#dc2626", color: "#fff" },
    title: "勝者と敗者を反転",
-   onClick: () => O.swapWinner(m) }, "↔ 勝敗反転"),
+   onClick: () => O.swapWinner(m) }, "反転 勝敗反転"),
  ),
  ));
  });
@@ -5187,7 +4999,7 @@ const O = {
               `現在の勝者「${m.winner_name}」は敗者になり、` +
               `次の試合への進出も切り替わります。\n` +
               `よろしいですか?`)) return;
- // セットは現状を反転 (winner_sets ↔ loser_sets)
+ // セットは現状を反転 (winner_sets 反転 loser_sets)
  const sets = (m.sets || []).map(s => Array.isArray(s) && s.length === 2 ? [s[1], s[0]] : s);
  // 新しい勝者は元 loser (= player1 か player2 のどちらか)
  const newWinnerSlot = m.winner_name === m.player1_name ? 2 : 1;
@@ -5254,12 +5066,12 @@ const O = {
    h("div", { className: "text-sm mb-3",
      style: { padding: "10px 14px", background: "#fef3c7",
        borderLeft: "3px solid #f59e0b", borderRadius: "0 4px 4px 0" } },
-     h("div", { className: "font-bold mb-1" }, "🔧 結果を修正"),
+     h("div", { className: "font-bold mb-1" }, "結果を修正"),
      h("div", { style: { fontSize: "12px" } },
        "次の試合に既に進出済みの場合、自動で取り消し → 新勝者で再進出します。" +
        "次の試合が既に完了している場合は先にそちらを修正してください。"),
    ),
-   h("div", { className: "text-sm font-bold mb-2" }, "🏆 勝者:"),
+   h("div", { className: "text-sm font-bold mb-2" }, "勝者:"),
    winnerRadios,
    h("div", { className: "text-sm font-bold mb-2" }, "セットスコア (選手1 - 選手2):"),
    setsBox,
@@ -5403,14 +5215,14 @@ const O = {
  if (count <= 0) return null;
  if (count === 1) {
  return h("span", { className: "call-badge call-caution",
-   title: "再コール1回目 (注意)" }, "⚠ 再コール 1");
+   title: "再コール1回目 (注意)" }, "再コール 1");
  }
  if (count === 2) {
  return h("span", { className: "call-badge call-warning",
-   title: "再コール2回目 (警告 - 不戦敗候補)" }, "⚠⚠ 再コール 2");
+   title: "再コール2回目 (警告 - 不戦敗候補)" }, "再コール 2");
  }
  return h("span", { className: "call-badge call-critical",
-   title: "再コール超過" }, "❗ 再コール " + count);
+   title: "再コール超過" }, "再コール " + count);
  },
 
  async recallMatch(m, slot) {
@@ -6030,7 +5842,7 @@ const O = {
      background: "#f9fafb", borderRadius: "6px" } });
 
  const reload = async () => {
-   bracketArea.innerHTML = "🔄 読込中...";
+   bracketArea.innerHTML = "読込中...";
    try {
      const bdata = await api.get(`/api/tournaments/${O.tournamentId}/bracket/export?event=` +
        encodeURIComponent(selectedEv));
@@ -6047,13 +5859,13 @@ const O = {
      h("label", { className: "text-sm font-bold" }, "種目:"),
      evSel,
      h("button", { className: "btn btn-sm btn-ghost",
-       onClick: reload }, "🔄 更新"),
+       onClick: reload }, "更新"),
    ),
    bracketArea,
  );
  const foot = h("button", { className: "btn btn-ghost",
    onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる");
- openModal("🏆 トーナメント表 (ビジュアル)", body, foot);
+ openModal("トーナメント表 (ビジュアル)", body, foot);
  reload();
  },
 
@@ -6961,7 +6773,7 @@ const EnT = {
  EnT.reload();
  }}, "連携保存"),
  );
- openModal("DB連携 (マスタDB ↔ 出場選手)", body, foot);
+ openModal("DB連携 (マスタDB 反転 出場選手)", body, foot);
  },
 
  async deleteEntrant(e) {
