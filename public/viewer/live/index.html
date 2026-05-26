@@ -3,21 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#09090b">
+<meta name="theme-color" content="#1e2a4a">
 <title>KTTA Platform - LIVE 観戦ビュー</title>
 <link rel="stylesheet" href="/shared/common.css">
 <style>
   :root {
-    --lv-bg: #09090b;
-    --lv-surface: #18181b;
-    --lv-surface-2: #27272a;
-    --lv-line: #3f3f46;
-    --lv-text: #fafafa;
-    --lv-sub: #a1a1aa;
-    --lv-accent: #dc2626;
-    --lv-warn: #f59e0b;
-    --lv-ok: #10b981;
-    --lv-blue: #3b82f6;
+    /* ─── ライトテーマ (視認性最優先) ─── */
+    --lv-bg: #f4f6fa;
+    --lv-surface: #ffffff;
+    --lv-surface-2: #f9fafb;
+    --lv-line: #d4d4d8;
+    --lv-line-strong: #9ca3af;
+    --lv-text: #111827;
+    --lv-text-2: #374151;
+    --lv-sub: #6b7280;
+    --lv-accent: #dc2626;     /* ボルドー (アクセント・LIVE) */
+    --lv-warn: #d97706;       /* オレンジ (呼出可能) */
+    --lv-ok: #15803d;         /* 緑 (使用可能・終了) */
+    --lv-blue: #2563eb;       /* 青 (待機) */
+    --lv-purple: #7c3aed;     /* 紫 (団体追加台) */
+    --lv-header: #1e2a4a;     /* ヘッダー濃紺 */
   }
   html { background: var(--lv-bg); }
   body {
@@ -33,16 +38,22 @@
     padding: 12px;
   }
 
-  /* ─── ヘッダー ─── */
+  /* ─── ヘッダー (濃紺ベース・上部のみ) ─── */
   .lv-header {
-    background: var(--lv-surface);
-    border: 1px solid var(--lv-line);
+    background: var(--lv-header);
+    color: #fff;
     border-radius: 8px;
     padding: 14px 18px;
     margin-bottom: 12px;
     display: flex; align-items: center; gap: 14px;
     flex-wrap: wrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
   }
+  .lv-header .lv-brand-name,
+  .lv-header .lv-brand-tag {
+    color: #fff;
+  }
+  .lv-header .lv-brand-tag { color: rgba(255,255,255,.7); }
   .lv-brand {
     display: flex; align-items: center; gap: 10px;
     flex: 1; min-width: 220px;
@@ -69,13 +80,16 @@
   }
   .lv-live-chip {
     display: inline-flex; align-items: center; gap: 6px;
-    background: rgba(220, 38, 38, .12);
-    border: 1px solid rgba(220, 38, 38, .3);
-    color: var(--lv-text);
+    background: var(--lv-accent);
+    border: 1px solid var(--lv-accent);
+    color: #fff;
     padding: 5px 11px; border-radius: 14px;
     font-family: var(--font-display);
     font-size: 10px; font-weight: 700;
     letter-spacing: 0.16em;
+  }
+  .lv-live-chip::before {
+    background: #fff !important;
   }
   .lv-live-chip::before {
     content: ""; width: 6px; height: 6px;
@@ -88,9 +102,9 @@
     display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto;
   }
   .lv-btn {
-    background: transparent;
-    color: var(--lv-text);
-    border: 1px solid var(--lv-line);
+    background: rgba(255,255,255,.1);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,.3);
     padding: 7px 13px;
     border-radius: 5px;
     font-family: var(--font-body); font-size: 12px;
@@ -98,12 +112,12 @@
     cursor: pointer;
     transition: all .12s;
   }
-  .lv-btn:hover { background: var(--lv-surface-2); border-color: var(--lv-sub); }
-  .lv-btn.active { background: var(--lv-text); color: var(--lv-bg); border-color: var(--lv-text); }
+  .lv-btn:hover { background: rgba(255,255,255,.2); border-color: rgba(255,255,255,.5); }
+  .lv-btn.active { background: #fff; color: var(--lv-header); border-color: #fff; }
   .lv-select {
-    background: var(--lv-surface-2);
+    background: rgba(255,255,255,.95);
     color: var(--lv-text);
-    border: 1px solid var(--lv-line);
+    border: 1px solid rgba(255,255,255,.3);
     padding: 7px 28px 7px 13px;
     border-radius: 5px;
     font-family: var(--font-body); font-size: 12px;
@@ -125,21 +139,24 @@
     font-size: 12px; color: var(--lv-sub);
   }
 
-  /* ─── 統計 ─── */
+  /* ─── 統計バー (大型カード) ─── */
   .lv-stats {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 8px; margin-bottom: 14px;
+    gap: 10px; margin-bottom: 14px;
   }
   .lv-stat {
     background: var(--lv-surface);
-    border: 1px solid var(--lv-line);
-    border-radius: 6px;
-    padding: 10px 12px;
+    border: 2px solid var(--lv-line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    text-align: center;
+    transition: transform .12s;
+    box-shadow: 0 1px 3px rgba(0,0,0,.04);
   }
   .lv-stat-num {
     font-family: var(--font-mono);
-    font-size: 22px; font-weight: 700;
+    font-size: 32px; font-weight: 800;
     line-height: 1;
   }
   .lv-stat-num.red { color: var(--lv-accent); }
@@ -147,12 +164,16 @@
   .lv-stat-num.green { color: var(--lv-ok); }
   .lv-stat-num.blue { color: var(--lv-blue); }
   .lv-stat-label {
-    font-family: var(--font-display);
-    font-size: 9px; font-weight: 500;
-    text-transform: uppercase; letter-spacing: 0.14em;
-    color: var(--lv-sub);
-    margin-top: 6px;
+    font-family: var(--font-body);
+    font-size: 12px; font-weight: 700;
+    color: var(--lv-text-2);
+    margin-top: 8px;
   }
+  /* 進行中カードは赤帯付き */
+  .lv-stat.highlight-red { border-color: var(--lv-accent); background: #fef2f2; }
+  .lv-stat.highlight-yellow { border-color: var(--lv-warn); background: #fffbeb; }
+  .lv-stat.highlight-blue { border-color: var(--lv-blue); background: #eff6ff; }
+  .lv-stat.highlight-green { border-color: var(--lv-ok); background: #f0fdf4; }
 
   /* ─── コートボード ─── */
   .lv-board {
@@ -161,27 +182,50 @@
     border-radius: 8px;
     padding: 18px;
     margin-bottom: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.04);
   }
   .lv-section-title {
     font-family: var(--font-display);
-    font-size: 11px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.18em;
-    color: var(--lv-sub);
-    margin-bottom: 12px;
-    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.14em;
+    color: var(--lv-text);
+    margin-bottom: 14px;
+    display: flex; align-items: center; gap: 10px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--lv-line);
   }
-  .lv-section-title::before {
-    content: ""; width: 14px; height: 1px; background: var(--lv-sub);
-  }
-  .lv-board-inner {
-    display: grid; gap: 6px;
-  }
-  .lv-court {
+
+  /* ─── ステータス凡例 (色の見方) ─── */
+  .lv-legend {
+    display: flex; gap: 12px; flex-wrap: wrap;
+    margin-bottom: 12px; padding: 10px 12px;
     background: var(--lv-surface-2);
-    border: 1px solid var(--lv-line);
-    border-radius: 6px;
-    padding: 8px 6px;
-    min-height: 88px;
+    border-radius: 6px; border: 1px solid var(--lv-line);
+    font-size: 11px;
+  }
+  .lv-legend-item {
+    display: flex; align-items: center; gap: 6px;
+    font-weight: 600;
+  }
+  .lv-legend-swatch {
+    width: 16px; height: 16px; border-radius: 3px;
+    border: 1.5px solid;
+  }
+  .lv-legend-swatch.empty   { background: #fff; border-color: var(--lv-line-strong); }
+  .lv-legend-swatch.active  { background: var(--lv-accent); border-color: var(--lv-accent); }
+  .lv-legend-swatch.extra   { background: var(--lv-purple); border-color: var(--lv-purple); }
+
+  .lv-board-inner {
+    display: grid; gap: 8px;
+  }
+
+  /* ─── 台 (コート) - ステータス別色分け強化 ─── */
+  .lv-court {
+    background: #fff;
+    border: 2px solid var(--lv-line);
+    border-radius: 8px;
+    padding: 10px 8px;
+    min-height: 100px;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     position: relative;
@@ -189,106 +233,156 @@
     transition: all .15s;
     overflow: hidden;
   }
+
+  /* 空き台: 緑チェック・薄い緑背景 */
   .lv-court.empty {
-    color: var(--lv-sub);
-    background: rgba(255,255,255,.02);
+    background: #f0fdf4;
+    border-color: #86efac;
+    color: var(--lv-ok);
   }
   .lv-court.empty:hover {
-    border-color: var(--lv-sub);
-    background: rgba(255,255,255,.04);
+    border-color: var(--lv-ok);
+    background: #dcfce7;
   }
+  .lv-court.empty::after {
+    content: "空"; position: absolute; bottom: 4px;
+    font-size: 9px; font-weight: 700;
+    color: var(--lv-ok); letter-spacing: 0.1em;
+    background: rgba(255,255,255,.7);
+    padding: 1px 8px; border-radius: 10px;
+    border: 1px solid #86efac;
+  }
+
+  /* 進行中: 赤背景・白文字・脈動アニメ */
   .lv-court.active {
-    background: linear-gradient(180deg, #450a0a 0%, #7f1d1d 100%);
-    border-color: var(--lv-accent);
+    background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
+    border-color: #991b1b;
+    color: #fff;
     animation: lvCourtPulse 2.4s infinite;
+    box-shadow: 0 2px 8px rgba(220,38,38,.3);
   }
+
+  /* 団体追加台: 紫背景 */
   .lv-court.extra {
-    background: linear-gradient(180deg, #1e1b4b 0%, #312e81 100%);
-    border-color: #818cf8;
+    background: linear-gradient(180deg, #a78bfa 0%, #7c3aed 100%);
+    border-color: #5b21b6;
+    color: #fff;
   }
+
   @keyframes lvCourtPulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,.55); }
-    50%      { box-shadow: 0 0 0 8px rgba(220,38,38,0); }
+    0%, 100% { box-shadow: 0 2px 8px rgba(220,38,38,.3), 0 0 0 0 rgba(220,38,38,.5); }
+    50%      { box-shadow: 0 2px 8px rgba(220,38,38,.3), 0 0 0 6px rgba(220,38,38,0); }
   }
+
+  /* 台番号 (左上・大きく) */
   .lv-court-no {
-    position: absolute; top: 4px; left: 7px;
+    position: absolute; top: 4px; left: 6px;
     font-family: var(--font-mono);
-    font-size: 9px; font-weight: 600;
+    font-size: 11px; font-weight: 800;
     color: var(--lv-sub);
+    background: rgba(255,255,255,.95);
+    padding: 1px 6px; border-radius: 3px;
+    border: 1px solid var(--lv-line);
   }
-  .lv-court.active .lv-court-no { color: rgba(255,255,255,.6); }
+  .lv-court.active .lv-court-no,
+  .lv-court.extra .lv-court-no {
+    color: var(--lv-text);
+    background: rgba(255,255,255,.95);
+    border-color: transparent;
+  }
+
+  /* ラウンド (右上) */
   .lv-court-round {
     position: absolute; top: 4px; right: 6px;
     font-family: var(--font-display);
-    font-size: 8px; font-weight: 600;
-    padding: 2px 5px; border-radius: 3px;
-    background: rgba(255,255,255,.12);
+    font-size: 9px; font-weight: 700;
+    padding: 2px 6px; border-radius: 3px;
+    background: rgba(0,0,0,.12);
+    color: var(--lv-text);
     letter-spacing: 0.04em;
-    text-transform: uppercase;
   }
-  .lv-court-p {
-    font-size: 11px; font-weight: 700;
-    line-height: 1.25;
-    margin-top: 2px;
-    max-width: 100%;
-    overflow: hidden; text-overflow: ellipsis;
-    text-align: center;
-  }
-  .lv-court-team {
-    font-size: 9px; opacity: .7;
-    text-align: center;
-    overflow: hidden; text-overflow: ellipsis;
-    max-width: 100%;
-  }
-  .lv-court-vs {
-    font-family: var(--font-display);
-    font-size: 8px; opacity: .5;
-    margin: 3px 0; letter-spacing: 0.12em;
-  }
-  .lv-court-empty-label {
-    font-size: 10px; color: var(--lv-sub);
-  }
-  .lv-hq {
-    margin-top: 12px;
-    background: var(--lv-accent);
+  .lv-court.active .lv-court-round,
+  .lv-court.extra .lv-court-round {
+    background: rgba(255,255,255,.25);
     color: #fff;
-    text-align: center;
-    padding: 8px;
-    border-radius: 5px;
-    font-family: var(--font-display);
-    font-size: 10px; font-weight: 700;
-    letter-spacing: 0.2em;
   }
 
-  /* ─── 試合タブ (進行中/次/終了した試合) ─── */
+  /* 選手名 (大きく・読みやすく) */
+  .lv-court-p {
+    font-size: 13px; font-weight: 800;
+    line-height: 1.25;
+    margin-top: 4px;
+    max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis;
+    text-align: center;
+    text-shadow: 0 1px 2px rgba(0,0,0,.15);
+  }
+  .lv-court.empty .lv-court-p { text-shadow: none; color: var(--lv-ok); }
+
+  .lv-court-team {
+    font-size: 10px; opacity: .9;
+    text-align: center;
+    overflow: hidden; text-overflow: ellipsis;
+    max-width: 100%; font-weight: 600;
+  }
+
+  .lv-court-vs {
+    font-family: var(--font-display);
+    font-size: 9px; opacity: .7;
+    margin: 3px 0; letter-spacing: 0.15em;
+    font-weight: 700;
+  }
+
+  .lv-court-empty-label {
+    display: none;  /* ::after で「空」表示するため */
+  }
+
+  /* 本部 (BENCH) 表示 */
+  .lv-hq {
+    margin-top: 14px;
+    background: var(--lv-header);
+    color: #fff;
+    text-align: center;
+    padding: 10px;
+    border-radius: 6px;
+    font-family: var(--font-display);
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 0.22em;
+  }
+
+  /* ─── 試合タブ ─── */
   .lv-tabs {
     display: flex; gap: 0;
-    border-bottom: 1px solid var(--lv-line);
-    margin-bottom: 12px;
+    border-bottom: 2px solid var(--lv-line);
+    margin-bottom: 14px;
+    background: var(--lv-surface);
+    border-radius: 8px 8px 0 0;
+    padding: 0 8px;
   }
   .lv-tab {
     background: transparent;
     color: var(--lv-sub);
     border: none;
-    padding: 11px 16px;
-    font-family: var(--font-body); font-size: 13px;
-    font-weight: 600; cursor: pointer;
-    border-bottom: 2px solid transparent;
+    padding: 13px 18px;
+    font-family: var(--font-body); font-size: 14px;
+    font-weight: 700; cursor: pointer;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
     transition: all .12s;
   }
   .lv-tab:hover { color: var(--lv-text); }
   .lv-tab.active {
-    color: var(--lv-text);
+    color: var(--lv-accent);
     border-bottom-color: var(--lv-accent);
   }
   .lv-tab-count {
     display: inline-block;
-    background: var(--lv-surface-2);
-    color: var(--lv-sub);
+    background: var(--lv-line);
+    color: var(--lv-text);
     font-family: var(--font-mono);
-    font-size: 10px; font-weight: 700;
-    padding: 1px 6px; border-radius: 8px;
-    margin-left: 5px;
+    font-size: 11px; font-weight: 800;
+    padding: 2px 8px; border-radius: 10px;
+    margin-left: 6px;
   }
   .lv-tab.active .lv-tab-count {
     background: var(--lv-accent); color: #fff;
@@ -297,27 +391,33 @@
   /* ─── 進行中試合ロー ─── */
   .lv-match {
     background: var(--lv-surface);
-    border: 1px solid var(--lv-line);
-    border-radius: 6px;
-    padding: 12px 14px;
-    margin-bottom: 6px;
+    border: 2px solid var(--lv-accent);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
     display: grid;
-    grid-template-columns: 60px 1fr auto;
-    gap: 14px;
+    grid-template-columns: 70px 1fr auto;
+    gap: 16px;
     align-items: center;
     cursor: pointer;
     transition: all .12s;
+    box-shadow: 0 1px 3px rgba(220,38,38,.1);
   }
-  .lv-match:hover { border-color: var(--lv-accent); background: var(--lv-surface-2); }
+  .lv-match:hover {
+    border-color: var(--lv-accent);
+    box-shadow: 0 4px 12px rgba(220,38,38,.2);
+    transform: translateY(-1px);
+  }
   .lv-match-table {
-    background: var(--lv-accent);
+    background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
     color: #fff;
     font-family: var(--font-display);
-    font-size: 14px; font-weight: 700;
+    font-size: 18px; font-weight: 800;
     text-align: center;
-    padding: 5px;
-    border-radius: 4px;
+    padding: 8px;
+    border-radius: 6px;
     letter-spacing: -0.01em;
+    box-shadow: 0 2px 4px rgba(220,38,38,.3);
   }
   .lv-match-players {
     display: flex; align-items: center; gap: 12px;
@@ -356,13 +456,13 @@
   /* ─── 直近結果 (左右対比+勝敗強調) ─── */
   .lv-result {
     background: var(--lv-surface);
-    border: 1px solid var(--lv-line);
-    border-radius: 6px;
-    padding: 14px 16px;
-    margin-bottom: 6px;
+    border: 2px solid var(--lv-line);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 8px;
     display: grid;
-    grid-template-columns: 1fr 90px 1fr;
-    gap: 12px;
+    grid-template-columns: 1fr 110px 1fr;
+    gap: 14px;
     align-items: center;
   }
   .lv-result-side {
@@ -370,54 +470,80 @@
   }
   .lv-result-side.right { text-align: right; }
   .lv-result-side .name {
-    font-size: 14px; font-weight: 700;
+    font-size: 15px; font-weight: 700;
     overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
   }
   .lv-result-side .team {
-    font-size: 11px; color: var(--lv-sub);
-    margin-top: 2px;
+    font-size: 12px; color: var(--lv-sub);
+    margin-top: 3px;
     overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .lv-result-side.loser { opacity: 0.45; }
-  .lv-result-side.loser .name { text-decoration: line-through; text-decoration-thickness: 1px; }
-  .lv-result-side.winner {
-    color: var(--lv-text);
+  .lv-result-side.loser { opacity: 0.55; color: var(--lv-sub); }
+  .lv-result-side.loser .name {
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
+    color: var(--lv-sub);
   }
-  .lv-result-side.winner .name { color: var(--lv-warn); }
+  .lv-result-side.winner .name {
+    color: var(--lv-accent);
+    font-weight: 800;
+  }
+  .lv-result-side.winner::before {
+    content: "勝";
+    display: inline-block;
+    background: var(--lv-accent);
+    color: #fff;
+    font-size: 11px; font-weight: 800;
+    padding: 2px 7px;
+    border-radius: 3px;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .lv-result-side.right.winner::before {
+    margin-right: 0; margin-left: 6px;
+  }
+  .lv-result-side.right.winner {
+    text-align: right;
+  }
   .lv-result-score {
-    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 6px 10px;
+    background: var(--lv-surface-2);
+    border-radius: 6px;
   }
   .lv-result-counts {
     font-family: var(--font-mono);
-    font-size: 22px; font-weight: 700;
+    font-size: 28px; font-weight: 800;
     letter-spacing: 0;
     line-height: 1;
+    color: var(--lv-text);
   }
   .lv-result-counts .winner-pt {
-    color: var(--lv-warn);
+    color: var(--lv-accent);
   }
   .lv-result-counts .sep {
     color: var(--lv-sub);
-    margin: 0 4px;
+    margin: 0 5px;
   }
   .lv-result-event {
     font-family: var(--font-display);
-    font-size: 9px; font-weight: 600;
-    color: var(--lv-sub);
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
+    font-size: 10px; font-weight: 700;
+    color: var(--lv-text-2);
+    letter-spacing: 0.04em;
   }
 
   /* ─── 残試合 ─── */
   .lv-next {
     display: grid;
-    grid-template-columns: 60px 1fr;
-    gap: 12px; padding: 9px 14px;
+    grid-template-columns: 70px 1fr;
+    gap: 14px; padding: 11px 16px;
     border-bottom: 1px solid var(--lv-line);
     align-items: center;
+    background: var(--lv-surface);
   }
+  .lv-next:hover { background: var(--lv-surface-2); }
   .lv-next:last-child { border-bottom: none; }
   .lv-next-tag {
     font-family: var(--font-display);
@@ -438,23 +564,27 @@
   .lv-search input {
     width: 100%;
     background: var(--lv-surface);
-    border: 1px solid var(--lv-line);
+    border: 2px solid var(--lv-line);
     color: var(--lv-text);
-    padding: 11px 16px;
-    border-radius: 6px;
-    font-family: inherit; font-size: 13px;
+    padding: 12px 18px;
+    border-radius: 8px;
+    font-family: inherit; font-size: 14px;
+    font-weight: 500;
   }
-  .lv-search input::placeholder { color: var(--lv-sub); }
+  .lv-search input::placeholder { color: var(--lv-sub); font-weight: 400; }
   .lv-search input:focus {
     outline: none;
-    border-color: var(--lv-text);
+    border-color: var(--lv-accent);
+    box-shadow: 0 0 0 3px rgba(220,38,38,.1);
   }
   .lv-search-hit {
-    background: rgba(245,158,11,.08);
-    border: 1px solid var(--lv-warn);
-    padding: 9px 14px; border-radius: 5px;
+    background: #fffbeb;
+    border: 2px solid var(--lv-warn);
+    padding: 10px 14px; border-radius: 6px;
     margin: 6px 0;
-    font-size: 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--lv-text);
   }
 
   /* ─── 大画面モード ─── */
@@ -783,16 +913,16 @@ const LV = {
     const totalCompleted = Object.values(s.event_stats || {})
       .reduce((a, e) => a + (e.completed || 0), 0);
     main.appendChild(h("div", { className: "lv-stats" },
-      h("div", { className: "lv-stat" },
+      h("div", { className: "lv-stat highlight-red" },
         h("div", { className: "lv-stat-num red" }, String(s.on_table.length)),
-        h("div", { className: "lv-stat-label" }, "進行中")),
-      h("div", { className: "lv-stat" },
+        h("div", { className: "lv-stat-label" }, "進行中の試合")),
+      h("div", { className: "lv-stat highlight-yellow" },
         h("div", { className: "lv-stat-num yellow" }, String(s.callable.length)),
         h("div", { className: "lv-stat-label" }, "残試合数")),
-      h("div", { className: "lv-stat" },
+      h("div", { className: "lv-stat highlight-blue" },
         h("div", { className: "lv-stat-num blue" }, String(s.waiting || 0)),
         h("div", { className: "lv-stat-label" }, "待機中")),
-      h("div", { className: "lv-stat" },
+      h("div", { className: "lv-stat highlight-green" },
         h("div", { className: "lv-stat-num green" }, String(totalCompleted)),
         h("div", { className: "lv-stat-label" }, "終了した試合")),
     ));
@@ -830,9 +960,26 @@ const LV = {
     const { court_rows, court_cols, hq_position } = s.tournament;
     const wrap = h("div", { className: "lv-board" });
     wrap.appendChild(h("div", { className: "lv-section-title" }, "台配置 (LIVE)"));
+
+    // 色分け凡例
+    const activeCount = s.tables.filter(t => t.match && !t.is_extra).length;
+    const extraCount = s.tables.filter(t => t.match && t.is_extra).length;
+    const emptyCount = s.tables.filter(t => !t.match).length;
+    wrap.appendChild(h("div", { className: "lv-legend" },
+      h("div", { className: "lv-legend-item" },
+        h("span", { className: "lv-legend-swatch empty" }),
+        h("span", {}, "使用可 (" + emptyCount + "台)")),
+      h("div", { className: "lv-legend-item" },
+        h("span", { className: "lv-legend-swatch active" }),
+        h("span", {}, "進行中 (" + activeCount + "台)")),
+      extraCount > 0 ? h("div", { className: "lv-legend-item" },
+        h("span", { className: "lv-legend-swatch extra" }),
+        h("span", {}, "団体追加台 (" + extraCount + "台)")) : null,
+    ));
+
     const grid = h("div", { className: "lv-board-inner" });
     grid.style.gridTemplateColumns = `repeat(${court_cols}, 1fr)`;
-    grid.style.maxWidth = `${court_cols * 120}px`;
+    grid.style.maxWidth = `${court_cols * 130}px`;
     grid.style.margin = "0 auto";
 
     s.tables.forEach(t => {
@@ -840,11 +987,12 @@ const LV = {
         className: "lv-court " + (t.match ? "active" : "empty")
           + (t.is_extra ? " extra" : ""),
         onClick: () => t.match && LV.showCourtDetail(t),
+        title: t.match ? "クリックで詳細" : "空き台",
       });
-      cell.appendChild(h("div", { className: "lv-court-no" }, "T" + t.table_no));
+      cell.appendChild(h("div", { className: "lv-court-no" }, "台" + t.table_no));
       if (t.match) {
         cell.appendChild(h("div", { className: "lv-court-round" },
-          `${t.match.event || ""}`.slice(0, 10)));
+          `${(t.match.event || "").slice(0, 8)}`));
         // 選手1 + 所属
         cell.appendChild(h("div", { className: "lv-court-p" },
           t.match.player1_name || ""));
@@ -852,22 +1000,20 @@ const LV = {
           cell.appendChild(h("div", { className: "lv-court-team" }, t.match.player1_team));
         }
         cell.appendChild(h("div", { className: "lv-court-vs" },
-          t.is_extra ? "EXTRA" : "VS"));
+          t.is_extra ? "団体追加" : "VS"));
         cell.appendChild(h("div", { className: "lv-court-p" },
           t.match.player2_name || ""));
         if (t.match.player2_team) {
           cell.appendChild(h("div", { className: "lv-court-team" }, t.match.player2_team));
         }
-      } else {
-        cell.appendChild(h("div", { className: "lv-court-empty-label" }, "空"));
       }
       grid.appendChild(cell);
     });
     wrap.appendChild(grid);
     if (hq_position === "bottom") {
       wrap.appendChild(h("div", { className: "lv-hq",
-        style: { maxWidth: `${court_cols * 120}px`, margin: "12px auto 0" } },
-        "BENCH / 本部"));
+        style: { maxWidth: `${court_cols * 130}px`, margin: "14px auto 0" } },
+        "本部"));
     }
     return wrap;
   },

@@ -1652,36 +1652,40 @@ const A = {
  }
 
  // プラットフォーム別コード生成
+ // 注意: Jimdo は <style>/<script> をサニタイズで削除することがあるため、
+ // HTTPS iframe 方式に統一 (Render の HTTPS URL で動作)
  let code = "";
+ if (!formUrl.startsWith("https://")) {
+   errors.push("[致命] iframe方式は HTTPS 必須。「本番URL設定」で https:// で始まる URL を設定してください。");
+ }
  if (platform === "jimdo") {
-   // Jimdo: 自己完結型インラインHTML (iframe不使用なのでHTTPS問題回避)
-   codeArea.value = "Jimdoスニペットを生成中...";
-   try {
-     const r = await fetch(`/api/tournaments/${t.id}/entry-form-snippet?` + qs + "&as=text");
-     if (!r.ok) throw new Error("HTTP " + r.status);
-     code = await r.text();
-     codeArea.value = code;
-   } catch (e) {
-     codeArea.value = "// 生成失敗: " + e.message + "\n// fallback URL: " + snippetUrl;
-   }
+   // Jimdo: HTTPS iframe (Jimdo の HTML埋込ウィジェットで動作)
+   code =
+     `<!-- ${t.name} 申込フォーム (Jimdo HTML埋込ウィジェット用) -->\n` +
+     `<div style="width:100%;max-width:840px;margin:20px auto;padding:0">\n` +
+     `  <iframe src="${formUrl}"\n` +
+     `          width="100%" height="1600"\n` +
+     `          frameborder="0" scrolling="auto"\n` +
+     `          style="border:0;display:block;width:100%;background:#fff;border-radius:8px"\n` +
+     `          title="${t.name} 申込フォーム"\n` +
+     `          loading="lazy"\n` +
+     `          allow="clipboard-write"></iframe>\n` +
+     `</div>`;
  } else if (platform === "studio") {
-   // STUDIO: HTTPS iframe (STUDIO はHTTPSページが多いので動作する)
-   if (!formUrl.startsWith("https://")) {
-     errors.push("[STUDIO] iframe方式はHTTPS必須。「本番URL設定」を確認してください。");
-   }
+   // STUDIO: HTTPS iframe
    code =
      `<!-- ${t.name} 申込フォーム (STUDIO 埋め込みHTML用) -->\n` +
      `<div style="width:100%;max-width:840px;margin:0 auto">\n` +
      `  <iframe src="${formUrl}"\n` +
-     `          width="100%" height="1400"\n` +
+     `          width="100%" height="1600"\n` +
      `          style="border:0;display:block;width:100%;background:#fff"\n` +
      `          title="${t.name} 申込フォーム"\n` +
      `          loading="lazy"\n` +
      `          referrerpolicy="no-referrer-when-downgrade"\n` +
      `          allow="clipboard-write"></iframe>\n` +
      `</div>`;
-   codeArea.value = code;
  }
+ codeArea.value = code;
 
  const wn = document.getElementById("embedWarn");
  if (wn) {
@@ -1710,11 +1714,10 @@ const A = {
  style: { padding: "10px 14px", background: "#f0fdf4",
  borderLeft: "3px solid #059669", borderRadius: "0 4px 4px 0" } },
  h("strong", {}, "Jimdo モード: "),
- "完全自己完結型 HTML スニペット (iframe不使用)。" +
- "HTTPS非対応サイトでも動作します。",
+ "HTTPS iframe で埋込み (Jimdo HTML 埋込ウィジェット用)。CSS/JS が安全に分離されます。",
  h("br", {}),
  h("strong", {}, "STUDIO モード: "),
- "HTTPS iframe。ホスティング先が HTTPS の場合に使用。"),
+ "HTTPS iframe (構造はJimdo版とほぼ同じ)。"),
 
  // プラットフォーム切替
  h("div", { className: "field" },
