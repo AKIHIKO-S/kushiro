@@ -234,10 +234,18 @@ try {
   addMCol("referee_entrant_id", "TEXT");
   // 団体戦の追加台 (2台同時使用): カンマ区切り "5,6" 等
   addMCol("extra_tables", "TEXT DEFAULT ''");
-  // entrants にブロック情報追加 (Aブロック・Bブロック等)
+  // 再コール回数 (1=初回,2=再コール1回目=注意,3=再コール2回目=警告,4+ = 最終警告)
+  addMCol("call_count", "INTEGER DEFAULT 0");
+  // entrants にブロック情報・大会固有番号追加
   const ecols = sqlite.prepare("PRAGMA table_info(entrants)").all();
   if (ecols.length && !ecols.find(c => c.name === "block")) {
     sqlite.exec("ALTER TABLE entrants ADD COLUMN block TEXT DEFAULT ''");
+  }
+  if (ecols.length && !ecols.find(c => c.name === "bracket_number")) {
+    sqlite.exec("ALTER TABLE entrants ADD COLUMN bracket_number INTEGER DEFAULT 0");
+  }
+  if (ecols.length && !ecols.find(c => c.name === "bracket_side")) {
+    sqlite.exec("ALTER TABLE entrants ADD COLUMN bracket_side TEXT DEFAULT ''");
   }
 } catch (e) { console.error("migration error:", e.message); }
 
@@ -1055,6 +1063,11 @@ const entrantStmts = {
     UPDATE entrants SET partner_player_id = ?, updated_at = datetime('now','localtime')
     WHERE id = ?
   `),
+  setBracketNumber: sqlite.prepare(`
+    UPDATE entrants SET bracket_number = ?, bracket_side = ?,
+      updated_at = datetime('now','localtime')
+    WHERE id = ?
+  `),
 };
 
 function createEntrant(data) {
@@ -1252,6 +1265,16 @@ function linkEntrantToPlayer(entrantId, playerId, isPartner) {
   return entrantStmts.get.get(entrantId);
 }
 
+// 選手番号 (大会固有・左右別) を手動設定
+function setEntrantBracketNumber(entrantId, number, side) {
+  const e = entrantStmts.get.get(entrantId);
+  if (!e) return null;
+  const n = Math.max(0, Math.min(999, parseInt(number) || 0));
+  const s = side === "L" || side === "R" ? side : (e.bracket_side || "");
+  entrantStmts.setBracketNumber.run(n, s, entrantId);
+  return entrantStmts.get.get(entrantId);
+}
+
 // 名前+所属から master player を検索 (リンク提案用)
 function suggestPlayerForEntrant(name, team) {
   return findPlayerByName(name, team); // 厳密一致のみ
@@ -1316,9 +1339,13 @@ const opStmts = {
   setStatus: sqlite.prepare(`UPDATE matches SET status=? WHERE id=?`),
   setTable: sqlite.prepare(`
     UPDATE matches SET table_no=?, status='on_table', called_at=datetime('now','localtime'),
-      started_at=datetime('now','localtime') WHERE id=?
+      started_at=datetime('now','localtime'),
+      call_count = COALESCE(call_count,0) + 1 WHERE id=?
   `),
   clearTable: sqlite.prepare(`UPDATE matches SET table_no=0, status='pending' WHERE id=?`),
+  setCallCount: sqlite.prepare(`UPDATE matches SET call_count=? WHERE id=?`),
+  bumpCallCount: sqlite.prepare(`UPDATE matches SET call_count = COALESCE(call_count,0) + 1 WHERE id=?`),
+  resetCallCount: sqlite.prepare(`UPDATE matches SET call_count=0 WHERE id=?`),
   setReferee: sqlite.prepare(`UPDATE matches SET referee_id=?, referee_name=? WHERE id=?`),
   setResult: sqlite.prepare(`
     UPDATE matches SET
@@ -1564,6 +1591,33 @@ function generateBracket(tournamentId, event, options) {
     });
   });
   txn();
+
+  // ─── 選手番号 (大会固有・左右別) を割り当て ───
+  // 左半分: 上から 1, 2, 3, ...
+  // 右半分: 上から 1, 2, 3, ... (別カウント)
+  const numberTxn = sqlite.transaction(() => {
+    const halfSize = bracketSize / 2;
+    matchesByRound[0].forEach((m, i) => {
+      // round1 における順序: bracket_pos = i (= 0, 1, 2, ...)
+      // 各試合の player1/2 にそれぞれ番号
+      const slot1 = i * 2;     // 0, 2, 4, ...
+      const slot2 = i * 2 + 1; // 1, 3, 5, ...
+      // 左半分かどうか
+      const isLeft1 = slot1 < halfSize;
+      const isLeft2 = slot2 < halfSize;
+      const num1 = isLeft1 ? (slot1 + 1) : (slot1 - halfSize + 1);
+      const num2 = isLeft2 ? (slot2 + 1) : (slot2 - halfSize + 1);
+      const side1 = isLeft1 ? "L" : "R";
+      const side2 = isLeft2 ? "L" : "R";
+      if (m.player1 && m.player1.id) {
+        entrantStmts.setBracketNumber.run(num1, side1, m.player1.id);
+      }
+      if (m.player2 && m.player2.id) {
+        entrantStmts.setBracketNumber.run(num2, side2, m.player2.id);
+      }
+    });
+  });
+  try { numberTxn(); } catch (e) { console.error("bracket_number assignment error:", e); }
 
   return {
     success: true,
@@ -2146,6 +2200,19 @@ function setRefereeRequired(matchId, required) {
   return stmts.getMatch.get(matchId);
 }
 
+// 再コール回数を設定 (manual override)
+function setCallCount(matchId, count) {
+  const c = Math.max(0, Math.min(99, parseInt(count) || 0));
+  opStmts.setCallCount.run(c, matchId);
+  return stmts.getMatch.get(matchId);
+}
+
+// 再コール +1
+function bumpCallCount(matchId) {
+  opStmts.bumpCallCount.run(matchId);
+  return stmts.getMatch.get(matchId);
+}
+
 // 任意の選手を審判に割り当て (敗者プール外でもOK)
 // opts.referee_name でDB外の氏名指定可能 (refereeId 未指定時)
 function assignAnyReferee(matchId, refereeId, opts) {
@@ -2261,9 +2328,19 @@ function getOperationState(tournamentId) {
   const tournament = getTournament(tournamentId);
   if (!tournament) return null;
 
-  const allMatches = sqlite.prepare(
-    `SELECT * FROM matches WHERE tournament_id=? ORDER BY bracket_round ASC, bracket_pos ASC, match_no ASC`
-  ).all(tournamentId).map(m => ({ ...m, sets: JSON.parse(m.sets_json || "[]") }));
+  // entrants から bracket_number / bracket_side を join (LEFT JOIN なので未登録選手も問題なし)
+  const allMatches = sqlite.prepare(`
+    SELECT m.*,
+      e1.bracket_number AS player1_bracket_number,
+      e1.bracket_side AS player1_bracket_side,
+      e2.bracket_number AS player2_bracket_number,
+      e2.bracket_side AS player2_bracket_side
+    FROM matches m
+    LEFT JOIN entrants e1 ON e1.id = m.player1_entrant_id
+    LEFT JOIN entrants e2 ON e2.id = m.player2_entrant_id
+    WHERE m.tournament_id=?
+    ORDER BY m.bracket_round ASC, m.bracket_pos ASC, m.match_no ASC
+  `).all(tournamentId).map(m => ({ ...m, sets: JSON.parse(m.sets_json || "[]") }));
 
   const onTable = allMatches.filter(m => m.status === "on_table");
   const callableRaw = allMatches.filter(m => m.status === "pending");
@@ -3241,6 +3318,33 @@ function importFromMatches(tournamentId, data) {
   });
   txn();
 
+  // 選手番号 (大会固有・左右別) を自動付与
+  // round1 の bracket_pos から slot を逆算し、左半分=1..N/2、右半分=1..N/2 で番号付け
+  try {
+    const numberTxn = sqlite.transaction(() => {
+      const halfSize = bracketSize / 2;
+      round1Matches.forEach(m => {
+        const p = m.bracket_pos || 0;
+        const slot1 = p * 2;
+        const slot2 = p * 2 + 1;
+        const isLeft1 = slot1 < halfSize;
+        const isLeft2 = slot2 < halfSize;
+        const num1 = isLeft1 ? (slot1 + 1) : (slot1 - halfSize + 1);
+        const num2 = isLeft2 ? (slot2 + 1) : (slot2 - halfSize + 1);
+        const side1 = isLeft1 ? "L" : "R";
+        const side2 = isLeft2 ? "L" : "R";
+        // ensureEntrant したキー(name+team)で entrant_id を探して付与
+        const k1 = (m.player1_name || "") + "|" + (m.player1_team || "");
+        const k2 = (m.player2_name || "") + "|" + (m.player2_team || "");
+        const eid1 = entrantByKey.get(k1);
+        const eid2 = entrantByKey.get(k2);
+        if (eid1) entrantStmts.setBracketNumber.run(num1, side1, eid1);
+        if (eid2) entrantStmts.setBracketNumber.run(num2, side2, eid2);
+      });
+    });
+    numberTxn();
+  } catch (e) { console.error("bracket_number assignment error (import):", e); }
+
   return {
     success: true,
     event: data.event,
@@ -3443,6 +3547,7 @@ module.exports = {
   // 進行管理
   generateBracket, finishMatchOp, callMatch, uncallMatch, assignReferee,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
+  setCallCount, bumpCallCount,
   getPlayerRefereeLock, getPlayerPlayingLock,
   getEventPriority, getPlayerSurvivalByEvent,
   getPriorityLockForPlayer, getMatchPriorityBlocks,
@@ -3459,6 +3564,7 @@ module.exports = {
   exportBracket, exportAllBrackets, importBracket,
   // Entrants (大会参加選手) - マスタDBと分離
   createEntrant, updateEntrant, deleteEntrant, getEntrant, getEntrants,
+  setEntrantBracketNumber,
   linkEntrantToPlayer, suggestPlayerForEntrant, createPlayerFromEntrant,
   validateEntrants, getEntrantStats,
   // 名前ユーティリティ

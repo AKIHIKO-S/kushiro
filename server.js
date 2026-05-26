@@ -310,6 +310,16 @@ app.put("/api/entrants/:id/link", requireAdmin, (req, res) => {
   const e = db.linkEntrantToPlayer(req.params.id, player_id || null, !!is_partner);
   res.json(e);
 });
+// 選手番号 (大会固有・左右別) を手動設定
+app.put("/api/entrants/:id/bracket-number", requireAdmin, (req, res) => {
+  const e = db.setEntrantBracketNumber(
+    req.params.id,
+    parseInt(req.body?.number) || 0,
+    (req.body?.side === "R" ? "R" : (req.body?.side === "L" ? "L" : ""))
+  );
+  if (!e) return res.status(404).json({ error: "エントリーが見つかりません" });
+  res.json(e);
+});
 // マスタDBにリンクすべき選手の提案
 app.get("/api/entrants/:id/suggest-player", (req, res) => {
   const e = db.getEntrant(req.params.id);
@@ -877,6 +887,18 @@ app.post("/api/matches/:id/referee", requireAdmin, (req, res) => {
 
 app.put("/api/matches/:id/referee-required", requireAdmin, (req, res) => {
   res.json(db.setRefereeRequired(req.params.id, !!req.body?.required));
+});
+
+// 再コール回数 設定 (admin)
+app.put("/api/matches/:id/call-count", requireAdmin, (req, res) => {
+  const count = req.body && req.body.count !== undefined ? req.body.count : null;
+  if (count === null) return res.status(400).json({ error: "count が必要" });
+  res.json(db.setCallCount(req.params.id, count));
+});
+
+// 再コール +1 (admin)
+app.post("/api/matches/:id/recall", requireAdmin, (req, res) => {
+  res.json(db.bumpCallCount(req.params.id));
 });
 
 // 試合の手動編集 (任意のフィールド)

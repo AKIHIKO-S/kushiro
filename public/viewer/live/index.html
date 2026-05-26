@@ -587,6 +587,94 @@
     color: var(--lv-text);
   }
 
+  /* ─── 再コール 注意/警告マーク (観戦者向け) ─── */
+  .lv-call-badge {
+    position: absolute;
+    top: 4px; left: 50%;
+    transform: translateX(-50%);
+    background: #fef3c7;
+    color: #92400e;
+    border: 1.5px solid #f59e0b;
+    font-family: var(--font-display);
+    font-size: 9px; font-weight: 800;
+    padding: 1px 6px;
+    border-radius: 8px;
+    letter-spacing: 0.08em;
+    z-index: 2;
+    box-shadow: 0 1px 4px rgba(0,0,0,.15);
+    white-space: nowrap;
+  }
+  .lv-call-badge.warning {
+    background: #fed7aa;
+    color: #7c2d12;
+    border-color: #ea580c;
+    animation: lvCallPulse 1.5s infinite;
+  }
+  .lv-call-badge.critical {
+    background: #fecaca;
+    color: #7f1d1d;
+    border-color: #dc2626;
+    animation: lvCallPulse 1s infinite;
+  }
+  @keyframes lvCallPulse {
+    0%, 100% { opacity: 1; transform: translateX(-50%) scale(1); }
+    50%      { opacity: .6; transform: translateX(-50%) scale(1.08); }
+  }
+  /* 進行中ロー用 (テキスト並び) */
+  .lv-match-call-badge {
+    display: inline-block;
+    background: #fef3c7;
+    color: #92400e;
+    border: 1.5px solid #f59e0b;
+    font-family: var(--font-display);
+    font-size: 10px; font-weight: 800;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 8px;
+    vertical-align: middle;
+    letter-spacing: 0.05em;
+  }
+  .lv-match-call-badge.warning {
+    background: #fed7aa; color: #7c2d12; border-color: #ea580c;
+    animation: lvCallPulse 1.5s infinite;
+  }
+  .lv-match-call-badge.critical {
+    background: #fecaca; color: #7f1d1d; border-color: #dc2626;
+    animation: lvCallPulse 1s infinite;
+  }
+
+  /* ─── 選手番号バッジ (大会固有・左右別) ─── */
+  .lv-pnum {
+    display: inline-block;
+    background: rgba(0,0,0,.18);
+    color: inherit;
+    font-family: var(--font-mono);
+    font-weight: 800;
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 7px;
+    margin-right: 3px;
+    vertical-align: middle;
+    letter-spacing: 0;
+  }
+  .lv-court.empty .lv-pnum { background: rgba(21,128,61,.12); color: var(--lv-ok); }
+  .lv-court.active .lv-pnum,
+  .lv-court.extra .lv-pnum { background: rgba(255,255,255,.28); color: #fff; }
+  .lv-match-name .lv-pnum,
+  .lv-result-side .lv-pnum,
+  .lv-detail-val .lv-pnum {
+    background: var(--lv-header);
+    color: #fff;
+    font-size: 10px;
+    padding: 1px 6px;
+  }
+  .lv-next-content .lv-pnum {
+    background: var(--lv-header);
+    color: #fff;
+    font-size: 10px;
+    padding: 1px 5px;
+  }
+
   /* ─── 大画面モード ─── */
   body.lv-big { font-size: 18px; }
   body.lv-big .lv-court { min-height: 130px; padding: 14px 8px; }
@@ -991,18 +1079,26 @@ const LV = {
       });
       cell.appendChild(h("div", { className: "lv-court-no" }, "台" + t.table_no));
       if (t.match) {
+        // 再コール 注意/警告マーク (観戦者向け)
+        const cc = parseInt(t.match.call_count) || 0;
+        if (cc >= 2) {
+          const cls = cc >= 4 ? "critical" : (cc >= 3 ? "warning" : "");
+          const label = cc >= 4 ? "再コール " + (cc-1) + "回!" :
+                        cc >= 3 ? "再コール 2回" : "再コール 1回";
+          cell.appendChild(h("div", { className: "lv-call-badge " + cls }, label));
+        }
         cell.appendChild(h("div", { className: "lv-court-round" },
           `${(t.match.event || "").slice(0, 8)}`));
-        // 選手1 + 所属
-        cell.appendChild(h("div", { className: "lv-court-p" },
-          t.match.player1_name || ""));
+        // 選手1 + 番号 + 所属
+        cell.appendChild(LV.renderCourtPlayer(t.match.player1_name,
+          t.match.player1_bracket_number));
         if (t.match.player1_team) {
           cell.appendChild(h("div", { className: "lv-court-team" }, t.match.player1_team));
         }
         cell.appendChild(h("div", { className: "lv-court-vs" },
           t.is_extra ? "団体追加" : "VS"));
-        cell.appendChild(h("div", { className: "lv-court-p" },
-          t.match.player2_name || ""));
+        cell.appendChild(LV.renderCourtPlayer(t.match.player2_name,
+          t.match.player2_bracket_number));
         if (t.match.player2_team) {
           cell.appendChild(h("div", { className: "lv-court-team" }, t.match.player2_team));
         }
@@ -1052,13 +1148,19 @@ const LV = {
           "残試合はありません。"));
       } else {
         s.callable.slice(0, 20).forEach(m => {
+          const p1Num = m.player1_bracket_number;
+          const p2Num = m.player2_bracket_number;
           content.appendChild(h("div", { className: "lv-next" },
             h("div", { className: "lv-next-tag" },
               `${(m.event || "").slice(0, 10)}`, h("br", {}),
               `${(m.round || "").slice(0, 10)}`),
             h("div", { className: "lv-next-content" },
+              p1Num && p1Num > 0
+                ? h("span", { className: "lv-pnum" }, "#" + p1Num) : null,
               h("span", {}, m.player1_name || "?"),
               h("span", { className: "vs-sep" }, "VS"),
+              p2Num && p2Num > 0
+                ? h("span", { className: "lv-pnum" }, "#" + p2Num) : null,
               h("span", {}, m.player2_name || "?")),
           ));
         });
@@ -1076,6 +1178,32 @@ const LV = {
     return wrap;
   },
 
+  // コートセル用 選手名 (番号付き)
+  renderCourtPlayer(name, num) {
+    const el = h("div", { className: "lv-court-p" });
+    if (num && num > 0) el.appendChild(h("span", { className: "lv-pnum" }, "#" + num));
+    el.appendChild(document.createTextNode(name || ""));
+    return el;
+  },
+
+  // 進行中ロー用 選手名 (番号付き) - 左右用
+  renderMatchPlayerName(name, num) {
+    const el = h("div", { className: "lv-match-name" });
+    if (num && num > 0) el.appendChild(h("span", { className: "lv-pnum" }, "#" + num));
+    el.appendChild(document.createTextNode(name || "?"));
+    return el;
+  },
+
+  // 再コール バッジ
+  callBadgeEl(count) {
+    const cc = parseInt(count) || 0;
+    if (cc < 2) return null;
+    const cls = cc >= 4 ? "critical" : (cc >= 3 ? "warning" : "");
+    const label = cc >= 4 ? "再コール " + (cc-1) + "回!" :
+                  cc >= 3 ? "再コール 2回" : "再コール 1回";
+    return h("span", { className: "lv-match-call-badge " + cls }, label);
+  },
+
   renderOngoing(m) {
     return h("div", { className: "lv-match",
         onClick: () => LV.showMatchDetail(m) },
@@ -1083,17 +1211,18 @@ const LV = {
         "T" + m.table_no + (m.extra_tables ? "+" + m.extra_tables : "")),
       h("div", { className: "lv-match-players" },
         h("div", { className: "lv-match-side" },
-          h("div", { className: "lv-match-name" }, m.player1_name || "?"),
+          LV.renderMatchPlayerName(m.player1_name, m.player1_bracket_number),
           h("div", { className: "lv-match-team" }, m.player1_team || ""),
         ),
         h("div", { className: "lv-match-vs" }, "VS"),
         h("div", { className: "lv-match-side right" },
-          h("div", { className: "lv-match-name" }, m.player2_name || "?"),
+          LV.renderMatchPlayerName(m.player2_name, m.player2_bracket_number),
           h("div", { className: "lv-match-team" }, m.player2_team || ""),
         ),
       ),
       h("div", { className: "lv-match-meta" },
-        h("div", {}, `${m.event || ""} ${m.round || ""}`),
+        h("div", {}, `${m.event || ""} ${m.round || ""}`,
+          LV.callBadgeEl(m.call_count)),
         m.referee_name
           ? h("div", { className: "ref" }, "審判: " + m.referee_name)
           : null,
@@ -1114,10 +1243,18 @@ const LV = {
     const rightSide = p1Won ? "loser" : "winner";
     const leftSets = p1Won ? (m.winner_sets || 0) : (m.loser_sets || 0);
     const rightSets = p1Won ? (m.loser_sets || 0) : (m.winner_sets || 0);
+    const p1Num = m.player1_bracket_number;
+    const p2Num = m.player2_bracket_number;
+    const nameEl = (name, num) => {
+      const el = h("div", { className: "name" });
+      if (num && num > 0) el.appendChild(h("span", { className: "lv-pnum" }, "#" + num));
+      el.appendChild(document.createTextNode(name || "?"));
+      return el;
+    };
     return h("div", { className: "lv-result",
         onClick: () => LV.showMatchDetail(m) },
       h("div", { className: "lv-result-side " + leftSide },
-        h("div", { className: "name" }, m.player1_name || "?"),
+        nameEl(m.player1_name, p1Num),
         h("div", { className: "team" }, m.player1_team || ""),
       ),
       h("div", { className: "lv-result-score" },
@@ -1130,7 +1267,7 @@ const LV = {
         ),
       ),
       h("div", { className: "lv-result-side right " + rightSide },
-        h("div", { className: "name" }, m.player2_name || "?"),
+        nameEl(m.player2_name, p2Num),
         h("div", { className: "team" }, m.player2_team || ""),
       ),
     );
@@ -1149,25 +1286,32 @@ const LV = {
       `第${i+1}セット: ${s[0]}-${s[1]}`).join(" · ");
     const closeFn = () => { overlay.innerHTML = ""; };
 
+    const p1Num = m.player1_bracket_number;
+    const p2Num = m.player2_bracket_number;
+    const playerVal = (name, num, team) => {
+      const el = h("div", { className: "lv-detail-val player" });
+      if (num && num > 0) el.appendChild(h("span", { className: "lv-pnum" }, "#" + num));
+      el.appendChild(document.createTextNode(name || "?"));
+      el.appendChild(h("div", { className: "team" }, team || ""));
+      return el;
+    };
+    const cc = parseInt(m.call_count) || 0;
     const card = h("div", { className: "lv-overlay-card" },
       h("div", { className: "lv-overlay-head" },
         h("div", { className: "lv-overlay-title" },
           (headerExtra ? headerExtra + " · " : "") +
-          (m.event || "") + " " + (m.round || "")),
+          (m.event || "") + " " + (m.round || ""),
+          cc >= 2 ? LV.callBadgeEl(cc) : null),
         h("button", { className: "lv-overlay-close",
           onClick: closeFn }, "×"),
       ),
       h("div", { className: "lv-detail-row" },
         h("div", { className: "lv-detail-label" }, "選手1"),
-        h("div", { className: "lv-detail-val player" },
-          m.player1_name || "?",
-          h("div", { className: "team" }, m.player1_team || "")),
+        playerVal(m.player1_name, p1Num, m.player1_team),
       ),
       h("div", { className: "lv-detail-row" },
         h("div", { className: "lv-detail-label" }, "選手2"),
-        h("div", { className: "lv-detail-val player" },
-          m.player2_name || "?",
-          h("div", { className: "team" }, m.player2_team || "")),
+        playerVal(m.player2_name, p2Num, m.player2_team),
       ),
       m.referee_name ? h("div", { className: "lv-detail-row" },
         h("div", { className: "lv-detail-label" }, "審判"),
@@ -1181,6 +1325,10 @@ const LV = {
         h("div", { className: "lv-detail-val" },
           { waiting: "待機", pending: "呼出可能", on_table: "進行中", completed: "終了" }[m.status] || m.status),
       ),
+      cc >= 1 ? h("div", { className: "lv-detail-row" },
+        h("div", { className: "lv-detail-label" }, "呼出回数"),
+        h("div", { className: "lv-detail-val" },
+          cc + " 回" + (cc >= 2 ? " (再コール中)" : ""))) : null,
       m.winner_name ? h("div", { className: "lv-detail-row" },
         h("div", { className: "lv-detail-label" }, "勝者"),
         h("div", { className: "lv-detail-val", style: { color: "var(--lv-warn)", fontWeight: 700 } },
@@ -1190,7 +1338,7 @@ const LV = {
         h("div", { className: "lv-detail-val", style: { fontFamily: "var(--font-mono)", fontSize: "12px" } },
           setsList)) : null,
       m.called_at ? h("div", { className: "lv-detail-row" },
-        h("div", { className: "lv-detail-label" }, "呼出"),
+        h("div", { className: "lv-detail-label" }, "呼出時刻"),
         h("div", { className: "lv-detail-val" },
           new Date(m.called_at).toLocaleString("ja-JP"))) : null,
     );
