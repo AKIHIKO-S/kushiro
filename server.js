@@ -418,6 +418,8 @@ app.post("/api/tournaments/:id/kumiawase/upload",
 // 新版: Node.js 製パーサー (Python 依存ゼロ)
 let kttaParser = null;
 let pdfParser = null;
+let templateParser = null;
+let templateBuilder = null;
 try {
   kttaParser = require("./tools/parse_ktta_bracket.js");
 } catch (e) {
@@ -428,6 +430,34 @@ try {
 } catch (e) {
   console.warn("[startup] parse_pdf_bracket.js のロード失敗:", e.message);
 }
+try {
+  templateParser = require("./tools/parse_template_bracket.js");
+  templateBuilder = require("./tools/build_bracket_template.js");
+} catch (e) {
+  console.warn("[startup] テンプレ パーサーのロード失敗:", e.message);
+}
+
+// テンプレ Excel ダウンロード
+app.get("/api/templates/bracket-import.xlsx", (req, res) => {
+  if (!templateBuilder || !templateBuilder.buildTemplateBuffer) {
+    return res.status(500).json({ error: "テンプレ生成モジュール未ロード" });
+  }
+  try {
+    const buf = templateBuilder.buildTemplateBuffer({
+      tournament_name: req.query.name || "釧路選手権大会 (記入例)",
+      event: req.query.event || "一般男子シングルス",
+      bracket_size: parseInt(req.query.size) || 64,
+    });
+    const filename = encodeURIComponent("トーナメント取込テンプレ.xlsx");
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=UTF-8''${filename}`);
+    res.setHeader("Content-Length", Buffer.byteLength(buf));
+    res.setHeader("Cache-Control", "no-store");
+    res.end(buf);
+  } catch (e) {
+    res.status(500).json({ error: "テンプレ生成失敗: " + e.message });
+  }
+});
 
 app.post("/api/tournaments/:id/entrants/upload-excel",
   requireAdmin, upload.single("file"), async (req, res) => {
@@ -470,7 +500,30 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
     }
   }
 
-  // ── 1b. Node.js Excel パーサー (推奨・本番) ──
+  // ── 1b-pre. テンプレ判定 (「設定」+「組合せ」シートあり) ──
+  // 取込テンプレを優先試行 → 位置情報を正確に反映
+  if (templateParser && templateParser.parseTemplate) {
+    try {
+      const XLSX = require("xlsx");
+      const wb = XLSX.readFile(xlsxPath, { cellStyles: false });
+      const hasTemplate = wb.SheetNames.includes("設定") && wb.SheetNames.includes("組合せ");
+      if (hasTemplate) {
+        const data = templateParser.parseTemplate(xlsxPath);
+        try { fs.unlinkSync(xlsxPath); } catch {}
+        if (data.error) {
+          return res.status(400).json({ ...data, used_parser: "parse_template_bracket.js" });
+        }
+        data.regenerate = regenerate;
+        data.auto_link_to_players = autoLink;
+        const r = db.importBracket(req.params.id, data);
+        return res.json({ ...r, used_parser: "parse_template_bracket.js" });
+      }
+    } catch (e) {
+      console.warn("[parser] テンプレ判定失敗、汎用パーサーへフォールバック:", e.message);
+    }
+  }
+
+  // ── 1b. Node.js 汎用 Excel パーサー (シード抽出) ──
   if (kttaParser && kttaParser.parseWorkbook) {
     try {
       const data = kttaParser.parseWorkbook(xlsxPath, {

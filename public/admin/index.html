@@ -2868,8 +2868,24 @@ const A = {
  // ── Excel/PDF 直接アップロード ──
  openExcelUpload(tournamentId) {
  const body = h("div", {},
+ // ─── テンプレダウンロード (推奨) ───
+ h("div", {
+   style: { padding: "12px 14px", background: "#eff6ff",
+            border: "2px solid #2563eb", borderRadius: "6px", marginBottom: "12px" } },
+   h("div", { className: "font-bold mb-1", style: { color: "#1e40af" } },
+     "正確に取込む方法 (推奨): 取込テンプレを利用"),
+   h("div", { className: "text-sm", style: { color: "#1e3a8a", marginBottom: "8px" } },
+     "下のテンプレ Excel をダウンロードし、対戦組合せを記入してアップロードすると、" +
+     "1回戦から決勝までの全ペアリングが Excel に書いた通り正確に取込まれます。" +
+     "シード選手が後半ラウンドから登場する形式 (スーパーシード) にも対応。"),
+   h("a", { className: "btn btn-sm",
+     style: { background: "#2563eb", color: "#fff" },
+     href: "/api/templates/bracket-import.xlsx", download: "" },
+     "取込テンプレをダウンロード"),
+ ),
+
  h("div", { className: "text-sm mb-3" },
- "釧路卓球協会 標準形式の組合せ表ファイルを選択してアップロードしてください。"),
+ "上記テンプレ以外の組合せ表 (会長杯/VICTAS杯など) も取込めます。"),
  h("div", { className: "text-xs text-sub mb-3",
    style: { padding: "8px 10px", background: "#f0fdf4",
             borderLeft: "3px solid #15803d", borderRadius: "0 4px 4px 0" } },
@@ -2878,8 +2894,8 @@ const A = {
    "または ",
    h("strong", {}, ".pdf (テキストPDF)"),
    h("div", { className: "text-xs", style: { marginTop: "4px", color: "var(--sub)" } },
-     "※ PDF はテキストPDF (Excel→PDF / Word→PDF など) のみ対応。" +
-     "スキャンした画像PDFは読み取れません。"),
+     "※ テンプレ以外の Excel は自動解析。組合せが正確に反映されない場合は上のテンプレをご利用ください。" +
+     "PDF はテキストPDF (Excel→PDF / Word→PDF など) のみ対応。"),
  ),
 
  // ─── 種目形式の必須選択 ───
