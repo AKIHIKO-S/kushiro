@@ -1742,17 +1742,81 @@ function finishMatchInternal(matchId, data) {
   return stmts.getMatch.get(matchId);
 }
 
+// ─── 試合結果の修正 (完了済み試合を再編集) ────
+// 完了済み試合の勝者を反転 or セット数を修正
+// 次の試合に既に進出済みなら自動でその進出を取り消し → 新勝者で再進出
+// 次の試合が既に進行中/完了の場合は警告して中止
+function correctResult(matchId, data) {
+  const m = stmts.getMatch.get(matchId);
+  if (!m) return { error: "試合が見つかりません" };
+
+  // 完了済みかどうかチェック
+  const wasCompleted = m.status === "completed";
+  if (wasCompleted && m.next_match_id) {
+    const nm = stmts.getMatch.get(m.next_match_id);
+    if (nm && nm.status === "completed") {
+      return {
+        error: "次の試合 (" + (nm.match_label || nm.match_no) + " " +
+          (nm.round || "") + ") が既に完了しています。" +
+          "先に次の試合の結果を取り消してから修正してください。",
+        next_match_id: nm.id,
+        next_match_label: nm.match_label || nm.match_no,
+      };
+    }
+    if (nm && nm.status === "on_table") {
+      return {
+        error: "次の試合 (" + (nm.match_label || nm.match_no) + ") が進行中です。" +
+          "進行中の試合は先に台から戻してから修正してください。",
+        next_match_id: nm.id,
+        next_match_label: nm.match_label || nm.match_no,
+      };
+    }
+    // 次の試合の対応する slot をクリア (前の勝者を取り除く)
+    if (nm) {
+      const oldWinnerEntrant = m.winner_id === m.player1_id ? m.player1_entrant_id : m.player2_entrant_id;
+      // m.next_slot = 1 なら slot1 をクリア
+      if (m.next_slot === 1) {
+        opStmts.setSlot1.run(null, "", "", nm.player2_name || "", nm.id);
+        sqlite.prepare(`UPDATE matches SET player1_entrant_id=NULL WHERE id=?`).run(nm.id);
+      } else {
+        opStmts.setSlot2.run(null, "", "", nm.player1_name || "", nm.id);
+        sqlite.prepare(`UPDATE matches SET player2_entrant_id=NULL WHERE id=?`).run(nm.id);
+      }
+      // 次の試合は再度 "waiting" に
+      opStmts.setStatus.run("waiting", nm.id);
+    }
+  }
+
+  // 元の試合をリセット (winner_id, loser_id等をクリア)
+  opStmts.setResult.run({
+    id: matchId,
+    winner_id: null, loser_id: null,
+    winner_name: "", loser_name: "",
+    winner_team: "", loser_team: "",
+    sets_json: "[]", winner_sets: 0, loser_sets: 0,
+  });
+  // 元の rating 変更も巻き戻し (簡易: 元勝者/敗者の rating を反映前に戻す)
+  if (wasCompleted && m.winner_id && m.loser_id) {
+    const wp = stmts.getPlayer.get(m.winner_id);
+    const lp = stmts.getPlayer.get(m.loser_id);
+    if (wp && lp) {
+      const { newWin, newLose } = calcElo(wp.rating, lp.rating);
+      // newWin が現在の wp.rating より大きい場合、wp.rating - (newWin - wp.rating) で巻戻
+      stmts.updateRating.run(wp.rating * 2 - newWin, wp.id);
+      stmts.updateRating.run(lp.rating * 2 - newLose, lp.id);
+    }
+  }
+  // 試合ステータスを pending or on_table に
+  opStmts.setStatus.run(m.table_no > 0 ? "on_table" : "pending", matchId);
+
+  // 新しい結果を適用
+  return finishMatchInternal(matchId, data);
+}
+
 function finishMatchOp(matchId, data) {
   const result = finishMatchInternal(matchId, data);
   // 同じ台で次の試合がある場合、敗者を自動審判アサイン (敗者審判ルール)
-  // ダブルスは敗者ペアの表示名 ("山田 / 鈴木") を referee_name に
-  if (result && result.table_no === 0) {
-    // 完了済みなので table_no は 0 になっている。直前の m から table を取り直す
-    const finishedTable = sqlite.prepare(
-      `SELECT table_no FROM matches WHERE id = ?`).get(matchId)?.table_no;
-    // ※ setResult で table_no=0 にしているので、called_at の台情報をたどる必要があるが、
-    //   実運用では「次の呼出時」に同じ台で待機している敗者を referee に指定するロジックで十分
-  }
+  // ※ 実運用では「次の呼出時」に同じ台で待機している敗者を referee に指定するロジックで十分
   return result;
 }
 
@@ -3593,7 +3657,7 @@ module.exports = {
   exportAllData, importPlayers, getStats, getLastUpdated,
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
-  generateBracket, finishMatchOp, callMatch, uncallMatch, assignReferee,
+  generateBracket, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
   setCallCount, bumpCallCount,
   getPlayerRefereeLock, getPlayerPlayingLock,

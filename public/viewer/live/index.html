@@ -220,13 +220,13 @@
     display: grid; gap: 8px;
   }
 
-  /* ─── 台 (コート) - ステータス別色分け強化・コンパクト化 ─── */
+  /* ─── 台 (コート) - 上部にヘッダーストリップ / 下部に審判 ─── */
   .lv-court {
     background: #fff;
     border: 2px solid var(--lv-line);
     border-radius: 6px;
-    padding: 6px 5px 14px;
-    min-height: 88px;
+    padding: 18px 4px 16px;  /* 上 18 = ヘッダーストリップ分、下 16 = 審判ストリップ分 */
+    min-height: 90px;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     position: relative;
@@ -235,8 +235,55 @@
     overflow: hidden;
     gap: 1px;
   }
+  /* 上部ストリップ (台N | 種目) */
+  .lv-court-header {
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 14px;
+    display: flex; align-items: center;
+    background: rgba(0,0,0,.06);
+    padding: 0 4px;
+    font-size: 9px; font-weight: 700;
+    line-height: 1;
+    gap: 4px;
+  }
+  .lv-court-header .tno {
+    font-family: var(--font-mono);
+    background: var(--lv-header); color: #fff;
+    padding: 1px 5px; border-radius: 3px;
+    flex-shrink: 0;
+  }
+  .lv-court-header .ev {
+    color: var(--lv-text-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 0;
+    font-size: 8px;
+    letter-spacing: 0.02em;
+  }
+  .lv-court.active .lv-court-header { background: rgba(0,0,0,.3); }
+  .lv-court.active .lv-court-header .ev { color: rgba(255,255,255,.92); }
+  .lv-court.extra .lv-court-header { background: rgba(0,0,0,.3); }
+  .lv-court.extra .lv-court-header .ev { color: rgba(255,255,255,.92); }
+  /* 下部ストリップ (審判) */
+  .lv-court-footer {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    height: 13px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.04);
+    padding: 0 4px;
+    font-size: 8px; font-weight: 600;
+    color: var(--lv-text-2);
+    line-height: 1;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .lv-court-footer:empty { display: none; }
+  .lv-court.active .lv-court-footer {
+    background: rgba(0,0,0,.25); color: rgba(255,255,255,.85);
+  }
+  .lv-court.extra .lv-court-footer {
+    background: rgba(0,0,0,.25); color: rgba(255,255,255,.85);
+  }
 
-  /* 空き台: 緑チェック・薄い緑背景 */
+  /* 空き台: 緑背景 */
   .lv-court.empty {
     background: #f0fdf4;
     border-color: #86efac;
@@ -246,14 +293,9 @@
     border-color: var(--lv-ok);
     background: #dcfce7;
   }
-  .lv-court.empty::after {
-    content: "空"; position: absolute; bottom: 4px;
-    font-size: 9px; font-weight: 700;
-    color: var(--lv-ok); letter-spacing: 0.1em;
-    background: rgba(255,255,255,.7);
-    padding: 1px 8px; border-radius: 10px;
-    border: 1px solid #86efac;
-  }
+  .lv-court.empty .lv-court-header { background: rgba(21,128,61,.12); }
+  .lv-court.empty .lv-court-header .ev { color: #15803d; font-weight: 700; }
+  .lv-court.empty .lv-court-footer { background: rgba(21,128,61,.08); color: #15803d; }
 
   /* 進行中: 赤背景・白文字・脈動アニメ */
   .lv-court.active {
@@ -276,38 +318,7 @@
     50%      { box-shadow: 0 2px 8px rgba(220,38,38,.3), 0 0 0 6px rgba(220,38,38,0); }
   }
 
-  /* 台番号 (左上・大きく) */
-  .lv-court-no {
-    position: absolute; top: 4px; left: 6px;
-    font-family: var(--font-mono);
-    font-size: 11px; font-weight: 800;
-    color: var(--lv-sub);
-    background: rgba(255,255,255,.95);
-    padding: 1px 6px; border-radius: 3px;
-    border: 1px solid var(--lv-line);
-  }
-  .lv-court.active .lv-court-no,
-  .lv-court.extra .lv-court-no {
-    color: var(--lv-text);
-    background: rgba(255,255,255,.95);
-    border-color: transparent;
-  }
-
-  /* ラウンド (右上) */
-  .lv-court-round {
-    position: absolute; top: 4px; right: 6px;
-    font-family: var(--font-display);
-    font-size: 9px; font-weight: 700;
-    padding: 2px 6px; border-radius: 3px;
-    background: rgba(0,0,0,.12);
-    color: var(--lv-text);
-    letter-spacing: 0.04em;
-  }
-  .lv-court.active .lv-court-round,
-  .lv-court.extra .lv-court-round {
-    background: rgba(255,255,255,.25);
-    color: #fff;
-  }
+  /* 旧 lv-court-no / lv-court-round は廃止 (lv-court-header に統合) */
 
   /* 選手名 (大きく・読みやすく) */
   .lv-court-p {
@@ -1084,13 +1095,18 @@ const LV = {
         onClick: () => t.match && LV.showCourtDetail(t),
         title: t.match ? "クリックで詳細" : "空き台",
       });
-      cell.appendChild(h("div", { className: "lv-court-no" }, "台" + t.table_no));
+      // 上部ストリップ: 台番号 + 種目 (重なり解消)
+      const eventLabel = t.match
+        ? ((t.match.event || "") + (t.match.round ? " " + t.match.round : ""))
+        : "空き台";
+      cell.appendChild(h("div", { className: "lv-court-header" },
+        h("span", { className: "tno" }, "台" + t.table_no),
+        h("span", { className: "ev" }, eventLabel),
+      ));
       if (t.match) {
         const cc1 = parseInt(t.match.call_count_p1) || 0;
         const cc2 = parseInt(t.match.call_count_p2) || 0;
-        cell.appendChild(h("div", { className: "lv-court-round" },
-          `${(t.match.event || "").slice(0, 8)}`));
-        // 選手1 + 番号 + 所属 + 再コールバッジ (該当選手の直下)
+        // 選手1 + 番号 + 所属 + 再コールバッジ
         cell.appendChild(LV.renderCourtPlayer(t.match.player1_name,
           t.match.player1_bracket_number));
         if (t.match.player1_team) {
@@ -1110,6 +1126,11 @@ const LV = {
           cell.appendChild(LV.callBadgeCourtEl(cc2));
         }
       }
+      // 下部ストリップ: 審判名 (進行中のみ表示)
+      const refText = t.match
+        ? (t.match.referee_name ? "審判: " + t.match.referee_name : "")
+        : "";
+      cell.appendChild(h("div", { className: "lv-court-footer" }, refText));
       grid.appendChild(cell);
     });
     wrap.appendChild(grid);

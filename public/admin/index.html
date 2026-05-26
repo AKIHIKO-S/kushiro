@@ -5067,6 +5067,9 @@ const O = {
 
  // ── アクションボタン ──
  main.appendChild(h("div", { className: "flex gap-2 mb-3 flex-wrap" },
+ h("button", { className: "btn btn-sm",
+   style: { background: "#7c3aed" },
+   onClick: () => O.openVisualBracket() }, "🏆 トーナメント表"),
  h("button", { className: "btn btn-sm", onClick: () => O.openBracketGen() }, "トーナメント生成"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openImportBracket() }, "JSON 読込"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.exportBracket() }, "JSON 書出"),
@@ -5140,7 +5143,7 @@ const O = {
  main.appendChild(refCard);
  }
 
- // ── 直近結果 ──
+ // ── 直近結果 (修正機能つき) ──
  if (O.state.recent_finished.length) {
  const recentCard = h("div", { className: "card" },
  h("div", { className: "card-head" },
@@ -5149,20 +5152,141 @@ const O = {
  ),
  );
  O.state.recent_finished.slice(0, 8).forEach(m => {
- recentCard.appendChild(h("div", { className: "match-list-item" },
- h("div", {},
- h("div", { className: "flex gap-2", style: { alignItems: "center" } },
+ recentCard.appendChild(h("div", { className: "match-list-item",
+   style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" } },
+ h("div", { style: { flex: 1, minWidth: "200px" } },
+ h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
  h("span", { className: "round-badge" }, `${m.event} ${m.round}`),
+ m.match_label ? h("span", { className: "text-xs text-sub mono" }, m.match_label) : null,
  h("span", { className: "font-bold", style: { color: "var(--warn)" } },
  `${m.winner_name}`),
  h("span", { className: "font-bold" }, `${m.winner_sets}-${m.loser_sets}`),
  h("span", { className: "text-sub" }, `${m.loser_name || "BYE"}`),
  ),
  ),
+ // 修正ボタン群
+ h("div", { className: "flex gap-1", style: { flexShrink: 0 } },
+ h("button", { className: "btn btn-sm btn-ghost",
+   style: { padding: "3px 8px", fontSize: "11px" },
+   onClick: () => O.openCorrectResult(m) }, "🔧 結果修正"),
+ h("button", { className: "btn btn-sm",
+   style: { padding: "3px 8px", fontSize: "11px",
+     background: "#dc2626", color: "#fff" },
+   title: "勝者と敗者を反転",
+   onClick: () => O.swapWinner(m) }, "↔ 勝敗反転"),
+ ),
  ));
  });
  main.appendChild(recentCard);
  }
+ },
+
+ // ── 勝敗反転 (ワンクリック) ──
+ async swapWinner(m) {
+ if (!confirm(`勝者を「${m.loser_name || "BYE"}」に反転します。\n` +
+              `現在の勝者「${m.winner_name}」は敗者になり、` +
+              `次の試合への進出も切り替わります。\n` +
+              `よろしいですか?`)) return;
+ // セットは現状を反転 (winner_sets ↔ loser_sets)
+ const sets = (m.sets || []).map(s => Array.isArray(s) && s.length === 2 ? [s[1], s[0]] : s);
+ // 新しい勝者は元 loser (= player1 か player2 のどちらか)
+ const newWinnerSlot = m.winner_name === m.player1_name ? 2 : 1;
+ const r = await api.post(`/api/matches/${m.id}/correct`, {
+   winner_slot: newWinnerSlot,
+   sets,
+   winner_sets: m.loser_sets,  // 反転
+   loser_sets: m.winner_sets,
+ });
+ if (r.error) return toast(r.error, "err");
+ toast("勝敗を反転しました", "ok");
+ O.reload();
+ },
+
+ // ── 結果修正 (セットスコア・勝者選択) ──
+ async openCorrectResult(m) {
+ const p1Won = m.winner_name === m.player1_name;
+ // 既存セット (winner-perspective を player1-perspective に正規化)
+ const setsP1 = (m.sets || []).map(s => {
+   if (!Array.isArray(s)) return [0, 0];
+   return p1Won ? [s[0], s[1]] : [s[1], s[0]];
+ });
+ // 5セット分 (足りない部分は空)
+ while (setsP1.length < 5) setsP1.push([0, 0]);
+
+ let winnerSlot = p1Won ? 1 : 2;
+ const setInputs = [];
+
+ const buildSetRow = (i) => {
+   const row = h("div", { className: "flex gap-2",
+     style: { alignItems: "center", marginBottom: "4px" } });
+   row.appendChild(h("span", { style: { width: "60px", fontSize: "12px" } },
+     "第" + (i + 1) + "セット"));
+   const i1 = h("input", { type: "number", className: "input",
+     min: 0, max: 99, value: setsP1[i][0],
+     style: { width: "70px", padding: "4px", textAlign: "center" } });
+   const i2 = h("input", { type: "number", className: "input",
+     min: 0, max: 99, value: setsP1[i][1],
+     style: { width: "70px", padding: "4px", textAlign: "center" } });
+   row.appendChild(i1);
+   row.appendChild(h("span", { style: { fontSize: "12px" } }, "-"));
+   row.appendChild(i2);
+   setInputs.push({ p1: i1, p2: i2 });
+   return row;
+ };
+
+ const setsBox = h("div", {});
+ for (let i = 0; i < 5; i++) setsBox.appendChild(buildSetRow(i));
+
+ const winnerRadios = h("div", { className: "flex gap-3", style: { marginBottom: "10px" } },
+   h("label", { className: "flex gap-1", style: { alignItems: "center", cursor: "pointer" } },
+     h("input", { type: "radio", name: "winSlot", value: "1",
+       checked: winnerSlot === 1 ? "" : null,
+       onChange: () => { winnerSlot = 1; } }),
+     h("span", { style: { fontWeight: 700 } }, m.player1_name || "選手1")),
+   h("label", { className: "flex gap-1", style: { alignItems: "center", cursor: "pointer" } },
+     h("input", { type: "radio", name: "winSlot", value: "2",
+       checked: winnerSlot === 2 ? "" : null,
+       onChange: () => { winnerSlot = 2; } }),
+     h("span", { style: { fontWeight: 700 } }, m.player2_name || "選手2")),
+ );
+
+ const body = h("div", {},
+   h("div", { className: "text-sm mb-3",
+     style: { padding: "10px 14px", background: "#fef3c7",
+       borderLeft: "3px solid #f59e0b", borderRadius: "0 4px 4px 0" } },
+     h("div", { className: "font-bold mb-1" }, "🔧 結果を修正"),
+     h("div", { style: { fontSize: "12px" } },
+       "次の試合に既に進出済みの場合、自動で取り消し → 新勝者で再進出します。" +
+       "次の試合が既に完了している場合は先にそちらを修正してください。"),
+   ),
+   h("div", { className: "text-sm font-bold mb-2" }, "🏆 勝者:"),
+   winnerRadios,
+   h("div", { className: "text-sm font-bold mb-2" }, "セットスコア (選手1 - 選手2):"),
+   setsBox,
+ );
+ const foot = h("div", { className: "flex gap-2" },
+   h("button", { className: "btn",
+     onClick: async () => {
+       const sets = setInputs
+         .map(({ p1, p2 }) => [parseInt(p1.value) || 0, parseInt(p2.value) || 0])
+         .filter(s => s[0] > 0 || s[1] > 0);
+       const r = await api.post(`/api/matches/${m.id}/correct`, {
+         winner_slot: winnerSlot,
+         sets,
+       });
+       if (r.error) {
+         alert("修正失敗:\n" + r.error +
+           (r.next_match_label ? "\n\n次の試合: " + r.next_match_label : ""));
+         return;
+       }
+       toast("結果を修正しました", "ok");
+       document.querySelector(".modal-bg")?.remove();
+       O.reload();
+     } }, "✓ 修正を保存"),
+   h("button", { className: "btn btn-ghost",
+     onClick: () => document.querySelector(".modal-bg")?.remove() }, "キャンセル"),
+ );
+ openModal(`結果修正: ${m.event} ${m.round} (${m.match_label || m.match_no})`, body, foot);
  },
 
  // ── コートレイアウト描画 ──
@@ -5884,6 +6008,202 @@ const O = {
  await api.post(`/api/matches/${id}/uncall`, {});
  toast("台から戻しました", "ok");
  O.reload();
+ },
+
+ // ── ビジュアル トーナメント表 ──
+ // 両側トーナメント (左半分=上から下、右半分=下から上) + ラウンド列表示
+ async openVisualBracket() {
+ // 種目選択
+ const events = Object.keys(O.state.event_stats || {});
+ if (!events.length) return toast("試合データがありません", "err");
+ let selectedEv = O.selectedEvent || events[0];
+
+ const evSel = h("select", { className: "input",
+   style: { width: "auto", marginBottom: "8px" },
+   onChange: (e) => { selectedEv = e.target.value; reload(); } },
+   ...events.map(ev => h("option", {
+     value: ev, selected: ev === selectedEv ? "" : null,
+   }, ev)));
+
+ const bracketArea = h("div", { id: "vbArea",
+   style: { overflow: "auto", maxHeight: "70vh", padding: "8px",
+     background: "#f9fafb", borderRadius: "6px" } });
+
+ const reload = async () => {
+   bracketArea.innerHTML = "🔄 読込中...";
+   try {
+     const bdata = await api.get(`/api/tournaments/${O.tournamentId}/bracket/export?event=` +
+       encodeURIComponent(selectedEv));
+     if (bdata.error) { bracketArea.innerHTML = '<div style="color:#dc2626">' + bdata.error + '</div>'; return; }
+     bracketArea.innerHTML = "";
+     bracketArea.appendChild(O.renderVisualBracket(bdata));
+   } catch (e) {
+     bracketArea.innerHTML = '<div style="color:#dc2626">読込失敗: ' + e.message + '</div>';
+   }
+ };
+
+ const body = h("div", {},
+   h("div", { className: "flex gap-2 mb-2", style: { alignItems: "center", flexWrap: "wrap" } },
+     h("label", { className: "text-sm font-bold" }, "種目:"),
+     evSel,
+     h("button", { className: "btn btn-sm btn-ghost",
+       onClick: reload }, "🔄 更新"),
+   ),
+   bracketArea,
+ );
+ const foot = h("button", { className: "btn btn-ghost",
+   onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる");
+ openModal("🏆 トーナメント表 (ビジュアル)", body, foot);
+ reload();
+ },
+
+ // ─── ビジュアルブラケットの実 DOM 構築 ─────
+ renderVisualBracket(bdata) {
+ const matches = bdata.matches || [];
+ if (!matches.length) {
+   return h("div", { className: "empty-state" }, "試合データなし");
+ }
+ // ラウンドごとにグループ化
+ const byRound = {};
+ matches.forEach(m => {
+   const r = m.bracket_round || 1;
+   (byRound[r] = byRound[r] || []).push(m);
+ });
+ const rounds = Object.keys(byRound).map(Number).sort((a, b) => a - b);
+ const totalRounds = bdata.total_rounds || rounds.length;
+ const bracketSize = bdata.bracket_size || (1 << totalRounds);
+
+ // 各 round 内で bracket_pos 昇順
+ rounds.forEach(r => byRound[r].sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0)));
+
+ // 各ラウンドを列として描画
+ const cols = h("div", { className: "vb-cols",
+   style: { display: "flex", gap: "16px", alignItems: "stretch", minWidth: "min-content" } });
+ // 状態に応じた背景
+ const stateBg = (m) => {
+   if (m.status === "completed") return "#e5e7eb";
+   if (m.status === "on_table") return "#fef2f2";
+   if (m.status === "pending") return "#fffbeb";
+   return "#fff";
+ };
+ const stateBorder = (m) => {
+   if (m.status === "completed") return "#9ca3af";
+   if (m.status === "on_table") return "#dc2626";
+   if (m.status === "pending") return "#f59e0b";
+   return "#d1d5db";
+ };
+ const roundName = (r) => {
+   if (r === totalRounds) return "決勝";
+   if (r === totalRounds - 1) return "準決勝";
+   if (r === totalRounds - 2) return "準々決勝";
+   return r + "回戦";
+ };
+ const matchHeight = 60; // 1試合の最小高 (round 1)
+
+ rounds.forEach((r, ri) => {
+   const col = h("div", { className: "vb-col",
+     style: { minWidth: "170px", display: "flex", flexDirection: "column" } });
+   col.appendChild(h("div", {
+     style: { padding: "6px 10px", background: "#1e293b", color: "#fff",
+       fontSize: "12px", fontWeight: 700, textAlign: "center",
+       borderRadius: "4px", marginBottom: "8px" } },
+     roundName(r) + " (" + byRound[r].length + ")"));
+
+   const ms = byRound[r];
+   const factor = Math.pow(2, ri);
+   ms.forEach(m => {
+     const card = h("div", { className: "vb-match",
+       style: {
+         border: "2px solid " + stateBorder(m),
+         background: stateBg(m),
+         borderRadius: "6px", padding: "6px 8px",
+         marginBottom: "4px",
+         minHeight: (matchHeight * factor) + "px",
+         display: "flex", flexDirection: "column",
+         justifyContent: "center",
+         fontSize: "11px",
+         position: "relative",
+       } });
+     // ラベル + ステータス
+     const lbl = m.match_no
+       ? (r + "-" + m.match_no)
+       : (r + "-" + (m.bracket_pos + 1));
+     card.appendChild(h("div", {
+       style: { fontSize: "9px", color: "#64748b", fontWeight: 700, marginBottom: "2px" } },
+       lbl,
+       m.status === "on_table" ? h("span", {
+         style: { marginLeft: "6px", color: "#dc2626", fontWeight: 800 } }, "● LIVE") : null,
+       m.status === "completed" ? h("span", {
+         style: { marginLeft: "6px", color: "#16a34a", fontWeight: 800 } }, "✓") : null,
+       m.status === "pending" ? h("span", {
+         style: { marginLeft: "6px", color: "#d97706", fontWeight: 800 } }, "呼出可") : null,
+     ));
+     // 選手1
+     const p1Won = m.result && m.result.winner_name === m.player1_name;
+     card.appendChild(h("div", {
+       style: { fontWeight: p1Won ? 700 : 500,
+         color: p1Won ? "#15803d" : "#374151",
+         textDecoration: m.result && !p1Won ? "line-through" : "none",
+         padding: "2px 0",
+         opacity: m.result && !p1Won ? 0.55 : 1 } },
+       (m.player1_name || "—"),
+       m.player1_team
+         ? h("span", { className: "text-xs text-sub",
+             style: { marginLeft: "4px" } }, "(" + m.player1_team + ")")
+         : null));
+     // セパレーター
+     card.appendChild(h("div", {
+       style: { borderTop: "1px dashed " + stateBorder(m), margin: "2px 0" } }));
+     // 選手2
+     const p2Won = m.result && m.result.winner_name === m.player2_name;
+     card.appendChild(h("div", {
+       style: { fontWeight: p2Won ? 700 : 500,
+         color: p2Won ? "#15803d" : "#374151",
+         textDecoration: m.result && !p2Won ? "line-through" : "none",
+         padding: "2px 0",
+         opacity: m.result && !p2Won ? 0.55 : 1 } },
+       (m.player2_name || "—"),
+       m.player2_team
+         ? h("span", { className: "text-xs text-sub",
+             style: { marginLeft: "4px" } }, "(" + m.player2_team + ")")
+         : null));
+     // スコア (完了済みのみ)
+     if (m.result) {
+       card.appendChild(h("div", {
+         style: { fontFamily: "var(--font-mono)", fontSize: "10px",
+           color: "#64748b", textAlign: "right", marginTop: "2px" } },
+         (m.result.winner_sets || 0) + " - " + (m.result.loser_sets || 0)));
+     }
+     col.appendChild(card);
+   });
+   cols.appendChild(col);
+ });
+
+ // 凡例 + 件数
+ const stats = {
+   total: matches.length,
+   completed: matches.filter(m => m.status === "completed").length,
+   on_table: matches.filter(m => m.status === "on_table").length,
+   pending: matches.filter(m => m.status === "pending").length,
+   waiting: matches.filter(m => m.status === "waiting").length,
+ };
+ const header = h("div", {
+   style: { display: "flex", gap: "12px", flexWrap: "wrap",
+     padding: "8px 12px", background: "#fff",
+     border: "1px solid #d1d5db", borderRadius: "6px", marginBottom: "10px",
+     fontSize: "12px" } },
+   h("span", { className: "font-bold" }, bdata.event + " (Bracket " + bracketSize + ")"),
+   h("span", { style: { color: "#dc2626" } }, "● 進行中 " + stats.on_table),
+   h("span", { style: { color: "#f59e0b" } }, "● 呼出可 " + stats.pending),
+   h("span", { style: { color: "#9ca3af" } }, "● 待機 " + stats.waiting),
+   h("span", { style: { color: "#16a34a" } }, "✓ 終了 " + stats.completed),
+   h("span", { className: "text-sub" }, "/ 計 " + stats.total),
+ );
+
+ const wrap = h("div", {});
+ wrap.appendChild(header);
+ wrap.appendChild(cols);
+ return wrap;
  },
 
  // ── トーナメント生成ダイアログ ──

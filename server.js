@@ -1087,6 +1087,15 @@ app.post("/api/matches/:id/finish", requireAdmin, (req, res) => {
   res.json(r);
 });
 
+// 結果修正 (完了済み試合の再編集)
+// body: { winner_slot: 1|2, sets: [[w,l]...], winner_sets?, loser_sets? }
+// 次の試合に既に進出済みなら自動で取消 → 新勝者で再進出
+app.post("/api/matches/:id/correct", requireAdmin, (req, res) => {
+  const r = db.correctResult(req.params.id, req.body || {});
+  if (r?.error) return res.status(400).json(r);
+  res.json(r);
+});
+
 // ── ブラケット JSON エクスポート/インポート ─────────
 app.get("/api/tournaments/:id/bracket/export", (req, res) => {
   const event = req.query.event;
