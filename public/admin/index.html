@@ -1885,14 +1885,18 @@ const A = {
  style: { fontSize: "11px", marginTop: "6px", color: "#dc2626" } });
 
  const refreshCode = async () => {
+ // events を URL に乗せると長さ制限 (~7KB) で 404 になるため、
+ // サーバー側に event_config として保存し、URL は最小化
  const qs = new URLSearchParams();
  if (gasUrl) qs.set("gas_url", gasUrl);
  if (deadline) qs.set("deadline", deadline);
  if (paymentNote) qs.set("payment_note", paymentNote);
- qs.set("events", JSON.stringify(events));
+ // events は URL に乗せない (server が tournament.event_config から読み込む)
  const origin = A.publicOrigin();
- const formUrl = origin + `/api/tournaments/${t.id}/entry-form.html?${qs}`;
- const snippetUrl = origin + `/api/tournaments/${t.id}/entry-form-snippet?${qs}`;
+ const formUrl = origin + `/api/tournaments/${t.id}/entry-form.html` +
+   (qs.toString() ? `?${qs}` : "");
+ const snippetUrl = origin + `/api/tournaments/${t.id}/entry-form-snippet` +
+   (qs.toString() ? `?${qs}` : "");
 
  // エラーチェック
  const warnings = [];
@@ -2053,9 +2057,33 @@ const A = {
  onInput: (e) => { paymentNote = e.target.value; refreshCode(); } })),
 
  h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "③ 埋込コード (HTML)"),
+ h("div", { className: "text-xs text-sub mb-2",
+   style: { padding: "8px 10px", background: "#fffbeb",
+            borderLeft: "3px solid #f59e0b", borderRadius: "0 4px 4px 0" } },
+   "重要: 「種目をサーバーに保存」を押してから埋込コードをコピーしてください。" +
+   "保存しないと申込フォームに種目が表示されない場合があります。"),
  codeArea,
  codeWarning,
- h("div", { className: "flex gap-2 mt-2" },
+ h("div", { className: "flex gap-2 mt-2 flex-wrap" },
+ h("button", { className: "btn btn-sm",
+   style: { background: "#15803d", color: "#fff" },
+ onClick: async () => {
+   // event_config をサーバーに保存 (URL に乗せず参照)
+   try {
+     const eventNames = events.map(e => e.name);
+     const r = await api.put(`/api/tournaments/${t.id}/entry-settings`, {
+       entries_open: true,
+       entry_deadline: t.entry_deadline || "",
+       entry_events: eventNames,
+       event_config: events,
+       organizer: t.organizer || "釧路卓球協会",
+     });
+     if (r.error) return toast("保存失敗: " + r.error, "err");
+     toast("種目をサーバーに保存しました (" + events.length + "件)", "ok");
+   } catch (e) {
+     toast("保存失敗: " + e.message, "err");
+   }
+ } }, "▼ 種目をサーバーに保存"),
  h("button", { className: "btn btn-sm",
  onClick: () => {
  codeArea.select(); document.execCommand("copy");
@@ -2069,9 +2097,10 @@ const A = {
  if (adminEmail) qs.set("admin_email", adminEmail);
  if (deadline) qs.set("deadline", deadline);
  if (paymentNote) qs.set("payment_note", paymentNote);
+ // プレビューは URL に events を乗せる (DB未保存でも見られる)
  qs.set("events", JSON.stringify(events));
  window.open(`/api/tournaments/${t.id}/entry-form.html?${qs}`, "_blank");
- }, href: "#" }, "プレビューを開く"),
+ }, href: "#" }, "プレビューを開く (保存前)"),
  ),
 
  h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "④ セットアップ手順"),
@@ -2699,6 +2728,8 @@ const A = {
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.downloadAggregation(t) }, "集計表ダウンロード"),
  h("button", { className: "btn btn-sm btn-ghost",
+ onClick: () => A.downloadMatchCards(t) }, "対戦票ダウンロード"),
+ h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.openReceiptsDialog(t) }, "領収書一括出力"),
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.openEntrantsTab(t.id) }, "詳細編集"),
@@ -2873,6 +2904,38 @@ const A = {
  EnT.tournamentId = tournamentId;
  if (event) EnT.filterEvent = event;
  A.showTab("entrants");
+ },
+
+ // ── 対戦票 (審判用記録票) ダウンロード ──
+ async downloadMatchCards(t) {
+ try {
+ // 試合データの確認
+ const tour = await api.get(`/api/tournaments/${t.id}`);
+ if (!tour || !tour.matches || !tour.matches.length) {
+   return toast("試合データがありません。先にトーナメント表を取込んでください。", "err");
+ }
+ // HEAD 疎通確認
+ const head = await fetch(`/api/tournaments/${t.id}/match-cards.xlsx`, { method: "HEAD" });
+ if (!head.ok) {
+   return toast("対戦票生成失敗: HTTP " + head.status, "err");
+ }
+ const ct = head.headers.get("content-type") || "";
+ if (!ct.includes("spreadsheet") && !ct.includes("excel")) {
+   return toast("不正なレスポンス: " + ct, "err");
+ }
+ const url = `/api/tournaments/${t.id}/match-cards.xlsx`;
+ const filename = `対戦票_${t.name || "tournament"}.xlsx`;
+ const a = document.createElement("a");
+ a.href = url;
+ a.download = filename;
+ a.rel = "noopener";
+ document.body.appendChild(a);
+ a.click();
+ setTimeout(() => a.remove(), 500);
+ toast("対戦票をダウンロードしました (種目別シート)", "ok");
+ } catch (e) {
+ toast("ダウンロード失敗: " + e.message, "err");
+ }
  },
 
  // ── 集計表ダウンロード (堅牢: 事前検証 → ブラウザネイティブDL) ──

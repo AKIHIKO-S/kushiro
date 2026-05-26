@@ -612,10 +612,157 @@ function buildReceiptsList(tournament, entrants, opts) {
   };
 }
 
+// ═══════════════════════════════════════════════════════
+// 対戦票 (審判用記録票) 一括 Excel 出力
+// 各試合 1 ブロック (10行 × 8列) のカード形式。1ページに 3 試合。
+// ═══════════════════════════════════════════════════════
+function buildMatchCardsXlsx(tournament, matches, entrants, opts) {
+  opts = opts || {};
+  const onlyPlayable = opts.only_playable !== false; // BYE 試合除外
+  // entrants から選手番号を引けるマップ
+  const numByEntrant = new Map();
+  (entrants || []).forEach(e => {
+    if (e.bracket_number && e.bracket_number > 0) {
+      numByEntrant.set(e.id, "#" + e.bracket_number);
+    }
+  });
+
+  const wb = XLSX.utils.book_new();
+
+  // 種目ごとにシートを分ける
+  const byEvent = new Map();
+  (matches || []).forEach(m => {
+    if (onlyPlayable) {
+      // BYE 試合は除外
+      const p1Bye = !m.player1_name || m.player1_name === "BYE";
+      const p2Bye = !m.player2_name || m.player2_name === "BYE";
+      if (p1Bye || p2Bye) return;
+    }
+    const key = m.event || "(未分類)";
+    if (!byEvent.has(key)) byEvent.set(key, []);
+    byEvent.get(key).push(m);
+  });
+
+  if (!byEvent.size) {
+    // 空ワークブック対策: 1シートに案内のみ
+    const ws = XLSX.utils.aoa_to_sheet([
+      [tournament.name || "対戦票"],
+      [""],
+      ["対戦カードがありません。先にトーナメント表を取込んでください。"],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, "対戦票");
+    return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  }
+
+  // セルスタイル定義 (XLSXフルスタイル対応版)
+  const thinBorder = { style: "thin", color: { rgb: "000000" } };
+  const borderAll = { top: thinBorder, bottom: thinBorder,
+                      left: thinBorder, right: thinBorder };
+
+  // 種目ごとに 1 シート
+  Array.from(byEvent.entries()).forEach(([eventName, list]) => {
+    // ラウンド・bracket_pos 順
+    list.sort((a, b) =>
+      (a.bracket_round || 99) - (b.bracket_round || 99) ||
+      (a.bracket_pos || 99) - (b.bracket_pos || 99));
+
+    const rows = [];
+    // ページヘッダー
+    rows.push([
+      tournament.name || "", "", "", "",
+      tournament.date ? new Date(tournament.date).toLocaleDateString("ja-JP") : "",
+      "", "", "",
+    ]);
+    rows.push(["対戦票 (審判用記録票) — " + eventName, "", "", "", "", "", "", ""]);
+    rows.push([]);
+
+    // 各試合 1 カード (10行) × 全試合
+    list.forEach((m, idx) => {
+      const p1Num = numByEntrant.get(m.player1_entrant_id) || "";
+      const p2Num = numByEntrant.get(m.player2_entrant_id) || "";
+      const tableNo = m.table_no || "—";
+      const refName = m.referee_name || "";
+
+      // 試合カード (横長 8列)
+      rows.push([
+        "試合 #" + (m.match_no || (idx + 1)),
+        "ラウンド: " + (m.round || ""),
+        "", "",
+        "台: " + tableNo,
+        "審判:", refName, "",
+      ]);
+      rows.push([
+        "選手1", p1Num, m.player1_name || "", m.player1_team || "",
+        "選手2", p2Num, m.player2_name || "", m.player2_team || "",
+      ]);
+      // スコア記入欄 (5セットまで)
+      rows.push([
+        "", "", "", "", "", "", "", "",
+      ]);
+      rows.push([
+        "セット", "第1", "第2", "第3", "第4", "第5", "勝", "備考",
+      ]);
+      rows.push([
+        "選手1得点", "", "", "", "", "", "", "",
+      ]);
+      rows.push([
+        "選手2得点", "", "", "", "", "", "", "",
+      ]);
+      rows.push([
+        "勝者 (○記入):", "", "", "", "", "", "", "",
+      ]);
+      rows.push([
+        "選手1の勝:", "□",
+        "選手2の勝:", "□",
+        "棄権:", "□",
+        "両者署名:", "",
+      ]);
+      // カードの区切り (空行 2)
+      rows.push([]);
+      rows.push([]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    // 列幅
+    ws["!cols"] = [
+      { wch: 12 }, { wch: 8 }, { wch: 18 }, { wch: 16 },
+      { wch: 10 }, { wch: 8 }, { wch: 18 }, { wch: 14 },
+    ];
+    // 印刷設定: 横方向 (A4 横、上下マージン小)
+    ws["!pageSetup"] = {
+      orientation: "landscape",
+      paperSize: 9, // A4
+      fitToWidth: 1,
+      fitToHeight: 0,
+    };
+    // セルに罫線適用 (試合カード範囲)
+    rows.forEach((row, ri) => {
+      if (!row || !row.length) return;
+      // 0-indexed ri は AOA の行番号、シートでは ri 行
+      for (let ci = 0; ci < 8; ci++) {
+        const addr = XLSX.utils.encode_cell({ r: ri, c: ci });
+        const cell = ws[addr];
+        if (cell) {
+          cell.s = cell.s || {};
+          cell.s.border = borderAll;
+          cell.s.alignment = { vertical: "center", wrapText: true };
+        }
+      }
+    });
+
+    // シート名は 30 文字以内
+    const sheetName = (eventName || "対戦票").slice(0, 30);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  });
+
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
+}
+
 module.exports = {
   buildAggregationXlsx,
   buildReceiptsHTML,
   buildReceiptsXlsx,
   buildReceiptsList,
+  buildMatchCardsXlsx,
   classifyEvent, genderOf,
 };

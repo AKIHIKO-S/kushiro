@@ -189,6 +189,7 @@ try {
   addTCol("entries_open", "INTEGER DEFAULT 0");
   addTCol("entry_deadline", "TEXT DEFAULT ''");
   addTCol("entry_events", "TEXT DEFAULT ''"); // JSON配列: ["男子シングルス","女子シングルス",...]
+  addTCol("event_config", "TEXT DEFAULT ''"); // JSON配列: 詳細 [{name, fee, type, per_team, note}]
   addTCol("category", "TEXT DEFAULT 'general'"); // 公式戦/オープン/練習試合 等
   addTCol("organizer", "TEXT DEFAULT ''");
 
@@ -2909,11 +2910,16 @@ function setEntrySeed(tournamentId, playerId, event, seed) {
 function updateEntrySettings(tournamentId, settings) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return null;
+  // event_config を更新 (フォーム生成のフル種目データ)
+  const evCfg = settings.event_config !== undefined
+    ? settings.event_config
+    : (t.event_config || "");
   sqlite.prepare(`
     UPDATE tournaments SET
       entries_open = ?,
       entry_deadline = ?,
       entry_events = ?,
+      event_config = ?,
       category = ?,
       organizer = ?,
       updated_at = datetime('now','localtime')
@@ -2922,6 +2928,7 @@ function updateEntrySettings(tournamentId, settings) {
     settings.entries_open ? 1 : 0,
     settings.entry_deadline || "",
     JSON.stringify(settings.entry_events || []),
+    typeof evCfg === "string" ? evCfg : JSON.stringify(evCfg || []),
     settings.category || t.category || "general",
     settings.organizer || t.organizer || "",
     tournamentId

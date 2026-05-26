@@ -395,67 +395,85 @@ app.post("/api/tournaments/:id/kumiawase/upload",
 });
 
 // Excel 直接アップロード → 解析 → 出場選手取込 (ワンステップ)
-// 新しい parse_ktta_bracket.py を使用。format を必ず受け取る。
+// 新版: Node.js 製 parse_ktta_bracket.js を直接 require (Python 依存ゼロ)
+// fallback で旧 Python パーサーも試す
+let kttaParser = null;
+try {
+  kttaParser = require("./tools/parse_ktta_bracket.js");
+} catch (e) {
+  console.warn("[startup] parse_ktta_bracket.js のロード失敗:", e.message);
+}
+
 app.post("/api/tournaments/:id/entrants/upload-excel",
   requireAdmin, upload.single("file"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "ファイルが添付されていません" });
   const xlsxPath = req.file.path;
   const regenerate = req.body.regenerate === "1" || req.body.regenerate === "true";
   const autoLink = req.body.auto_link !== "0" && req.body.auto_link !== "false";
-  const format = req.body.format; // "singles" | "doubles" | "team" | undefined(auto)
-  const eventHint = req.body.event || ""; // 任意: 種目名指定 (○ヘッダー無いExcel用)
+  const format = req.body.format;
+  const eventHint = req.body.event || "";
 
-  // 新パーサーを優先。fallback で旧 jtta パーサーも試す
-  const newParser = path.join(__dirname, "tools", "parse_ktta_bracket.py");
-  const oldParser = path.join(__dirname, "tools", "parse_jtta_excel.py");
-  const script = fs.existsSync(newParser) ? newParser : oldParser;
+  // ── 1. Node.js パーサー (推奨・本番) ──
+  if (kttaParser && kttaParser.parseWorkbook) {
+    try {
+      const data = kttaParser.parseWorkbook(xlsxPath, {
+        formatHint: format && ["singles", "doubles", "team"].includes(format) ? format : null,
+        eventHint: eventHint || null,
+        allSheets: true,
+        verbose: false,
+      });
+      try { fs.unlinkSync(xlsxPath); } catch {}
+      if (data.error) {
+        return res.status(400).json({ ...data, used_parser: "parse_ktta_bracket.js" });
+      }
+      data.regenerate = regenerate;
+      data.auto_link_to_players = autoLink;
+      const r = db.importBracket(req.params.id, data);
+      return res.json({ ...r, used_parser: "parse_ktta_bracket.js" });
+    } catch (e) {
+      console.error("[parser] Node parser failed:", e);
+      try { fs.unlinkSync(xlsxPath); } catch {}
+      return res.status(500).json({
+        error: "Excel パーサー失敗: " + e.message,
+        used_parser: "parse_ktta_bracket.js",
+      });
+    }
+  }
+
+  // ── 2. fallback: Python parse_jtta_excel.py (旧版) ──
+  const script = path.join(__dirname, "tools", "parse_jtta_excel.py");
   if (!fs.existsSync(script)) {
     try { fs.unlinkSync(xlsxPath); } catch {}
-    return res.status(500).json({ error: "パーサースクリプトが見つかりません" });
+    return res.status(500).json({ error: "Node パーサーも Python パーサーも利用できません" });
   }
-
-  // 引数組み立て
-  const args = [script, xlsxPath, "--all-sheets"];
-  if (script === newParser) {
-    if (format && ["singles", "doubles", "team"].includes(format)) {
-      args.push("--format", format);
-    }
-    if (eventHint) args.push("--event", eventHint);
-  }
-
-  // Python パーサーを起動 (PYTHONPATH 経由で openpyxl をロード)
   const pyEnv = Object.assign({}, process.env);
   if (!pyEnv.PYTHONPATH) pyEnv.PYTHONPATH = path.join(__dirname, ".python-packages");
-  const py = spawn("python3", args, { env: pyEnv });
+  const py = spawn("python3", [script, xlsxPath, "--all-sheets"], { env: pyEnv });
   let stdout = "", stderr = "";
   py.stdout.on("data", (d) => { stdout += d.toString(); });
   py.stderr.on("data", (d) => { stderr += d.toString(); });
   py.on("close", (code) => {
     try { fs.unlinkSync(xlsxPath); } catch {}
     if (code !== 0) {
-      const errMsg = stderr.includes("No module named 'openpyxl'")
-        ? "Excelパーサーが必要な Python パッケージ (openpyxl) が見つかりません。サーバーの再デプロイをお願いします。"
-        : "パーサー失敗 (exit code " + code + ")";
       return res.status(500).json({
-        error: errMsg,
+        error: "パーサー失敗 (exit code " + code + ")",
         stderr: stderr.slice(0, 500),
-        used_parser: path.basename(script),
+        used_parser: "parse_jtta_excel.py (fallback)",
       });
     }
     let data;
     try { data = JSON.parse(stdout); }
     catch (e) {
       return res.status(500).json({ error: "JSON 解析失敗: " + e.message,
-        raw: stdout.slice(0, 500), used_parser: path.basename(script) });
+        used_parser: "parse_jtta_excel.py (fallback)" });
     }
     if (data.error) {
-      return res.status(400).json({ ...data, used_parser: path.basename(script) });
+      return res.status(400).json({ ...data, used_parser: "parse_jtta_excel.py (fallback)" });
     }
-    // インポート
     data.regenerate = regenerate;
     data.auto_link_to_players = autoLink;
     const r = db.importBracket(req.params.id, data);
-    res.json({ ...r, used_parser: path.basename(script) });
+    res.json({ ...r, used_parser: "parse_jtta_excel.py (fallback)" });
   });
   py.on("error", (err) => {
     try { fs.unlinkSync(xlsxPath); } catch {}
@@ -526,6 +544,35 @@ app.get("/api/tournaments/:id/receipts.xlsx", (req, res) => {
   } catch (e) {
     console.error("receipts.xlsx error:", e);
     res.status(500).json({ error: "領収書生成失敗: " + e.message });
+  }
+});
+
+// ─── 対戦票 (審判用記録票) 一括 Excel 出力 ───
+app.get("/api/tournaments/:id/match-cards.xlsx", (req, res) => {
+  try {
+    const tournament = db.getTournament(req.params.id);
+    if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
+    const matches = db.getMatchesByTournament(req.params.id) || [];
+    if (!matches.length) {
+      return res.status(400).json({
+        error: "試合データがありません。先にトーナメント表を取込んでください。",
+      });
+    }
+    const entrants = db.getEntrants(req.params.id) || [];
+    const buf = reports.buildMatchCardsXlsx(tournament, matches, entrants, {
+      only_playable: req.query.include_bye !== "1",
+    });
+    const safeName = (tournament.name || "tournament").replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_");
+    const filename = encodeURIComponent(`対戦票_${safeName}.xlsx`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=UTF-8''${filename}`);
+    res.setHeader("Content-Length", Buffer.byteLength(buf));
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.end(buf);
+  } catch (e) {
+    console.error("match-cards.xlsx error:", e);
+    res.status(500).json({ error: "対戦票生成失敗: " + e.message });
   }
 });
 
@@ -671,9 +718,26 @@ const DEFAULT_EVENTS_CATALOG = [
 ];
 
 function _resolveEvents(tournament) {
+  // ★ 最優先: tournament.event_config (フォーム生成で保存された full データ)
+  try {
+    if (tournament.event_config) {
+      const cfg = typeof tournament.event_config === "string"
+        ? JSON.parse(tournament.event_config)
+        : tournament.event_config;
+      if (Array.isArray(cfg) && cfg.length) {
+        return cfg.map(e => ({
+          name: e.name,
+          type: e.type || "singles",
+          fee: parseInt(e.fee) || 0,
+          per_team: e.per_team || (e.type === "team" ? 6 : null),
+          note: e.note || "",
+        }));
+      }
+    }
+  } catch {}
+
+  // フォールバック: entry_events + matches + entrants から再構築
   const eventSet = new Set();
-  // 0. 申込管理セクションで設定した entry_events を最優先で反映
-  //    (まだ matches/entrants が登録されていない状態でも種目だけ確定できるように)
   try {
     const ee = tournament.entry_events
       ? (typeof tournament.entry_events === "string"
@@ -682,13 +746,10 @@ function _resolveEvents(tournament) {
       : [];
     if (Array.isArray(ee)) ee.forEach(n => { if (n) eventSet.add(n); });
   } catch {}
-  // 1. 大会内の matches から event 一覧
   const matches = db.getMatchesByTournament(tournament.id);
   matches.forEach(m => { if (m.event) eventSet.add(m.event); });
-  // 2. 既存 entrants からも event を集める
   const entrants = db.getEntrants(tournament.id);
   entrants.forEach(e => { if (e.event) eventSet.add(e.event); });
-  // → events リスト (デフォルト料金つき)
   const inferType = (n) => {
     if (/団体|チーム/.test(n)) return "team";
     if (/ダブルス|混合|ミックス/.test(n)) return "doubles";
