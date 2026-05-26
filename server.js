@@ -1082,7 +1082,8 @@ app.use("/admin", express.static(path.join(publicDir, "admin")));
 app.use("/viewer", express.static(path.join(publicDir, "viewer")));
 
 // 運用マニュアル (Markdown)
-for (const docName of ["OPERATIONS.md", "RENDER_DEPLOY.md", "UPDATE_WORKFLOW.md", "HOSTING.md"]) {
+for (const docName of ["OPERATIONS.md", "RENDER_DEPLOY.md", "UPDATE_WORKFLOW.md", "HOSTING.md",
+                       "ORACLE_CLOUD_DEPLOY.md", "ORACLE_BEGINNER.md"]) {
   app.get("/" + docName, (req, res) => {
     const f = path.join(__dirname, docName);
     if (!fs.existsSync(f)) return res.status(404).send("Not Found");

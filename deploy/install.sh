@@ -114,8 +114,15 @@ echo ""
 echo "DNS 反映確認..."
 if host "$DOMAIN" >/dev/null 2>&1; then
   echo "Let's Encrypt 証明書取得中..."
-  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "admin@$DOMAIN" --redirect || \
-    echo "[警告] HTTPS 化失敗。DNS 反映後に手動で: sudo certbot --nginx -d $DOMAIN"
+  # nip.io 等の即席ドメインの場合は admin@ メールが使えないため一般メールにする
+  CERT_EMAIL="${CERT_EMAIL:-admin@$DOMAIN}"
+  # ドメインに数字-数字 が含まれる (nip.io等) → 別メール
+  if echo "$DOMAIN" | grep -qE "\.(nip\.io|sslip\.io|xip\.io)$"; then
+    CERT_EMAIL="noreply@example.com"
+  fi
+  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$CERT_EMAIL" --redirect --register-unsafely-without-email 2>/dev/null \
+    || certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$CERT_EMAIL" --redirect \
+    || echo "[警告] HTTPS 化失敗。DNS 反映後に手動で: sudo certbot --nginx -d $DOMAIN"
 else
   echo "[スキップ] DNS が未反映。後ほど手動で実行:"
   echo "         sudo certbot --nginx -d $DOMAIN"
