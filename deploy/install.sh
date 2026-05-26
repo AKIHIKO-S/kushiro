@@ -100,11 +100,26 @@ rm -f /etc/nginx/sites-enabled/default
 
 nginx -t && systemctl reload nginx
 
-# Let's Encrypt HTTPS
+# Oracle Cloud などで iptables も開放 (Ubuntu 22.04 デフォルト)
+if command -v iptables >/dev/null 2>&1; then
+  iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80  -j ACCEPT 2>/dev/null || true
+  iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
+  if command -v netfilter-persistent >/dev/null 2>&1; then
+    netfilter-persistent save 2>/dev/null || true
+  fi
+fi
+
+# Let's Encrypt HTTPS (DNSが反映されてない場合はスキップ)
 echo ""
-echo "Let's Encrypt 証明書取得 (DNSが反映されているか先に確認してください)"
-certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "admin@$DOMAIN" || \
-  echo "[警告] HTTPS 化失敗。DNS 反映後に手動で: sudo certbot --nginx -d $DOMAIN"
+echo "DNS 反映確認..."
+if host "$DOMAIN" >/dev/null 2>&1; then
+  echo "Let's Encrypt 証明書取得中..."
+  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "admin@$DOMAIN" --redirect || \
+    echo "[警告] HTTPS 化失敗。DNS 反映後に手動で: sudo certbot --nginx -d $DOMAIN"
+else
+  echo "[スキップ] DNS が未反映。後ほど手動で実行:"
+  echo "         sudo certbot --nginx -d $DOMAIN"
+fi
 
 # Cron バックアップ
 crontab -u "$APP_USER" -l 2>/dev/null > /tmp/cron-ktta || true

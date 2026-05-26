@@ -1,0 +1,74 @@
+# GitHub Actions: Oracle Cloud 自動デプロイ
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# main ブランチへの push で自動的に Oracle Cloud にデプロイ
+#
+# 事前設定 (GitHub Secrets):
+#   ORACLE_HOST     : Oracle Cloud インスタンスの Public IP
+#   ORACLE_SSH_KEY  : SSH 秘密鍵 (-----BEGIN OPENSSH PRIVATE KEY----- から含む全文)
+#   ORACLE_USER     : ユーザー名 (デフォルト: ubuntu)
+#
+# 使い方:
+#   git push  → 自動でこの workflow が走る
+#   1分以内に本番反映
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+name: Deploy to Oracle Cloud
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # 手動実行も可能
+
+concurrency:
+  group: oracle-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (情報のみ)
+        uses: actions/checkout@v4
+
+      - name: SSH and deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER || 'ubuntu' }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          port: 22
+          script_stop: true
+          script: |
+            set -e
+            echo "=== KTTA Platform デプロイ開始 ==="
+            cd /opt/ktta
+
+            # 念のためバックアップ (デプロイ前)
+            sudo -u ktta bash deploy/backup.sh || echo "backup skipped"
+
+            # 最新コード取得
+            sudo git fetch origin main
+            sudo git reset --hard origin/main
+
+            # 依存更新
+            sudo -u ktta npm install --omit=dev
+
+            # 構文チェック (失敗したら中断)
+            bash tools/check_syntax.sh
+
+            # サービス再起動
+            sudo systemctl restart ktta
+
+            # 30秒待ってヘルスチェック
+            sleep 5
+            curl -fs http://localhost:3000/api/health > /tmp/health.json
+            cat /tmp/health.json
+
+            echo "=== デプロイ完了 ==="
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Oracle Cloud デプロイ失敗"
+          echo "ロールバック: SSH接続して 'cd /opt/ktta && sudo git reset --hard HEAD~1 && sudo systemctl restart ktta'"
