@@ -589,13 +589,13 @@ if (SEAL_DIR_PERSISTENT) {
 // よく使われる申込種目のデフォルトカタログ (admin で追加・編集可能)
 const DEFAULT_EVENTS_CATALOG = [
   // 団体戦
-  { name: "一般男子 団体戦", type: "team", fee: 4000, per_team: 4 },
-  { name: "一般女子 団体戦", type: "team", fee: 4000, per_team: 4 },
-  { name: "高校男子 団体戦", type: "team", fee: 3000, per_team: 4 },
-  { name: "高校女子 団体戦", type: "team", fee: 3000, per_team: 4 },
+  { name: "一般男子 団体戦", type: "team", fee: 4000, per_team: 6 },
+  { name: "一般女子 団体戦", type: "team", fee: 4000, per_team: 6 },
+  { name: "高校男子 団体戦", type: "team", fee: 3000, per_team: 6 },
+  { name: "高校女子 団体戦", type: "team", fee: 3000, per_team: 6 },
   { name: "中学男子 団体戦", type: "team", fee: 3000, per_team: 6 },
   { name: "中学女子 団体戦", type: "team", fee: 3000, per_team: 6 },
-  { name: "小学生 団体戦", type: "team", fee: 2500, per_team: 4 },
+  { name: "小学生 団体戦", type: "team", fee: 2500, per_team: 6 },
   // 混合ダブルス
   { name: "混合ダブルス 一般", type: "doubles", fee: 1200 },
   { name: "混合ダブルス 高校", type: "doubles", fee: 1000 },
@@ -647,7 +647,7 @@ function _resolveEvents(tournament) {
   };
   return Array.from(eventSet).map(name => {
     const type = inferType(name);
-    return { name, type, fee: defaultFee(type, name), per_team: type === "team" ? 4 : null };
+    return { name, type, fee: defaultFee(type, name), per_team: type === "team" ? 6 : null };
   });
 }
 

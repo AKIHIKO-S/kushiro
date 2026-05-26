@@ -217,7 +217,11 @@ function doPost(e) {
     // ─── 5. 選手名簿 (横並びレイアウト) ───
     appendToRoster(ss, data);
 
-    // ─── 6. 自動返信メール ───
+    // ─── 6. 種目別 選手リスト 自動再生成 ───
+    try { generateEventLists(); }
+    catch (evErr) { console.error("種目別リスト生成失敗:", evErr); }
+
+    // ─── 7. 自動返信メール ───
     try { _sendReplyMail(data, ledgerRowNum); }
     catch (mailErr) { console.error("自動返信メール失敗:", mailErr); }
     try { _sendAdminNotification(data, ledgerRowNum); }

@@ -1425,7 +1425,7 @@ const A = {
  style: { borderLeft: "4px solid #059669", background: "#f0fdf4" } });
  card.appendChild(h("div", { className: "card-head" },
  h("div", { className: "card-title" }, "申込フォーム / 受付サイト"),
- h("div", { className: "flex gap-2" },
+ h("div", { className: "flex gap-2", style: { flexWrap: "wrap" } },
  h("button", { className: "btn btn-sm",
  onClick: () => A.openEntryFormGenerator(t) }, "フォーム生成 / 埋込コード"),
  h("a", { className: "btn btn-sm btn-ghost",
@@ -1433,6 +1433,8 @@ const A = {
  target: "_blank" }, "プレビュー"),
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.fetchGasStats(t) }, "申込集計を取得"),
+ h("button", { className: "btn btn-sm btn-ghost",
+ onClick: () => A.openReceiptManager(t) }, "領収書発行"),
  ),
  ));
  card.appendChild(h("div", { className: "text-sm text-sub mb-2" },
@@ -1444,6 +1446,202 @@ const A = {
  border: "1px solid #d1fae5", borderRadius: "6px",
  fontSize: "12px", color: "#065f46", display: "none" } }));
  return card;
+ },
+
+ // ─── 領収書発行マネージャー ───
+ // (A) GAS から申込リスト取得 → 団体ごとに一括発行
+ // (B) 任意入力 (空フォーム) で個別発行
+ async openReceiptManager(t) {
+   const gasUrl = localStorage.getItem("tt_gas_url_" + t.id) || "";
+   const body = h("div", {},
+     h("div", { className: "text-sm mb-3",
+       style: { padding: "10px 14px", background: "#eff6ff",
+         borderLeft: "3px solid #2563eb", borderRadius: "0 4px 4px 0" } },
+       "領収書をブラウザ上で発行・印刷できます。"),
+
+     // ─── A. GAS 連携 一括発行 ───
+     h("h3", { className: "text-sm font-bold mt-3 mb-2" },
+       "① 申込団体から一括発行 (GAS連携)"),
+     h("div", { className: "field" },
+       h("label", { className: "field-label" }, "GAS Web App URL"),
+       h("input", { className: "input", id: "rcvGasUrl",
+         value: gasUrl,
+         placeholder: "https://script.google.com/macros/s/.../exec",
+         onInput: (e) => { localStorage.setItem("tt_gas_url_" + t.id, e.target.value); } }),
+     ),
+     h("div", { className: "flex gap-2 mb-3" },
+       h("button", { className: "btn btn-sm",
+         onClick: () => A.fetchAndShowReceipts(t) },
+         "GAS から取得して領収書発行"),
+     ),
+     h("div", { id: "rcvList_" + t.id,
+       style: { maxHeight: "300px", overflow: "auto",
+         padding: "8px", background: "#fff",
+         border: "1px solid var(--border)", borderRadius: "6px",
+         marginBottom: "16px", display: "none" } }),
+
+     // ─── B. フリー入力 ───
+     h("h3", { className: "text-sm font-bold mt-4 mb-2" },
+       "② 任意入力で個別発行 (空の領収書)"),
+     h("div", { className: "two-col" },
+       h("div", { className: "field" },
+         h("label", { className: "field-label" }, "宛名 (必須)"),
+         h("input", { className: "input", id: "rcvName",
+           placeholder: "例: ○○卓球クラブ" })),
+       h("div", { className: "field" },
+         h("label", { className: "field-label" }, "金額 (円・必須)"),
+         h("input", { className: "input", id: "rcvAmount", type: "number",
+           placeholder: "例: 10500" })),
+     ),
+     h("div", { className: "field" },
+       h("label", { className: "field-label" }, "但し書き"),
+       h("input", { className: "input", id: "rcvNote",
+         value: t.name ? (t.name + " 参加料として") : "卓球大会 参加料として" })),
+     h("div", { className: "two-col" },
+       h("div", { className: "field" },
+         h("label", { className: "field-label" }, "発行日"),
+         h("input", { className: "input", id: "rcvDate", type: "date",
+           value: new Date().toISOString().slice(0, 10) })),
+       h("div", { className: "field" },
+         h("label", { className: "field-label" }, "発行者"),
+         h("input", { className: "input", id: "rcvIssuer",
+           value: "釧路卓球協会 会長 山本 満" })),
+     ),
+     h("button", { className: "btn btn-sm",
+       onClick: () => A.issueManualReceipt(t) }, "この内容で領収書を発行"),
+   );
+   const foot = h("button", { className: "btn btn-ghost",
+     onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる");
+   openModal("領収書 発行 / 管理", body, foot);
+ },
+
+ // GAS から申込リストを取得して一括領収書発行
+ async fetchAndShowReceipts(t) {
+   const url = document.getElementById("rcvGasUrl").value.trim();
+   if (!url) return toast("GAS URL を入力してください", "err");
+   const target = document.getElementById("rcvList_" + t.id);
+   target.style.display = "block";
+   target.innerHTML = "<em>取得中...</em>";
+   try {
+     const r = await api.get(`/api/tournaments/${t.id}/gas-stats?gas_url=` + encodeURIComponent(url));
+     // gas-stats からは集計を取得。明細は別 API (list) が必要
+     // 一旦 ledger 系を取りに行く: list endpoint
+     const sep = url.includes("?") ? "&" : "?";
+     const listUrl = `/api/tournaments/${t.id}/gas-stats?gas_url=` + encodeURIComponent(url);
+     // 簡易: gas-stats のレスポンスからチーム別集計を表示
+     if (!r.ok && r.error) {
+       target.innerHTML = `<span style="color:#dc2626">取得失敗: ${r.error}</span>`;
+       return;
+     }
+     const evtCount = Object.values(r.by_event || {}).reduce((s, n) => s + n, 0);
+     target.innerHTML =
+       `<div style="margin-bottom:8px"><strong>申込状況:</strong> ${r.teams_count}団体・${evtCount}件・合計¥${(r.total_amount||0).toLocaleString("ja-JP")}</div>` +
+       `<div class="text-xs text-sub mb-2">団体別の個別領収書を発行するには、各団体名と金額を下の「任意入力」欄に入力してください。</div>` +
+       `<button class="btn btn-sm" id="rcvBulkBtn">一括発行プレビュー (全団体まとめて表示)</button>`;
+     const bulkBtn = document.getElementById("rcvBulkBtn");
+     if (bulkBtn) bulkBtn.onclick = () => A.previewBulkReceipts(t, r, url);
+   } catch (e) {
+     target.innerHTML = `<span style="color:#dc2626">通信エラー: ${e.message}</span>`;
+   }
+ },
+
+ // 一括領収書プレビュー (全団体まとめて HTML 表示)
+ async previewBulkReceipts(t, stats, gasUrl) {
+   // 申込台帳の各団体の合計金額をもとに領収書を1枚ずつ作成
+   // GAS の集計のみだと団体名→金額の細かい情報がないため、
+   // 簡易版: 集計用シートの内容を expand する
+   const issuer = "釧路卓球協会 会長 山本 満";
+   const win = window.open("", "_blank");
+   const today = new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" });
+   const html = `<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><title>領収書一括</title>
+<style>
+  body { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; padding: 20px; }
+  .receipt { border: 2px solid #1c1917; padding: 24px;
+    margin-bottom: 30px; max-width: 600px; page-break-after: always; }
+  .receipt h1 { text-align: center; font-size: 28px; margin-bottom: 20px;
+    border-bottom: 3px double #1c1917; padding-bottom: 10px; }
+  .receipt .row { display: flex; justify-content: space-between;
+    padding: 6px 0; border-bottom: 1px dashed #999; margin-bottom: 8px; }
+  .receipt .amt { font-size: 26px; font-weight: 700; color: #b91c1c; }
+  .receipt .issuer { text-align: right; margin-top: 30px; font-size: 14px; }
+  @media print { body { padding: 0; } .no-print { display: none; } }
+</style></head><body>
+<div class="no-print" style="margin-bottom:20px;text-align:center">
+  <button onclick="window.print()" style="padding:10px 20px;background:#1e2a4a;color:#fff;border:none;border-radius:6px;cursor:pointer">印刷</button>
+  <button onclick="window.close()" style="padding:10px 20px;margin-left:8px">閉じる</button>
+</div>
+<p>※ 集計用シートをもとに <strong>大会全体の概要領収書</strong> を作成しました。<br>
+団体ごとに個別発行するには「任意入力で個別発行」セクションで宛名を入力してください。</p>
+<div class="receipt">
+  <h1>領 収 書</h1>
+  <div class="row"><span>No.</span><span>#0001</span></div>
+  <div class="row"><span>発行日</span><span>${today}</span></div>
+  <div class="row"><strong>宛名</strong><span style="font-size:20px">${esc(stats.teams_count + " 団体 様")}</span></div>
+  <div class="row"><strong>金額</strong><span class="amt">¥ ${(stats.total_amount||0).toLocaleString("ja-JP")} -</span></div>
+  <div class="row"><strong>但し</strong><span>${esc(t.name + " 参加料として")}</span></div>
+  <div class="issuer">${esc(issuer)} 　(印)</div>
+  <p style="text-align:center;margin-top:20px;color:#666">上記の通り領収いたしました。</p>
+</div>
+</body></html>`;
+   win.document.write(html);
+   win.document.close();
+ },
+
+ // フリー入力で個別領収書発行
+ async issueManualReceipt(t) {
+   const name = (document.getElementById("rcvName") || {}).value?.trim();
+   const amount = parseInt((document.getElementById("rcvAmount") || {}).value) || 0;
+   const note = (document.getElementById("rcvNote") || {}).value?.trim() || "";
+   const date = (document.getElementById("rcvDate") || {}).value || new Date().toISOString().slice(0, 10);
+   const issuer = (document.getElementById("rcvIssuer") || {}).value?.trim() || "釧路卓球協会 会長 山本 満";
+
+   if (!name) return toast("宛名を入力してください", "err");
+   if (amount <= 0) return toast("金額を入力してください", "err");
+
+   const win = window.open("", "_blank");
+   const dateStr = new Date(date).toLocaleDateString("ja-JP",
+     { year: "numeric", month: "long", day: "numeric" });
+   const no = String(Math.floor(Math.random() * 9999) + 1).padStart(4, "0");
+   const html = `<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><title>領収書</title>
+<style>
+  body { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+    padding: 40px; background: #f9f9f9; }
+  .receipt { background: #fff; border: 2px solid #1c1917; padding: 40px 50px;
+    max-width: 600px; margin: 0 auto; }
+  h1 { text-align: center; font-size: 36px; margin-bottom: 30px;
+    border-bottom: 3px double #1c1917; padding-bottom: 15px;
+    letter-spacing: 0.4em; }
+  .row { display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 0; border-bottom: 1px dashed #999; margin-bottom: 8px; }
+  .row .lbl { font-size: 14px; color: #555; min-width: 100px; }
+  .row .val { font-size: 20px; flex: 1; text-align: right; }
+  .amt { font-size: 32px !important; font-weight: 700; color: #b91c1c; }
+  .issuer { text-align: right; margin-top: 40px; font-size: 16px;
+    padding-top: 20px; border-top: 1px solid #ccc; }
+  .footer-text { text-align: center; margin-top: 20px; color: #666;
+    font-size: 13px; letter-spacing: 0.2em; }
+  @media print { body { padding: 0; background: #fff; } .no-print { display: none; } }
+</style></head><body>
+<div class="no-print" style="text-align:center;margin-bottom:20px">
+  <button onclick="window.print()" style="padding:12px 28px;background:#1e2a4a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:700">印刷</button>
+  <button onclick="window.close()" style="padding:12px 28px;margin-left:8px">閉じる</button>
+</div>
+<div class="receipt">
+  <h1>領収書</h1>
+  <div class="row"><span class="lbl">No.</span><span class="val">#${no}</span></div>
+  <div class="row"><span class="lbl">発行日</span><span class="val">${esc(dateStr)}</span></div>
+  <div class="row"><span class="lbl">宛名</span><span class="val" style="font-weight:700">${esc(name)} 様</span></div>
+  <div class="row"><span class="lbl">金額</span><span class="val amt">¥ ${amount.toLocaleString("ja-JP")} -</span></div>
+  <div class="row"><span class="lbl">但し</span><span class="val">${esc(note)}</span></div>
+  <div class="issuer">${esc(issuer)} 　(印)</div>
+  <p class="footer-text">上 記 の 通 り 領 収 い た し ま し た</p>
+</div>
+</body></html>`;
+   win.document.write(html);
+   win.document.close();
+   toast("領収書を新しいタブで開きました", "ok");
  },
 
  // ── GAS スプレッドシートから集計取得 ──
@@ -1592,25 +1790,25 @@ const A = {
  events.forEach((ev, idx) => {
  tbody.appendChild(h("tr", {},
  h("td", {}, h("input", { className: "input", value: ev.name,
- onInput: (e) => { ev.name = e.target.value; } })),
+ onInput: (e) => { ev.name = e.target.value; refreshCode(); } })),
  h("td", {},
  h("select", { className: "input",
- onChange: (e) => { ev.type = e.target.value; renderEventsTable(); } },
+ onChange: (e) => { ev.type = e.target.value; renderEventsTable(); refreshCode(); } },
  h("option", { value: "singles", selected: ev.type === "singles" ? "" : null }, "個人戦"),
  h("option", { value: "doubles", selected: ev.type === "doubles" ? "" : null }, "ダブルス"),
  h("option", { value: "team", selected: ev.type === "team" ? "" : null }, "団体戦"),
  )),
  h("td", {}, h("input", { className: "input", type: "number",
  value: ev.fee || 0,
- onInput: (e) => { ev.fee = parseInt(e.target.value) || 0; } })),
+ onInput: (e) => { ev.fee = parseInt(e.target.value) || 0; refreshCode(); } })),
  h("td", {},
  ev.type === "team"
  ? h("input", { className: "input", type: "number",
- value: ev.per_team || 4,
- onInput: (e) => { ev.per_team = parseInt(e.target.value) || 4; } })
+ value: ev.per_team || 6,
+ onInput: (e) => { ev.per_team = parseInt(e.target.value) || 6; refreshCode(); } })
  : h("span", { className: "text-sub" }, "—")),
  h("td", {}, h("button", { className: "btn btn-sm btn-danger",
- onClick: () => { events.splice(idx, 1); renderEventsTable(); } },
+ onClick: () => { events.splice(idx, 1); renderEventsTable(); refreshCode(); } },
  "削除")),
  ));
  });

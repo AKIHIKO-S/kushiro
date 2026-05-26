@@ -53,7 +53,7 @@ function buildEntryFormHTML(tournament, events, opts) {
     fee: e.fee || 0,
     type: e.type || "singles",
     note: e.note || "",
-    per_team: e.per_team || 4,
+    per_team: e.per_team || 6,
   })));
 
   // タンチョウ+卓球 イラスト (インラインSVG・HTTPS依存なし)
@@ -349,7 +349,6 @@ function buildEntryFormHTML(tournament, events, opts) {
 </head>
 <body>
 <div class="form-header">
-  <div class="form-header-art">${TANCHO_SVG}</div>
   <h1><span class="seal">大会申込</span>${tournName}</h1>
   <div class="meta">
     開催日 ${tournDate || "日程未定"}
@@ -450,7 +449,7 @@ function renderEvents() {
   EVENTS.forEach((ev, idx) => {
     const isTeam = ev.type === "team";
     const isDoubles = ev.type === "doubles";
-    const memberCount = isTeam ? (ev.per_team || 4) : (isDoubles ? 2 : 1);
+    const memberCount = isTeam ? (ev.per_team || 6) : (isDoubles ? 2 : 1);
     const det = document.createElement("details");
     det.className = "event-block";
     det.dataset.idx = idx;
@@ -488,7 +487,7 @@ function addEntry(eventIdx) {
 
   if (isTeam) {
     html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_name" placeholder="チーム名" style="width:100%; margin-bottom:6px; padding:6px;" />';
-    const per = ev.per_team || 4;
+    const per = ev.per_team || 6;
     for (let i = 0; i < per; i++) {
       html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_m' + i + '" placeholder="メンバー' + (i + 1) + ' 氏名" style="width:100%; margin-bottom:4px; padding:6px; font-size:12px;" />';
     }
@@ -594,7 +593,7 @@ function gatherFormData() {
       if (ev.type === "team") {
         obj.team_name = (row.querySelector("input[name^='ev" + idx + "_team" + ri + "_name']") || {}).value || "";
         obj.members = [];
-        for (let i = 0; i < (ev.per_team || 4); i++) {
+        for (let i = 0; i < (ev.per_team || 6); i++) {
           const v = (row.querySelector("input[name='ev" + idx + "_team" + ri + "_m" + i + "']") || {}).value;
           if (v && v.trim()) obj.members.push(v.trim());
         }
@@ -729,7 +728,7 @@ function buildEntryFormSnippet(tournament, events, opts) {
     name: e.name,
     fee: e.fee || 0,
     type: e.type || "singles",
-    per_team: e.per_team || 8,
+    per_team: e.per_team || 6,
   })));
 
   // タンチョウ+卓球の SVG (前バージョンの簡略版・インラインで埋込)
@@ -882,7 +881,6 @@ function buildEntryFormSnippet(tournament, events, opts) {
 
 <div class="tt-wrap">
   <div class="tt-hd">
-    <div class="tt-hd-art">${TANCHO_SVG}</div>
     <div class="tt-hd-text">
       <h2><span class="tt-hd-seal">大会申込</span>${tournName}</h2>
       <div class="tt-meta">
@@ -1055,7 +1053,7 @@ function buildEntryFormSnippet(tournament, events, opts) {
       '</div>';
     if (isTeam) {
       html += '<input type="text" class="tt-team-name" name="ev' + eventIdx + '_t' + idx + '_name" placeholder="チーム名 (例: Aチーム)" />';
-      var per = ev.per_team || 8;
+      var per = ev.per_team || 6;
       for (var i = 0; i < per; i++) {
         html += '<div style="display:grid;grid-template-columns:2fr 60px 2fr;gap:6px;margin-bottom:4px">' +
           '<input type="text" name="ev' + eventIdx + '_t' + idx + '_m' + i + '_name" placeholder="選手' + (i+1) + ' 氏名" />' +
@@ -1171,7 +1169,7 @@ function buildEntryFormSnippet(tournament, events, opts) {
           obj.team_name = nameEl ? nameEl.value.trim() : "";
           obj.members = [];
           obj.members_detail = [];
-          var per = ev.per_team || 8;
+          var per = ev.per_team || 6;
           for (var i = 0; i < per; i++) {
             var nm = row.querySelector('input[name="ev' + idx + '_t' + ri + '_m' + i + '_name"]');
             var ag = row.querySelector('input[name="ev' + idx + '_t' + ri + '_m' + i + '_age"]');
