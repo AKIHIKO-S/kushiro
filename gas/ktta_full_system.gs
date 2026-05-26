@@ -606,6 +606,18 @@ function rosterAlreadyExists_(sh, team, name) {
 
 // ═══════════════════════════════════════════════
 // 団体別集計 再計算
+// (まりもオープン集計表 準拠の美しいレイアウト)
+//
+//   レイアウト:
+//     [大会日付] [大会名]
+//     [No, 団体名, 団体(男/女), ダブルス(男/女), ミックス(男/女),
+//      シングルス(男/女), お弁当, 懇親会, 合計]
+//     [-, -, 男/女, 男/女, 男/女, 男/女, 数量, 数量, ¥]
+//     [-, -, 単価, 単価, 単価, 単価, 単価, 単価, -]
+//     [No1, 団体A, ...]
+//     [No2, 団体B, ...]
+//     ...
+//     [合計]
 // ═══════════════════════════════════════════════
 function rebuildSummary() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -614,7 +626,10 @@ function rebuildSummary() {
 
   // 申込台帳から団体別に集計
   const lastRow = logSh.getLastRow();
-  if (lastRow < 2) return;
+  if (lastRow < 2) {
+    SpreadsheetApp.getUi().alert('申込台帳にデータがありません。');
+    return;
+  }
   const data = logSh.getRange(2, 1, lastRow - 1, 16).getValues();
   const byTeam = {};
   data.forEach(row => {
@@ -623,11 +638,15 @@ function rebuildSummary() {
     const gender = String(row[9] || '');
     const bento = parseInt(row[12]) || 0;
     const party = parseInt(row[13]) || 0;
+    if (!team) return;
     if (!byTeam[team]) {
       byTeam[team] = {
         names: new Set(),
-        team_m: 0, team_f: 0, dbl_m: 0, dbl_f: 0, mix: 0,
-        sgl_m: 0, sgl_f: 0, bento: 0, party: 0,
+        team_m: 0, team_f: 0,
+        dbl_m: 0, dbl_f: 0,
+        mix_m: 0, mix_f: 0,
+        sgl_m: 0, sgl_f: 0,
+        bento: 0, party: 0,
       };
     }
     const t = byTeam[team];
@@ -635,7 +654,7 @@ function rebuildSummary() {
     if (/団体/.test(event)) {
       gender === 'female' ? t.team_f++ : t.team_m++;
     } else if (/混合|ミックス/.test(event)) {
-      t.mix++;
+      gender === 'female' ? t.mix_f++ : t.mix_m++;
     } else if (/ダブルス|ペア/.test(event)) {
       gender === 'female' ? t.dbl_f++ : t.dbl_m++;
     } else {
@@ -645,42 +664,242 @@ function rebuildSummary() {
     t.party += party;
   });
 
-  // クリア + 再書込み
-  sumSh.clear();
-  sumSh.appendRow([
-    '#', '団体名', '人数',
-    '団体戦男', '団体戦女', 'ダブルス男', 'ダブルス女', 'ミックス',
-    'シングルス男', 'シングルス女',
-    '弁当数', '懇親会数', '参加料合計 (円)',
-  ]);
-  sumSh.getRange(1, 1, 1, 13)
-    .setFontWeight('bold').setBackground('#1e293b').setFontColor('#fff');
+  // 価格
+  const P = {
+    team_m: priceProp('PRICE_TEAM_M'),
+    team_f: priceProp('PRICE_TEAM_F'),
+    dbl_m: priceProp('PRICE_DBL_M'),
+    dbl_f: priceProp('PRICE_DBL_F'),
+    mix_m: priceProp('PRICE_MIX'),
+    mix_f: priceProp('PRICE_MIX'),
+    sgl_m: priceProp('PRICE_SGL_M'),
+    sgl_f: priceProp('PRICE_SGL_F'),
+    bento: priceProp('PRICE_BENTO'),
+    party: priceProp('PRICE_PARTY'),
+  };
 
-  let idx = 1;
+  // クリア + 再構築 (まりもオープン形式)
+  sumSh.clear();
+  sumSh.clearFormats();
+
+  // 列ヘッダー定義
+  // col 1=No, 2=団体名, 3-4=団体(男女), 5-6=ダブルス(男女),
+  // 7-8=ミックス(男女), 9-10=シングルス(男女), 11=弁当, 12=懇親会, 13=合計
+  const totalCols = 13;
+
+  // ─── 行1: タイトル ───
+  const today = Utilities.formatDate(new Date(), 'JST', 'yyyy年MM月dd日');
+  sumSh.getRange(1, 1).setValue(today);
+  sumSh.getRange(1, 1, 1, 2).merge().setFontSize(11).setFontColor('#475569')
+    .setBackground('#f1f5f9');
+  sumSh.getRange(1, 3).setValue('団体別 申込集計表 — ' + prop('ASSOCIATION_NAME'));
+  sumSh.getRange(1, 3, 1, totalCols - 2).merge()
+    .setFontSize(16).setFontWeight('bold')
+    .setBackground('#1e293b').setFontColor('#ffffff')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sumSh.setRowHeight(1, 36);
+
+  // ─── 行2: 上段ヘッダー (大カテゴリ) ───
+  sumSh.getRange(2, 1).setValue('No.');
+  sumSh.getRange(2, 2).setValue('団体名');
+  sumSh.getRange(2, 3).setValue('団体');
+  sumSh.getRange(2, 3, 1, 2).merge();
+  sumSh.getRange(2, 5).setValue('ダブルス');
+  sumSh.getRange(2, 5, 1, 2).merge();
+  sumSh.getRange(2, 7).setValue('ミックス');
+  sumSh.getRange(2, 7, 1, 2).merge();
+  sumSh.getRange(2, 9).setValue('シングルス');
+  sumSh.getRange(2, 9, 1, 2).merge();
+  sumSh.getRange(2, 11).setValue('お弁当');
+  sumSh.getRange(2, 12).setValue('懇親会');
+  sumSh.getRange(2, 13).setValue('合計');
+  sumSh.getRange(2, 1, 1, totalCols)
+    .setFontWeight('bold').setFontSize(11)
+    .setBackground('#334155').setFontColor('#ffffff')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sumSh.setRowHeight(2, 30);
+
+  // ─── 行3: 下段ヘッダー (男/女) ───
+  sumSh.getRange(3, 3).setValue('男子');
+  sumSh.getRange(3, 4).setValue('女子');
+  sumSh.getRange(3, 5).setValue('男子');
+  sumSh.getRange(3, 6).setValue('女子');
+  sumSh.getRange(3, 7).setValue('男子');
+  sumSh.getRange(3, 8).setValue('女子');
+  sumSh.getRange(3, 9).setValue('男子');
+  sumSh.getRange(3, 10).setValue('女子');
+  sumSh.getRange(3, 1, 1, totalCols)
+    .setBackground('#475569').setFontColor('#ffffff')
+    .setFontSize(10).setFontWeight('bold')
+    .setHorizontalAlignment('center');
+  sumSh.setRowHeight(3, 22);
+  // No 列と 団体名列を行2-3 で merge
+  sumSh.getRange(2, 1, 2, 1).merge().setVerticalAlignment('middle');
+  sumSh.getRange(2, 2, 2, 1).merge().setVerticalAlignment('middle');
+  sumSh.getRange(2, 11, 2, 1).merge().setVerticalAlignment('middle');
+  sumSh.getRange(2, 12, 2, 1).merge().setVerticalAlignment('middle');
+  sumSh.getRange(2, 13, 2, 1).merge().setVerticalAlignment('middle');
+
+  // ─── 行4: 単価 ───
+  sumSh.getRange(4, 1).setValue('単価');
+  sumSh.getRange(4, 1, 1, 2).merge().setHorizontalAlignment('center');
+  sumSh.getRange(4, 3).setValue(P.team_m);
+  sumSh.getRange(4, 4).setValue(P.team_f);
+  sumSh.getRange(4, 5).setValue(P.dbl_m);
+  sumSh.getRange(4, 6).setValue(P.dbl_f);
+  sumSh.getRange(4, 7).setValue(P.mix_m);
+  sumSh.getRange(4, 8).setValue(P.mix_f);
+  sumSh.getRange(4, 9).setValue(P.sgl_m);
+  sumSh.getRange(4, 10).setValue(P.sgl_f);
+  sumSh.getRange(4, 11).setValue(P.bento);
+  sumSh.getRange(4, 12).setValue(P.party);
+  sumSh.getRange(4, 13).setValue('円').setHorizontalAlignment('center');
+  sumSh.getRange(4, 1, 1, totalCols)
+    .setBackground('#fef3c7').setFontColor('#92400e')
+    .setFontStyle('italic').setFontSize(10)
+    .setHorizontalAlignment('center');
+  sumSh.getRange(4, 3, 1, 10).setNumberFormat('#,##0');
+  sumSh.setRowHeight(4, 22);
+
+  // ─── 行5+: 各団体の集計 ───
+  const teamNames = Object.keys(byTeam).sort((a, b) => a.localeCompare(b, 'ja'));
   let grand = 0;
-  Object.keys(byTeam).sort().forEach(team => {
-    const t = byTeam[team];
-    const fee = t.team_m * priceProp('PRICE_TEAM_M') +
-                t.team_f * priceProp('PRICE_TEAM_F') +
-                t.dbl_m * priceProp('PRICE_DBL_M') +
-                t.dbl_f * priceProp('PRICE_DBL_F') +
-                t.mix * priceProp('PRICE_MIX') +
-                t.sgl_m * priceProp('PRICE_SGL_M') +
-                t.sgl_f * priceProp('PRICE_SGL_F') +
-                t.bento * priceProp('PRICE_BENTO') +
-                t.party * priceProp('PRICE_PARTY');
+  const totals = {
+    team_m: 0, team_f: 0, dbl_m: 0, dbl_f: 0,
+    mix_m: 0, mix_f: 0, sgl_m: 0, sgl_f: 0,
+    bento: 0, party: 0,
+  };
+  teamNames.forEach((name, idx) => {
+    const t = byTeam[name];
+    const row = 5 + idx;
+    const fee = t.team_m * P.team_m + t.team_f * P.team_f +
+                t.dbl_m * P.dbl_m + t.dbl_f * P.dbl_f +
+                t.mix_m * P.mix_m + t.mix_f * P.mix_f +
+                t.sgl_m * P.sgl_m + t.sgl_f * P.sgl_f +
+                t.bento * P.bento + t.party * P.party;
     grand += fee;
-    sumSh.appendRow([idx++, team, t.names.size,
-      t.team_m, t.team_f, t.dbl_m, t.dbl_f, t.mix,
-      t.sgl_m, t.sgl_f, t.bento, t.party, fee]);
+    Object.keys(totals).forEach(k => { totals[k] += t[k] || 0; });
+
+    sumSh.getRange(row, 1, 1, 13).setValues([[
+      idx + 1, name,
+      t.team_m, t.team_f,
+      t.dbl_m, t.dbl_f,
+      t.mix_m, t.mix_f,
+      t.sgl_m, t.sgl_f,
+      t.bento, t.party,
+      fee,
+    ]]);
+    // ゼブラストライプ
+    if (idx % 2 === 0) {
+      sumSh.getRange(row, 1, 1, 13).setBackground('#f8fafc');
+    } else {
+      sumSh.getRange(row, 1, 1, 13).setBackground('#ffffff');
+    }
+    sumSh.getRange(row, 1).setHorizontalAlignment('center');
+    sumSh.getRange(row, 2).setFontWeight('bold');
+    sumSh.getRange(row, 3, 1, 10).setHorizontalAlignment('center');
+    sumSh.getRange(row, 13).setNumberFormat('¥#,##0').setFontWeight('bold')
+      .setHorizontalAlignment('right').setFontColor('#1d4ed8');
+    // 0 のセルを薄く
+    [3,4,5,6,7,8,9,10,11,12].forEach(c => {
+      const cell = sumSh.getRange(row, c);
+      if (cell.getValue() === 0) cell.setFontColor('#cbd5e1');
+    });
   });
-  sumSh.appendRow(['', '◆ 総合計', '', '', '', '', '', '', '', '', '', '', grand]);
-  sumSh.getRange(sumSh.getLastRow(), 1, 1, 13).setFontWeight('bold')
-    .setBackground('#fef3c7');
+
+  // ─── 最終行: 合計 ───
+  const totRow = 5 + teamNames.length;
+  sumSh.getRange(totRow, 1).setValue('');
+  sumSh.getRange(totRow, 2).setValue('総合計');
+  sumSh.getRange(totRow, 3).setValue(totals.team_m);
+  sumSh.getRange(totRow, 4).setValue(totals.team_f);
+  sumSh.getRange(totRow, 5).setValue(totals.dbl_m);
+  sumSh.getRange(totRow, 6).setValue(totals.dbl_f);
+  sumSh.getRange(totRow, 7).setValue(totals.mix_m);
+  sumSh.getRange(totRow, 8).setValue(totals.mix_f);
+  sumSh.getRange(totRow, 9).setValue(totals.sgl_m);
+  sumSh.getRange(totRow, 10).setValue(totals.sgl_f);
+  sumSh.getRange(totRow, 11).setValue(totals.bento);
+  sumSh.getRange(totRow, 12).setValue(totals.party);
+  sumSh.getRange(totRow, 13).setValue(grand);
+  sumSh.getRange(totRow, 1, 1, 13)
+    .setBackground('#1e293b').setFontColor('#ffffff')
+    .setFontWeight('bold').setFontSize(12);
+  sumSh.getRange(totRow, 3, 1, 10).setHorizontalAlignment('center');
+  sumSh.getRange(totRow, 13).setNumberFormat('¥#,##0').setFontSize(14)
+    .setHorizontalAlignment('right');
+  sumSh.setRowHeight(totRow, 32);
+
+  // ─── 罫線 ───
+  const range = sumSh.getRange(2, 1, totRow - 1, 13);
+  range.setBorder(true, true, true, true, true, true,
+    '#94a3b8', SpreadsheetApp.BorderStyle.SOLID);
+  // 太枠 (外周)
+  sumSh.getRange(2, 1, totRow - 1, 13)
+    .setBorder(true, true, true, true, null, null,
+      '#1e293b', SpreadsheetApp.BorderStyle.SOLID_THICK);
+  // ヘッダー下太線
+  sumSh.getRange(4, 1, 1, 13)
+    .setBorder(null, null, true, null, null, null,
+      '#1e293b', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+  // 合計行 上太線
+  sumSh.getRange(totRow, 1, 1, 13)
+    .setBorder(true, null, null, null, null, null,
+      '#1e293b', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+
+  // ─── 列幅 ───
+  sumSh.setColumnWidth(1, 50);   // No
+  sumSh.setColumnWidth(2, 180);  // 団体名
+  for (let c = 3; c <= 10; c++) sumSh.setColumnWidth(c, 65);  // カウント列
+  sumSh.setColumnWidth(11, 70);  // 弁当
+  sumSh.setColumnWidth(12, 70);  // 懇親会
+  sumSh.setColumnWidth(13, 110); // 合計
+
+  // ─── 固定行 ───
+  sumSh.setFrozenRows(4);
+  sumSh.setFrozenColumns(2);
+
+  // ─── 集計サマリーボード (上部の右寄り) ───
+  // 注意: ここは行 1-4 の外 (列 15以降) に表示
+  const dashCol = 15;
+  sumSh.getRange(1, dashCol).setValue('◆ ハイライト');
+  sumSh.getRange(1, dashCol, 1, 3).merge()
+    .setBackground('#0f172a').setFontColor('#ffffff')
+    .setFontWeight('bold').setFontSize(12)
+    .setHorizontalAlignment('center');
+  const cards = [
+    ['団体数', teamNames.length, '#3b82f6'],
+    ['選手数', Object.values(byTeam).reduce((a, t) => a + t.names.size, 0), '#10b981'],
+    ['総合計', grand, '#dc2626'],
+  ];
+  cards.forEach((c, i) => {
+    const r = 2 + i;
+    sumSh.getRange(r, dashCol).setValue(c[0]);
+    sumSh.getRange(r, dashCol, 1, 2).merge();
+    sumSh.getRange(r, dashCol + 2).setValue(c[1]);
+    sumSh.getRange(r, dashCol, 1, 3)
+      .setBackground('#ffffff').setBorder(true, true, true, true, null, null,
+      '#cbd5e1', SpreadsheetApp.BorderStyle.SOLID);
+    sumSh.getRange(r, dashCol).setFontWeight('bold').setHorizontalAlignment('left')
+      .setFontColor(c[2]).setFontSize(11);
+    sumSh.getRange(r, dashCol + 2)
+      .setHorizontalAlignment('right').setFontWeight('bold')
+      .setFontSize(13).setFontColor(c[2]);
+    if (c[0] === '総合計') {
+      sumSh.getRange(r, dashCol + 2).setNumberFormat('¥#,##0');
+    } else {
+      sumSh.getRange(r, dashCol + 2).setNumberFormat('#,##0');
+    }
+    sumSh.setRowHeight(r, 30);
+  });
+  sumSh.setColumnWidth(dashCol, 80);
+  sumSh.setColumnWidth(dashCol + 1, 30);
+  sumSh.setColumnWidth(dashCol + 2, 100);
 
   SpreadsheetApp.getUi().alert(
-    '団体別集計を更新しました。\n' +
-    '団体数: ' + Object.keys(byTeam).length + '\n' +
+    '団体別集計を更新しました。\n\n' +
+    '団体数: ' + teamNames.length + '\n' +
+    '選手数: ' + Object.values(byTeam).reduce((a, t) => a + t.names.size, 0) + '\n' +
     '総合計: ¥' + grand.toLocaleString());
 }
 
