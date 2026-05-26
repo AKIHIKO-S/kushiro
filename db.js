@@ -239,6 +239,7 @@ try {
   addMCol("call_count", "INTEGER DEFAULT 0");  // 互換用 (累計)
   addMCol("call_count_p1", "INTEGER DEFAULT 0");  // 選手1の再コール回数
   addMCol("call_count_p2", "INTEGER DEFAULT 0");  // 選手2の再コール回数
+  addMCol("match_label", "TEXT DEFAULT ''");  // "1-1", "2-1" 形式の試合番号 (R-N)
   // entrants にブロック情報・大会固有番号追加
   const ecols = sqlite.prepare("PRAGMA table_info(entrants)").all();
   if (ecols.length && !ecols.find(c => c.name === "block")) {
@@ -1310,7 +1311,7 @@ function createPlayerFromEntrant(entrantId, isPartner) {
 const opStmts = {
   insertFullMatch: sqlite.prepare(`
     INSERT INTO matches (
-      id, tournament_id, event, round, round_order, match_no,
+      id, tournament_id, event, round, round_order, match_no, match_label,
       winner_id, loser_id, winner_name, loser_name, winner_team, loser_team,
       sets_json, winner_sets, loser_sets, played_at, note,
       status, table_no, referee_id, referee_name,
@@ -1319,7 +1320,7 @@ const opStmts = {
       bracket_pos, bracket_round,
       player1_entrant_id, player2_entrant_id
     ) VALUES (
-      @id, @tournament_id, @event, @round, @round_order, @match_no,
+      @id, @tournament_id, @event, @round, @round_order, @match_no, @match_label,
       @winner_id, @loser_id, @winner_name, @loser_name, @winner_team, @loser_team,
       @sets_json, @winner_sets, @loser_sets, @played_at, @note,
       @status, @table_no, @referee_id, @referee_name,
@@ -1538,16 +1539,19 @@ function generateBracket(tournamentId, event, options) {
     });
   }
 
-  // SQLite トランザクションで一括挿入
+  // SQLite トランザクションで一括挿入 (小さい山=round1 から順に挿入)
   const txn = sqlite.transaction(() => {
     matchesByRound.forEach((rnd, r) => {
       const roundName = roundNameForBracket(r + 1, totalRounds);
+      const roundIdx = r + 1;  // 1=1回戦, 2=2回戦, ...
       rnd.forEach(m => {
         const isFirstRound = r === 0;
         // entrant の display_name (ダブルスは "山田 太郎 / 鈴木 一郎" / シングルは "山田 太郎")
         const p1Name = m.player1 ? m.player1.display_name : (isFirstRound ? "BYE" : "");
         const p2Name = m.player2 ? m.player2.display_name : (isFirstRound ? "BYE" : "");
         const bothReady = m.player1 && m.player2;
+        // match_label: 「R-N」形式 (例: "1-1", "1-2", "2-1", ..., "決-1")
+        const matchLabel = roundIdx + "-" + m.match_no;
         opStmts.insertFullMatch.run({
           id: m.id,
           tournament_id: tournamentId,
@@ -1555,6 +1559,7 @@ function generateBracket(tournamentId, event, options) {
           round: roundName,
           round_order: getRoundOrder(roundName),
           match_no: m.match_no,
+          match_label: matchLabel,
           winner_id: null, loser_id: null,
           winner_name: "", loser_name: "", winner_team: "", loser_team: "",
           sets_json: "[]", winner_sets: 0, loser_sets: 0,
@@ -3304,12 +3309,14 @@ function importFromMatches(tournamentId, data) {
       const bothReady = p1Name && p2Name && p1Name !== "BYE" && p2Name !== "BYE";
       const roundName = m.round || roundNameForBracket(r, totalRounds);
 
+      const matchNoNum = m.match_no || (p + 1);
       opStmts.insertFullMatch.run({
         id, tournament_id: tournamentId,
         event: data.event,
         round: roundName,
         round_order: getRoundOrder(roundName),
-        match_no: m.match_no || (p + 1),
+        match_no: matchNoNum,
+        match_label: (m.bracket_round || r) + "-" + matchNoNum,
         winner_id: null, loser_id: null,
         winner_name: "", loser_name: "",
         winner_team: "", loser_team: "",

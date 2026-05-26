@@ -310,60 +310,63 @@ function buildReceiptsHTML(tournament, entrants, opts) {
     border: none; padding: 8px 20px;
     border-radius: 4px; font-weight: 700; cursor: pointer;
   }
+  /* ─── A6 サイズ (105×148mm) 領収書 ─── */
   .receipt-page {
-    width: 210mm; height: 148mm;
-    padding: 22mm 18mm;
-    margin: 12px auto;
+    width: 148mm; height: 105mm;   /* A6 横置き */
+    padding: 10mm 10mm 8mm;
+    margin: 8px auto;
     background: #fff;
     box-shadow: 0 1px 4px rgba(0,0,0,.1);
     page-break-after: always;
     position: relative;
     border: 1px solid #ddd;
+    overflow: hidden;
   }
   .receipt-title {
     text-align: center;
-    font-size: 32px;
-    letter-spacing: 0.5em;
-    padding-left: 0.5em;
+    font-size: 22px;
+    letter-spacing: 0.4em;
+    padding-left: 0.4em;
     border-bottom: 2px solid #000;
-    padding-bottom: 8px;
-    margin-bottom: 24px;
+    padding-bottom: 4px;
+    margin-bottom: 6px;
   }
   .receipt-no {
-    position: absolute; top: 22mm; right: 18mm;
-    font-size: 11px;
+    position: absolute; top: 6mm; right: 10mm;
+    font-size: 9px;
   }
   .receipt-to {
-    font-size: 22px;
-    margin: 14px 0 24px;
-    padding: 4px 0;
+    font-size: 15px;
+    margin: 4px 0 8px;
+    padding: 3px 0;
     border-bottom: 1px solid #888;
   }
-  .receipt-to-sub { font-size: 12px; color: #555; margin-left: 4px; }
+  .receipt-to-sub { font-size: 10px; color: #555; margin-left: 3px; }
   .receipt-amount {
-    font-size: 36px;
+    font-size: 24px;
     text-align: center;
-    margin: 16px 0;
+    margin: 6px 0;
     font-weight: 700;
     border-top: 1px solid #000;
     border-bottom: 3px double #000;
-    padding: 12px 0;
-    letter-spacing: 0.1em;
+    padding: 5px 0;
+    letter-spacing: 0.08em;
   }
-  .receipt-amount-prefix { font-size: 20px; vertical-align: middle; margin-right: 8px; }
+  .receipt-amount-prefix { font-size: 14px; vertical-align: middle; margin-right: 5px; }
   .receipt-purpose {
-    font-size: 13px;
-    margin: 16px 0;
+    font-size: 10px;
+    margin: 6px 0;
+    line-height: 1.5;
   }
-  .receipt-purpose strong { font-size: 14px; }
+  .receipt-purpose strong { font-size: 11px; }
   .breakdown {
-    margin: 16px 0;
+    margin: 4px 0;
     border-collapse: collapse;
     width: 100%;
-    font-size: 11px;
+    font-size: 9px;
   }
   .breakdown th, .breakdown td {
-    padding: 4px 8px;
+    padding: 2px 5px;
     border: 1px solid #aaa;
     text-align: right;
   }
@@ -371,42 +374,41 @@ function buildReceiptsHTML(tournament, entrants, opts) {
   .breakdown td:first-child { text-align: left; }
   .receipt-footer {
     position: absolute;
-    bottom: 22mm; right: 18mm;
+    bottom: 8mm; right: 10mm;
     text-align: right;
-    font-size: 13px;
-    line-height: 1.6;
+    font-size: 10px;
+    line-height: 1.4;
   }
-  .receipt-footer .issuer { font-size: 14px; font-weight: 700; margin-top: 4px; }
+  .receipt-footer .issuer { font-size: 11px; font-weight: 700; margin-top: 2px; }
   .seal-wrap {
     display: inline-block; position: relative;
-    margin-left: 8px;
+    margin-left: 4px;
     vertical-align: middle;
   }
   .seal-wrap img {
-    width: 64px; height: 64px;
+    width: 40px; height: 40px;
     object-fit: contain;
     opacity: 0.85;
   }
   .seal-wrap .no-seal {
-    width: 56px; height: 56px;
+    width: 36px; height: 36px;
     border: 2px solid #c91f37; color: #c91f37;
     border-radius: 4px;
     display: inline-flex; align-items: center; justify-content: center;
-    font-size: 11px;
+    font-size: 9px;
     transform: rotate(-3deg);
   }
   .receipt-date {
     position: absolute;
-    bottom: 22mm; left: 18mm;
-    font-size: 13px;
+    bottom: 8mm; left: 10mm;
+    font-size: 10px;
   }
   @media print {
     .toolbar { display: none; }
     .receipt-page {
       margin: 0; box-shadow: none; border: none;
-      width: 100%; height: 100vh;
     }
-    @page { size: A5 landscape; margin: 0; }
+    @page { size: A6 landscape; margin: 0; }
   }
 </style>
 </head>

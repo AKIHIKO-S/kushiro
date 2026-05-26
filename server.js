@@ -296,6 +296,18 @@ app.post("/api/tournaments/:id/entrants", requireAdmin, (req, res) => {
   const e = db.createEntrant({ ...req.body, tournament_id: req.params.id });
   res.status(201).json(e);
 });
+// シード配置でトーナメント生成
+// body: { event, regenerate?, entrant_ids? }
+app.post("/api/tournaments/:id/bracket/generate", requireAdmin, (req, res) => {
+  const event = req.body?.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.generateBracket(req.params.id, event, {
+    regenerate: req.body?.regenerate !== false,
+    entrant_ids: req.body?.entrant_ids || null,
+  });
+  if (r?.error) return res.status(400).json(r);
+  res.json(r);
+});
 app.put("/api/entrants/:id", requireAdmin, (req, res) => {
   const e = db.updateEntrant(req.params.id, req.body || {});
   if (!e) return res.status(404).json({ error: "エントリーが見つかりません" });
