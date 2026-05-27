@@ -1480,20 +1480,42 @@ const A = {
  " ・ 試合呼出 / 台割当 / 審判アサイン / 結果入力"),
  ));
 
- // ─── 外部 (GAS) 連携の案内 ───
+ // ─── ★ Step 1-3 統合: 申込フォーム / 抽選番号 / 名簿 ───
+ panel.appendChild(A.renderEntrantsSection(t));
+
+ // ─── 申込フォーム (公開URL + 設定) ───
  panel.appendChild(h("div", { className: "card",
-   style: { background: "#f8fafc", borderLeft: "4px solid #64748b" } },
+   style: { background: "linear-gradient(135deg,#fef3c7 0%,#fef9c3 100%)",
+            borderLeft: "4px solid #fbbf24" } },
  h("div", { className: "card-head" },
- h("div", { className: "card-title", style: { color: "#475569" } },
-   "申込・名簿・集計・領収書"),
+ h("div", { className: "card-title", style: { color: "#78350f" } },
+   "公開申込フォーム"),
+ h("div", { className: "flex gap-2 flex-wrap" },
+ h("button", { className: "btn btn-sm",
+   onClick: () => A.openEntryFormGenerator(t) }, "フォーム設定 / 埋込コード"),
+ h("button", { className: "btn btn-sm btn-ghost",
+   onClick: () => window.open(`/entry/${t.id}`, "_blank") }, "プレビュー"),
+ h("button", { className: "btn btn-sm btn-ghost",
+   onClick: async () => {
+     try {
+       await navigator.clipboard.writeText(
+         `${A.publicOrigin()}/entry/${t.id}`);
+       toast("URLをコピーしました", "ok");
+     } catch { toast("コピー失敗", "err"); }
+   } }, "URLコピー"),
  ),
- h("div", { className: "text-sm", style: { color: "#475569", lineHeight: "1.7" } },
- "申込フォーム作成 / 申込内容のスプレッドシート転記 / 団体別集計 / " +
- "種目別一覧表 / 領収書発行 は ",
- h("strong", {}, "GAS (Google Apps Script)"),
- " 側で処理してください。",
- h("br", {}),
- "完成した申込リスト/組合せ表を Excel で出力し、上の「Excel / PDF 取込」から取り込むことで本システムでの大会運営が開始できます。",
+ ),
+ h("div", { className: "text-sm", style: { color: "#78350f", lineHeight: "1.7" } },
+   "公開URL: ",
+   h("code", { style: { background: "#fff", padding: "2px 6px",
+     borderRadius: "3px", fontSize: "11px", border: "1px solid #fbbf24" } },
+     `${A.publicOrigin() || location.origin}/entry/${t.id}`),
+   h("br", {}),
+   "状態: ",
+   t.entries_open
+     ? h("strong", { style: { color: "#15803d" } }, "● 受付中")
+     : h("strong", { style: { color: "#dc2626" } }, "○ 停止中"),
+   t.entry_deadline ? ` / 締切: ${t.entry_deadline}` : "",
  ),
  ));
 
