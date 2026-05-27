@@ -107,6 +107,7 @@ function onOpen() {
     .addItem('⑤ 種目別一覧を再構築', 'rebuildEventList')
     .addSeparator()
     .addItem('⑥ 領収書 PDF を一括生成', 'generateReceipts')
+    .addItem('⑥-2 個別領収書を発行', 'generateSingleReceipt')
     .addItem('⑦ トーナメント表シートを作成', 'buildBracketSheet')
     .addSeparator()
     .addItem('⑧ KTTA Platform 用 Excel を書出', 'exportForPlatform')
@@ -312,6 +313,16 @@ function buildFormHtml_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const events = DEFAULT_EVENTS;
   const webAppUrl = ScriptApp.getService().getUrl();
+  // 料金マップを JS に渡す (種目名 → 円)
+  const priceMap = {};
+  events.forEach(ev => {
+    if (/団体/.test(ev)) priceMap[ev] = ev.includes('女') ? priceProp('PRICE_TEAM_F') : priceProp('PRICE_TEAM_M');
+    else if (/混合|ミックス/.test(ev)) priceMap[ev] = priceProp('PRICE_MIX');
+    else if (/ダブルス/.test(ev)) priceMap[ev] = ev.includes('女') ? priceProp('PRICE_DBL_F') : priceProp('PRICE_DBL_M');
+    else priceMap[ev] = ev.includes('女') ? priceProp('PRICE_SGL_F') : priceProp('PRICE_SGL_M');
+  });
+  const PRICE_BENTO = priceProp('PRICE_BENTO');
+  const PRICE_PARTY = priceProp('PRICE_PARTY');
   return `<!DOCTYPE html><html lang="ja"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>大会申込フォーム — ${prop('ASSOCIATION_NAME')}</title>
@@ -340,17 +351,61 @@ main { padding: 20px 24px; }
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
 .ev-row { display: flex; gap: 8px; align-items: center;
   padding: 6px 8px; margin: 4px 0;
-  background: #f9fafb; border-radius: 4px; }
+  background: #f9fafb; border-radius: 4px;
+  justify-content: space-between; }
+.ev-row .ev-left { display: flex; gap: 8px; align-items: center; }
+.ev-row .ev-price { font-size: 11px; color: #6b7280; }
 .ev-row input[type=checkbox] { width: auto; }
 .btn { width: 100%; padding: 12px; font-size: 15px;
   font-weight: 700; color: #fff; background: #2563eb;
   border: none; border-radius: 6px; cursor: pointer; }
 .btn:hover { background: #1d4ed8; }
 .btn:disabled { background: #9ca3af; cursor: not-allowed; }
+.btn-secondary { background: #6b7280; }
+.btn-secondary:hover { background: #4b5563; }
+.btn-line { background: #06c755; }
+.btn-line:hover { background: #05a647; }
 .msg { padding: 12px; border-radius: 6px; margin-top: 12px;
   font-size: 14px; display: none; }
 .msg.ok { background: #d1fae5; color: #064e3b; display: block; }
 .msg.err { background: #fee2e2; color: #7f1d1d; display: block; }
+/* 料金パネル (sticky bottom) */
+.fee-bar {
+  position: sticky; bottom: 0; left: 0; right: 0;
+  background: linear-gradient(180deg, #fff 0%, #fef3c7 100%);
+  border-top: 3px solid #d97706; padding: 12px 16px;
+  font-weight: bold; box-shadow: 0 -4px 12px rgba(0,0,0,0.08);
+  z-index: 10;
+}
+.fee-bar .fee-row { display: flex; justify-content: space-between;
+  align-items: center; font-size: 13px; color: #78350f; padding: 2px 0; }
+.fee-bar .fee-total { font-size: 18px; color: #7c2d12;
+  border-top: 1px solid #d97706; margin-top: 4px; padding-top: 6px; }
+/* 確認モーダル */
+.modal-bg {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5); display: flex;
+  align-items: center; justify-content: center; z-index: 100;
+}
+.modal-box {
+  background: #fff; max-width: 540px; width: 90%;
+  max-height: 90vh; overflow-y: auto;
+  border-radius: 8px; padding: 24px;
+}
+.modal-box h2 { font-size: 18px; margin-bottom: 12px; color: #1e293b; }
+.modal-box .preview-row {
+  display: flex; justify-content: space-between;
+  padding: 6px 0; border-bottom: 1px dashed #e5e7eb; font-size: 13px;
+}
+.modal-box .preview-total { font-size: 18px; font-weight: bold;
+  color: #b91c1c; padding-top: 10px; border-top: 2px solid #b91c1c;
+  margin-top: 10px; }
+.copy-text-area {
+  width: 100%; min-height: 180px; padding: 10px;
+  border: 1px solid #d1d5db; border-radius: 4px;
+  font-family: 'Hiragino Sans', monospace; font-size: 12px;
+  background: #f9fafb; margin: 8px 0;
+}
 @media (max-width: 480px) { .container { border-radius: 0; }
   header, main { padding: 14px 16px; } }
 </style></head><body>
@@ -402,11 +457,17 @@ main { padding: 20px 24px; }
 
   <div class="section">
     <h2>出場種目 (複数選択可)</h2>
-    ${events.map(ev => `<div class="ev-row">
-      <input type="checkbox" name="event_${ev}" id="ev_${ev.replace(/[^A-Za-z0-9一-龯ぁ-んァ-ヶー]/g, '_')}">
-      <label for="ev_${ev.replace(/[^A-Za-z0-9一-龯ぁ-んァ-ヶー]/g, '_')}">${ev}</label>
-    </div>`).join('')}
-    <div class="field"><label>ダブルスのパートナー 氏名 (該当者のみ)</label>
+    ${events.map(ev => {
+      const id = 'ev_' + ev.replace(/[^A-Za-z0-9一-龯ぁ-んァ-ヶー]/g, '_');
+      return `<div class="ev-row">
+        <div class="ev-left">
+          <input type="checkbox" name="event_${ev}" id="${id}" class="event-cb" data-event="${ev}">
+          <label for="${id}">${ev}</label>
+        </div>
+        <span class="ev-price">¥${(priceMap[ev]||0).toLocaleString()}</span>
+      </div>`;
+    }).join('')}
+    <div class="field" style="margin-top:12px"><label>ダブルスのパートナー 氏名 (該当者のみ)</label>
       <input name="partner_name"></div>
   </div>
 
@@ -434,44 +495,220 @@ main { padding: 20px 24px; }
       <textarea name="note" rows="3"></textarea></div>
   </div>
 
-  <button type="submit" class="btn" id="sb">申込を送信</button>
+  <button type="submit" class="btn" id="sb">申込内容を確認する →</button>
   <div id="msg" class="msg"></div>
 </form>
 </main>
+
+<!-- Sticky 合計金額バー -->
+<div class="fee-bar" id="feeBar">
+  <div class="fee-row"><span>種目参加料 (<span id="feeEventCount">0</span>種目)</span><span id="feeEvents">¥0</span></div>
+  <div class="fee-row"><span>お弁当</span><span id="feeBento">¥0</span></div>
+  <div class="fee-row"><span>懇親会</span><span id="feeParty">¥0</span></div>
+  <div class="fee-row fee-total"><span>合計</span><span id="feeTotal">¥0</span></div>
 </div>
+</div>
+
+<!-- 確認モーダル -->
+<div id="confirmModal" style="display:none"></div>
+<!-- 完了モーダル -->
+<div id="successModal" style="display:none"></div>
+
 <script>
 const events = ${JSON.stringify(events)};
-document.getElementById('frm').addEventListener('submit', async (e) => {
+const PRICE_MAP = ${JSON.stringify(priceMap)};
+const PRICE_BENTO = ${PRICE_BENTO};
+const PRICE_PARTY = ${PRICE_PARTY};
+
+// ── 合計金額をリアルタイム計算 ──
+function calcTotal() {
+  const checked = Array.from(document.querySelectorAll('.event-cb:checked'));
+  let eventSum = 0;
+  const eventList = [];
+  checked.forEach(cb => {
+    const ev = cb.dataset.event;
+    const price = PRICE_MAP[ev] || 0;
+    eventSum += price;
+    eventList.push({ event: ev, fee: price });
+  });
+  const bento = parseInt(document.querySelector('[name=bento]').value) || 0;
+  const party = parseInt(document.querySelector('[name=party]').value) || 0;
+  const bentoSum = bento * PRICE_BENTO;
+  const partySum = party * PRICE_PARTY;
+  const total = eventSum + bentoSum + partySum;
+
+  document.getElementById('feeEventCount').textContent = checked.length;
+  document.getElementById('feeEvents').textContent = '¥' + eventSum.toLocaleString();
+  document.getElementById('feeBento').textContent = bento ? ('¥' + bentoSum.toLocaleString() + ' (×' + bento + ')') : '¥0';
+  document.getElementById('feeParty').textContent = party ? ('¥' + partySum.toLocaleString() + ' (×' + party + ')') : '¥0';
+  document.getElementById('feeTotal').textContent = '¥' + total.toLocaleString();
+  return { eventList, eventSum, bento, bentoSum, party, partySum, total };
+}
+document.querySelectorAll('.event-cb').forEach(cb => cb.addEventListener('change', calcTotal));
+document.querySelector('[name=bento]').addEventListener('change', calcTotal);
+document.querySelector('[name=party]').addEventListener('change', calcTotal);
+window.addEventListener('load', calcTotal);
+
+// ── 送信ボタン → 確認モーダル表示 ──
+document.getElementById('frm').addEventListener('submit', (e) => {
   e.preventDefault();
-  const btn = document.getElementById('sb');
-  const msg = document.getElementById('msg');
-  btn.disabled = true; btn.textContent = '送信中…';
   const fd = new FormData(e.target);
   const data = {};
   fd.forEach((v, k) => { data[k] = v; });
   data.events = events.filter(ev => fd.get('event_' + ev));
+  if (data.events.length === 0) {
+    alert('出場種目を1つ以上選択してください。');
+    return;
+  }
+  const summary = calcTotal();
+  showConfirmModal(data, summary);
+});
+
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function buildSummaryText(data, summary) {
+  // LINE 共有用のプレーンテキスト
+  const lines = [];
+  lines.push('━━━━━━━━━━━━━━━━━━━━');
+  lines.push('${prop('ASSOCIATION_NAME')} 大会 申込');
+  lines.push('━━━━━━━━━━━━━━━━━━━━');
+  lines.push('団体: ' + data.team);
+  lines.push('申込責任者: ' + data.rep_name);
+  lines.push('連絡先: ' + (data.email || '') + (data.phone ? ' / ' + data.phone : ''));
+  lines.push('');
+  lines.push('【選手】');
+  lines.push('  ' + (data.player_name || '') + (data.furigana ? ' (' + data.furigana + ')' : ''));
+  if (data.gender) lines.push('  性別: ' + (data.gender === 'female' ? '女子' : '男子'));
+  if (data.age_group) lines.push('  年齢区分: ' + data.age_group);
+  if (data.partner_name) lines.push('  ダブルス相手: ' + data.partner_name);
+  lines.push('');
+  lines.push('【出場種目】(' + summary.eventList.length + '種目)');
+  summary.eventList.forEach(e => {
+    lines.push('  ・' + e.event + '  ¥' + e.fee.toLocaleString());
+  });
+  lines.push('');
+  if (summary.bento) lines.push('お弁当: ' + summary.bento + '個 = ¥' + summary.bentoSum.toLocaleString());
+  if (summary.party) lines.push('懇親会: ' + summary.party + '名 = ¥' + summary.partySum.toLocaleString());
+  lines.push('');
+  lines.push('━━━━━━━━━━━━━━━━━━━━');
+  lines.push('合計: ¥' + summary.total.toLocaleString());
+  lines.push('━━━━━━━━━━━━━━━━━━━━');
+  if (data.note) {
+    lines.push('');
+    lines.push('備考: ' + data.note);
+  }
+  return lines.join('\\n');
+}
+
+function showConfirmModal(data, summary) {
+  const html =
+    '<div class="modal-bg" onclick="if(event.target===this)closeConfirm()">' +
+    '<div class="modal-box">' +
+    '<h2>申込内容の確認</h2>' +
+    '<div style="font-size:13px;color:#475569;margin-bottom:12px">' +
+    '内容をご確認の上、よろしければ「送信を確定」を押してください。' +
+    '</div>' +
+    '<div class="preview-row"><span>団体</span><span>' + escHtml(data.team) + '</span></div>' +
+    '<div class="preview-row"><span>申込責任者</span><span>' + escHtml(data.rep_name) + '</span></div>' +
+    '<div class="preview-row"><span>選手氏名</span><span>' + escHtml(data.player_name) + '</span></div>' +
+    (data.partner_name ? '<div class="preview-row"><span>ダブルス相手</span><span>' + escHtml(data.partner_name) + '</span></div>' : '') +
+    '<div class="preview-row"><span>連絡先メール</span><span>' + escHtml(data.email) + '</span></div>' +
+    '<div style="margin-top:14px;font-weight:bold;color:#1e293b">出場種目 (' + summary.eventList.length + ')</div>' +
+    summary.eventList.map(e =>
+      '<div class="preview-row"><span>' + escHtml(e.event) + '</span><span>¥' + e.fee.toLocaleString() + '</span></div>'
+    ).join('') +
+    (summary.bento ? '<div class="preview-row"><span>お弁当 ×' + summary.bento + '</span><span>¥' + summary.bentoSum.toLocaleString() + '</span></div>' : '') +
+    (summary.party ? '<div class="preview-row"><span>懇親会 ×' + summary.party + '</span><span>¥' + summary.partySum.toLocaleString() + '</span></div>' : '') +
+    '<div class="preview-total">合計: ¥' + summary.total.toLocaleString() + '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:16px">' +
+    '<button type="button" class="btn btn-secondary" onclick="closeConfirm()" style="flex:1">戻る</button>' +
+    '<button type="button" class="btn" id="confirmSendBtn" onclick="actuallySubmit()" style="flex:2">この内容で送信</button>' +
+    '</div></div></div>';
+  const m = document.getElementById('confirmModal');
+  m.innerHTML = html;
+  m.style.display = 'block';
+  window._pendingData = data;
+  window._pendingSummary = summary;
+}
+
+function closeConfirm() {
+  const m = document.getElementById('confirmModal');
+  m.style.display = 'none';
+  m.innerHTML = '';
+}
+
+async function actuallySubmit() {
+  const data = window._pendingData;
+  const summary = window._pendingSummary;
+  const btn = document.getElementById('confirmSendBtn');
+  btn.disabled = true; btn.textContent = '送信中…';
   try {
     const r = await fetch('${webAppUrl}', {
       method: 'POST', headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, total_amount: summary.total }),
     });
     const json = await r.json();
     if (json.ok) {
-      msg.className = 'msg ok';
-      msg.textContent = '申込を受付ました (受付番号 #' + json.receipt_no + ')。' +
-        '確認メールをご確認ください。';
-      e.target.reset();
+      closeConfirm();
+      showSuccessModal(data, summary, json.receipt_no);
+      document.getElementById('frm').reset();
+      calcTotal();
     } else {
-      msg.className = 'msg err';
-      msg.textContent = '送信失敗: ' + (json.error || '不明エラー');
+      btn.disabled = false; btn.textContent = 'この内容で送信';
+      alert('送信失敗: ' + (json.error || '不明エラー'));
     }
   } catch (err) {
-    msg.className = 'msg err';
-    msg.textContent = '通信エラー: ' + err.message;
-  } finally {
-    btn.disabled = false; btn.textContent = '申込を送信';
+    btn.disabled = false; btn.textContent = 'この内容で送信';
+    alert('通信エラー: ' + err.message);
   }
-});
+}
+
+function showSuccessModal(data, summary, receiptNo) {
+  const summaryText = buildSummaryText(data, summary);
+  const lineUrl = 'https://line.me/R/msg/text/?' + encodeURIComponent(summaryText);
+  const html =
+    '<div class="modal-bg" onclick="if(event.target===this)closeSuccess()">' +
+    '<div class="modal-box">' +
+    '<h2 style="color:#15803d">✓ 申込を受け付けました</h2>' +
+    '<div style="background:#d1fae5;color:#064e3b;padding:10px;border-radius:4px;margin-bottom:12px;font-size:13px">' +
+    '受付番号: <strong>#' + receiptNo + '</strong><br>' +
+    '確認メールを <strong>' + escHtml(data.email) + '</strong> へ送信しました。' +
+    '</div>' +
+    '<div style="font-size:13px;font-weight:bold;margin-bottom:6px">申込内容 (LINE で共有できます):</div>' +
+    '<textarea class="copy-text-area" id="copyText" readonly>' + escHtml(summaryText) + '</textarea>' +
+    '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">' +
+    '<button type="button" class="btn" onclick="copyToClipboard()" style="flex:1">📋 クリップボードにコピー</button>' +
+    '<a class="btn btn-line" href="' + lineUrl + '" target="_blank" rel="noopener" style="flex:1;text-align:center;text-decoration:none;display:inline-block">LINE で共有</a>' +
+    '</div>' +
+    '<button type="button" class="btn btn-secondary" onclick="closeSuccess()" style="margin-top:10px">閉じる</button>' +
+    '</div></div>';
+  const m = document.getElementById('successModal');
+  m.innerHTML = html;
+  m.style.display = 'block';
+}
+
+function closeSuccess() {
+  const m = document.getElementById('successModal');
+  m.style.display = 'none';
+  m.innerHTML = '';
+}
+
+async function copyToClipboard() {
+  const ta = document.getElementById('copyText');
+  ta.select();
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(ta.value);
+    copied = true;
+  } catch {
+    try { copied = document.execCommand('copy'); } catch {}
+  }
+  alert(copied ? 'コピーしました。LINE 等に貼り付けてください。' : 'コピーに失敗しました。手動で選択してコピーしてください。');
+}
 
 // ─── 親ウィンドウ (Jimdo iframe) に高さを送信 ───
 function sendHeight() {
@@ -1178,6 +1415,76 @@ function generateReceipts() {
     '領収書 PDF を生成しました。\n\n' +
     'Google Doc: ' + doc.getUrl() + '\n' +
     'PDF: ' + pdfUrl);
+}
+
+// ═══════════════════════════════════════════════
+// 個別領収書発行 (団体を1つ指定して PDF 化)
+// ═══════════════════════════════════════════════
+function generateSingleReceipt() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const sumSh = ss.getSheetByName(SHEETS.SUMMARY);
+  const lastRow = sumSh.getLastRow();
+  if (lastRow < 2) {
+    ui.alert('集計データがありません。先に「団体別集計を再計算」を実行してください。');
+    return;
+  }
+  const data = sumSh.getRange(2, 1, lastRow - 1, 13).getValues();
+  // 団体名一覧を作成
+  const teams = data
+    .map(r => ({ name: String(r[1] || ''), fee: parseInt(r[12]) || 0 }))
+    .filter(t => t.name && !t.name.startsWith('◆') && t.fee > 0);
+  if (!teams.length) {
+    ui.alert('発行対象の団体がありません (参加料 0円 / ◆行は除外)。');
+    return;
+  }
+  // 入力ダイアログで団体名を選ばせる
+  const list = teams.map((t, i) => (i + 1) + '. ' + t.name + ' (¥' + t.fee.toLocaleString() + ')').join('\n');
+  const resp = ui.prompt(
+    '個別領収書発行',
+    '発行する団体の番号を入力してください:\n\n' + list,
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  const idx = parseInt(resp.getResponseText()) - 1;
+  if (isNaN(idx) || idx < 0 || idx >= teams.length) {
+    ui.alert('番号が不正です。');
+    return;
+  }
+  const target = teams[idx];
+
+  const docName = '領収書_' + target.name + '_' +
+    Utilities.formatDate(new Date(), 'JST', 'yyyyMMdd_HHmm');
+  const doc = DocumentApp.create(docName);
+  const body = doc.getBody();
+  const today = Utilities.formatDate(new Date(), 'JST', 'yyyy年MM月dd日');
+
+  body.appendParagraph('領収書').setHeading(DocumentApp.ParagraphHeading.HEADING1)
+    .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendParagraph('');
+  body.appendParagraph(target.name + ' 様').setFontSize(14).setBold(true);
+  body.appendParagraph('');
+  body.appendParagraph('金額:  ¥' + target.fee.toLocaleString() + ' 円也')
+    .setFontSize(20).setBold(true)
+    .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendParagraph('');
+  body.appendParagraph('但し、大会参加料として上記正に領収いたしました。').setFontSize(11);
+  body.appendParagraph('');
+  body.appendParagraph(today).setFontSize(10);
+  body.appendParagraph('');
+  body.appendParagraph(prop('ASSOCIATION_NAME')).setFontSize(12);
+  body.appendParagraph(prop('PRESIDENT_NAME')).setFontSize(12);
+  doc.saveAndClose();
+
+  const docFile = DriveApp.getFileById(doc.getId());
+  const pdfBlob = docFile.getAs('application/pdf').setName(docName + '.pdf');
+  const pdfFile = DriveApp.createFile(pdfBlob);
+
+  ui.alert(
+    target.name + ' の領収書を発行しました。\n\n' +
+    'Google Doc: ' + doc.getUrl() + '\n' +
+    'PDF: ' + pdfFile.getUrl()
+  );
 }
 
 // ═══════════════════════════════════════════════
