@@ -4,7 +4,7 @@
 
 [Unit]
 Description=KTTA Platform (Kushiro Table Tennis Association)
-Documentation=https://github.com/your-org/tabletennis
+Documentation=https://github.com/AKIHIKO-S/kushiro
 After=network.target
 
 [Service]
@@ -16,7 +16,7 @@ Restart=always
 RestartSec=3
 Environment=NODE_ENV=production
 Environment=PORT=3000
-# 管理キーは /etc/ktta.env から読み込む (chmod 600)
+# 管理キー + DB パス等は /etc/ktta.env から読み込む (chmod 600)
 EnvironmentFile=-/etc/ktta.env
 StandardOutput=journal
 StandardError=journal
@@ -26,8 +26,13 @@ SyslogIdentifier=ktta
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/opt/ktta
+# /opt/ktta = アプリ本体, /var/data = SQLite DB と印鑑画像
+ReadWritePaths=/opt/ktta /var/data
 ProtectHome=true
+
+# リソース制限 (任意・Always Free A1 でも余裕)
+MemoryHigh=512M
+MemoryMax=1G
 
 [Install]
 WantedBy=multi-user.target

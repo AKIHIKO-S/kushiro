@@ -17,9 +17,10 @@
 set -euo pipefail
 
 DOMAIN="${1:-}"
-REPO_URL="${REPO_URL:-https://github.com/your-org/tabletennis.git}"
+REPO_URL="${REPO_URL:-https://github.com/AKIHIKO-S/kushiro.git}"
 APP_DIR="/opt/ktta"
 APP_USER="ktta"
+DATA_DIR="/var/data"   # SQLite DB + 印鑑等の永続データ
 
 if [ -z "$DOMAIN" ]; then
   echo "使い方: sudo $0 <ドメイン名>"
@@ -43,27 +44,27 @@ sleep 2
 # 1. システム更新 + 依存パッケージ
 echo "[1/7] システム更新+依存パッケージ"
 apt update -y
-apt install -y curl git nginx certbot python3-certbot-nginx sqlite3 python3 python3-pip
+apt install -y curl git nginx certbot python3-certbot-nginx sqlite3 build-essential
 
-# 2. Node.js 20.x インストール
-echo "[2/7] Node.js 20.x インストール"
-if ! command -v node >/dev/null 2>&1 || ! node -v | grep -q "^v2[0-9]"; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+# 2. Node.js 22.x LTS インストール (better-sqlite3 互換)
+echo "[2/7] Node.js 22.x インストール"
+if ! command -v node >/dev/null 2>&1 || ! node -v | grep -qE "^v(2[2-9]|[3-9][0-9])"; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt install -y nodejs
 fi
 node -v
 
-# 3. Python パッケージ (Excel パーサー用)
-echo "[3/7] Python パッケージ"
-pip3 install --quiet openpyxl
+# 3. データディレクトリ (DB + 印鑑画像)
+echo "[3/7] 永続データディレクトリ"
+mkdir -p "$DATA_DIR/seal"
 
 # 4. アプリユーザー + ディレクトリ
 echo "[4/7] アプリユーザー作成"
 if ! id -u "$APP_USER" >/dev/null 2>&1; then
-  useradd -r -s /usr/sbin/nologin -d "$APP_DIR" -m "$APP_USER"
+  useradd -r -s /bin/bash -d "$APP_DIR" -m "$APP_USER"
 fi
 mkdir -p "$APP_DIR"
-chown "$APP_USER:$APP_USER" "$APP_DIR"
+chown -R "$APP_USER:$APP_USER" "$APP_DIR" "$DATA_DIR"
 
 # 5. アプリ取得 + 依存インストール
 echo "[5/7] アプリ取得 + npm install"
@@ -82,6 +83,9 @@ if [ ! -f /etc/ktta.env ]; then
 NODE_ENV=production
 PORT=3000
 ADMIN_KEY=$ADMIN_KEY
+DB_PATH=$DATA_DIR/tournament.db
+SEAL_DIR=$DATA_DIR/seal
+TZ=Asia/Tokyo
 EOF
   chmod 600 /etc/ktta.env
   echo "  >> 管理キー (大切に保管): $ADMIN_KEY"
