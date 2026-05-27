@@ -23,16 +23,18 @@ concurrency:
   group: oracle-deploy
   cancel-in-progress: true
 
+env:
+  # Node.js 20 廃止対応 (2026/6/2 以降) — 強制的に Node 24 を使用
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout (情報のみ)
-        uses: actions/checkout@v4
-
+      # checkout は実際には不要 (deploy は SSH で実行)。スキップして高速化。
       - name: SSH and deploy
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.ORACLE_HOST }}
           username: ${{ secrets.ORACLE_USER || 'ubuntu' }}
