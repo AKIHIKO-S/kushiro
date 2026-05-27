@@ -1261,6 +1261,175 @@ function linkEntrantToPlayer(entrantId, playerId, isPartner) {
   return entrantStmts.get.get(entrantId);
 }
 
+// ─── 抽選番号 (No.) 自動付与 ───────────────────────────
+// 申込締切後、種目別に 1, 2, 3, ... を一括割当。
+// シード(seed > 0)が設定されている entrant は seed 順を尊重し小さい番号を割当。
+// opts: { event?: string, mode?: 'shuffle'|'submitted'|'surname', force?: boolean }
+//   mode=shuffle (default): ランダム
+//   mode=submitted        : 申込順
+//   mode=surname          : 苗字50音順
+//   force=true            : 既存の bracket_number も上書き (default: 既存維持して未割当のみ)
+function autoAssignDrawNumbers(tournamentId, opts) {
+  opts = opts || {};
+  const mode = opts.mode || "shuffle";
+  const force = !!opts.force;
+  // 種目リスト
+  let events;
+  if (opts.event) {
+    events = [opts.event];
+  } else {
+    const rows = sqlite.prepare(`
+      SELECT DISTINCT event FROM entrants WHERE tournament_id = ? AND event != ''
+    `).all(tournamentId);
+    events = rows.map(r => r.event);
+  }
+
+  const summary = [];
+  const updateNumberStmt = sqlite.prepare(`
+    UPDATE entrants SET bracket_number = ?, updated_at = datetime('now','localtime')
+    WHERE id = ?
+  `);
+
+  const txn = sqlite.transaction(() => {
+    for (const ev of events) {
+      const list = entrantStmts.listByEvent.all(tournamentId, ev);
+      if (!list.length) continue;
+
+      // シード付き選手 (seed > 0) は予約番号 1〜N に配置 (seed昇順)
+      const seeded = list.filter(e => e.seed > 0).sort((a, b) => a.seed - b.seed);
+      const unseeded = list.filter(e => !(e.seed > 0));
+
+      // unseeded を mode で並べ替え
+      if (mode === "shuffle") {
+        // Fisher-Yates
+        for (let i = unseeded.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [unseeded[i], unseeded[j]] = [unseeded[j], unseeded[i]];
+        }
+      } else if (mode === "submitted") {
+        unseeded.sort((a, b) => String(a.created_at || "").localeCompare(b.created_at || ""));
+      } else if (mode === "surname") {
+        unseeded.sort((a, b) => String(a.furigana || a.surname || "").localeCompare(b.furigana || b.surname || ""));
+      }
+
+      const all = [...seeded, ...unseeded];
+      let n = 0;
+      let assigned = 0;
+      for (const e of all) {
+        n++;
+        if (!force && e.bracket_number && e.bracket_number > 0) continue; // 既存維持
+        updateNumberStmt.run(n, e.id);
+        assigned++;
+      }
+      summary.push({ event: ev, total: all.length, assigned });
+    }
+  });
+  txn();
+
+  return { ok: true, events: summary };
+}
+
+// ─── 名簿 (Roster) データ生成 ─────────────────────────
+// ニッタク杯形式の重複管理表用データを返す。
+// 戻り値:
+//   {
+//     tournament: { id, name, date, venue },
+//     events: [
+//       { name, type:'single'|'double'|'team', count,
+//         entrants: [{ no, name, team, partner_name, partner_team, doubles, status, dups }]
+//       }, ...
+//     ],
+//     duplicates: [   // 同一選手が複数種目に出ているケース
+//       { key, name, team, events: ['男子S','男子D','混合D'] }
+//     ]
+//   }
+function buildRosterData(tournamentId) {
+  const t = stmts.getTournament.get(tournamentId);
+  if (!t) return null;
+  const all = entrantStmts.listByTournament.all(tournamentId);
+
+  // 種目別にまとめる (entrants table の event 順に出現)
+  const byEvent = new Map();
+  for (const e of all) {
+    const ev = e.event || "(種目未設定)";
+    if (!byEvent.has(ev)) byEvent.set(ev, []);
+    byEvent.get(ev).push(e);
+  }
+
+  // 重複検出キー (name + team)
+  // 同じ key の entrant が 2つ以上の event に登場 → duplicate
+  const dupMap = new Map(); // key -> { name, team, events: Set }
+  const memberKey = (name, team) => `${(name || "").replace(/\s+/g, "")}::${(team || "").replace(/\s+/g, "")}`;
+
+  for (const [ev, list] of byEvent.entries()) {
+    for (const e of list) {
+      const k1 = memberKey(e.name, e.team);
+      if (k1) {
+        if (!dupMap.has(k1)) dupMap.set(k1, { key: k1, name: e.name, team: e.team, events: new Set() });
+        dupMap.get(k1).events.add(ev);
+      }
+      // ダブルスのパートナーも検出対象
+      if (e.partner_name) {
+        const k2 = memberKey(e.partner_name, e.partner_team);
+        if (k2 && k2 !== k1) {
+          if (!dupMap.has(k2)) dupMap.set(k2, { key: k2, name: e.partner_name, team: e.partner_team, events: new Set() });
+          dupMap.get(k2).events.add(ev);
+        }
+      }
+    }
+  }
+  const duplicates = [];
+  for (const v of dupMap.values()) {
+    if (v.events.size >= 2) {
+      duplicates.push({ key: v.key, name: v.name, team: v.team, events: Array.from(v.events) });
+    }
+  }
+  duplicates.sort((a, b) => b.events.length - a.events.length || a.name.localeCompare(b.name));
+
+  // 各 entrant に「この選手は重複している?」フラグを付ける
+  const dupKeySet = new Set(duplicates.map(d => d.key));
+  const events = [];
+  for (const [evName, list] of byEvent.entries()) {
+    // bracket_number 順 → 0 は末尾
+    const sorted = [...list].sort((a, b) => {
+      const an = a.bracket_number > 0 ? a.bracket_number : 9999;
+      const bn = b.bracket_number > 0 ? b.bracket_number : 9999;
+      if (an !== bn) return an - bn;
+      return String(a.furigana || a.surname || "").localeCompare(b.furigana || b.surname || "");
+    });
+    const hasDoubles = sorted.some(e => e.is_doubles);
+    const type = hasDoubles ? "double" : "single";
+    const entrants = sorted.map((e, i) => {
+      const dups1 = dupKeySet.has(memberKey(e.name, e.team));
+      const dups2 = e.partner_name ? dupKeySet.has(memberKey(e.partner_name, e.partner_team)) : false;
+      return {
+        id: e.id,
+        no: e.bracket_number > 0 ? e.bracket_number : (i + 1),
+        no_assigned: e.bracket_number > 0,
+        name: e.name,
+        team: e.team,
+        partner_name: e.partner_name || "",
+        partner_team: e.partner_team || "",
+        is_doubles: !!e.is_doubles,
+        status: e.status,
+        seed: e.seed,
+        dup_self: dups1,
+        dup_partner: dups2,
+      };
+    });
+    events.push({ name: evName, type, count: entrants.length, entrants });
+  }
+
+  return {
+    tournament: {
+      id: t.id, name: t.name, date: t.date, venue: t.venue,
+      entry_deadline: t.entry_deadline,
+    },
+    events,
+    duplicates,
+  };
+}
+
 // 選手番号 (大会固有・左右別) を手動設定
 function setEntrantBracketNumber(entrantId, number, side) {
   const e = entrantStmts.get.get(entrantId);
@@ -3809,7 +3978,7 @@ module.exports = {
   exportBracket, exportAllBrackets, importBracket,
   // Entrants (大会参加選手) - マスタDBと分離
   createEntrant, updateEntrant, deleteEntrant, getEntrant, getEntrants,
-  setEntrantBracketNumber,
+  setEntrantBracketNumber, autoAssignDrawNumbers, buildRosterData,
   linkEntrantToPlayer, suggestPlayerForEntrant, createPlayerFromEntrant,
   validateEntrants, getEntrantStats,
   // 名前ユーティリティ

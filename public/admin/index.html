@@ -2860,6 +2860,14 @@ const A = {
  onClick: () => A.downloadMatchCards(t) }, "対戦票ダウンロード"),
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.openReceiptsDialog(t) }, "領収書一括出力"),
+ // ★Step 3 追加: 抽選番号自動付与 + 重複管理表 (ニッタク杯形式)
+ h("button", { className: "btn btn-sm",
+ style: { background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" },
+ onClick: () => A.openDrawNumberDialog(t) }, "抽選番号 自動付与"),
+ h("button", { className: "btn btn-sm",
+ style: { background: "#fee2e2", color: "#7c2d12", borderColor: "#fca5a5" },
+ onClick: () => window.open(`/api/tournaments/${t.id}/roster.html`, "_blank") },
+ "重複管理表 (名簿)"),
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.openEntrantsTab(t.id) }, "詳細編集"),
  ),
@@ -2908,6 +2916,80 @@ const A = {
  } catch (e) { console.error(e); }
  })();
  return card;
+ },
+
+ // ── 抽選番号 (No.) 自動付与ダイアログ ──
+ openDrawNumberDialog(t) {
+ const body = h("div", {},
+ h("div", { style: { padding: "12px 14px", background: "#fef3c7",
+   borderLeft: "4px solid #d97706", borderRadius: "4px", marginBottom: "14px",
+   fontSize: "13px", lineHeight: "1.7", color: "#78350f" } },
+   h("div", { className: "font-bold mb-1" }, "抽選番号 (No.) を一括で割り当てます"),
+   "申込締切後、種目別に No.1, 2, 3, ... を自動で振り直します。",
+   h("br"),
+   "シード設定済みの選手は seed 順を尊重して上位番号に配置されます。"),
+
+ h("div", { className: "field" },
+   h("label", { className: "field-label" }, "対象種目"),
+   h("select", { className: "input", id: "dnEvent" },
+     h("option", { value: "" }, "すべての種目"),
+     // 種目一覧を非同期で埋める
+   ),
+ ),
+ h("div", { className: "field" },
+   h("label", { className: "field-label" }, "並び順"),
+   h("select", { className: "input", id: "dnMode" },
+     h("option", { value: "shuffle" }, "シャッフル (ランダム) — 推奨"),
+     h("option", { value: "surname" }, "苗字50音順"),
+     h("option", { value: "submitted" }, "申込順 (受付日時)"),
+   ),
+ ),
+ h("div", { className: "field" },
+   h("label", { style: { display: "flex", alignItems: "center", gap: "6px",
+     fontSize: "13px", cursor: "pointer" } },
+     h("input", { type: "checkbox", id: "dnForce" }),
+     h("span", {}, "既に番号が振られている選手も再割当する (force)")),
+   h("div", { className: "text-xs text-sub",
+     style: { paddingLeft: "22px", marginTop: "4px" } },
+     "OFF: 未割当の選手にだけ番号を振る (差分追加に便利)"),
+ ),
+ );
+
+ // 種目一覧を取得して select に追加
+ setTimeout(async () => {
+   try {
+     const data = await api.get(`/api/tournaments/${t.id}/roster.json`);
+     const sel = document.getElementById("dnEvent");
+     if (sel) {
+       data.events.forEach(ev => {
+         sel.appendChild(h("option", { value: ev.name },
+           `${ev.name} (${ev.count}件)`));
+       });
+     }
+   } catch (e) { console.warn(e); }
+ }, 100);
+
+ const foot = h("div", { className: "flex gap-2" },
+ h("button", { className: "btn", onClick: async () => {
+   const event = document.getElementById("dnEvent").value;
+   const mode = document.getElementById("dnMode").value;
+   const force = document.getElementById("dnForce").checked;
+   try {
+     const r = await api.post(`/api/tournaments/${t.id}/entrants/auto-number`,
+       { event: event || undefined, mode, force });
+     const summary = (r.events || []).map(e =>
+       `${e.event}: ${e.assigned}/${e.total}件`).join("\n");
+     toast(`抽選番号を割当てました\n${summary}`, "ok");
+     document.querySelector(".modal-bg")?.remove();
+   } catch (e) { toast("失敗: " + e.message, "err"); }
+ } }, "実行 (番号を割当)"),
+ h("button", { className: "btn btn-ghost",
+ onClick: () => window.open(`/api/tournaments/${t.id}/roster.html`, "_blank") },
+ "重複管理表を表示"),
+ h("button", { className: "btn btn-ghost",
+ onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"),
+ );
+ openModal("抽選番号 自動付与 — " + t.name, body, foot);
  },
 
  // ── Excel/PDF 直接アップロード ──

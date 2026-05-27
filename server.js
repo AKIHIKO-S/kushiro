@@ -366,6 +366,191 @@ app.post("/api/tournaments/:id/entrants", requireAdmin, (req, res) => {
   const e = db.createEntrant({ ...req.body, tournament_id: req.params.id });
   res.status(201).json(e);
 });
+// ── 抽選番号 (No.) 一括自動付与 ──
+// POST body: { event?, mode?, force? }
+//   event=指定なし → 全種目
+//   mode: 'shuffle' (default) | 'submitted' | 'surname'
+//   force: true なら既存番号も上書き
+app.post("/api/tournaments/:id/entrants/auto-number", requireAdmin, (req, res) => {
+  try {
+    const r = db.autoAssignDrawNumbers(req.params.id, req.body || {});
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── 名簿データ JSON ──
+app.get("/api/tournaments/:id/roster.json", (req, res) => {
+  const data = db.buildRosterData(req.params.id);
+  if (!data) return res.status(404).json({ error: "大会が見つかりません" });
+  res.json(data);
+});
+
+// ── 名簿 HTML (印刷可・ニッタク杯形式) ──
+app.get("/api/tournaments/:id/roster.html", (req, res) => {
+  const data = db.buildRosterData(req.params.id);
+  if (!data) return res.status(404).type("html").send("<h1>大会が見つかりません</h1>");
+  const html = buildRosterHTML(data);
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(html);
+});
+
+function _escHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function buildRosterHTML(data) {
+  const t = data.tournament;
+  const dateStr = t.date || "";
+  const venue = t.venue || "";
+  // 重複セクション
+  const dupSection = data.duplicates.length
+    ? `<section class="dup-section">
+      <h2>重複申込チェック (${data.duplicates.length}名)</h2>
+      <p class="dup-note">複数種目にエントリーしている選手 (要確認):</p>
+      <table class="dup-table">
+        <thead><tr><th>選手名</th><th>所属</th><th>出場種目</th></tr></thead>
+        <tbody>${data.duplicates.map(d => `
+          <tr>
+            <td>${_escHtml(d.name)}</td>
+            <td>${_escHtml(d.team)}</td>
+            <td>${d.events.map(e => `<span class="ev-tag">${_escHtml(e)}</span>`).join("")}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </section>`
+    : `<section class="dup-section ok">
+      <h2>重複申込チェック</h2>
+      <p>重複申込はありません ✓</p>
+    </section>`;
+
+  // 種目別シート
+  const eventSections = data.events.map(ev => {
+    const rows = ev.entrants.map(e => {
+      const num = `<td class="no">${e.no}</td>`;
+      if (e.is_doubles) {
+        return `<tr${e.dup_self || e.dup_partner ? ' class="dup"' : ""}>
+          ${num}
+          <td class="name${e.dup_self ? " dup-cell" : ""}">${_escHtml(e.name)}</td>
+          <td class="name${e.dup_partner ? " dup-cell" : ""}">${_escHtml(e.partner_name)}</td>
+          <td class="team">(${_escHtml(e.team)})</td>
+          <td class="team">(${_escHtml(e.partner_team)})</td>
+        </tr>`;
+      }
+      return `<tr${e.dup_self ? ' class="dup"' : ""}>
+        ${num}
+        <td class="name${e.dup_self ? " dup-cell" : ""}" colspan="2">${_escHtml(e.name)}</td>
+        <td class="team" colspan="2">(${_escHtml(e.team)})</td>
+      </tr>`;
+    }).join("");
+    return `<section class="event-section">
+      <h3>${_escHtml(ev.name)} <span class="count">(${ev.count}名${ev.type === "double" ? "組" : ""})</span></h3>
+      <table class="roster-table">${rows}</table>
+    </section>`;
+  }).join("");
+
+  return `<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<title>${_escHtml(t.name)} - 重複管理表 (名簿)</title>
+<style>
+  @page { size: A4; margin: 14mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", "Yu Gothic UI", system-ui, sans-serif;
+    color: #1c1917; background: #fff; padding: 16px;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  header {
+    text-align: right; margin-bottom: 24px; padding-bottom: 14px;
+    border-bottom: 2px solid #b91c1c;
+  }
+  header h1 { font-size: 18px; margin-bottom: 4px; }
+  header .meta { font-size: 12px; color: #57534e; }
+
+  .dup-section {
+    margin-bottom: 20px; padding: 12px 14px;
+    background: #fef3c7; border-left: 4px solid #d97706;
+    border-radius: 4px;
+  }
+  .dup-section.ok {
+    background: #f0fdf4; border-left-color: #15803d;
+  }
+  .dup-section h2 { font-size: 14px; margin-bottom: 6px; color: #78350f; }
+  .dup-section.ok h2 { color: #14532d; }
+  .dup-note { font-size: 12px; margin-bottom: 8px; color: #78716c; }
+  .dup-table { width: 100%; border-collapse: collapse; font-size: 12px; background: #fff; }
+  .dup-table th, .dup-table td {
+    padding: 6px 8px; border: 1px solid #e7e5e4; text-align: left;
+  }
+  .dup-table th { background: #f5f5f4; font-weight: bold; }
+  .ev-tag {
+    display: inline-block; padding: 1px 6px; margin: 1px 3px 1px 0;
+    background: #fee2e2; border-radius: 3px; font-size: 11px; color: #7c2d12;
+  }
+
+  .event-section {
+    margin-bottom: 18px; page-break-inside: avoid;
+  }
+  .event-section h3 {
+    font-size: 14px; padding: 6px 10px;
+    background: linear-gradient(to right, #fef9c3, #fef3c7);
+    border-left: 5px solid #b91c1c;
+    margin-bottom: 6px;
+  }
+  .event-section h3 .count {
+    font-size: 11px; color: #57534e; font-weight: normal; margin-left: 6px;
+  }
+  .roster-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .roster-table tr { page-break-inside: avoid; }
+  .roster-table td {
+    padding: 5px 8px; border-bottom: 1px solid #e7e5e4;
+    vertical-align: middle;
+  }
+  .roster-table tr.dup { background: #fef3c7; }
+  .roster-table .no {
+    width: 36px; text-align: center; font-weight: bold;
+    color: #7c2d12; font-family: "Hiragino Sans", system-ui, sans-serif;
+  }
+  .roster-table .name { font-weight: bold; }
+  .roster-table .name.dup-cell { color: #b91c1c; }
+  .roster-table .name.dup-cell::before { content: "● "; font-size: 10px; }
+  .roster-table .team { color: #78716c; font-size: 12px; }
+
+  .toolbar {
+    position: fixed; top: 12px; right: 12px;
+    display: flex; gap: 8px;
+  }
+  .toolbar button {
+    padding: 6px 14px; border: 1px solid #d6d3d1;
+    background: #fff; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 12px;
+  }
+  .toolbar button:hover { background: #fafaf9; }
+  @media print { .toolbar { display: none !important; } }
+</style></head><body>
+<div class="toolbar">
+  <button onclick="window.print()">印刷</button>
+  <button onclick="window.close()">閉じる</button>
+</div>
+<header>
+  <div class="meta">釧路卓球協会</div>
+  <h1>${_escHtml(t.name)}</h1>
+  <div class="meta">
+    ${dateStr ? "日時: " + _escHtml(dateStr) : ""}
+    ${venue ? " / 会場: " + _escHtml(venue) : ""}
+    / 出力: ${new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" })}
+  </div>
+</header>
+${dupSection}
+${eventSections || '<p style="text-align:center;padding:40px;color:#a8a29e;">エントリーがまだありません</p>'}
+</body></html>`;
+}
+
 // シード配置でトーナメント生成
 // body: { event, regenerate?, entrant_ids? }
 app.post("/api/tournaments/:id/bracket/generate", requireAdmin, (req, res) => {
