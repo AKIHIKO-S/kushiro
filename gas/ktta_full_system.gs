@@ -100,15 +100,16 @@ function onOpen() {
     .addItem('初期セットアップ (全シート作成)', 'setupAllSheets')
     .addSeparator()
     .addItem('① 申込フォームの URL を表示', 'showFormUrl')
-    .addItem('② テスト申込を投入 (動作確認用)', 'insertTestEntry')
+    .addItem('② Jimdo 埋込コードを表示', 'showJimdoEmbedCode')
+    .addItem('③ テスト申込を投入 (動作確認用)', 'insertTestEntry')
     .addSeparator()
-    .addItem('③ 団体別集計を再計算', 'rebuildSummary')
-    .addItem('④ 種目別一覧を再構築', 'rebuildEventList')
+    .addItem('④ 団体別集計を再計算', 'rebuildSummary')
+    .addItem('⑤ 種目別一覧を再構築', 'rebuildEventList')
     .addSeparator()
-    .addItem('⑤ 領収書 PDF を一括生成', 'generateReceipts')
-    .addItem('⑥ トーナメント表シートを作成', 'buildBracketSheet')
+    .addItem('⑥ 領収書 PDF を一括生成', 'generateReceipts')
+    .addItem('⑦ トーナメント表シートを作成', 'buildBracketSheet')
     .addSeparator()
-    .addItem('⑦ KTTA Platform 用 Excel を書出', 'exportForPlatform')
+    .addItem('⑧ KTTA Platform 用 Excel を書出', 'exportForPlatform')
     .addSeparator()
     .addItem('設定を編集', 'openConfigDialog')
     .addToUi();
@@ -471,6 +472,21 @@ document.getElementById('frm').addEventListener('submit', async (e) => {
     btn.disabled = false; btn.textContent = '申込を送信';
   }
 });
+
+// ─── 親ウィンドウ (Jimdo iframe) に高さを送信 ───
+function sendHeight() {
+  try {
+    const h = document.documentElement.scrollHeight;
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: 'ktta-form-height', height: h }, '*');
+    }
+  } catch (e) {}
+}
+window.addEventListener('load', sendHeight);
+window.addEventListener('resize', sendHeight);
+// 入力変更 / セクション展開で再送信
+const _ro = new ResizeObserver(sendHeight);
+_ro.observe(document.documentElement);
 </script>
 </body></html>`;
 }
@@ -489,6 +505,153 @@ function showFormUrl() {
     '申込フォーム URL:\n\n' + url + '\n\n' +
     'この URL を大会サイト/メール等で共有してください。'
   );
+}
+
+// ─── Jimdo / STUDIO 埋込コード生成 ─────────────────
+// iframe で GAS Web App URL を貼り付けるコードを表示
+// 高さは postMessage で受信して自動調整
+function showJimdoEmbedCode() {
+  const ui = SpreadsheetApp.getUi();
+  const url = ScriptApp.getService().getUrl();
+  if (!url) {
+    ui.alert(
+      'まず「デプロイ」→「新しいデプロイ」→ ウェブアプリ で公開してください。\n' +
+      '・アクセスできるユーザー: 全員\n' +
+      '・次のユーザーとして実行: 自分'
+    );
+    return;
+  }
+  const tournName = prop('ASSOCIATION_NAME') + ' 大会';
+  const iframeId = 'ktta-form-' + Math.floor(Math.random() * 1e6);
+
+  // Jimdo HTML埋込ウィジェット用コード
+  // ・iframe で GAS フォームを読込み
+  // ・postMessage で高さ自動調整
+  // ・Jimdo は <style>/<script> をサニタイズしないように <div> + 簡素な <script> のみ
+  const jimdoCode =
+    '<!-- ' + tournName + ' 申込フォーム (KTTA / GAS Web App) -->\n' +
+    '<div style="width:100%;max-width:840px;margin:20px auto;padding:0">\n' +
+    '  <iframe id="' + iframeId + '" src="' + url + '"\n' +
+    '          width="100%" height="1600"\n' +
+    '          frameborder="0" scrolling="auto"\n' +
+    '          style="border:0;display:block;width:100%;background:#fff;border-radius:8px"\n' +
+    '          title="' + tournName + ' 申込フォーム"\n' +
+    '          loading="lazy"\n' +
+    '          allow="clipboard-write"></iframe>\n' +
+    '</div>\n' +
+    '<script>\n' +
+    '(function(){\n' +
+    '  window.addEventListener("message", function(e){\n' +
+    '    if (!e.data || e.data.type !== "ktta-form-height") return;\n' +
+    '    var f = document.getElementById("' + iframeId + '");\n' +
+    '    if (f && e.data.height > 0) f.style.height = (e.data.height + 30) + "px";\n' +
+    '  });\n' +
+    '})();\n' +
+    '</script>';
+
+  // STUDIO / 一般 HTML 埋込用 (同じだが ID 別)
+  const studioCode =
+    '<!-- ' + tournName + ' 申込フォーム (STUDIO / 一般 HTML 埋込用) -->\n' +
+    '<div style="width:100%;max-width:840px;margin:0 auto">\n' +
+    '  <iframe src="' + url + '"\n' +
+    '          width="100%" height="1600"\n' +
+    '          style="border:0;display:block;width:100%;background:#fff"\n' +
+    '          title="' + tournName + ' 申込フォーム"\n' +
+    '          loading="lazy"\n' +
+    '          referrerpolicy="no-referrer-when-downgrade"\n' +
+    '          allow="clipboard-write"></iframe>\n' +
+    '</div>';
+
+  // ダイアログ
+  const html = HtmlService.createHtmlOutput(
+    '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
+    '<style>' +
+    'body { font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;' +
+    '  padding: 16px; color: #1c1917; background: #f9fafb; margin: 0; }' +
+    'h2 { font-size: 16px; margin: 12px 0 6px; color: #1e293b; }' +
+    '.url-box { padding: 10px 12px; background: #fff; border: 1px solid #d1d5db;' +
+    '  border-radius: 6px; font-family: monospace; font-size: 12px; word-break: break-all;' +
+    '  margin-bottom: 12px; }' +
+    '.tabs { display: flex; gap: 0; border-bottom: 2px solid #e5e7eb; margin-bottom: 0; }' +
+    '.tab { padding: 8px 16px; cursor: pointer; font-size: 13px; font-weight: 600;' +
+    '  background: transparent; border: none; border-bottom: 3px solid transparent;' +
+    '  margin-bottom: -2px; color: #64748b; }' +
+    '.tab.active { color: #2563eb; border-bottom-color: #2563eb; }' +
+    '.code-area { width: 100%; min-height: 220px; padding: 12px;' +
+    '  font-family: "SF Mono", Consolas, monospace; font-size: 11px;' +
+    '  background: #0f172a; color: #e2e8f0; border: none; border-radius: 0 0 6px 6px;' +
+    '  resize: vertical; }' +
+    '.btn { padding: 8px 16px; font-size: 13px; font-weight: 700;' +
+    '  background: #2563eb; color: #fff; border: none; border-radius: 4px;' +
+    '  cursor: pointer; margin: 8px 4px 0 0; }' +
+    '.btn:hover { background: #1d4ed8; }' +
+    '.btn-sec { background: #fff; color: #2563eb; border: 1px solid #2563eb; }' +
+    '.btn-sec:hover { background: #eff6ff; }' +
+    '.note { background: #fef3c7; border-left: 3px solid #f59e0b;' +
+    '  padding: 10px 14px; border-radius: 0 4px 4px 0; font-size: 12px;' +
+    '  color: #78350f; margin-top: 12px; line-height: 1.7; }' +
+    '.steps { font-size: 12px; color: #334155; line-height: 1.8;' +
+    '  padding: 12px 14px; background: #f0f9ff; border-left: 3px solid #0284c7;' +
+    '  border-radius: 0 4px 4px 0; margin-top: 12px; }' +
+    '.steps ol { margin: 6px 0 0 20px; }' +
+    '</style></head><body>' +
+
+    '<h2>申込フォーム 公開 URL</h2>' +
+    '<div class="url-box"><a href="' + url + '" target="_blank">' + url + '</a></div>' +
+
+    '<h2>埋込コード</h2>' +
+    '<div class="tabs">' +
+    '  <button class="tab active" data-tab="jimdo" onclick="show(\'jimdo\')">Jimdo</button>' +
+    '  <button class="tab" data-tab="studio" onclick="show(\'studio\')">STUDIO / その他</button>' +
+    '</div>' +
+    '<textarea id="codeJimdo" class="code-area" readonly>' + escapeHtml_(jimdoCode) + '</textarea>' +
+    '<textarea id="codeStudio" class="code-area" readonly style="display:none">' + escapeHtml_(studioCode) + '</textarea>' +
+
+    '<div>' +
+    '  <button class="btn" onclick="copyCode()">コードをコピー</button>' +
+    '  <button class="btn btn-sec" onclick="openPreview()">フォームを別ウィンドウで開く</button>' +
+    '</div>' +
+
+    '<div class="steps">' +
+    '<strong>Jimdo に貼り付ける手順</strong>' +
+    '<ol>' +
+    '  <li>Jimdo の編集モードで、貼り付けたい場所に「+ コンテンツ追加」</li>' +
+    '  <li>「ウィジェット/HTML」 を選択</li>' +
+    '  <li>上の「コードをコピー」を押して、Jimdo に貼り付け</li>' +
+    '  <li>「保存」を押す → 即座に申込フォームが表示されます</li>' +
+    '</ol>' +
+    '</div>' +
+
+    '<div class="note">' +
+    '<strong>注意:</strong> Jimdo のサニタイズ仕様により &lt;style&gt; や &lt;script&gt; が削除される場合は、' +
+    'STUDIO タブの単純な iframe 版を試してください (高さ自動調整は無効になりますが表示は可能)。' +
+    '</div>' +
+
+    '<script>' +
+    'function show(t) {' +
+    '  document.querySelectorAll(".tab").forEach(el => el.classList.toggle("active", el.dataset.tab === t));' +
+    '  document.getElementById("codeJimdo").style.display = t === "jimdo" ? "block" : "none";' +
+    '  document.getElementById("codeStudio").style.display = t === "studio" ? "block" : "none";' +
+    '}' +
+    'function copyCode() {' +
+    '  var act = document.querySelector(".tab.active").dataset.tab;' +
+    '  var ta = document.getElementById("code" + act.charAt(0).toUpperCase() + act.slice(1));' +
+    '  ta.select(); document.execCommand("copy");' +
+    '  alert("コピーしました。Jimdo の HTML ウィジェットに貼り付けてください。");' +
+    '}' +
+    'function openPreview() { window.open("' + url + '", "_blank"); }' +
+    '</script>' +
+    '</body></html>'
+  ).setWidth(720).setHeight(640);
+  ui.showModalDialog(html, '申込フォーム — Jimdo 埋込コード');
+}
+
+function escapeHtml_(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 // ═══════════════════════════════════════════════
