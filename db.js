@@ -2973,6 +2973,147 @@ function createEntry(tournamentId, data) {
   return { ok: true, player_id: player.id, player_name: player.name, events, status, new_player: isNewPlayer };
 }
 
+// ── チーム/個人混在のフォーム送信を受け取って entrants + tournament_players 両方に記録
+// formData は entry_form.js の gatherFormData() が出すシェイプ:
+//   { tournament_id, team_name, contact_name, contact_tel, contact_email,
+//     supervisor, coach, note, submitted_at, total_amount,
+//     entries: [
+//       { event, type:"singles", fee, name, team },
+//       { event, type:"doubles", fee, name1, name2, team },
+//       { event, type:"team", fee, team_name, members:[...] },
+//       { event, type:"custom", fee, name, team },
+//     ] }
+function createTeamEntry(tournamentId, formData) {
+  const t = stmts.getTournament.get(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+
+  // 申込受付チェック
+  if (!t.entries_open) return { error: "現在この大会は申込を受け付けていません" };
+  if (t.entry_deadline) {
+    const today = new Date().toISOString().split("T")[0];
+    if (today > t.entry_deadline) {
+      return { error: `申込締切（${t.entry_deadline}）を過ぎています` };
+    }
+  }
+
+  const entries = Array.isArray(formData.entries) ? formData.entries : [];
+  if (!entries.length) return { error: "出場種目を1つ以上選択してください" };
+
+  const submittedAt = (formData.submitted_at
+    ? new Date(formData.submitted_at)
+    : new Date()).toISOString().slice(0, 19).replace("T", " ");
+
+  const status = "pending"; // 全申込は受付確認待ち
+  const noteBase = String(formData.note || "").trim();
+  const contactInfo = [
+    formData.contact_name ? `担当: ${formData.contact_name}` : "",
+    formData.contact_email ? `${formData.contact_email}` : "",
+    formData.contact_tel ? `TEL: ${formData.contact_tel}` : "",
+  ].filter(Boolean).join(" / ");
+
+  const createdEntrants = [];
+  const tpEntries = []; // for tournament_players (status tracking)
+
+  for (const ent of entries) {
+    const evName = String(ent.event || "").trim();
+    if (!evName) continue;
+    const type = ent.type || "singles";
+
+    if (type === "team") {
+      // 団体戦: 1チーム=1 entrant。members は note に保持
+      const tn = String(ent.team_name || formData.team_name || "").trim();
+      const members = Array.isArray(ent.members) ? ent.members.filter(Boolean) : [];
+      if (!tn && members.length === 0) continue;
+      const e = createEntrant({
+        tournament_id: tournamentId,
+        event: evName,
+        name: tn || (members[0] || ""),
+        team: tn,
+        category: ent.category || "general",
+        gender: ent.gender || "",
+        status,
+        note: [
+          `[団体] メンバー: ${members.join("、")}`,
+          contactInfo,
+          noteBase,
+        ].filter(Boolean).join(" | "),
+      });
+      createdEntrants.push(e);
+    } else if (type === "doubles") {
+      const n1 = String(ent.name1 || "").trim();
+      const n2 = String(ent.name2 || "").trim();
+      const team1 = String(ent.team1 || ent.team || "").trim();
+      const team2 = String(ent.team2 || ent.team || "").trim();
+      if (!n1 && !n2) continue;
+      const e = createEntrant({
+        tournament_id: tournamentId,
+        event: evName,
+        name: n1,
+        team: team1,
+        partner_name: n2,
+        partner_team: team2,
+        is_doubles: true,
+        category: ent.category || "general",
+        gender: ent.gender || "",
+        status,
+        note: [contactInfo, noteBase].filter(Boolean).join(" | "),
+      });
+      createdEntrants.push(e);
+      // tournament_players はマスタDB に該当する選手がいる場合のみ追加 (重複管理用)
+      for (const n of [n1, n2]) {
+        if (!n) continue;
+        const p = findPlayerByName(n, team1);
+        if (p) tpEntries.push({ player_id: p.id, event: evName });
+      }
+    } else {
+      // singles / custom
+      const name = String(ent.name || "").trim();
+      const team = String(ent.team || "").trim();
+      if (!name) continue;
+      const e = createEntrant({
+        tournament_id: tournamentId,
+        event: evName,
+        name,
+        team,
+        category: ent.category || "general",
+        gender: ent.gender || "",
+        status,
+        note: [contactInfo, noteBase].filter(Boolean).join(" | "),
+      });
+      createdEntrants.push(e);
+      const p = findPlayerByName(name, team);
+      if (p) tpEntries.push({ player_id: p.id, event: evName });
+    }
+  }
+
+  // tournament_players へ status:pending で記録 (重複は ON CONFLICT で更新)
+  for (const tp of tpEntries) {
+    try {
+      entryStmts.insertOrUpdateEntry.run({
+        tournament_id: tournamentId,
+        player_id: tp.player_id,
+        event: tp.event,
+        seed: 0,
+        status,
+        applied_at: submittedAt,
+        entry_note: noteBase,
+      });
+    } catch (_) { /* ignore duplicate-key races */ }
+  }
+
+  return {
+    ok: true,
+    entry_count: createdEntrants.length,
+    total_amount: parseInt(formData.total_amount) || 0,
+    entrant_ids: createdEntrants.map(e => e.id),
+    contact: {
+      name: formData.contact_name || "",
+      email: formData.contact_email || "",
+      tel: formData.contact_tel || "",
+    },
+  };
+}
+
 function getEntries(tournamentId, statusFilter) {
   let sql = `
     SELECT p.id, p.name, p.furigana, p.team, p.gender, p.category, p.rating,
@@ -3662,7 +3803,7 @@ module.exports = {
   searchMatches, countMatchesForSearch, getSearchFilters,
   getPlayerOpponents, getHeadToHead, getPlayerEventStats,
   // 申込
-  createEntry, getEntries, setEntryStatus, setEntrySeed,
+  createEntry, createTeamEntry, getEntries, setEntryStatus, setEntrySeed,
   updateEntrySettings, getOpenTournaments,
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket,

@@ -937,6 +937,59 @@ const A = {
  h("div", { className: "text-xs text-sub mt-2" },
  "領収書出力時に右下に押印画像として印字されます。背景透過 PNG を推奨。"),
  ),
+ // ── メール送信 (申込控え) ──
+ h("div", { className: "card", style: { padding: "14px", marginBottom: "14px" } },
+ h("div", { className: "card-title", style: { marginBottom: "10px" } }, "メール送信 (申込控え)"),
+ h("div", { id: "mailStatus", style: { fontSize: "12px", fontFamily: "monospace",
+ padding: "8px 10px", background: "var(--ink-100)", borderRadius: "4px",
+ marginBottom: "10px", lineHeight: "1.7" } }, "状態を取得中..."),
+ h("div", { className: "field" },
+ h("label", { className: "field-label" }, "テスト送信先メールアドレス"),
+ h("input", { className: "input", id: "mailTestTo", type: "email",
+ placeholder: "your-email@example.com", value: "" }),
+ ),
+ h("button", { className: "btn btn-sm mt-2",
+ onClick: async () => {
+   const to = document.getElementById("mailTestTo").value.trim();
+   if (!to) return toast("送信先を入力してください", "err");
+   try {
+     const r = await api.post("/api/mail/test", { to });
+     if (r.error) return toast("失敗: " + r.error, "err");
+     toast("テストメールを送信しました: " + r.to, "ok");
+   } catch (e) { toast("失敗: " + e.message, "err"); }
+ } }, "テスト送信"),
+ h("div", { className: "text-xs text-sub mt-2", style: { lineHeight: "1.6" } },
+ "SMTP は環境変数で設定: SMTP_USER, SMTP_PASS, ADMIN_EMAIL, SMTP_FROM。", h("br"),
+ "Gmail App Password 必要 (2段階認証 ON + ",
+ h("a", { href: "https://myaccount.google.com/apppasswords", target: "_blank",
+ style: { color: "#b91c1c" } }, "App Password 生成"), ")。"),
+ ),
+ // メール状態取得
+ (() => {
+   setTimeout(async () => {
+     try {
+       const s = await api.get("/api/mail/status");
+       const div = document.getElementById("mailStatus");
+       if (!div) return;
+       if (s.enabled) {
+         div.innerHTML = `<span style="color:#15803d;font-weight:bold;">● 有効</span><br>` +
+           `SMTP: ${s.config.SMTP_HOST}:${s.config.SMTP_PORT}<br>` +
+           `User: ${s.config.SMTP_USER}<br>` +
+           `From: ${s.config.SMTP_FROM}<br>` +
+           `Admin: ${s.config.ADMIN_EMAIL || "(未設定)"}`;
+       } else {
+         div.innerHTML = `<span style="color:#dc2626;font-weight:bold;">○ 未設定</span><br>` +
+           `SMTP_USER と SMTP_PASS を /etc/ktta.env に設定してください。`;
+       }
+     } catch (e) {
+       const div = document.getElementById("mailStatus");
+       if (div) div.textContent = "状態取得失敗: " + e.message;
+     }
+   }, 100);
+   return null;
+ })(),
+ ),
+
  h("div", { className: "card", style: { padding: "14px" } },
  h("div", { className: "card-title", style: { marginBottom: "10px" } }, "システム情報 / 診断"),
  h("div", { style: { fontSize: "12px", fontFamily: "monospace", lineHeight: "1.8" } },
@@ -1904,12 +1957,13 @@ const A = {
  // events を URL に乗せると長さ制限 (~7KB) で 404 になるため、
  // サーバー側に event_config として保存し、URL は最小化
  const qs = new URLSearchParams();
- if (gasUrl) qs.set("gas_url", gasUrl);
+ if (gasUrl) qs.set("gas_url", gasUrl);  // GAS URL 任意 (空なら本サーバーへ自動POST)
  if (deadline) qs.set("deadline", deadline);
  if (paymentNote) qs.set("payment_note", paymentNote);
  // events は URL に乗せない (server が tournament.event_config から読み込む)
  const origin = A.publicOrigin();
- const formUrl = origin + `/api/tournaments/${t.id}/entry-form.html` +
+ // ★新方式: /entry/<id> = 自己完結フォーム (GAS不要、自サーバーへ直接POST)
+ const formUrl = origin + `/entry/${t.id}` +
    (qs.toString() ? `?${qs}` : "");
  const snippetUrl = origin + `/api/tournaments/${t.id}/entry-form-snippet` +
    (qs.toString() ? `?${qs}` : "");
@@ -1920,9 +1974,7 @@ const A = {
  if (gasUrl && !/^https:\/\/script\.google\.com\//.test(gasUrl)) {
    errors.push("GAS Web App URL は https://script.google.com/macros/... 形式である必要があります。");
  }
- if (!gasUrl) {
-   warnings.push("GAS Web App URL 未設定: 申込フォームの送信先がありません。「内容をコピー」のみ動作します。");
- }
+ // GAS URL が未設定の場合は本サーバーが受け口になる (警告不要)
 
  // プラットフォーム別コード生成
  // 注意: Jimdo は <style>/<script> をサニタイズで削除することがあるため、
@@ -2146,15 +2198,46 @@ const A = {
  if (paymentNote) qs.set("payment_note", paymentNote);
  // プレビューは URL に events を乗せる (DB未保存でも見られる)
  qs.set("events", JSON.stringify(events));
- window.open(`/api/tournaments/${t.id}/entry-form.html?${qs}`, "_blank");
+ window.open(`/entry/${t.id}?${qs}`, "_blank");
  }, href: "#" }, "プレビューを開く (保存前)"),
+ ),
+
+ // ★公開申込URL を目立つカードで表示
+ h("div", { className: "mt-4",
+ style: { padding: "14px 16px", background: "linear-gradient(135deg,#fef3c7 0%,#fef9c3 100%)",
+ borderRadius: "8px", border: "1px solid #fbbf24" } },
+ h("div", { style: { fontSize: "11px", color: "#92400e", fontWeight: "bold",
+ letterSpacing: "1px", marginBottom: "6px" } }, "公開申込 URL (このまま共有可)"),
+ h("div", { style: { display: "flex", gap: "8px", alignItems: "center" } },
+ h("input", { type: "text", readOnly: "", value: `${A.publicOrigin()}/entry/${t.id}`,
+ id: "publicEntryUrl",
+ style: { flex: "1", padding: "8px 10px", fontSize: "13px", fontFamily: "monospace",
+ background: "#fff", border: "1px solid #fbbf24", borderRadius: "4px" } }),
+ h("button", { className: "btn", style: { padding: "8px 14px" },
+ onClick: async () => {
+   try {
+     await navigator.clipboard.writeText(`${A.publicOrigin()}/entry/${t.id}`);
+     toast("URL をコピーしました", "ok");
+   } catch { toast("コピー失敗", "err"); }
+ } }, "コピー"),
+ h("button", { className: "btn btn-ghost", style: { padding: "8px 14px" },
+ onClick: () => window.open(`/entry/${t.id}`, "_blank") }, "プレビュー"),
+ ),
+ h("div", { style: { fontSize: "11px", color: "#78350f", marginTop: "6px",
+ lineHeight: "1.6" } },
+ "GAS 設定なしで動作します。申込は本サーバーに直接保存されます。"),
  ),
 
  h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "④ セットアップ手順"),
  h("div", { className: "text-sm",
  style: { padding: "12px", background: "#f9fafb", borderRadius: "4px",
  whiteSpace: "pre-wrap", fontSize: "12px", lineHeight: "1.7" } },
- h("strong", {}, "■ GAS スプレッドシート設定 (申込受信用)"),
+ h("strong", {}, "■ 申込先 (デフォルト: 本サーバー自己完結)"),
+ h("br", {}),
+ "・GAS URL を空欄にすると、申込は本サーバーに直接保存されます。\n" +
+ "・既存の GAS スプレッドシートを使う場合のみ「GAS Web App URL」を設定してください。\n",
+ h("br", {}),
+ h("strong", {}, "■ GAS スプレッドシート設定 (任意)"),
  h("br", {}),
  "1. Google スプレッドシートを新規作成\n" +
  "2. 拡張機能 → Apps Script を開く\n" +

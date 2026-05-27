@@ -14,6 +14,7 @@ const multer = require("multer");
 const db = require("./db");
 const reports = require("./reports");
 const entryForm = require("./entry_form");
+const mailer = require("./mailer");
 
 // xlsx 一時アップロード保存先 (拡張子保持)
 const uploadDir = path.join(os.tmpdir(), "tt-uploads");
@@ -171,6 +172,75 @@ app.post("/api/public/tournaments/:id/entry", (req, res) => {
   const r = db.createEntry(req.params.id, req.body || {});
   if (r.error) return res.status(400).json(r);
   res.status(201).json(r);
+});
+
+// 新方式: 申込フォーム (entry_form.js) からの team-style POST 受け口
+// GAS 経由でも、同一サーバー直接でも受けられる (text/plain or application/json)
+// CORS は全開放 (公開フォームのため)
+app.options("/api/public/tournaments/:id/submit-team-entry", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.sendStatus(204);
+});
+app.post("/api/public/tournaments/:id/submit-team-entry",
+  express.text({ limit: "5mb", type: ["text/plain", "application/json"] }),
+  async (req, res) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    let payload = req.body;
+    if (typeof payload === "string") {
+      try { payload = JSON.parse(payload); }
+      catch { return res.status(400).json({ error: "JSON parse error", raw: payload.slice(0, 200) }); }
+    }
+    if (!payload || typeof payload !== "object") {
+      return res.status(400).json({ error: "ペイロードが空です" });
+    }
+    try {
+      const r = db.createTeamEntry(req.params.id, payload);
+      if (r.error) return res.status(400).json(r);
+
+      // ── 控えメール送信 (非同期・失敗してもレスポンスはOKを返す) ──
+      const tournament = db.getTournament(req.params.id);
+      const mailResults = { confirmation: null, admin: null };
+      if (mailer.isEnabled() && tournament) {
+        const adminUrl = `${req.protocol}://${req.headers.host}/admin#tournament/${req.params.id}`;
+        // 並列送信
+        const [confirmRes, adminRes] = await Promise.allSettled([
+          mailer.sendConfirmationEmail({ tournament, formData: payload, result: r }),
+          mailer.sendAdminNotification({ tournament, formData: payload, result: r, adminUrl }),
+        ]);
+        mailResults.confirmation = confirmRes.status === "fulfilled"
+          ? confirmRes.value : { ok: false, error: String(confirmRes.reason) };
+        mailResults.admin = adminRes.status === "fulfilled"
+          ? adminRes.value : { ok: false, error: String(adminRes.reason) };
+      }
+      res.status(201).json({ ...r, mail: mailResults });
+    } catch (e) {
+      recordError(e, req, res, 500);
+      res.status(500).json({ error: "申込処理エラー: " + e.message });
+    }
+  }
+);
+
+// SMTP 設定状態を返す + テスト送信エンドポイント (admin専用)
+app.get("/api/mail/status", requireAdmin, (req, res) => {
+  res.json({
+    enabled: mailer.isEnabled(),
+    config: {
+      ...mailer.config,
+      // パスワードは絶対に返さない
+    },
+  });
+});
+app.post("/api/mail/test", requireAdmin, async (req, res) => {
+  const to = req.body?.to || mailer.config.ADMIN_EMAIL;
+  if (!to) return res.status(400).json({ error: "送信先メールアドレスが指定されていません" });
+  try {
+    const info = await mailer.sendTestEmail(to);
+    res.json({ ok: true, message_id: info.messageId, to });
+  } catch (e) {
+    res.status(500).json({ error: "送信失敗: " + e.message });
+  }
 });
 app.get("/api/public/search", (req, res) => {
   const { q, limit } = req.query;
@@ -1341,6 +1411,45 @@ for (const docName of ["OPERATIONS.md", "RENDER_DEPLOY.md", "UPDATE_WORKFLOW.md"
     res.sendFile(f);
   });
 }
+
+// ── 公開申込フォーム /entry/:id ───────────────────────
+// Jimdo 等への iframe 埋込にも、単独URL公開にもこの URL を使用。
+// 既存 /api/tournaments/:id/entry-form.html と同じ HTML を返すが
+// デフォルトで「自己サーバーに POST」する設定にする (GAS 不要)。
+app.get("/entry/:id", (req, res) => {
+  try {
+    const tournament = db.getTournament(req.params.id);
+    if (!tournament) {
+      return res.status(404).type("html").send(
+        "<!doctype html><meta charset='utf-8'><title>大会が見つかりません</title>" +
+        "<style>body{font-family:system-ui;text-align:center;padding:80px 20px;color:#1c1917}" +
+        "h1{font-size:24px}p{color:#78716c}</style>" +
+        "<h1>大会が見つかりません</h1><p>URL を確認してください。</p>"
+      );
+    }
+    const events = _resolveEvents(tournament);
+    // 自己 POST URL (絶対 URL で渡す → iframe 埋込でも正しく動作)
+    const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
+    const host = req.headers["x-forwarded-host"] || req.headers.host;
+    const selfUrl = `${proto}://${host}/api/public/tournaments/${tournament.id}/submit-team-entry`;
+
+    const html = entryForm.buildEntryFormHTML(tournament, events, {
+      gas_url: selfUrl,
+      admin_email: req.query.admin_email || "",
+      deadline: tournament.entry_deadline || req.query.deadline || "",
+      payment_note: req.query.payment_note || "",
+      notes: req.query.notes || "",
+    });
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    res.removeHeader("X-Frame-Options");
+    res.setHeader("Content-Security-Policy", "frame-ancestors *;");
+    res.send(html);
+  } catch (e) {
+    recordError(e, req, res, 500);
+    res.status(500).send("<h1>フォーム生成失敗</h1><pre>" + e.message + "</pre>");
+  }
+});
 
 app.get(["/admin", "/admin/*"], (req, res) => {
   res.sendFile(path.join(publicDir, "admin", "index.html"));

@@ -17,6 +17,7 @@
     "compression": "^1.8.1",
     "express": "^4.21.0",
     "multer": "^2.1.1",
+    "nodemailer": "^8.0.9",
     "pdfjs-dist": "^4.10.38",
     "xlsx": "^0.18.5"
   }
