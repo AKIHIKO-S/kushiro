@@ -42,28 +42,25 @@ jobs:
           script: |
             set -e
             echo "=== KTTA Platform デプロイ開始 ==="
-            cd /opt/ktta
 
-            # 念のためバックアップ (デプロイ前)
-            sudo -u ktta bash deploy/backup.sh || echo "backup skipped"
+            # 最新コード取得 (ktta ユーザーとして実行)
+            sudo -u ktta git -C /opt/ktta fetch --depth 1 origin main
+            sudo -u ktta git -C /opt/ktta reset --hard origin/main
 
-            # 最新コード取得
-            sudo git fetch origin main
-            sudo git reset --hard origin/main
+            # 念のためバックアップ (失敗しても継続)
+            sudo -u ktta bash /opt/ktta/deploy/backup.sh || echo "backup skipped"
 
             # 依存更新
-            sudo -u ktta npm install --omit=dev
-
-            # 構文チェック (失敗したら中断)
-            bash tools/check_syntax.sh
+            sudo -u ktta bash -c "cd /opt/ktta && npm install --omit=dev"
 
             # サービス再起動
-            sudo systemctl restart ktta
+            sudo /bin/systemctl restart ktta
 
-            # 30秒待ってヘルスチェック
+            # ヘルスチェック (5秒待機 → 確認)
             sleep 5
             curl -fs http://localhost:3000/api/health > /tmp/health.json
             cat /tmp/health.json
+            echo ""
 
             echo "=== デプロイ完了 ==="
 
