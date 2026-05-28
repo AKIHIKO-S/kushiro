@@ -6,9 +6,16 @@
 
   const GENDERS = [{v:"male",l:"男子"},{v:"female",l:"女子"}];
   const CATS = [
-    {v:"general",l:"一般"},{v:"high",l:"高校"},
-    {v:"middle",l:"中学"},{v:"elementary",l:"小学"},{v:"senior",l:"シニア"}
+    {v:"elementary",l:"小学生"},{v:"middle",l:"中学生"},{v:"high",l:"高校生"},
+    {v:"university",l:"大学生"},{v:"general",l:"一般"},{v:"individual",l:"個人"}
   ];
+  // 値→ラベル (旧 senior 等の後方互換も含めフォールバック)
+  function catLabel(v) {
+    const f = CATS.find(c => c.v === v);
+    if (f) return f.l;
+    if (v === "senior") return "シニア";
+    return v ? v : "未設定";
+  }
   const EV_TYPES = ["シングルス","ダブルス","団体戦","混合ダブルス"];
   const ROUNDS = [
     "決勝","準決勝","準々決勝","ベスト16","ベスト32",
@@ -395,6 +402,6 @@
     createPoller, downloadCSV, downloadJSON, openModal,
     logoHTML, statusBadge,
     HOKKAIDO_BRANCHES, normalizeBranch, branchColor, branchColorMap, branchBadge,
-    eventColor, eventBadge,
+    eventColor, eventBadge, catLabel,
   };
 })(window);

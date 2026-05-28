@@ -999,21 +999,31 @@ const V = {
  return s ? s.charAt(0) : "?";
  },
 
+ // 数字カウントアップ (出場選手数のアニメーション)
+ _countUp(el, target) {
+ const dur = 650, t0 = performance.now();
+ const step = (now) => {
+   const k = Math.min(1, (now - t0) / dur);
+   el.textContent = String(Math.round(target * (1 - Math.pow(1 - k, 3))));
+   if (k < 1) requestAnimationFrame(step);
+ };
+ requestAnimationFrame(step);
+ },
+
  renderPlayerList() {
  const list = document.getElementById("playerList");
  const status = document.getElementById("searchStatus");
  clear(list);
+ if (status) status.textContent = "";
 
  if (!V.state.players.length) {
  list.style.display = "grid";
- status.textContent = "";
  list.appendChild(h("div", { className: "empty-state", style: { gridColumn: "1/-1" } },
  document.getElementById("searchInput").value
  ? "該当する選手が見つかりません。"
  : "選手名・所属で検索してください（例：佐藤、卓球クラブ）"));
  return;
  }
- // アコーディオン表示のためコンテナをブロックに
  list.style.display = "block";
  const q = (document.getElementById("searchInput").value || "").trim();
  const g = (document.getElementById("searchGender") || {}).value;
@@ -1021,42 +1031,48 @@ const V = {
  const filtered = !!q || (g && g !== "all") || (c && c !== "all");
  const males = V.state.players.filter(p => p.gender !== "female").length;
  const females = V.state.players.length - males;
- status.textContent = "";
- // 登録人数を大きく分かりやすく表示 (#183)
- list.appendChild(h("div", { className: "pdb-total" },
-   h("div", { className: "pdb-total-main" },
-     h("span", { className: "pdb-total-num" }, String(V.state.players.length)),
-     h("span", { className: "pdb-total-unit" }, "名")),
-   h("div", { className: "pdb-total-side" },
-     h("div", { className: "pdb-total-lbl" }, filtered ? "検索結果" : "登録選手"),
-     h("div", { className: "pdb-total-sub" }, `男子 ${males} ・ 女子 ${females}`))));
 
- const renderCard = (p) => {
+ // ヒーロー: 出場選手数 (カウントアップ)
+ const heroNum = h("span", { className: "pdb-total-num" }, "0");
+ list.appendChild(h("div", { className: "pdb-total pdb-hero" },
+   h("div", { className: "pdb-total-main" }, heroNum, h("span", { className: "pdb-total-unit" }, "名")),
+   h("div", { className: "pdb-total-side" },
+     h("div", { className: "pdb-total-lbl" }, filtered ? "検索結果" : "出場選手数"),
+     h("div", { className: "pdb-total-sub" }, `男子 ${males} ・ 女子 ${females}`))));
+ V._countUp(heroNum, V.state.players.length);
+
+ // グループ切替 (ふりがな / 所属チーム / カテゴリ)
+ V.groupMode = V.groupMode || "furigana";
+ const seg = h("div", { className: "pdb-seg" });
+ [["furigana", "ふりがな順"], ["team", "所属チーム"], ["category", "カテゴリ"]].forEach(([mode, label]) => {
+   seg.appendChild(h("button", { className: "pdb-seg-btn" + (V.groupMode === mode ? " active" : ""),
+     onClick: () => { V.groupMode = mode; V.renderPlayerList(); } }, label));
+ });
+ list.appendChild(seg);
+
+ const renderCard = (p, i) => {
  const gClass = p.gender === "female" ? "female" : "male";
- const wins = p.match_wins || 0;
- const losses = p.match_losses || 0;
- const total = wins + losses;
+ const wins = p.match_wins || 0, losses = p.match_losses || 0, total = wins + losses;
  const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
  const app = p.appearances || 0;
  const stats = [];
  if (app > 0) stats.push(h("span", { className: "pdb-stat app" },
  h("span", { className: "pdb-stat-lbl" }, "出場"), String(app) + "回"));
  if (total > 0) {
- stats.push(h("span", { className: "pdb-stat win" },
- h("span", { className: "pdb-stat-lbl" }, "勝"), String(wins)));
- stats.push(h("span", { className: "pdb-stat loss" },
- h("span", { className: "pdb-stat-lbl" }, "敗"), String(losses)));
+ stats.push(h("span", { className: "pdb-stat win" }, h("span", { className: "pdb-stat-lbl" }, "勝"), String(wins)));
+ stats.push(h("span", { className: "pdb-stat loss" }, h("span", { className: "pdb-stat-lbl" }, "敗"), String(losses)));
  }
- const golds = p.wins_ach || 0;
- const medalCount = p.total_achievements || 0;
+ const golds = p.wins_ach || 0, medalCount = p.total_achievements || 0;
  if (golds > 0) stats.push(h("span", { className: "pdb-stat medal" }, "優勝" + golds));
  else if (medalCount > 0) stats.push(h("span", { className: "pdb-stat medal" }, "入賞" + medalCount));
- return h("div", { className: "pdb-card " + gClass, onClick: () => V.openPlayer(p.id) },
+ return h("div", { className: "pdb-card " + gClass,
+ style: { animationDelay: (Math.min(i, 14) * 0.028) + "s" }, onClick: () => V.openPlayer(p.id) },
  h("div", { className: "pdb-avatar" }, V._initials(p.name)),
  h("div", { className: "pdb-info" },
  h("div", { className: "pdb-name" }, p.name || "(無名)"),
  p.furigana ? h("div", { className: "pdb-furi" }, p.furigana) : null,
  h("div", { className: "pdb-meta" },
+ h("span", { className: "pdb-cat" }, TT.catLabel(p.category)),
  p.branch ? (function(){ const _bc = TT.branchColor(p.branch);
    return h("span", { className: "pdb-branch", style: { background: _bc.bg, color: _bc.fg } }, TT.normalizeBranch(p.branch)); })() : null,
  p.team || "—"),
@@ -1067,27 +1083,39 @@ const V = {
  );
  };
 
- // あ行/か行/さ行 アコーディオン分類 (admin と統一)
- const rows = ["あ行","か行","さ行","た行","な行","は行","ま行","や行","ら行","わ行","他"];
- const grouped = {};
- V.state.players.forEach(p => {
- const r = V._kanaRow(p.furigana || V._initials(p.name));
- (grouped[r] = grouped[r] || []).push(p);
- });
- rows.forEach((r, idx) => {
- const players = grouped[r];
- if (!players || !players.length) return;
- const acc = h("div", { className: "pdb-acc" + (idx === 0 || q ? " open" : "") });
- const head = h("div", { className: "pdb-acc-head", onClick: () => acc.classList.toggle("open") },
- h("div", { className: "pdb-row-num" }, r.charAt(0)),
- h("div", { className: "pdb-row-label" }, r),
- h("div", { className: "pdb-row-count" }, players.length + "名"),
- );
- const body = h("div", { className: "pdb-acc-body" });
- players.forEach(p => body.appendChild(renderCard(p)));
- acc.appendChild(head);
- acc.appendChild(body);
- list.appendChild(acc);
+ // グループ化 (3モード)
+ let groups = [];
+ if (V.groupMode === "team") {
+   const m = {};
+   V.state.players.forEach(p => { const k = (p.team || "").trim() || "（所属なし）"; (m[k] = m[k] || []).push(p); });
+   groups = Object.keys(m).sort((a, b) =>
+     a === "（所属なし）" ? 1 : b === "（所属なし）" ? -1 : a.localeCompare(b, "ja"))
+     .map(k => ({ label: k, players: m[k] }));
+ } else if (V.groupMode === "category") {
+   const order = (TT.CATS || []).map(x => x.v).concat(["senior", "", "general"]);
+   const m = {};
+   V.state.players.forEach(p => { const k = p.category || "general"; (m[k] = m[k] || []).push(p); });
+   groups = Object.keys(m).sort((a, b) => {
+     const ia = order.indexOf(a), ib = order.indexOf(b);
+     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+   }).map(k => ({ label: TT.catLabel(k), players: m[k] }));
+ } else {
+   const rows = ["あ行","か行","さ行","た行","な行","は行","ま行","や行","ら行","わ行","他"];
+   const m = {};
+   V.state.players.forEach(p => { const r = V._kanaRow(p.furigana || V._initials(p.name)); (m[r] = m[r] || []).push(p); });
+   groups = rows.filter(r => m[r] && m[r].length).map(r => ({ label: r, players: m[r] }));
+ }
+
+ groups.forEach((grp, gi) => {
+   const acc = h("div", { className: "pdb-acc" + (gi === 0 || q ? " open" : "") });
+   const head = h("div", { className: "pdb-acc-head", onClick: () => acc.classList.toggle("open") },
+     h("div", { className: "pdb-row-num" }, (grp.label || "").charAt(0)),
+     h("div", { className: "pdb-row-label" }, grp.label),
+     h("div", { className: "pdb-row-count" }, grp.players.length + "名"));
+   const body = h("div", { className: "pdb-acc-body" });
+   grp.players.forEach((p, i) => body.appendChild(renderCard(p, i)));
+   acc.appendChild(head); acc.appendChild(body);
+   list.appendChild(acc);
  });
  },
 
