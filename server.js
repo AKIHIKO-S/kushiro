@@ -1581,6 +1581,8 @@ app.get("/api/public/players/:id/live-status", (req, res) => {
 });
 
 app.post("/api/matches/:id/call", requireAdmin, (req, res) => {
+  const pre = db.getMatch(req.params.id);
+  const before = db.snapshotMatchRows(pre ? [pre.id] : [req.params.id]);
   const r = db.callMatch(
     req.params.id,
     parseInt(req.body?.table_no) || 0,
@@ -1597,6 +1599,9 @@ app.post("/api/matches/:id/call", requireAdmin, (req, res) => {
     }
   );
   if (r?.error) return res.status(400).json(r);
+  if (pre) db.recordOp(pre.tournament_id, "call",
+    `呼出: 台${parseInt(req.body?.table_no) || pre.table_no || "?"}（${pre.player1_name || ""} vs ${pre.player2_name || ""}）`,
+    [pre.id], before);
   res.json(r);
   // 呼出成功 → 当該試合の選手にプッシュ通知 (対戦が入った段階での通知) #188
   try {
@@ -1616,7 +1621,13 @@ app.post("/api/matches/:id/call", requireAdmin, (req, res) => {
 });
 
 app.post("/api/matches/:id/uncall", requireAdmin, (req, res) => {
-  res.json(db.uncallMatch(req.params.id));
+  const pre = db.getMatch(req.params.id);
+  const before = db.snapshotMatchRows(pre ? [pre.id] : [req.params.id]);
+  const r = db.uncallMatch(req.params.id);
+  if (pre && !(r && r.error)) db.recordOp(pre.tournament_id, "uncall",
+    `台から戻す: 台${pre.table_no || "?"}（${pre.player1_name || ""} vs ${pre.player2_name || ""}）`,
+    [pre.id], before);
+  res.json(r);
 });
 
 // ─── Web Push 購読 API ──────────────────────────────────
@@ -1686,8 +1697,14 @@ app.put("/api/tournaments/:id/op-settings", requireAdmin, (req, res) => {
 });
 
 app.post("/api/matches/:id/finish", requireAdmin, (req, res) => {
+  const pre = db.getMatch(req.params.id);
+  const ids = pre ? [pre.id, pre.next_match_id].filter(Boolean) : [req.params.id];
+  const before = db.snapshotMatchRows(ids);
   const r = db.finishMatchOp(req.params.id, req.body || {});
   if (!r) return res.status(404).json({ error: "試合が見つかりません" });
+  if (!r.error && pre) db.recordOp(pre.tournament_id, "finish",
+    `結果入力: ${r.winner_name || ""} ${r.winner_sets || 0}-${r.loser_sets || 0} ${r.loser_name || ""}（${pre.event || ""} ${pre.round || ""}）`,
+    ids, before);
   res.json(r);
 });
 
@@ -1695,8 +1712,24 @@ app.post("/api/matches/:id/finish", requireAdmin, (req, res) => {
 // body: { winner_slot: 1|2, sets: [[w,l]...], winner_sets?, loser_sets? }
 // 次の試合に既に進出済みなら自動で取消 → 新勝者で再進出
 app.post("/api/matches/:id/correct", requireAdmin, (req, res) => {
+  const pre = db.getMatch(req.params.id);
+  const ids = pre ? [pre.id, pre.next_match_id].filter(Boolean) : [req.params.id];
+  const before = db.snapshotMatchRows(ids);
   const r = db.correctResult(req.params.id, req.body || {});
   if (r?.error) return res.status(400).json(r);
+  if (pre) db.recordOp(pre.tournament_id, "correct",
+    `結果修正: ${r.winner_name || ""} ${r.winner_sets || 0}-${r.loser_sets || 0} ${r.loser_name || ""}（${pre.event || ""} ${pre.round || ""}）`,
+    ids, before);
+  res.json(r);
+});
+
+// ─── 操作ログ + Undo (誤操作/抗議対応) ──────────────────────────
+app.get("/api/tournaments/:id/op-log", (req, res) => {
+  res.json({ log: db.getOpLog(req.params.id, req.query.limit) });
+});
+app.post("/api/tournaments/:id/undo-last", requireAdmin, (req, res) => {
+  const r = db.undoLastOp(req.params.id);
+  if (r.error) return res.status(400).json(r);
   res.json(r);
 });
 

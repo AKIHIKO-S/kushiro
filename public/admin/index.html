@@ -645,6 +645,19 @@
  .bk-manual { background: #dcfce7; color: #15803d; }
  .bk-prerestore { background: #fef3c7; color: #92400e; }
 
+ /* 操作ログ #203 */
+ .oplog-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 4px;
+   border-bottom: 1px solid var(--border); font-size: 12px; }
+ .oplog-row.undone { opacity: .5; text-decoration: line-through; }
+ .oplog-ts { font-family: var(--font-mono); font-size: 11px; color: var(--sub); white-space: nowrap; }
+ .oplog-act { font-size: 10px; font-weight: 800; padding: 1px 7px; border-radius: 8px; white-space: nowrap; }
+ .oplog-finish { background: #dcfce7; color: #15803d; }
+ .oplog-correct { background: #fed7aa; color: #9a3412; }
+ .oplog-call { background: #dbeafe; color: #1e40af; }
+ .oplog-uncall { background: #f1f5f9; color: #475569; }
+ .oplog-sum { flex: 1; min-width: 0; color: var(--ink-900); }
+ .oplog-undone { font-size: 10px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+
  /* ─── 再コール バッジ ─── */
  .call-badge {
    display: inline-flex; align-items: center; gap: 3px;
@@ -6242,10 +6255,16 @@ const O = {
  title: "敗者は次の試合まで審判担当。OFFにすると拘束チェックを無効化"
  },
  (O.state.tournament.enforce_referee_rule !== 0 ? "● " : "○ ") + "敗者審判ルール"),
+ // 直前の操作を取り消す (誤操作/抗議対応 #203)
+ h("button", { className: "btn btn-sm",
+   style: { background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" },
+   title: "結果入力・呼出・修正などの直前の操作を1つ取り消します",
+   onClick: () => O.undoLast() }, "↶ 取り消し"),
  // ツール (折りたたみ)
  h("details", { className: "op-tools" },
  h("summary", { className: "btn btn-sm btn-ghost", style: { display: "inline-block" } }, "ツール・設定 ▾"),
  h("div", { className: "op-tools-body" },
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openOpLog() }, "操作ログ"),
  h("button", { className: "btn btn-sm", style: { background: "#7c3aed" },
    onClick: () => O.openVisualBracket() }, "トーナメント表"),
  h("button", { className: "btn btn-sm", onClick: () => O.openBracketGen() }, "トーナメント生成"),
@@ -7484,6 +7503,42 @@ const O = {
  if (r && r.queued) return toast("オフライン: 台から戻す操作を保存しました（接続復帰後に自動送信）", "warn");
  toast("台から戻しました", "ok");
  O.reload();
+ },
+
+ // ── 操作ログ + Undo (誤操作/抗議対応 #203) ──
+ async undoLast() {
+ if (!O.tournamentId) return;
+ if (!confirm("直前の操作を1つ取り消します。\n（結果入力・呼出・結果修正・台へ戻す が対象）\nよろしいですか？")) return;
+ let r;
+ try { r = await api.post(`/api/tournaments/${O.tournamentId}/undo-last`, {}); }
+ catch (e) { return toast("通信できません（オフライン）。接続復帰後にお試しください", "err"); }
+ if (r.error) return toast(r.error, "err");
+ toast("取り消しました: " + (r.summary || ""), "ok");
+ O.reload();
+ },
+ _opLogLabel(a) {
+ return ({ finish: "結果入力", correct: "結果修正", call: "呼出", uncall: "台へ戻す" })[a] || a;
+ },
+ async openOpLog() {
+ if (!O.tournamentId) return;
+ const data = await api.get(`/api/tournaments/${O.tournamentId}/op-log`);
+ const log = (data && data.log) || [];
+ const body = h("div", {},
+   h("div", { className: "text-sm text-sub", style: { marginBottom: "10px", lineHeight: "1.7" } },
+     "新しい順に表示します。「直前を取り消す」で最新の操作を1つ元に戻せます（誤操作・抗議対応）。"),
+   h("button", { className: "btn btn-sm",
+     style: { marginBottom: "12px", background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" },
+     onClick: () => { document.querySelector(".modal-bg")?.remove(); O.undoLast(); } }, "↶ 直前を取り消す"));
+ if (!log.length) {
+   body.appendChild(h("div", { className: "empty-state", style: { padding: "14px" } }, "まだ操作履歴がありません。"));
+ } else {
+   log.forEach(e => body.appendChild(h("div", { className: "oplog-row" + (e.undone ? " undone" : "") },
+     h("span", { className: "oplog-ts" }, (e.ts || "").slice(5, 16)),
+     h("span", { className: "oplog-act oplog-" + e.action }, O._opLogLabel(e.action)),
+     h("span", { className: "oplog-sum" }, e.summary || ""),
+     e.undone ? h("span", { className: "oplog-undone" }, "取消済") : null)));
+ }
+ openModal("操作ログ / 取り消し", body, null);
  },
 
  // ── ビジュアル トーナメント表 ──

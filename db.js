@@ -167,6 +167,19 @@ sqlite.exec(`
     created_at TEXT DEFAULT (datetime('now','localtime'))
   );
   CREATE INDEX IF NOT EXISTS idx_push_player ON push_subscriptions(player_id);
+
+  -- 操作ログ (誤操作/抗議対応の取り消し用)。before_json に影響した試合行の前状態を保持。
+  CREATE TABLE IF NOT EXISTS op_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tournament_id TEXT,
+    ts TEXT DEFAULT (datetime('now','localtime')),
+    action TEXT,
+    summary TEXT,
+    match_ids TEXT,
+    before_json TEXT,
+    undone INTEGER DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_oplog_t ON op_log(tournament_id, id);
 `);
 
 // 既存DBにカラムがない場合は追加
@@ -4495,6 +4508,54 @@ function snapshotPath(name) {
 function hasOngoingTournament() {
   return !!sqlite.prepare(`SELECT 1 FROM tournaments WHERE status='ongoing' LIMIT 1`).get();
 }
+
+// ─── 操作ログ + Undo (誤操作/抗議対応) ───────────────────────────
+// 影響した試合行の「前状態」を before_json に保持し、LIFO で復元する。
+function snapshotMatchRows(ids) {
+  ids = (ids || []).filter(Boolean);
+  if (!ids.length) return [];
+  const ph = ids.map(() => "?").join(",");
+  return sqlite.prepare(`SELECT * FROM matches WHERE id IN (${ph})`).all(...ids);
+}
+function recordOp(tournamentId, action, summary, matchIds, beforeRows) {
+  try {
+    sqlite.prepare(
+      `INSERT INTO op_log (tournament_id, action, summary, match_ids, before_json)
+       VALUES (?,?,?,?,?)`
+    ).run(tournamentId || "", action || "", summary || "",
+      JSON.stringify(matchIds || []), JSON.stringify(beforeRows || []));
+  } catch (e) { /* ログ失敗は本処理に影響させない */ }
+}
+function getOpLog(tournamentId, limit) {
+  limit = Math.min(parseInt(limit) || 30, 100);
+  return sqlite.prepare(
+    `SELECT id, ts, action, summary, undone FROM op_log
+     WHERE tournament_id=? ORDER BY id DESC LIMIT ?`
+  ).all(tournamentId, limit);
+}
+function _restoreMatchRow(r) {
+  const cols = Object.keys(r).filter(k => k !== "id");
+  if (!cols.length) return;
+  const set = cols.map(c => `"${c}"=@${c}`).join(", ");
+  sqlite.prepare(`UPDATE matches SET ${set} WHERE id=@id`).run(r);
+}
+// 直前(最新の未取消)の操作を取り消す。影響行を before 状態へ復元 (トランザクション)。
+function undoLastOp(tournamentId) {
+  const row = sqlite.prepare(
+    `SELECT * FROM op_log WHERE tournament_id=? AND undone=0 ORDER BY id DESC LIMIT 1`
+  ).get(tournamentId);
+  if (!row) return { error: "取り消せる操作がありません" };
+  let before = [];
+  try { before = JSON.parse(row.before_json || "[]"); } catch (e) {}
+  const tx = sqlite.transaction(() => {
+    for (const r of before) _restoreMatchRow(r);
+    sqlite.prepare(`UPDATE op_log SET undone=1 WHERE id=?`).run(row.id);
+  });
+  tx();
+  let matchIds = [];
+  try { matchIds = JSON.parse(row.match_ids || "[]"); } catch (e) {}
+  return { ok: true, summary: row.summary, action: row.action, match_ids: matchIds };
+}
 // スナップショットから復元 (破壊的)。現状の安全網スナップを取ってから DB を差し替える。
 // 差し替え後は sqlite ハンドルを閉じるため、呼び出し側はプロセスを再起動すること。
 function restoreSnapshot(name) {
@@ -4550,6 +4611,8 @@ module.exports = {
   kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription,
   // DB スナップショット (バックアップ/復元)
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, hasOngoingTournament,
+  // 操作ログ + Undo
+  snapshotMatchRows, recordOp, getOpLog, undoLastOp,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,
