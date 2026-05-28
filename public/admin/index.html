@@ -524,6 +524,43 @@
  border: 1px solid var(--border-strong); border-radius: 4px;
  font-family: monospace; font-size: 14px;
  }
+ /* セットカウント 直接入力 (大会当日・大きめタッチ対応) */
+ .score-entry {
+   display: grid; grid-template-columns: 1fr auto 1fr;
+   gap: 12px; align-items: center; margin: 4px 0 8px;
+ }
+ .score-side { text-align: center; }
+ .score-side .score-name {
+   font-size: 14px; font-weight: 700; color: var(--ink-900);
+   margin-bottom: 8px; min-height: 20px; line-height: 1.3;
+   word-break: break-word;
+ }
+ .score-num {
+   width: 100%; max-width: 120px; height: 88px; margin: 0 auto;
+   text-align: center; font-size: 48px; font-weight: 800;
+   font-family: var(--font-display);
+   border: 2px solid var(--border-strong); border-radius: 12px;
+   color: var(--ink-900); background: #fff;
+   -moz-appearance: textfield; transition: all .12s;
+ }
+ .score-num::-webkit-outer-spin-button,
+ .score-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+ .score-num:focus {
+   outline: none; border-color: var(--accent);
+   box-shadow: 0 0 0 4px rgba(220,38,38,.12);
+ }
+ .score-side.is-winner .score-num {
+   border-color: #16a34a; background: #f0fdf4; color: #15803d;
+ }
+ .score-side.is-winner .score-name { color: #15803d; }
+ .score-side.is-winner .score-name::after {
+   content: " 🏆"; font-size: 13px;
+ }
+ .score-vs {
+   font-size: 22px; font-weight: 800; color: var(--sub);
+   font-family: var(--font-display);
+ }
+ .score-hint { font-size: 11px; color: var(--sub); text-align: center; margin-top: 4px; }
 
  /* 申込種目チップ */
  .entry-events-list { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -6169,123 +6206,103 @@ const O = {
  // モード: simple (セット数のみ・基本) / detail (各セット点数・任意)
  // 基本5セット制 (3-x で勝利)、3セット制も切替可能
  openResultInput(m) {
- let winnerSlot = 0;
- let bestOfGames = 5;   // 5セット or 3セット (5/3)
- let mode = "simple";   // simple | detail
+ let bestOfGames = 5;   // 5セット or 3セット (表示の目安)
+ let mode = "simple";   // simple (セット数直接入力) | detail (各セット点数)
  let p1Sets = 0, p2Sets = 0;
 
  const renderBody = () => {
- const winsToTake = Math.ceil(bestOfGames / 2);  // 5G→3勝、3G→2勝
+ const winsToTake = Math.ceil(bestOfGames / 2);
+ // 勝者を数字から自動判定 (多い方が勝者)
+ const winnerSlot = p1Sets > p2Sets ? 1 : (p2Sets > p1Sets ? 2 : 0);
 
- // 切替ヘッダー
+ // 切替ヘッダー (セット制 + 入力モード)
  const header = h("div", { className: "flex gap-2 mb-3 flex-wrap" },
  h("div", { className: "flex gap-1" },
- h("button", {
- className: "btn btn-sm" + (bestOfGames === 5 ? "" : " btn-ghost"),
- onClick: () => { bestOfGames = 5; refresh(); }
- }, "5セット制"),
- h("button", {
- className: "btn btn-sm" + (bestOfGames === 3 ? "" : " btn-ghost"),
- onClick: () => { bestOfGames = 3; refresh(); }
- }, "3セット制"),
+ h("button", { className: "btn btn-sm" + (bestOfGames === 5 ? "" : " btn-ghost"),
+ onClick: () => { bestOfGames = 5; refresh(); } }, "5セット制"),
+ h("button", { className: "btn btn-sm" + (bestOfGames === 3 ? "" : " btn-ghost"),
+ onClick: () => { bestOfGames = 3; refresh(); } }, "3セット制"),
  ),
  h("div", { className: "flex gap-1", style: { marginLeft: "auto" } },
- h("button", {
- className: "btn btn-sm" + (mode === "simple" ? "" : " btn-ghost"),
- onClick: () => { mode = "simple"; refresh(); }
- }, "セット数のみ"),
- h("button", {
- className: "btn btn-sm" + (mode === "detail" ? "" : " btn-ghost"),
- onClick: () => { mode = "detail"; refresh(); }
- }, "任意 (各セット点数)"),
+ h("button", { className: "btn btn-sm" + (mode === "simple" ? "" : " btn-ghost"),
+ onClick: () => { mode = "simple"; refresh(); } }, "セット数"),
+ h("button", { className: "btn btn-sm" + (mode === "detail" ? "" : " btn-ghost"),
+ onClick: () => { mode = "detail"; refresh(); } }, "各セット点数"),
  ),
  );
 
- // 対戦カード
- const matchInfo = h("div", {},
- h("div", { className: "round-badge mb-2", style: { display: "inline-block" } },
+ // 対戦見出し
+ const matchInfo = h("div", { className: "mb-2" },
+ h("div", { className: "round-badge", style: { display: "inline-block" } },
  `${m.event} ${m.round}`),
- h("div", { className: "flex gap-2 mb-3 vs-block", style: { fontSize: "16px", fontWeight: 700 } },
- h("span", { style: { color: "var(--pri)" } }, m.player1_name),
- h("span", { className: "vs" }, "VS"),
- h("span", { style: { color: "var(--pri)" } }, m.player2_name),
- ),
+ m.table_no ? h("span", { style: { marginLeft: "8px", fontSize: "12px",
+   color: "var(--sub)" } }, `${m.table_no}番台`) : null,
  );
 
- // 勝者選択 (大きいボタン)
- const winnerBtns = h("div", { className: "two-col mb-3" },
- h("button", {
- className: "btn " + (winnerSlot === 1 ? "" : "btn-ghost"),
- style: { padding: "16px", fontSize: "14px" },
- onClick: () => { winnerSlot = 1; refresh(); }
- }, m.player1_name + " 勝利"),
- h("button", {
- className: "btn " + (winnerSlot === 2 ? "" : "btn-ghost"),
- style: { padding: "16px", fontSize: "14px" },
- onClick: () => { winnerSlot = 2; refresh(); }
- }, m.player2_name + " 勝利"),
- );
-
- // 入力フォーム (mode で切替)
  let inputs;
  if (mode === "simple") {
- // セット数のみ: 勝者が winsToTake (3 or 2)、敗者は 0〜(winsToTake-1)
- inputs = h("div", { className: "field" },
- h("label", { className: "field-label" },
- `セットカウント (${bestOfGames}セット制、${winsToTake}本先取)`),
- h("div", { className: "flex gap-2", style: { alignItems: "center", justifyContent: "center" } },
- h("select", { className: "input",
- style: { width: "100px", textAlign: "center", fontSize: "24px", padding: "8px" },
- id: "p1SetsSel",
- onChange: (e) => { p1Sets = parseInt(e.target.value) || 0; },
- },
- ...[0,1,2,3,4].slice(0, winsToTake + 1).map(n =>
- h("option", { value: n, selected: p1Sets === n ? "" : null }, String(n)))),
- h("span", { style: { fontSize: "20px", fontWeight: 700, margin: "0 12px" } }, "—"),
- h("select", { className: "input",
- style: { width: "100px", textAlign: "center", fontSize: "24px", padding: "8px" },
- id: "p2SetsSel",
- onChange: (e) => { p2Sets = parseInt(e.target.value) || 0; },
- },
- ...[0,1,2,3,4].slice(0, winsToTake + 1).map(n =>
- h("option", { value: n, selected: p2Sets === n ? "" : null }, String(n)))),
+ // ★ セットカウント 直接入力 (大きい数字入力ボックス)。勝者は自動判定
+ inputs = h("div", {},
+ h("div", { className: "score-entry" },
+ h("div", { className: "score-side" + (winnerSlot === 1 ? " is-winner" : ""), id: "side1" },
+ h("div", { className: "score-name" }, m.player1_name),
+ h("input", { type: "number", className: "score-num", id: "p1Num",
+ min: 0, max: 9, value: String(p1Sets),
+ inputmode: "numeric", pattern: "[0-9]*",
+ onInput: (e) => {
+   p1Sets = parseInt(e.target.value) || 0;
+   // 勝者ハイライトのみ即時更新 (フォーカスは維持)
+   const w = p1Sets > p2Sets ? 1 : (p2Sets > p1Sets ? 2 : 0);
+   document.getElementById("side1")?.classList.toggle("is-winner", w === 1);
+   document.getElementById("side2")?.classList.toggle("is-winner", w === 2);
+ } }),
  ),
- h("div", { className: "text-xs text-sub text-center mt-2" },
- `左=${m.player1_name} / 右=${m.player2_name}。勝者は ${winsToTake} セット先取。`),
+ h("div", { className: "score-vs" }, "—"),
+ h("div", { className: "score-side" + (winnerSlot === 2 ? " is-winner" : ""), id: "side2" },
+ h("div", { className: "score-name" }, m.player2_name),
+ h("input", { type: "number", className: "score-num", id: "p2Num",
+ min: 0, max: 9, value: String(p2Sets),
+ inputmode: "numeric", pattern: "[0-9]*",
+ onInput: (e) => {
+   p2Sets = parseInt(e.target.value) || 0;
+   const w = p1Sets > p2Sets ? 1 : (p2Sets > p1Sets ? 2 : 0);
+   document.getElementById("side1")?.classList.toggle("is-winner", w === 1);
+   document.getElementById("side2")?.classList.toggle("is-winner", w === 2);
+ } }),
+ ),
+ ),
+ h("div", { className: "score-hint" },
+ `${bestOfGames}セット制 (${winsToTake}本先取)。獲得セット数を直接入力してください。多い方が勝者です。`),
  );
  } else {
- // 詳細: 各セット点数入力
+ // 各セット点数入力 (任意)
  const setInputs = h("div", { className: "result-input-grid" });
- const maxGames = bestOfGames;
- for (let i = 1; i <= maxGames; i++) {
+ for (let i = 1; i <= bestOfGames; i++) {
  setInputs.appendChild(h("span", { className: "text-xs text-sub" }, `S${i}`));
- setInputs.appendChild(h("input", { type: "number", id: `rs${i}P1`, min: 0, max: 30 }));
+ setInputs.appendChild(h("input", { type: "number", id: `rs${i}P1`, min: 0, max: 30, inputmode: "numeric" }));
  setInputs.appendChild(h("span", { className: "text-center" }, "-"));
- setInputs.appendChild(h("input", { type: "number", id: `rs${i}P2`, min: 0, max: 30 }));
+ setInputs.appendChild(h("input", { type: "number", id: `rs${i}P2`, min: 0, max: 30, inputmode: "numeric" }));
  }
  inputs = h("div", { className: "field" },
- h("label", { className: "field-label" },
- `各セット点数 (任意・${bestOfGames}セット分)`),
+ h("div", { className: "flex gap-2 mb-2", style: { fontSize: "13px", fontWeight: 700,
+   justifyContent: "space-between" } },
+   h("span", {}, m.player1_name), h("span", {}, "各セット点数"), h("span", {}, m.player2_name)),
  setInputs,
  h("div", { className: "text-xs text-sub mt-1" },
- `空欄のセットはスキップされます。点数からセット数を自動集計します。`),
+ `空欄のセットはスキップ。点数の多い方がそのセットの勝ち→自動集計します。`),
  );
  }
 
- return h("div", {}, header, matchInfo, winnerBtns, inputs);
+ return h("div", {}, header, matchInfo, inputs);
  };
 
  let bodyContainer = h("div", {});
- const refresh = () => {
- bodyContainer.innerHTML = "";
- bodyContainer.appendChild(renderBody());
- };
+ const refresh = () => { bodyContainer.innerHTML = ""; bodyContainer.appendChild(renderBody()); };
  refresh();
 
  const foot = h("button", { className: "btn btn-ok", onClick: async () => {
- if (!winnerSlot) return toast("勝者を選択してください", "err");
  let sets = [];
- let wsCount, lsCount;
+ let wsCount, lsCount, winnerSlot;
  if (mode === "detail") {
  for (let i = 1; i <= bestOfGames; i++) {
  const v1 = document.getElementById(`rs${i}P1`)?.value;
@@ -6294,24 +6311,18 @@ const O = {
  sets.push([parseInt(v1), parseInt(v2)]);
  }
  }
- // 自動集計
  const w1 = sets.filter(s => s[0] > s[1]).length;
  const w2 = sets.filter(s => s[1] > s[0]).length;
- wsCount = winnerSlot === 1 ? w1 : w2;
- lsCount = winnerSlot === 1 ? w2 : w1;
+ if (w1 === w2) return toast("勝敗が決していません (セット数を確認)", "err");
+ winnerSlot = w1 > w2 ? 1 : 2;
+ wsCount = Math.max(w1, w2);
+ lsCount = Math.min(w1, w2);
  } else {
- // simple モード: セット数のみ。winnerSlot から決定
- // sets[] は単純な "3-1" 形式を 1要素 で残す (詳細点数は不明なので 0-0 形式)
- // ただし downstream の集計と齟齬を生まないよう、winsToTake = winner sets
- const winsToTake = Math.ceil(bestOfGames / 2);
- if (winnerSlot === 1) {
- wsCount = p1Sets || winsToTake;
- lsCount = p2Sets;
- } else {
- wsCount = p2Sets || winsToTake;
- lsCount = p1Sets;
- }
- // 各セット点数は不明なので空配列 (player view では「セット数のみ」表示)
+ // セット数 直接入力。多い方が勝者
+ if (p1Sets === p2Sets) return toast("セット数が同じです。勝者を決めてください", "err");
+ winnerSlot = p1Sets > p2Sets ? 1 : 2;
+ wsCount = Math.max(p1Sets, p2Sets);
+ lsCount = Math.min(p1Sets, p2Sets);
  sets = [];
  }
  const r = await api.post(`/api/matches/${m.id}/finish`, {
