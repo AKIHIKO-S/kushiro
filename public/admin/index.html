@@ -33,6 +33,84 @@
  .admin-badge { display: none; }
  }
 
+ /* ─── 大会カード (一覧) ─── */
+ .t-card {
+   display: flex; align-items: stretch; gap: 0;
+   background: #fff; border: 1px solid var(--border);
+   border-radius: 12px; margin-bottom: 10px; overflow: hidden;
+   transition: all .15s; cursor: pointer; position: relative;
+ }
+ .t-card:hover {
+   border-color: var(--border-strong);
+   transform: translateY(-2px); box-shadow: var(--shadow-lg);
+ }
+ .t-card .t-accent {
+   width: 6px; flex-shrink: 0;
+   background: var(--ink-300);
+ }
+ .t-card.st-ongoing .t-accent { background: #16a34a; }
+ .t-card.st-preparation .t-accent { background: #d97706; }
+ .t-card.st-scheduled .t-accent { background: #2563eb; }
+ .t-card.st-completed .t-accent { background: var(--ink-400); }
+ .t-card.st-cancelled .t-accent { background: var(--ink-300); }
+ .t-card-body { flex: 1; padding: 14px 18px; min-width: 0; }
+ .t-card-top {
+   display: flex; align-items: flex-start; gap: 10px;
+   justify-content: space-between;
+ }
+ .t-card-name {
+   font-size: 16px; font-weight: 700; color: var(--ink-900);
+   line-height: 1.3; word-break: break-word;
+ }
+ .t-status {
+   flex-shrink: 0; padding: 3px 11px; border-radius: 20px;
+   font-size: 11px; font-weight: 700; white-space: nowrap;
+   display: inline-flex; align-items: center; gap: 4px;
+ }
+ .t-status::before {
+   content: ""; width: 6px; height: 6px; border-radius: 50%;
+   background: currentColor;
+ }
+ .t-status.st-ongoing { background: #dcfce7; color: #15803d; }
+ .t-status.st-preparation { background: #fef3c7; color: #b45309; }
+ .t-status.st-scheduled { background: #dbeafe; color: #1d4ed8; }
+ .t-status.st-completed { background: var(--ink-100); color: var(--ink-600); }
+ .t-status.st-cancelled { background: var(--ink-100); color: var(--ink-400); }
+ .t-card-meta {
+   display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;
+ }
+ .t-chip {
+   display: inline-flex; align-items: center; gap: 4px;
+   font-size: 12px; color: var(--ink-600);
+   background: var(--ink-50); border: 1px solid var(--ink-200);
+   padding: 3px 9px; border-radius: 8px;
+ }
+ .t-chip .t-chip-ic { opacity: 0.6; font-size: 11px; }
+ .t-chip.hot { background: #fef2f2; border-color: #fecaca; color: #b91c1c; font-weight: 700; }
+ .t-progress {
+   margin-top: 10px; height: 6px; border-radius: 3px;
+   background: var(--ink-100); overflow: hidden;
+ }
+ .t-progress > span {
+   display: block; height: 100%;
+   background: linear-gradient(90deg, #22c55e, #16a34a);
+   transition: width .3s;
+ }
+ .t-card-actions {
+   display: flex; flex-direction: column; gap: 6px;
+   padding: 14px; justify-content: center;
+   border-left: 1px solid var(--ink-100);
+   background: var(--ink-50);
+ }
+ .t-card-actions .btn { white-space: nowrap; font-size: 12px; padding: 6px 14px; }
+ @media (max-width: 560px) {
+   .t-card { flex-wrap: wrap; }
+   .t-card-actions {
+     flex-direction: row; width: 100%; border-left: none;
+     border-top: 1px solid var(--ink-100);
+   }
+ }
+
  /* ─── 選手DB スタイリッシュカード ─── */
  .pdb-acc {
    background: #fff;
@@ -1298,18 +1376,42 @@ const A = {
  };
  A.state.tournaments.forEach(t => {
  const st = t.status || "scheduled";
- el.appendChild(h("div", { className: "tournament-row" },
- h("div", {},
- h("div", { className: "font-bold", style: { fontSize: "15px" } }, t.name),
- h("div", { className: "text-xs text-sub mt-1" },
- `${fmtDate(t.date) || "日程未定"}　${t.venue || "会場未定"}　${t.match_count || 0}試合　${t.player_count || 0}名`),
- ),
- h("span", { className: "badge status-" + st },
- statusLabel[st] || "予定"),
- h("div", { className: "row-actions" },
- h("button", { className: "btn btn-sm", onClick: () => A.openTournament(t.id) }, "管理"),
- h("button", { className: "btn btn-sm btn-danger", onClick: () => A.deleteTournament(t.id) }, "削除"),
- ),
+ const mc = t.match_count || 0;
+ const pc = t.player_count || 0;
+ const done = t.completed_count != null ? t.completed_count : 0;
+ const progress = mc > 0 ? Math.round((done / mc) * 100) : 0;
+ // メタ情報チップ
+ const meta = [
+   h("span", { className: "t-chip" },
+     h("span", { className: "t-chip-ic" }, "📅"), fmtDate(t.date) || "日程未定"),
+   h("span", { className: "t-chip" },
+     h("span", { className: "t-chip-ic" }, "📍"), t.venue || "会場未定"),
+ ];
+ if (pc > 0) meta.push(h("span", { className: "t-chip" },
+   h("span", { className: "t-chip-ic" }, "👤"), pc + "名"));
+ if (mc > 0) meta.push(h("span", { className: "t-chip" },
+   h("span", { className: "t-chip-ic" }, "🏓"), mc + "試合"));
+ if (t.entries_open) meta.push(h("span", { className: "t-chip hot" }, "申込受付中"));
+
+ el.appendChild(h("div", { className: "t-card st-" + st,
+   onClick: () => A.openTournament(t.id) },
+   h("div", { className: "t-accent" }),
+   h("div", { className: "t-card-body" },
+     h("div", { className: "t-card-top" },
+       h("div", { className: "t-card-name" }, t.name),
+       h("span", { className: "t-status st-" + st }, statusLabel[st] || "予定"),
+     ),
+     h("div", { className: "t-card-meta" }, ...meta),
+     // 進行中なら進捗バー
+     (st === "ongoing" && mc > 0) ? h("div", { className: "t-progress",
+       title: `${done}/${mc} 試合完了 (${progress}%)` },
+       h("span", { style: { width: progress + "%" } })) : null,
+   ),
+   h("div", { className: "t-card-actions",
+     onClick: (e) => e.stopPropagation() },
+     h("button", { className: "btn btn-sm", onClick: () => A.openTournament(t.id) }, "管理"),
+     h("button", { className: "btn btn-sm btn-danger", onClick: () => A.deleteTournament(t.id) }, "削除"),
+   ),
  ));
  });
  },

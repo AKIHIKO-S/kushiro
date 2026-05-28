@@ -445,6 +445,7 @@ const stmts = {
   getTournaments: sqlite.prepare(`
     SELECT t.*,
       (SELECT COUNT(*) FROM matches m WHERE m.tournament_id=t.id) AS match_count,
+      (SELECT COUNT(*) FROM matches m WHERE m.tournament_id=t.id AND m.status='completed') AS completed_count,
       (SELECT COUNT(DISTINCT player_id) FROM tournament_players tp WHERE tp.tournament_id=t.id) AS player_count
     FROM tournaments t
     ORDER BY
