@@ -1493,6 +1493,12 @@ app.get("/api/tournaments/:id/operations", (req, res) => {
   res.json(state);
 });
 
+// 団体戦の所属選手 (名簿) — 進行管理で「どの選手が出場するか」を表示するため。
+// メンバー名のみ返却 (連絡先などの PII は含めない)。
+app.get("/api/tournaments/:id/team-rosters", (req, res) => {
+  res.json({ rosters: db.getTeamRosters(req.params.id) });
+});
+
 app.get("/api/public/tournaments/:id/live", (req, res) => {
   const state = getCachedOperationState(req.params.id);
   if (!state) return res.status(404).json({ error: "大会が見つかりません" });

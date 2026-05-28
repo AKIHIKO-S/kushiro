@@ -2876,6 +2876,38 @@ function getRefereeQueue(tournamentId, event) {
   });
 }
 
+// 団体戦の所属選手(名簿)抽出。entrant.note の "[団体] メンバー: A、B、C" 部分のみを
+// 解析し、連絡先などの PII (担当/email/TEL/備考) は一切返さない。最大6名。
+function parseTeamMembers(note) {
+  if (!note) return [];
+  // note は " | " 区切り。メンバー区画だけを取り出す (連絡先は含めない)
+  const seg = String(note).split(" | ").map(s => s.trim())
+    .find(s => /^\[団体\]\s*メンバー[:：]/.test(s));
+  if (!seg) return [];
+  const list = seg.replace(/^\[団体\]\s*メンバー[:：]\s*/, "").trim();
+  if (!list) return [];
+  return list.split(/[、,，･・・]/).map(s => s.trim()).filter(Boolean).slice(0, 6);
+}
+
+// 大会の団体戦チームと所属選手の一覧 (メンバー名のみ・PIIなし)
+function getTeamRosters(tournamentId) {
+  const rows = sqlite.prepare(
+    `SELECT id, event, name, team, note FROM entrants WHERE tournament_id = ?`
+  ).all(tournamentId);
+  const out = [];
+  for (const r of rows) {
+    const members = parseTeamMembers(r.note);
+    if (!members.length) continue; // メンバー情報の無いエントリーは対象外
+    out.push({
+      entrant_id: r.id,
+      event: r.event || "",
+      team_name: r.team || r.name || "",
+      members,
+    });
+  }
+  return out;
+}
+
 // 進行状況サマリ
 function getOperationState(tournamentId) {
   const tournament = getTournament(tournamentId);
@@ -4447,7 +4479,7 @@ module.exports = {
   getEventPriority, getPlayerSurvivalByEvent,
   getPriorityLockForPlayer, getMatchPriorityBlocks,
   getCallableMatches, getOnTableMatches, getRefereeQueue,
-  getOperationState, getPlayerLiveStatus,
+  getOperationState, getPlayerLiveStatus, getTeamRosters,
   getBracket, deleteEventMatches, setCourtLayout,
   // 試合検索 / H2H / 選手統計
   searchMatches, countMatchesForSearch, getSearchFilters,

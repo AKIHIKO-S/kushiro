@@ -591,6 +591,33 @@
    vertical-align: middle;
  }
 
+ /* ─── 団体戦 所属選手 (名簿) #199 ─── */
+ .team-roster {
+   display: flex; align-items: flex-start; gap: 8px;
+   margin-top: 6px; padding: 6px 9px;
+   background: #f0fdfa; border: 1px solid #99f6e4;
+   border-left: 3px solid #0d9488; border-radius: 7px;
+ }
+ .team-roster .trl-cap {
+   flex: 0 0 auto; font-size: 10px; font-weight: 800;
+   color: #0f766e; background: #ccfbf1;
+   padding: 2px 7px; border-radius: 6px; white-space: nowrap;
+   margin-top: 1px;
+ }
+ .team-roster .trl-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+ .team-roster .trl-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; }
+ .team-roster .trl-team {
+   font-size: 11px; font-weight: 800; color: #134e4a;
+   white-space: nowrap;
+ }
+ .team-roster .trl-team::after { content: "："; color: #5eead4; font-weight: 400; }
+ .team-roster .trl-members { display: flex; flex-wrap: wrap; gap: 4px; }
+ .team-roster .trl-mem {
+   display: inline-block; font-size: 12px; font-weight: 600; color: #0f172a;
+   background: #fff; border: 1px solid #ccfbf1;
+   padding: 1px 7px; border-radius: 10px; line-height: 1.5;
+ }
+
  /* ─── 再コール バッジ ─── */
  .call-badge {
    display: inline-flex; align-items: center; gap: 3px;
@@ -5947,6 +5974,21 @@ const O = {
    return;
  }
  O.state = state;
+ // 団体戦の名簿(所属選手)を取得。静的データなので大会ごとに1回 + 手動/操作後の再読込時のみ
+ // (4秒ポーリング silent=true 時は再取得しない → 負荷軽減)
+ if (O.teamRosterTid !== O.tournamentId || !silent) {
+   O.teamRosterTid = O.tournamentId;
+   try {
+     const tr = await api.get("/api/tournaments/" + O.tournamentId + "/team-rosters");
+     const map = {}, byEid = {};
+     (tr.rosters || []).forEach(r => {
+       if (r.entrant_id) byEid[r.entrant_id] = r.members;
+       const k = O._normTeam(r.team_name);
+       if (k && !map[k]) map[k] = r.members;
+     });
+     O.teamRosterMap = map; O.teamRosterByEid = byEid;
+   } catch (e) { /* 名簿取得失敗は非致命 (進行管理は継続) */ }
+ }
  try {
    // 再描画でスクロール位置が先頭に戻らないよう保持 (4秒ポーリング/対戦操作後も維持)
    const sc = O._opScrollEl();
@@ -6617,6 +6659,7 @@ const O = {
    h("span", { className: "pteam" }, m.player2_team ? "(" + m.player2_team + ")" : ""),
    cc2 >= 1 ? O.renderCallBadge(cc2) : null),
  ),
+ O.renderTeamMembers(m),
  h("div", { className: "text-xs text-sub mt-1 flex gap-2",
  style: { alignItems: "center", flexWrap: "wrap" } },
  m.referee_name
@@ -6806,6 +6849,39 @@ const O = {
    localStorage.setItem(O._announcedKey(), JSON.stringify([...s]));
  },
 
+ // ── 団体戦 所属選手 (名簿) 表示 #199 ──
+ _normTeam(s) {
+   return String(s || "").trim().toLowerCase().replace(/[\s　]+/g, "");
+ },
+ _isTeamMatch(m) { return !!m && /団体|チーム/.test(m.event || ""); },
+ _teamMembersFor(m, slot) {
+   if (!O.teamRosterMap) return null;
+   const name = slot === 1 ? m.player1_name : m.player2_name;
+   const team = slot === 1 ? m.player1_team : m.player2_team;
+   const eid  = slot === 1 ? m.player1_entrant_id : m.player2_entrant_id;
+   let mem = (eid && O.teamRosterByEid && O.teamRosterByEid[eid]) || null;
+   if (!mem) mem = O.teamRosterMap[O._normTeam(name)] || O.teamRosterMap[O._normTeam(team)] || null;
+   return (mem && mem.length) ? mem : null;
+ },
+ // 団体戦のとき、各チームの所属選手(最大6名)を小さく表示
+ renderTeamMembers(m) {
+   if (!O._isTeamMatch(m)) return null;
+   const mem1 = O._teamMembersFor(m, 1);
+   const mem2 = O._teamMembersFor(m, 2);
+   if (!mem1 && !mem2) return null;
+   const line = (teamName, mem) => (mem && mem.length)
+     ? h("div", { className: "trl-line" },
+         h("span", { className: "trl-team" }, teamName || "チーム"),
+         h("span", { className: "trl-members" },
+           mem.map((nm, i) => h("span", { className: "trl-mem" }, nm))))
+     : null;
+   return h("div", { className: "team-roster" },
+     h("span", { className: "trl-cap" }, "所属選手"),
+     h("div", { className: "trl-body" },
+       line(m.player1_name, mem1),
+       line(m.player2_name, mem2)));
+ },
+
  renderCallableRow(m, idx, isNext) {
  const blocks = m.blocks || [];
  const blocked = blocks.length > 0;
@@ -6841,6 +6917,7 @@ const O = {
  h("span", { className: "vs" }, "VS"),
  pill(m.player2_name, m.player2_furigana, m.player2_team, num2),
  ),
+ O.renderTeamMembers(m),
  ...blocks.map(b =>
  h("div", { className: "text-xs",
  style: { color: "var(--accent)", marginTop: "2px" } },
