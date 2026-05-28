@@ -1011,9 +1011,6 @@ const V = {
  const females = V.state.players.length - males;
  status.textContent = `${V.state.players.length}名 · 男子${males} / 女子${females}`;
 
- // 支部ごとに必ず異なる色を割当 (一覧内で重複しない)
- const branchColors = TT.branchColorMap(V.state.players.map(x => x.branch));
-
  const renderCard = (p) => {
  const gClass = p.gender === "female" ? "female" : "male";
  const wins = p.match_wins || 0;
@@ -1040,8 +1037,8 @@ const V = {
  h("div", { className: "pdb-name" }, p.name || "(無名)"),
  p.furigana ? h("div", { className: "pdb-furi" }, p.furigana) : null,
  h("div", { className: "pdb-meta" },
- p.branch ? (function(){ const _bc = branchColors.get(p.branch) || TT.branchColor(p.branch);
-   return h("span", { className: "pdb-branch", style: { background: _bc.bg, color: _bc.fg } }, p.branch); })() : null,
+ p.branch ? (function(){ const _bc = TT.branchColor(p.branch);
+   return h("span", { className: "pdb-branch", style: { background: _bc.bg, color: _bc.fg } }, TT.normalizeBranch(p.branch)); })() : null,
  p.team || "—"),
  stats.length ? h("div", { className: "pdb-stats" }, ...stats) : null,
  total > 0 ? h("div", { className: "pdb-winrate-bar", title: "勝率 " + winRate + "%" },

@@ -285,36 +285,63 @@
       fg: `hsl(${hue}, ${Math.min(sat + 10, 88)}%, 30%)`,
     };
   }
-  // 支部名 → 色 (単体バッジ用 / 全画面で同名は同色。ハッシュ分散で衝突は稀)
-  function branchColor(name) {
-    const s = String(name == null ? "" : name).trim();
-    if (!s) return { bg: "#f1f5f9", fg: "#475569" };
-    let h1 = 0, h2 = 0;
-    for (let i = 0; i < s.length; i++) {
-      h1 = (h1 * 131 + s.charCodeAt(i)) >>> 0;
-      h2 = (h2 * 31 + s.charCodeAt(i) * 7 + i) >>> 0;
-    }
-    return _hslPair(h1 % 360, 62 + (h2 % 16), 89 + ((h2 >>> 4) % 6)); // sat62-77 light89-94
+  // 北海道の公式支部 (地名部分のみ)。表示は「地名+支部」。順序=色の割当順 (固定)
+  const HOKKAIDO_BRANCHES = [
+    "札幌", "函館", "旭川", "釧路", "十勝", "千歳", "苫小牧", "江別",
+    "室蘭", "名寄", "根室", "後志", "滝川", "北見", "岩見沢", "留萌",
+    "日高", "稚内", "紋別", "小樽", "深川", "網走", "富良野", "斜里",
+  ];
+  const GRAY_BRANCH = { bg: "#f1f5f9", fg: "#64748b" };
+  // 任意表記 → 公式の地名 (該当なければ null)。
+  // 例: 札幌卓球連盟/函館卓球協会/根室管内卓球連盟/○○支部 → 地名
+  function _branchBase(raw) {
+    let s = String(raw == null ? "" : raw).trim();
+    if (!s) return null;
+    s = s.replace(/[\s　]+/g, "");
+    // 末尾の語を順に剥がす
+    let base = s
+      .replace(/管内/g, "")
+      .replace(/(卓球)?(協会|連盟|クラブ|協議会)$/g, "")
+      .replace(/支部$/g, "")
+      .trim();
+    if (HOKKAIDO_BRANCHES.includes(base)) return base;
+    // 前方一致 (例: 「札幌市」「釧路地区」等)
+    for (const b of HOKKAIDO_BRANCHES) { if (s.indexOf(b) === 0) return b; }
+    return null;
   }
-  // 支部名の集合 → name→色 Map (一覧表示用。黄金角で必ず色相が離れる=必ず違う色)
+  // 表示用に正規化: 公式支部 → 「地名+支部」 / 対象外 → 元の文字列 / 空 → ""
+  function normalizeBranch(raw) {
+    const s = String(raw == null ? "" : raw).trim();
+    if (!s) return "";
+    const base = _branchBase(s);
+    return base ? base + "支部" : s;
+  }
+  // 支部名 → 色。公式24支部は固定の異色、対象外/空はグレー。同名は常に同色。
+  function branchColor(raw) {
+    const base = _branchBase(raw);
+    if (base == null) return GRAY_BRANCH;
+    const idx = HOKKAIDO_BRANCHES.indexOf(base);
+    const hue = Math.round(idx * 137.508) % 360; // 黄金角で必ず色相が離れる
+    const sat = 64 + (idx % 3) * 6;   // 64/70/76
+    const light = 90 + (idx % 2) * 3; // 90/93
+    return _hslPair(hue, sat, light);
+  }
+  // 互換API: 名前集合 → name→色 Map (色は branchColor に委譲し全画面で一致)
   function branchColorMap(names) {
-    const uniq = [...new Set((names || []).map(n => String(n == null ? "" : n).trim()).filter(Boolean))]
-      .sort((a, b) => a.localeCompare(b, "ja"));
     const map = new Map();
-    uniq.forEach((n, i) => {
-      const hue = Math.round(i * 137.508) % 360; // 黄金角 → 隣接でも最大限に離れる
-      const sat = 64 + (i % 3) * 6;   // 64/70/76
-      const light = 90 + (i % 2) * 3; // 90/93 (同色相が万一来ても明度で分離)
-      map.set(n, _hslPair(hue, sat, light));
+    (names || []).forEach(n => {
+      const s = String(n == null ? "" : n).trim();
+      if (s && !map.has(s)) map.set(s, branchColor(s));
     });
     return map;
   }
-  // 支部バッジ要素を生成 (h が必要)。color を渡せばそれを使用、無ければ branchColor。
-  function branchBadge(name, extraStyle, color) {
-    if (!name) return null;
-    const c = color || branchColor(name);
+  // 支部バッジ要素を生成 (h が必要)。表示は正規化名、色は branchColor。
+  function branchBadge(raw, extraStyle, color) {
+    const label = normalizeBranch(raw);
+    if (!label) return null;
+    const c = color || branchColor(raw);
     return h("span", { className: "branch-tag",
-      style: Object.assign({ background: c.bg, color: c.fg }, extraStyle || {}) }, name);
+      style: Object.assign({ background: c.bg, color: c.fg }, extraStyle || {}) }, label);
   }
 
   // Export
@@ -326,6 +353,6 @@
     fmtDate, fmtDateShort,
     createPoller, downloadCSV, downloadJSON, openModal,
     logoHTML, statusBadge,
-    branchColor, branchColorMap, branchBadge,
+    HOKKAIDO_BRANCHES, normalizeBranch, branchColor, branchColorMap, branchBadge,
   };
 })(window);
