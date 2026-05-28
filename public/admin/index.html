@@ -1495,12 +1495,17 @@ const A = {
  const done = t.completed_count != null ? t.completed_count : 0;
  const progress = mc > 0 ? Math.round((done / mc) * 100) : 0;
  // メタ情報チップ
- const meta = [
+ const meta = [];
+ // 大会レベルバッジ (全道/全国を強調)
+ const lv = A._levelInfo(t.level);
+ if (lv) meta.push(h("span", { className: "t-chip",
+   style: { background: lv.bg, color: lv.color, borderColor: lv.border, fontWeight: "700" } }, lv.label));
+ meta.push(
    h("span", { className: "t-chip" },
      h("span", { className: "t-chip-ic" }, "📅"), fmtDate(t.date) || "日程未定"),
    h("span", { className: "t-chip" },
      h("span", { className: "t-chip-ic" }, "📍"), t.venue || "会場未定"),
- ];
+ );
  if (pc > 0) meta.push(h("span", { className: "t-chip" },
    h("span", { className: "t-chip-ic" }, "👤"), pc + "名"));
  if (mc > 0) meta.push(h("span", { className: "t-chip" },
@@ -4092,6 +4097,7 @@ const A = {
 
  editTournament(t) {
  const statusOpts = [["scheduled","予定"],["preparation","準備中"],["ongoing","進行中"],["completed","終了"]];
+ const levelOpts = [["district","地区・市民大会"],["hokkaido","全道大会"],["national","全国大会"],["other","その他・オープン"]];
  const body = h("div", {},
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "大会名"),
@@ -4107,9 +4113,18 @@ const A = {
  h("option", { value: v, selected: t.status === v ? "" : null }, l))),
  ),
  ),
+ h("div", { className: "two-col" },
+ h("div", { className: "field" },
+ h("label", { className: "field-label" }, "大会レベル"),
+ h("select", { className: "input", id: "etLevel" },
+ ...levelOpts.map(([v, l]) =>
+ h("option", { value: v, selected: (t.level || "district") === v ? "" : null }, l))),
+ h("div", { className: "text-xs text-sub", style: { marginTop: "3px" } },
+ "全道/全国は選手DBの戦績がレベル別に記録されます")),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "会場"),
  h("input", { className: "input", id: "etVenue", value: t.venue || "" })),
+ ),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "概要"),
  h("textarea", { id: "etDesc", rows: 2 }, t.description || "")),
@@ -4120,6 +4135,7 @@ const A = {
  date: document.getElementById("etDate").value,
  venue: document.getElementById("etVenue").value.trim(),
  status: document.getElementById("etStatus").value,
+ level: document.getElementById("etLevel").value,
  description: document.getElementById("etDesc").value.trim(),
  });
  toast("更新しました", "ok");
@@ -5157,6 +5173,24 @@ const A = {
      background: "linear-gradient(90deg,#22c55e,#15803d)" } })),
  )) : null,
 
+ // ─── 大会レベル別 戦績 (全道/全国を別記録) ───
+ (() => {
+   const ls = p.level_stats || {};
+   const levels = [["national","全国","#7c3aed"],["hokkaido","全道","#b91c1c"],
+                   ["district","地区・市民","#2563eb"],["other","オープン","#15803d"]];
+   const rows = levels.filter(([k]) => ls[k] && (ls[k].wins + ls[k].losses) > 0);
+   if (!rows.length) return null;
+   return h("div", { className: "field" },
+     h("label", { className: "field-label" }, "大会レベル別 戦績"),
+     h("div", { style: { display: "flex", flexDirection: "column", gap: "4px" } },
+       ...rows.map(([k, label, color]) => h("div", { style: { display: "flex",
+         alignItems: "center", gap: "8px", fontSize: "13px" } },
+         h("span", { style: { minWidth: "84px", fontWeight: "700", color } }, label),
+         h("span", { className: "win-badge" }, ls[k].wins + "勝"),
+         h("span", { className: "loss-badge" }, ls[k].losses + "敗")))),
+   );
+ })(),
+
  // ─── 入賞歴 (achievements) ───
  !isNew ? h("div", { className: "field" },
  h("label", { className: "field-label" }, "入賞歴 / 戦績"),
@@ -5229,6 +5263,17 @@ const A = {
  await api.del("/api/players/" + id);
  toast("削除しました", "ok");
  await A.reload();
+ },
+
+ // ─── 大会レベル ヘルパー ───
+ // district はデフォルトなので null (バッジ非表示)、それ以外は色付きバッジ情報
+ _levelInfo(level) {
+   switch (level) {
+     case "hokkaido": return { label: "全道大会", bg: "#fef2f2", color: "#b91c1c", border: "#fca5a5" };
+     case "national": return { label: "全国大会", bg: "#faf5ff", color: "#7c3aed", border: "#d8b4fe" };
+     case "other": return { label: "オープン", bg: "#f0fdf4", color: "#15803d", border: "#86efac" };
+     default: return null; // district = バッジなし
+   }
  },
 
  // ─── 入賞歴 (achievements) ヘルパー ───

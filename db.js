@@ -193,6 +193,8 @@ try {
   addTCol("entry_gas_url", "TEXT DEFAULT ''"); // GAS Web App URL (申込先 スプレッドシート)
   addTCol("category", "TEXT DEFAULT 'general'"); // 公式戦/オープン/練習試合 等
   addTCol("organizer", "TEXT DEFAULT ''");
+  // 大会レベル: 'district'(地区) | 'hokkaido'(全道) | 'national'(全国) | 'other'
+  addTCol("level", "TEXT DEFAULT 'district'");
 
   // tournament_players 申込ステータス
   const tpcols = sqlite.prepare("PRAGMA table_info(tournament_players)").all();
@@ -583,7 +585,27 @@ function getPlayer(id) {
   player.matches = stmts.getMatchesByPlayer.all(id, id).map(m => ({
     ...m, sets: JSON.parse(m.sets_json || "[]")
   }));
+  // 大会レベル別の勝敗内訳 (全道/全国の戦績を別記録)
+  player.level_stats = getPlayerLevelStats(id);
   return player;
+}
+
+// 選手の勝敗を大会レベル(地区/全道/全国)別に集計
+function getPlayerLevelStats(playerId) {
+  const rows = sqlite.prepare(`
+    SELECT COALESCE(t.level,'district') AS level,
+      SUM(CASE WHEN m.winner_id = ? THEN 1 ELSE 0 END) AS wins,
+      SUM(CASE WHEN m.loser_id = ? THEN 1 ELSE 0 END) AS losses
+    FROM matches m
+    JOIN tournaments t ON t.id = m.tournament_id
+    WHERE (m.winner_id = ? OR m.loser_id = ?)
+      AND m.status='completed'
+      AND m.winner_name != 'BYE' AND m.loser_name != 'BYE'
+    GROUP BY COALESCE(t.level,'district')
+  `).all(playerId, playerId, playerId, playerId);
+  const out = {};
+  rows.forEach(r => { out[r.level] = { wins: r.wins || 0, losses: r.losses || 0 }; });
+  return out;
 }
 
 // 個人名らしいかをチェック (チーム名・学校名・地名と区別)
@@ -775,6 +797,11 @@ function updateTournament(id, data) {
     description: data.description ?? existing.description ?? "",
     state_json: data.state ? JSON.stringify(data.state) : existing.state_json,
   });
+  // 大会レベル (district/hokkaido/national/other) を個別更新
+  if (data.level !== undefined) {
+    sqlite.prepare("UPDATE tournaments SET level = ? WHERE id = ?")
+      .run(data.level || "district", id);
+  }
   return getTournament(id);
 }
 
