@@ -1672,32 +1672,14 @@ const L = {
  });
  }
 
- // 直近結果
- if (s.recent_finished.length) {
+ // 直近結果 (横並び ○勝者 — スコア — 敗者× / BYE除外)
+ const recentReal = (s.recent_finished || []).filter(m =>
+   m.winner_name !== "BYE" && m.loser_name !== "BYE");
+ if (recentReal.length) {
  main.appendChild(h("div", { className: "section-title mt-3" }, "直近の結果"));
- s.recent_finished.slice(0, 6).forEach(m => {
- const card = h("div", { className: "match-card", style: { marginBottom: "4px" } });
- // 勝者
- card.appendChild(h("div", { className: "match-row winner" },
- h("div", { className: "match-player-name" },
- h("span", { style: { color: "var(--warn)" } }, ""),
- h("span", {}, m.winner_name),
- m.winner_team ? h("span", { className: "match-team" }, "(" + m.winner_team + ")") : null,
- ),
- h("div", { className: "match-sets" }, V.formatSets(m.sets, true)),
- h("div", { className: "match-score" }, String(m.winner_sets || 0)),
- ));
- card.appendChild(h("div", { className: "match-row loser" },
- h("div", { className: "match-player-name" },
- h("span", { style: { color: "var(--sub-l)" } }, ""),
- h("span", {}, m.loser_name || "BYE"),
- m.loser_team ? h("span", { className: "match-team" }, "(" + m.loser_team + ")") : null,
- ),
- h("div", { className: "match-sets" }, V.formatSets(m.sets, false)),
- h("div", { className: "match-score" }, String(m.loser_sets || 0)),
- ));
- main.appendChild(card);
- });
+ const box = h("div", { className: "card", style: { padding: "6px 10px" } });
+ recentReal.slice(0, 8).forEach(m => box.appendChild(V.renderMatchResultRow(m)));
+ main.appendChild(box);
  }
  },
 
