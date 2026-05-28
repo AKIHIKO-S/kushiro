@@ -647,6 +647,28 @@
    color:var(--ink-600); white-space:nowrap; }
  .vb-tab:hover { border-color: var(--accent); color: var(--accent); }
  .vb-tab.active { background: var(--ink-900); color:#fff; border-color: var(--ink-900); }
+ /* 対戦カードの削除ボタン (埋め込み編集モード) */
+ .vb-match { position: relative; }
+ .vb-del {
+   position:absolute; top:-7px; right:-7px; width:18px; height:18px; line-height:1;
+   border-radius:50%; border:1px solid #fca5a5; background:#fee2e2; color:#b91c1c;
+   font-size:11px; font-weight:800; cursor:pointer; padding:0; z-index:2;
+   display:flex; align-items:center; justify-content:center; opacity:.55; transition:opacity .12s;
+ }
+ .vb-del:hover { opacity:1; background:#dc2626; color:#fff; border-color:#dc2626; }
+ /* 進行管理 埋め込みトーナメント表パネル */
+ .op-bracket { padding:0; overflow:hidden; }
+ .op-bracket > .op-bracket-summary {
+   list-style:none; cursor:pointer; padding:14px 16px;
+   display:flex; align-items:center; gap:10px; user-select:none;
+ }
+ .op-bracket > .op-bracket-summary::-webkit-details-marker { display:none; }
+ .op-bracket > .op-bracket-summary::before {
+   content:"▸"; color:var(--ink-500); font-size:13px; transition:transform .15s;
+ }
+ .op-bracket[open] > .op-bracket-summary::before { transform:rotate(90deg); }
+ .op-bracket > div:not(.op-bracket-summary):not(.empty-state) { padding:0 16px 16px; }
+ .op-bracket > .empty-state { margin:0 16px 16px; }
 
  /* 結果入力モーダル */
  .result-input-grid {
@@ -5934,6 +5956,213 @@ const O = {
  });
  main.appendChild(recentCard);
  }
+
+ // ── トーナメント表 (常時表示・対戦の追加/削除) #180 ──
+ try { main.appendChild(O._getOpBracketPanel()); }
+ catch (e) { console.warn("[opBracket]", e); }
+ },
+
+ // 埋め込みトーナメント表パネルを取得 (4秒ポーリングでのちらつき防止のためキャッシュ)
+ // 種目構成が変わった時のみ再構築。それ以外は変化検知で対戦表エリアのみ差分更新。
+ _getOpBracketPanel() {
+ const events = Object.keys(O.state.event_stats || {}).filter(e => e && e !== "(未分類)");
+ const evKey = events.join("|");
+ if (!O._opBracketPanelEl || O._opBracketEvKey !== evKey) {
+   O._opBracketEvKey = evKey;
+   O._opBracketPanelEl = O._buildOpBracketPanel(events);
+ } else if (typeof O._opBracketPanelEl._refresh === "function") {
+   O._opBracketPanelEl._refresh(); // 開いている時だけ変化検知で再描画
+ }
+ return O._opBracketPanelEl;
+ },
+
+ // 埋め込みトーナメント表パネルの構築
+ _buildOpBracketPanel(events) {
+ const card = h("details", { className: "card op-bracket" });
+ card.open = (O._bracketOpen !== false); // デフォルト開 (常時表示)。ユーザーの開閉は記憶
+ card.appendChild(h("summary", { className: "op-bracket-summary" },
+   h("span", { className: "card-title" }, "トーナメント表"),
+   h("span", { className: "text-xs text-sub" }, "対戦の確認・追加・削除 (タップで開閉)")));
+
+ if (!events.length) {
+   card.appendChild(h("div", { className: "empty-state", style: { padding: "16px" } },
+     "トーナメント未生成です。「ツール・設定」→「トーナメント生成」または JSON 読込で作成できます。"));
+   return card;
+ }
+
+ let sel = (O.selectedEvent && events.includes(O.selectedEvent)) ? O.selectedEvent : events[0];
+ let zoom = O._opBracketZoom || 0.85;
+ let lastSig = "";
+
+ const area = h("div", { style: { overflow: "auto", maxHeight: "62vh", padding: "8px",
+   background: "#f9fafb", borderRadius: "6px" } });
+ const zlbl = h("span", { className: "text-xs", style: { minWidth: "40px", textAlign: "center", fontWeight: 700 } }, "85%");
+ const applyZoom = () => { area.style.zoom = String(zoom); zlbl.textContent = Math.round(zoom * 100) + "%"; O._opBracketZoom = zoom; };
+
+ // 現在の状態シグネチャ (種目内の試合状況が変われば再描画)
+ const sigOf = () => {
+   const st = (O.state.event_stats || {})[sel] || {};
+   return [sel, st.total || 0, st.completed || 0,
+     O.state.on_table.filter(m => m.event === sel).length,
+     O.state.callable.filter(m => m.event === sel).length].join("|");
+ };
+
+ const load = async () => {
+   area.innerHTML = "読込中…";
+   try {
+     const bdata = await api.get(`/api/tournaments/${O.tournamentId}/bracket/export?event=` +
+       encodeURIComponent(sel));
+     if (!bdata || bdata.error) {
+       area.innerHTML = '<div style="padding:12px;color:#dc2626">' +
+         ((bdata && bdata.error) || "この種目のトーナメント表はありません") + '</div>';
+       lastSig = sigOf(); return;
+     }
+     area.innerHTML = "";
+     O._bracketEditMode = true;
+     area.appendChild(O.renderVisualBracket(bdata));
+     O._bracketEditMode = false;
+     applyZoom();
+     lastSig = sigOf();
+   } catch (e) {
+     area.innerHTML = '<div style="padding:12px;color:#dc2626">読込に失敗しました</div>';
+   }
+ };
+ // D&D入替・スロット編集・削除後の再描画フックを共有
+ O._vbReload = load;
+ O._vbEvent = () => sel;
+
+ // 種目/ブロック タブ
+ const tabStrip = h("div", { className: "vb-tabs" });
+ const renderTabs = () => {
+   tabStrip.innerHTML = "";
+   events.forEach(ev => tabStrip.appendChild(h("button", {
+     className: "vb-tab" + (ev === sel ? " active" : ""),
+     onClick: () => { sel = ev; O.selectedEvent = ev; renderTabs(); load(); } }, ev)));
+ };
+ renderTabs();
+
+ const toolbar = h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", margin: "8px 0" } },
+   h("button", { className: "btn btn-sm btn-ok", onClick: () => O.openAddMatch(sel) }, "＋ 対戦を追加"),
+   h("div", { className: "flex", style: { alignItems: "center", gap: "2px" } },
+     h("button", { className: "btn btn-sm btn-ghost", title: "縮小",
+       onClick: () => { zoom = Math.max(0.4, Math.round((zoom - 0.1) * 10) / 10); applyZoom(); } }, "−"),
+     zlbl,
+     h("button", { className: "btn btn-sm btn-ghost", title: "拡大",
+       onClick: () => { zoom = Math.min(2, Math.round((zoom + 0.1) * 10) / 10); applyZoom(); } }, "＋")),
+   h("button", { className: "btn btn-sm", style: { background: "#7c3aed" },
+     onClick: () => O.openVisualBracket() }, "全画面・印刷"),
+   h("span", { className: "text-xs text-sub" },
+     "1回戦: ドラッグで入替 / クリックで編集 ・ 各対戦の ✕ で削除"),
+ );
+
+ const inner = h("div", {});
+ if (events.length > 1) inner.appendChild(tabStrip);
+ inner.appendChild(toolbar);
+ inner.appendChild(area);
+ card.appendChild(inner);
+
+ // 開閉状態の記憶 + 開いた時の遅延ロード
+ card.addEventListener("toggle", () => {
+   O._bracketOpen = card.open;
+   if (card.open && !area.dataset.loaded) { area.dataset.loaded = "1"; load(); }
+ });
+ if (card.open) { area.dataset.loaded = "1"; load(); }
+
+ // ポーリング再描画用: 変化があり、かつ開いている時だけ対戦表を更新
+ card._refresh = () => {
+   if (!card.open) return;
+   if (!area.dataset.loaded) { area.dataset.loaded = "1"; load(); return; }
+   if (sigOf() !== lastSig) load();
+ };
+ return card;
+ },
+
+ // 埋め込みトーナメント表の各カードに削除ボタンを付与 (編集モード時のみ)
+ _decorateBracketCard(card, m) {
+ if (!O._bracketEditMode || !m || !m.id) return;
+ const del = h("button", { className: "vb-del", title: "この対戦を削除",
+   onClick: (e) => { e.stopPropagation(); O._deleteMatchFromBracket(m); } }, "✕");
+ card.appendChild(del);
+ },
+
+ // 埋め込みトーナメント表からの対戦削除
+ async _deleteMatchFromBracket(m) {
+ const raw = m.status_raw || m.status;
+ if (raw === "on_table") return toast("進行中の試合は削除できません。先に「戻す」で取消してください。", "err");
+ const label = (m.player1_name || "?") + " vs " + (m.player2_name || "?");
+ if (!confirm(`「${label}」(${m.round || ""}) を削除します。\n` +
+   `※ トーナメントの勝ち上がりに影響する場合があります。削除後は表を確認してください。\n\nよろしいですか？`)) return;
+ const r = await api.del("/api/matches/" + m.id);
+ if (r && r.error) return toast(r.error, "err");
+ toast("対戦を削除しました", "ok");
+ if (typeof O._vbReload === "function") O._vbReload();
+ O.reload(true);
+ },
+
+ // 進行管理から対戦を追加 (種目を事前選択)。標準トーナメント外の追加対戦・3位決定戦など
+ async openAddMatch(presetEvent) {
+ const events = Object.keys(O.state.event_stats || {}).filter(e => e && e !== "(未分類)");
+ const evInput = h("input", { className: "input", id: "amEvent", list: "amEvents",
+   value: presetEvent || "", placeholder: "例: 男子シングルス" });
+ const dbl = h("input", { type: "checkbox", id: "amDbl" });
+ const p1 = h("input", { className: "input", placeholder: "選手1 氏名" });
+ const p1t = h("input", { className: "input", placeholder: "選手1 所属" });
+ const p2 = h("input", { className: "input", placeholder: "選手2 氏名" });
+ const p2t = h("input", { className: "input", placeholder: "選手2 所属" });
+ const p1p = h("input", { className: "input", placeholder: "選手1 パートナー氏名" });
+ const p2p = h("input", { className: "input", placeholder: "選手2 パートナー氏名" });
+ const roundInput = h("input", { className: "input", value: "追加対戦", placeholder: "例: 3位決定戦 / 決勝" });
+ const statusSel = h("select", { className: "input" },
+   h("option", { value: "pending" }, "呼出可能"),
+   h("option", { value: "waiting" }, "待機"));
+ const pairRow = h("div", { className: "two-col", style: { display: "none" } },
+   h("div", { className: "field" }, h("label", { className: "field-label" }, "選手1 パートナー"), p1p),
+   h("div", { className: "field" }, h("label", { className: "field-label" }, "選手2 パートナー"), p2p));
+ dbl.addEventListener("change", () => { pairRow.style.display = dbl.checked ? "" : "none"; });
+
+ const body = h("div", {},
+   h("div", { className: "text-xs text-sub", style: { marginBottom: "8px" } },
+     "トーナメント外の追加対戦 (3位決定戦・特別試合など) を作成します。呼べる対戦として進行管理に表示されます。"),
+   h("div", { className: "two-col" },
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "種目"), evInput,
+       h("datalist", { id: "amEvents" }, ...events.map(e => h("option", { value: e })))),
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "ラウンド名"), roundInput)),
+   h("div", { className: "field" },
+     h("label", { className: "flex gap-2", style: { alignItems: "center", fontSize: "13px", fontWeight: 600 } },
+       dbl, "ダブルス / 団体戦")),
+   h("div", { className: "two-col" },
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "選手1 氏名"), p1),
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "選手1 所属"), p1t)),
+   h("div", { className: "two-col" },
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "選手2 氏名"), p2),
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "選手2 所属"), p2t)),
+   pairRow,
+   h("div", { className: "field" }, h("label", { className: "field-label" }, "初期ステータス"), statusSel),
+ );
+ const callBtn = h("button", { className: "btn", onClick: async () => {
+   const isD = dbl.checked;
+   const n1 = (p1.value || "").trim(), n2 = (p2.value || "").trim();
+   if (!n1 || !n2) return toast("選手1・選手2 の氏名を入力してください", "err");
+   const ev = (evInput.value || "").trim();
+   if (!ev) return toast("種目を入力してください", "err");
+   const pp1 = isD ? (p1p.value || "").trim() : "";
+   const pp2 = isD ? (p2p.value || "").trim() : "";
+   const data = {
+     event: ev, round: (roundInput.value || "").trim() || "追加対戦",
+     status: statusSel.value, table_no: 0,
+     player1_name: pp1 ? (n1 + " / " + pp1) : n1, player1_team: (p1t.value || "").trim(),
+     player2_name: pp2 ? (n2 + " / " + pp2) : n2, player2_team: (p2t.value || "").trim(),
+     sets: [],
+   };
+   const r = await api.post(`/api/tournaments/${O.tournamentId}/scheduled-match`, data);
+   if (r && r.error) return toast(r.error, "err");
+   toast("対戦を追加しました", "ok");
+   addModal.remove();
+   // 種目が増えた可能性 → パネルを作り直す
+   O._opBracketPanelEl = null; O._opBracketEvKey = null;
+   O.reload(true);
+ } }, "追加する");
+ const addModal = openModal("対戦を追加", body, callBtn);
  },
 
  // ── 勝敗反転 (ワンクリック) ──

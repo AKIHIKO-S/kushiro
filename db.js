@@ -941,6 +941,42 @@ function updateMatch(id, data) {
   return { ...rec, sets: JSON.parse(rec.sets_json) };
 }
 
+// 進行管理から「予定試合」を追加 (3位決定戦・特別試合など)。
+// createMatch (= 確定済み戦績用) と異なり player1/player2・status・table を保存する。
+function createScheduledMatch(tournamentId, data) {
+  data = data || {};
+  const p1 = String(data.player1_name || "").trim();
+  const p2 = String(data.player2_name || "").trim();
+  if (!p1 || !p2) return { error: "選手1・選手2 の氏名が必要です" };
+  const status = ["pending", "waiting", "on_table"].includes(data.status) ? data.status : "pending";
+  const rec = {
+    id: uid(),
+    tournament_id: tournamentId,
+    event: String(data.event || "").trim() || "(追加対戦)",
+    round: String(data.round || "").trim() || "追加対戦",
+    round_order: data.round_order != null ? data.round_order : getRoundOrder(data.round),
+    match_no: parseInt(data.match_no) || 0,
+    match_label: data.match_label || "",
+    winner_id: null, loser_id: null,
+    winner_name: "", loser_name: "", winner_team: "", loser_team: "",
+    sets_json: "[]", winner_sets: 0, loser_sets: 0,
+    played_at: "", note: data.note || "manual-add",
+    status,
+    table_no: parseInt(data.table_no) || 0,
+    referee_id: null, referee_name: "",
+    player1_id: data.player1_id || null, player2_id: data.player2_id || null,
+    player1_name: p1, player2_name: p2,
+    player1_team: String(data.player1_team || "").trim(),
+    player2_team: String(data.player2_team || "").trim(),
+    next_match_id: null, next_slot: null,
+    called_at: "", started_at: "", finished_at: "",
+    bracket_pos: null, bracket_round: null,
+    player1_entrant_id: null, player2_entrant_id: null,
+  };
+  opStmts.insertFullMatch.run(rec);
+  return { ok: true, id: rec.id };
+}
+
 function deleteMatch(id) { stmts.deleteMatch.run(id); }
 
 function getMatch(id) {
@@ -3594,10 +3630,12 @@ function exportBracket(tournamentId, event) {
     bracket_size: bracketSize,
     total_rounds: bracketSize ? Math.log2(bracketSize) : 0,
     matches: matches.map(m => ({
+      id: m.id,
       bracket_round: m.bracket_round,
       bracket_pos: m.bracket_pos,
       round: m.round,
       match_no: m.match_no,
+      status_raw: m.status,
       player1_name: m.player1_name || "",
       player1_team: m.player1_team || "",
       player2_name: m.player2_name || "",
@@ -4273,7 +4311,7 @@ module.exports = {
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,
   getTournaments, getTournament, createTournament, updateTournament, deleteTournament,
-  createMatch, updateMatch, deleteMatch, getMatch, getMatchesByTournament,
+  createMatch, createScheduledMatch, updateMatch, deleteMatch, getMatch, getMatchesByTournament,
   bulkImportMatches,
   addTournamentPlayer, removeTournamentPlayer, getTournamentPlayers,
   exportAllData, importPlayers, getStats, getLastUpdated, getOpsFingerprint,

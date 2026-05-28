@@ -399,6 +399,12 @@ app.post("/api/tournaments/:id/matches", requireAdmin, (req, res) => {
   const match = db.createMatch({ ...req.body, tournament_id: req.params.id });
   res.status(201).json(match);
 });
+// 進行管理から「予定試合」を追加 (player1/player2・status・台を保存)
+app.post("/api/tournaments/:id/scheduled-match", requireAdmin, (req, res) => {
+  const r = db.createScheduledMatch(req.params.id, req.body || {});
+  if (r.error) return res.status(400).json(r);
+  res.status(201).json(r);
+});
 app.get("/api/matches/:id", (req, res) => {
   const m = db.getMatch(req.params.id);
   if (!m) return res.status(404).json({ error: "試合が見つかりません" });
