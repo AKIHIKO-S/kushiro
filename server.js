@@ -990,8 +990,15 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
     }
     data.regenerate = regenerate;
     data.auto_link_to_players = autoLink;
-    const r = db.importBracket(req.params.id, data);
-    res.json({ ...r, used_parser: "parse_jtta_excel.py (fallback)" });
+    // child-process の close コールバック内なので Express の error handler に乗らない。
+    // ここで importBracket が throw すると uncaughtException → リクエストがハングするため明示的に捕捉。
+    try {
+      const r = db.importBracket(req.params.id, data);
+      res.json({ ...r, used_parser: "parse_jtta_excel.py (fallback)" });
+    } catch (e) {
+      res.status(500).json({ error: "取込に失敗しました: " + e.message,
+        used_parser: "parse_jtta_excel.py (fallback)" });
+    }
   });
   py.on("error", (err) => {
     try { fs.unlinkSync(xlsxPath); } catch {}

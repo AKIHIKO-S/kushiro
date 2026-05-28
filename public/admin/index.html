@@ -2394,22 +2394,26 @@ const A = {
  if (!gasUrl) {
  return toast("GAS Web App URL が未設定です。「フォーム生成」から設定してください。", "err");
  }
+ // 専用の表示先 div があればそこに、無ければモーダルで表示 (div は現状未生成のため null 安全に)
  const target = document.getElementById("gasStats_" + t.id);
- if (target) {
- target.style.display = "block";
- target.innerHTML = "<em>スプレッドシートに問い合わせ中...</em>";
- }
+ let modalBox = null;
+ const render = (html) => {
+   if (target) { target.style.display = "block"; target.innerHTML = html; return; }
+   if (!modalBox) { modalBox = h("div", {}); openModal("GAS 申込集計", modalBox, null); }
+   modalBox.innerHTML = html;
+ };
+ render("<em>スプレッドシートに問い合わせ中...</em>");
  try {
  const r = await api.get(`/api/tournaments/${t.id}/gas-stats?gas_url=` + encodeURIComponent(gasUrl));
  if (!r.ok) {
- target.innerHTML = `<span style="color:#dc2626">取得失敗: ${r.error || ""}</span>`;
+ render(`<span style="color:#dc2626">取得失敗: ${esc(r.error || "")}</span>`);
  return;
  }
  const byEv = r.by_event || {};
  const evRows = Object.entries(byEv)
- .map(([ev, n]) => `<tr><td>${ev}</td><td style="text-align:right;font-family:monospace">${n}件</td></tr>`)
+ .map(([ev, n]) => `<tr><td>${esc(ev)}</td><td style="text-align:right;font-family:monospace">${n}件</td></tr>`)
  .join("");
- target.innerHTML =
+ render(
  `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:8px">
    <div><div style="font-size:9px;letter-spacing:.1em;text-transform:uppercase">申込団体</div>
      <div style="font-size:22px;font-weight:700;font-family:monospace">${r.teams_count || 0}</div></div>
@@ -2421,9 +2425,9 @@ const A = {
      <div style="font-size:22px;font-weight:700;font-family:monospace">¥${(r.total_amount || 0).toLocaleString("ja-JP")}</div></div>
  </div>
  ${evRows ? `<table style="width:100%;font-size:11px;border-collapse:collapse">${evRows}</table>` : ""}
- <div style="font-size:10px;color:#6b7280;margin-top:6px">最終更新: ${r.updated_at ? new Date(r.updated_at).toLocaleString("ja-JP") : "不明"}</div>`;
+ <div style="font-size:10px;color:#6b7280;margin-top:6px">最終更新: ${r.updated_at ? new Date(r.updated_at).toLocaleString("ja-JP") : "不明"}</div>`);
  } catch (e) {
- target.innerHTML = `<span style="color:#dc2626">通信エラー: ${e.message}</span>`;
+ render(`<span style="color:#dc2626">通信エラー: ${esc(e.message)}</span>`);
  }
  },
 
@@ -2769,7 +2773,7 @@ const A = {
  onClick: () => {
  const name = prompt("テンプレート名を入力 (例: 釧路リーグ用):");
  if (!name) return;
- const tpls = JSON.parse(localStorage.getItem("ktta_event_templates") || "[]");
+ const tpls = (() => { try { return JSON.parse(localStorage.getItem("ktta_event_templates") || "[]"); } catch (e) { return []; } })();
  tpls.push({ name, events: JSON.parse(JSON.stringify(events)),
    saved_at: new Date().toISOString() });
  localStorage.setItem("ktta_event_templates", JSON.stringify(tpls));
@@ -3047,7 +3051,7 @@ const A = {
 
  // ── ユーザー保存テンプレート 管理 ──
  openUserEventTemplates(currentEvents, onApply) {
- const tpls = JSON.parse(localStorage.getItem("ktta_event_templates") || "[]");
+ const tpls = (() => { try { return JSON.parse(localStorage.getItem("ktta_event_templates") || "[]"); } catch (e) { return []; } })();
  const body = h("div", {});
  if (!tpls.length) {
    body.appendChild(h("div", { className: "empty-state",
@@ -5846,7 +5850,9 @@ const A = {
  const f = document.getElementById("jsonFile").files[0];
  if (!f) return toast("ファイルを選択してください", "err");
  const text = await f.text();
- const data = JSON.parse(text);
+ let data;
+ try { data = JSON.parse(text); }
+ catch (e) { return toast("JSON 解析に失敗しました: " + e.message, "err"); }
  const players = data.players || data;
  if (!Array.isArray(players)) return toast("不正なJSONです", "err");
  const r = await api.post("/api/import/players", { players });

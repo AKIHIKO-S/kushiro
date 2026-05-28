@@ -2151,12 +2151,15 @@ function finishMatchInternal(matchId, data) {
     else { winner = p2; loser = p1; }
   } else return null;
 
-  // セットスコア集計
+  // セットスコア集計 (sets は [p1, p2] 視点。勝者が p1 側か p2 側かで数え方を反転)
+  // 注: player_id が両方 null の entrant ブラケットでは m.player1_id===winner.id が
+  //     null===null で誤判定するため、解決済みの winner 参照そのもので判定する。
+  const winnerIsP1 = (winner === p1);
   const sets = data.sets || [];
   let ws = 0, ls = 0;
   sets.forEach(s => {
     if (Array.isArray(s) && s.length === 2) {
-      if (data.winner_slot === 1 || (m.player1_id === winner.id)) {
+      if (winnerIsP1) {
         if (s[0] > s[1]) ws++; else if (s[1] > s[0]) ls++;
       } else {
         if (s[1] > s[0]) ws++; else if (s[0] > s[1]) ls++;
@@ -2207,6 +2210,12 @@ function correctResult(matchId, data) {
   const m = stmts.getMatch.get(matchId);
   if (!m) return { error: "試合が見つかりません" };
 
+  // 新しい結果で勝者を特定できることを先に検証 (途中で失敗してブラケットを壊さないため)
+  data = data || {};
+  if (!(data.winner_slot === 1 || data.winner_slot === 2 || data.winner_id)) {
+    return { error: "勝者を特定できません (winner_slot か winner_id が必要です)" };
+  }
+
   // 完了済みかどうかチェック
   const wasCompleted = m.status === "completed";
   if (wasCompleted && m.next_match_id) {
@@ -2228,46 +2237,50 @@ function correctResult(matchId, data) {
         next_match_label: nm.match_label || nm.match_no,
       };
     }
+  }
+
+  // 一連の更新は1トランザクションで (途中失敗時は全てロールバック)
+  const apply = sqlite.transaction(() => {
     // 次の試合の対応する slot をクリア (前の勝者を取り除く)
-    if (nm) {
-      const oldWinnerEntrant = m.winner_id === m.player1_id ? m.player1_entrant_id : m.player2_entrant_id;
-      // m.next_slot = 1 なら slot1 をクリア
-      if (m.next_slot === 1) {
-        opStmts.setSlot1.run(null, "", "", nm.player2_name || "", nm.id);
-        sqlite.prepare(`UPDATE matches SET player1_entrant_id=NULL WHERE id=?`).run(nm.id);
-      } else {
-        opStmts.setSlot2.run(null, "", "", nm.player1_name || "", nm.id);
-        sqlite.prepare(`UPDATE matches SET player2_entrant_id=NULL WHERE id=?`).run(nm.id);
+    if (wasCompleted && m.next_match_id) {
+      const nm = stmts.getMatch.get(m.next_match_id);
+      if (nm) {
+        if (m.next_slot === 1) {
+          opStmts.setSlot1.run(null, "", "", nm.player2_name || "", nm.id);
+          sqlite.prepare(`UPDATE matches SET player1_entrant_id=NULL WHERE id=?`).run(nm.id);
+        } else {
+          opStmts.setSlot2.run(null, "", "", nm.player1_name || "", nm.id);
+          sqlite.prepare(`UPDATE matches SET player2_entrant_id=NULL WHERE id=?`).run(nm.id);
+        }
+        opStmts.setStatus.run("waiting", nm.id); // 次の試合は再度 "waiting" に
       }
-      // 次の試合は再度 "waiting" に
-      opStmts.setStatus.run("waiting", nm.id);
     }
-  }
 
-  // 元の試合をリセット (winner_id, loser_id等をクリア)
-  opStmts.setResult.run({
-    id: matchId,
-    winner_id: null, loser_id: null,
-    winner_name: "", loser_name: "",
-    winner_team: "", loser_team: "",
-    sets_json: "[]", winner_sets: 0, loser_sets: 0,
+    // 元の試合をリセット (winner_id, loser_id等をクリア)
+    opStmts.setResult.run({
+      id: matchId,
+      winner_id: null, loser_id: null,
+      winner_name: "", loser_name: "",
+      winner_team: "", loser_team: "",
+      sets_json: "[]", winner_sets: 0, loser_sets: 0,
+    });
+    // 元の rating 変更も巻き戻し (簡易: 元勝者/敗者の rating を反映前に戻す)
+    if (wasCompleted && m.winner_id && m.loser_id) {
+      const wp = stmts.getPlayer.get(m.winner_id);
+      const lp = stmts.getPlayer.get(m.loser_id);
+      if (wp && lp) {
+        const { newWin, newLose } = calcElo(wp.rating, lp.rating);
+        stmts.updateRating.run(wp.rating * 2 - newWin, wp.id);
+        stmts.updateRating.run(lp.rating * 2 - newLose, lp.id);
+      }
+    }
+    // 試合ステータスを pending or on_table に
+    opStmts.setStatus.run(m.table_no > 0 ? "on_table" : "pending", matchId);
+
+    // 新しい結果を適用
+    return finishMatchInternal(matchId, data);
   });
-  // 元の rating 変更も巻き戻し (簡易: 元勝者/敗者の rating を反映前に戻す)
-  if (wasCompleted && m.winner_id && m.loser_id) {
-    const wp = stmts.getPlayer.get(m.winner_id);
-    const lp = stmts.getPlayer.get(m.loser_id);
-    if (wp && lp) {
-      const { newWin, newLose } = calcElo(wp.rating, lp.rating);
-      // newWin が現在の wp.rating より大きい場合、wp.rating - (newWin - wp.rating) で巻戻
-      stmts.updateRating.run(wp.rating * 2 - newWin, wp.id);
-      stmts.updateRating.run(lp.rating * 2 - newLose, lp.id);
-    }
-  }
-  // 試合ステータスを pending or on_table に
-  opStmts.setStatus.run(m.table_no > 0 ? "on_table" : "pending", matchId);
-
-  // 新しい結果を適用
-  return finishMatchInternal(matchId, data);
+  return apply();
 }
 
 function finishMatchOp(matchId, data) {
@@ -3814,12 +3827,13 @@ function swapBracketSlots(tournamentId, event, a, b) {
 
   const getSlot = (m, slot) => ({
     id: m[`player${slot}_id`], name: m[`player${slot}_name`] || "", team: m[`player${slot}_team`] || "",
+    entrant_id: m[`player${slot}_entrant_id`] || null,
   });
   const sA = getSlot(mA, slotA), sB = getSlot(mB, slotB);
   const setSlot = sqlite.transaction(() => {
     const upd = (matchId, slot, s) => sqlite.prepare(
-      `UPDATE matches SET player${slot}_id=@pid, player${slot}_name=@pname, player${slot}_team=@pteam WHERE id=@id`
-    ).run({ pid: s.id || null, pname: s.name || "", pteam: s.team || "", id: matchId });
+      `UPDATE matches SET player${slot}_id=@pid, player${slot}_name=@pname, player${slot}_team=@pteam, player${slot}_entrant_id=@peid WHERE id=@id`
+    ).run({ pid: s.id || null, pname: s.name || "", pteam: s.team || "", peid: s.entrant_id || null, id: matchId });
     upd(mA.id, slotA, sB);
     upd(mB.id, slotB, sA);
     // 両スロット確定で pending、未確定で waiting に再計算
