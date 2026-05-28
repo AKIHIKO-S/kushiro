@@ -532,7 +532,15 @@
    font-size: 9px; font-weight: 800; padding: 1px 7px;
    border-radius: 8px; letter-spacing: .05em; margin-left: 6px;
  }
- .player-pill .pfuri { color: var(--sub); font-size: 9px; font-weight: 500; margin-left: 3px; }
+ .player-pill .pname { font-size: 15px; font-weight: 700; }
+ .player-pill .pfuri { color: var(--pri); font-size: 11px; font-weight: 600; margin-left: 4px; }
+ /* コール済みチェック (場内アナウンス管理) */
+ .call-order-wrap { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+ .call-chk { display: flex; flex-direction: column; align-items: center; gap: 1px;
+   font-size: 8px; font-weight: 700; color: var(--ink-500); cursor: pointer; user-select: none; }
+ .call-chk input { width: 18px; height: 18px; cursor: pointer; accent-color: #16a34a; }
+ .callable-row.announced { opacity: .52; }
+ .callable-row.announced .call-chk { color: #15803d; }
  .round-badge {
  background: var(--pri-bg); color: var(--pri);
  padding: 4px 10px; border-radius: 12px;
@@ -6560,22 +6568,42 @@ const O = {
  _surname(full) { return (full || "").split(/[\s　]/)[0] || full || ""; },
 
  // ── 呼べる対戦行 (idx=順番, isNext=次に呼ぶ強調) ──
+ // 場内アナウンス(コール)済みフラグ — 端末ローカルに保持し、再描画/再読込でも維持
+ _announcedKey() { return "tt_announced_" + (O.tournamentId || ""); },
+ _announcedSet() {
+   try { return new Set(JSON.parse(localStorage.getItem(O._announcedKey()) || "[]")); }
+   catch (e) { return new Set(); }
+ },
+ _isAnnounced(id) { return O._announcedSet().has(id); },
+ _setAnnounced(id, on) {
+   const s = O._announcedSet();
+   if (on) s.add(id); else s.delete(id);
+   localStorage.setItem(O._announcedKey(), JSON.stringify([...s]));
+ },
+
  renderCallableRow(m, idx, isNext) {
  const blocks = m.blocks || [];
  const blocked = blocks.length > 0;
+ const announced = O._isAnnounced(m.id);
  const num1 = m.player1_bracket_number || m.entrant1_bracket_number;
  const num2 = m.player2_bracket_number || m.entrant2_bracket_number;
  const pColor = O._eventPriorityColor(m.event);
  // 選手ピル (番号 + 氏名 + ふりがな + 所属)
  const pill = (name, furi, team, num) => h("span", { className: "player-pill" },
    num ? h("span", { className: "pnum" }, "#" + num) : null,
-   " ", name || "",
+   " ", h("span", { className: "pname" }, name || ""),
    furi ? h("span", { className: "pfuri" }, furi) : null,
    h("span", { className: "pteam" }, team ? "(" + team + ")" : ""));
- return h("div", { className: "callable-row" + (blocked ? " waiting" : "") + (isNext ? " next-up" : ""),
+ const row = h("div", { className: "callable-row" + (blocked ? " waiting" : "") + (isNext ? " next-up" : "") + (announced ? " announced" : ""),
  style: blocked ? { borderLeftColor: "var(--accent)", background: "#fef2f2" } : {} },
- // 順番番号
- h("div", { className: "call-order" }, idx != null ? String(idx + 1) : "—"),
+ // 順番番号 + コール済みチェック
+ h("div", { className: "call-order-wrap" },
+   h("div", { className: "call-order" }, idx != null ? String(idx + 1) : "—"),
+   h("label", { className: "call-chk", title: "場内アナウンス(コール)済みにする" },
+     h("input", { type: "checkbox", checked: announced ? "" : null,
+       onChange: (e) => { O._setAnnounced(m.id, e.target.checked);
+         row.classList.toggle("announced", e.target.checked); } }),
+     h("span", {}, "コール済"))),
  h("div", { style: { minWidth: 0, flex: 1 } },
  h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", marginBottom: "3px" } },
  h("span", { className: "round-badge" },
@@ -6611,6 +6639,7 @@ const O = {
  blocked ? "強制呼出" : "呼ぶ"),
  ),
  );
+ return row;
  },
 
  async toggleRefereeRule() {
