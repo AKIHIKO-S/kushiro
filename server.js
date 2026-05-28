@@ -1515,6 +1515,15 @@ app.post("/api/tournaments/:id/bracket/import", requireAdmin, (req, res) => {
   res.json(r);
 });
 
+// ドラッグ&ドロップ: 1回戦の選手位置を入れ替え
+app.post("/api/tournaments/:id/bracket/swap", requireAdmin, (req, res) => {
+  const { event, a, b } = req.body || {};
+  if (!event || !a || !b) return res.status(400).json({ error: "event, a, b が必要です" });
+  const r = db.swapBracketSlots(req.params.id, event, a, b);
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
+
 app.put("/api/tournaments/:id/court-layout", requireAdmin, (req, res) => {
   const r = db.setCourtLayout(req.params.id, req.body || {});
   if (!r) return res.status(404).json({ error: "大会が見つかりません" });

@@ -3543,6 +3543,50 @@ function exportAllBrackets(tournamentId) {
   };
 }
 
+// ドラッグ&ドロップ: 1回戦の2スロット(選手位置)を入れ替え
+// a/b = { pos: bracket_pos(整数), slot: 1|2 }。進行中/終了済を含む場合は拒否。
+function swapBracketSlots(tournamentId, event, a, b) {
+  if (!event) return { error: "event が必要です" };
+  const posA = parseInt(a && a.pos), posB = parseInt(b && b.pos);
+  const slotA = (parseInt(a && a.slot) === 2) ? 2 : 1;
+  const slotB = (parseInt(b && b.slot) === 2) ? 2 : 1;
+  if (!Number.isInteger(posA) || !Number.isInteger(posB)) return { error: "位置が不正です" };
+  if (posA === posB && slotA === slotB) return { error: "同じ位置です" };
+
+  const round1 = sqlite.prepare(
+    `SELECT * FROM matches WHERE tournament_id=? AND event=? AND bracket_round=1`
+  ).all(tournamentId, event);
+  const mA = round1.find(m => (m.bracket_pos || 0) === posA);
+  const mB = round1.find(m => (m.bracket_pos || 0) === posB);
+  if (!mA || !mB) return { error: "対象の試合が見つかりません" };
+
+  for (const m of (mA.id === mB.id ? [mA] : [mA, mB])) {
+    if (m.status === "completed" || m.status === "on_table" || m.winner_name) {
+      return { error: "進行中または終了した試合は入れ替えできません" };
+    }
+  }
+
+  const getSlot = (m, slot) => ({
+    id: m[`player${slot}_id`], name: m[`player${slot}_name`] || "", team: m[`player${slot}_team`] || "",
+  });
+  const sA = getSlot(mA, slotA), sB = getSlot(mB, slotB);
+  const setSlot = sqlite.transaction(() => {
+    const upd = (matchId, slot, s) => sqlite.prepare(
+      `UPDATE matches SET player${slot}_id=@pid, player${slot}_name=@pname, player${slot}_team=@pteam WHERE id=@id`
+    ).run({ pid: s.id || null, pname: s.name || "", pteam: s.team || "", id: matchId });
+    upd(mA.id, slotA, sB);
+    upd(mB.id, slotB, sA);
+    // 両スロット確定で pending、未確定で waiting に再計算
+    [mA.id, mB.id].forEach(id => {
+      const mm = sqlite.prepare(`SELECT player1_name, player2_name FROM matches WHERE id=?`).get(id);
+      const ready = mm.player1_name && mm.player2_name && mm.player1_name !== "BYE" && mm.player2_name !== "BYE";
+      sqlite.prepare(`UPDATE matches SET status=? WHERE id=?`).run(ready ? "pending" : "waiting", id);
+    });
+  });
+  setSlot();
+  return { success: true };
+}
+
 // インポート: 形式自動判別
 function importBracket(tournamentId, data) {
   if (!data) return { error: "データが空です" };
@@ -4097,7 +4141,7 @@ module.exports = {
   createEntry, createTeamEntry, getEntries, setEntryStatus, setEntrySeed,
   updateEntrySettings, getOpenTournaments,
   // ブラケット JSON I/O
-  exportBracket, exportAllBrackets, importBracket,
+  exportBracket, exportAllBrackets, importBracket, swapBracketSlots,
   // Entrants (大会参加選手) - マスタDBと分離
   createEntrant, updateEntrant, deleteEntrant, getEntrant, getEntrants,
   setEntrantBracketNumber, autoAssignDrawNumbers, buildRosterData,

@@ -629,7 +629,7 @@
    0%,100% { box-shadow: 0 0 0 2px rgba(245,158,11,.55), 0 0 8px rgba(245,158,11,.25); }
    50%     { box-shadow: 0 0 0 5px rgba(245,158,11,0), 0 0 14px rgba(245,158,11,.5); }
  }
- .vb-match.vb-drag-over { outline: 3px dashed #2563eb; outline-offset: 1px; }
+ .vb-drag-over { outline: 2px dashed #2563eb; outline-offset: 1px; background: #eff6ff !important; }
  .vb-match.vb-dragging { opacity: .45; }
  .vb-fswrap:fullscreen { background: #fff; padding: 16px; overflow: auto; }
  .vb-fswrap:fullscreen #vbArea { max-height: calc(100vh - 70px) !important; }
@@ -6844,6 +6844,9 @@ const O = {
      bracketArea.innerHTML = '<div style="color:#dc2626">読込失敗: ' + e.message + '</div>';
    }
  };
+ // DnD入替後の再描画に使用
+ O._vbReload = reload;
+ O._vbEvent = () => selectedEv;
 
  // 印刷: 新ウィンドウに bracketArea を移して印刷 (インラインstyleなので体裁保持)
  const printBracket = () => {
@@ -6887,6 +6890,8 @@ const O = {
    h("button", { className: "btn btn-sm btn-ghost", onClick: reload }, "更新"),
    h("button", { className: "btn btn-sm", style: { background: "#0ea5e9" }, onClick: toggleFs }, "⛶ 全画面"),
    h("button", { className: "btn btn-sm", style: { background: "#7c3aed" }, onClick: printBracket }, "印刷 (A3横)"),
+   h("span", { className: "text-xs text-sub", style: { marginLeft: "auto" } },
+     "1回戦の選手はドラッグ&ドロップで位置を入れ替えできます"),
  );
  fsWrap.appendChild(toolbar);
  fsWrap.appendChild(bracketArea);
@@ -6955,17 +6960,43 @@ const O = {
        style: { marginLeft: "6px", color: "#16a34a", fontWeight: 800 } }, "✓") : null,
      callable ? h("span", { className: "vb-call-chip" }, "▶ 呼出可能") : null,
    ));
-   const pRow = (name, team, won, lost) => h("div", {
-     style: { fontWeight: won ? 700 : 500, color: won ? "#15803d" : "#374151",
-       textDecoration: lost ? "line-through" : "none", padding: "2px 0",
-       opacity: lost ? 0.55 : 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
-     (name || "—"),
-     team ? h("span", { className: "text-xs text-sub", style: { marginLeft: "4px" } }, "(" + team + ")") : null);
+   const dndOn = m.bracket_round === 1; // 1回戦のみ入替可能
+   const pos = m.bracket_pos || 0;
+   const pRow = (name, team, won, lost, slot) => {
+     const row = h("div", {
+       style: { fontWeight: won ? 700 : 500, color: won ? "#15803d" : "#374151",
+         textDecoration: lost ? "line-through" : "none", padding: "2px 4px",
+         opacity: lost ? 0.55 : 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+         borderRadius: "4px" } },
+       (name || "—"),
+       team ? h("span", { className: "text-xs text-sub", style: { marginLeft: "4px" } }, "(" + team + ")") : null);
+     if (dndOn) {
+       if (name && name !== "BYE") {
+         row.setAttribute("draggable", "true");
+         row.style.cursor = "grab";
+         row.title = "ドラッグして他の選手と位置を入れ替え";
+         row.addEventListener("dragstart", (e) => {
+           e.stopPropagation();
+           e.dataTransfer.setData("text/plain", JSON.stringify({ pos, slot, name }));
+           e.dataTransfer.effectAllowed = "move";
+         });
+       }
+       row.addEventListener("dragover", (e) => { e.preventDefault(); row.classList.add("vb-drag-over"); });
+       row.addEventListener("dragleave", () => row.classList.remove("vb-drag-over"));
+       row.addEventListener("drop", (e) => {
+         e.preventDefault(); e.stopPropagation(); row.classList.remove("vb-drag-over");
+         let from; try { from = JSON.parse(e.dataTransfer.getData("text/plain")); } catch (_) { return; }
+         if (from.pos === pos && from.slot === slot) return;
+         O._dndSwap(bdata.event, from, { pos, slot, name });
+       });
+     }
+     return row;
+   };
    const p1Won = m.result && m.result.winner_name === m.player1_name;
    const p2Won = m.result && m.result.winner_name === m.player2_name;
-   card.appendChild(pRow(m.player1_name, m.player1_team, p1Won, m.result && !p1Won));
+   card.appendChild(pRow(m.player1_name, m.player1_team, p1Won, m.result && !p1Won, 1));
    card.appendChild(h("div", { style: { borderTop: "1px dashed " + stateBorder(m), margin: "1px 0" } }));
-   card.appendChild(pRow(m.player2_name, m.player2_team, p2Won, m.result && !p2Won));
+   card.appendChild(pRow(m.player2_name, m.player2_team, p2Won, m.result && !p2Won, 2));
    if (m.result) {
      card.appendChild(h("div", {
        style: { fontFamily: "var(--font-mono)", fontSize: "10px", color: "#64748b",
@@ -7040,6 +7071,17 @@ const O = {
  wrap.appendChild(header);
  wrap.appendChild(cols);
  return wrap;
+ },
+
+ // ドラッグ&ドロップで1回戦の選手位置を入れ替え
+ async _dndSwap(event, from, to) {
+   try {
+     const r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/swap`,
+       { event, a: { pos: from.pos, slot: from.slot }, b: { pos: to.pos, slot: to.slot } });
+     if (r && r.error) return toast(r.error, "err");
+     toast(`「${from.name || "選手"}」の位置を入れ替えました`, "ok");
+     if (typeof O._vbReload === "function") O._vbReload();
+   } catch (e) { toast("入れ替えに失敗しました: " + (e.message || e), "err"); }
  },
 
  // ── トーナメント生成ダイアログ ──
