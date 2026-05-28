@@ -355,6 +355,23 @@ app.delete("/api/achievements/:id", requireAdmin, (req, res) => {
   db.deleteAchievement(req.params.id); res.json({ ok: true });
 });
 
+// ── 個別戦績 (試合) の手動入力・削除 ──
+// 選手の試合一覧 (編集用・手動フラグ付き)
+app.get("/api/players/:id/match-records", requireAdmin, (req, res) => {
+  res.json(db.getPlayerMatchesForEdit(req.params.id));
+});
+// 手動で試合戦績を追加
+// body: { won, opponent_name, opponent_team, my_score, opp_score, event, date }
+app.post("/api/players/:id/match-records", requireAdmin, (req, res) => {
+  const r = db.createManualMatch(req.params.id, req.body || {});
+  if (r.error) return res.status(400).json(r);
+  res.status(201).json(r);
+});
+// 試合戦績を削除 (手動・通常どちらも。通常はブラケット整合に注意)
+app.delete("/api/match-records/:id", requireAdmin, (req, res) => {
+  db.deleteMatch(req.params.id); res.json({ ok: true });
+});
+
 // ═══ 管理API（大会CRUD） ══════════════════════════════
 app.get("/api/tournaments", (req, res) => { res.json(db.getTournaments()); });
 app.get("/api/tournaments/:id", (req, res) => {

@@ -5228,7 +5228,43 @@ const A = {
  h("div", { className: "text-xs text-sub",
    style: { padding: "8px", background: "#f8fafc", borderRadius: "6px" } },
    "入賞歴は、選手を保存してから登録できます"),
+
+ // ─── 個別戦績 (試合) の手動入力・削除 ───
+ !isNew ? h("div", { className: "field" },
+ h("label", { className: "field-label" }, "個別戦績 (試合の勝敗) — 手動入力・削除"),
+ h("div", { className: "ach-list", id: "matchRecList" },
+   h("div", { style: { fontSize: "12px", color: "#a8a29e", padding: "6px" } }, "読込中...")),
+ // 追加フォーム
+ h("div", { style: { display: "grid",
+   gridTemplateColumns: "auto 1fr 1fr 70px auto", gap: "5px", marginTop: "6px",
+   alignItems: "center" } },
+ h("select", { className: "input", id: "mrWon", style: { padding: "6px", fontSize: "12px" } },
+   h("option", { value: "1" }, "○勝ち"), h("option", { value: "0" }, "×負け")),
+ h("input", { className: "input", id: "mrOpp", placeholder: "対戦相手 氏名",
+   style: { padding: "6px", fontSize: "12px" } }),
+ h("input", { className: "input", id: "mrOppTeam", placeholder: "相手所属",
+   style: { padding: "6px", fontSize: "12px" } }),
+ h("input", { className: "input", id: "mrScore", placeholder: "3-1",
+   title: "セットカウント 自分-相手", style: { padding: "6px", fontSize: "12px", textAlign: "center" } }),
+ h("button", { className: "btn btn-sm", type: "button",
+   style: { padding: "6px 10px", fontSize: "12px" },
+   onClick: () => A._addMatchRecord(p.id) }, "追加")),
+ h("div", { style: { display: "grid",
+   gridTemplateColumns: "1fr 110px", gap: "5px", marginTop: "5px" } },
+ h("input", { className: "input", id: "mrEvent", placeholder: "大会名・種目 (例: 2024全道 男子S)",
+   style: { padding: "6px", fontSize: "12px" } }),
+ h("input", { className: "input", id: "mrDate", type: "date",
+   style: { padding: "6px", fontSize: "12px" } })),
+ h("div", { className: "text-xs text-sub", style: { marginTop: "4px" } },
+   "※ スコアは「自分のセット数-相手のセット数」(例 3-1)。「追加」で即保存")) :
+ h("div", { className: "text-xs text-sub",
+   style: { padding: "8px", background: "#f8fafc", borderRadius: "6px" } },
+   "個別戦績は、選手を保存してから登録できます"),
  );
+ // 既存選手なら試合一覧を非同期ロード
+ if (!isNew && p.id) {
+   setTimeout(() => A._loadMatchRecords(p.id), 120);
+ }
  const foot = h("button", { className: "btn", onClick: async () => {
  const data = {
  name: document.getElementById("plName").value.trim(),
@@ -5306,6 +5342,77 @@ const A = {
        } }, "×"),
    );
  },
+ // ─── 個別戦績 (試合) ヘルパー ───
+ async _loadMatchRecords(playerId) {
+   const box = document.getElementById("matchRecList");
+   if (!box) return;
+   try {
+     const matches = await api.get("/api/players/" + playerId + "/match-records");
+     box.innerHTML = "";
+     if (!matches.length) {
+       box.appendChild(h("div", { style: { fontSize: "12px", color: "#a8a29e", padding: "6px" } },
+         "試合記録がまだありません"));
+       return;
+     }
+     matches.slice(0, 40).forEach(m => box.appendChild(A._renderMatchRecItem(playerId, m)));
+   } catch (e) {
+     box.innerHTML = ""; box.appendChild(h("div", { style: { fontSize: "12px", color: "#dc2626" } },
+       "読込失敗: " + e.message));
+   }
+ },
+ _renderMatchRecItem(playerId, m) {
+   const won = m.winner_id === playerId;
+   const oppName = won ? (m.loser_name || "?") : (m.winner_name || "?");
+   const myS = won ? m.winner_sets : m.loser_sets;
+   const oppS = won ? m.loser_sets : m.winner_sets;
+   return h("div", { className: "ach-item",
+     style: { background: won ? "#f0fdf4" : "#fef2f2",
+       borderColor: won ? "#86efac" : "#fca5a5" } },
+     h("span", { className: "ach-place " + (won ? "" : ""),
+       style: { background: won ? "#16a34a" : "#dc2626", color: "#fff" } }, won ? "○勝" : "×負"),
+     h("span", { style: { fontWeight: "600" } }, oppName),
+     h("span", { style: { fontFamily: "monospace", fontWeight: "700" } }, myS + "-" + oppS),
+     h("span", { style: { color: "#78716c", fontSize: "11px" } }, m.event || ""),
+     m.is_manual
+       ? h("button", { className: "ach-del", type: "button", title: "削除",
+           onClick: async (e) => {
+             e.stopPropagation();
+             if (!confirm("この戦績を削除しますか?")) return;
+             try {
+               await api.del("/api/match-records/" + m.id);
+               e.target.closest(".ach-item").remove();
+               toast("削除しました", "ok");
+             } catch (err) { toast("削除失敗: " + err.message, "err"); }
+           } }, "×")
+       : h("span", { style: { marginLeft: "auto", fontSize: "9px", color: "#a8a29e" },
+           title: "大会データの試合は進行管理から修正してください" }, "大会"),
+   );
+ },
+ async _addMatchRecord(playerId) {
+   const won = document.getElementById("mrWon").value === "1";
+   const opp = document.getElementById("mrOpp").value.trim();
+   const oppTeam = document.getElementById("mrOppTeam").value.trim();
+   const scoreStr = document.getElementById("mrScore").value.trim();
+   const event = document.getElementById("mrEvent").value.trim();
+   const date = document.getElementById("mrDate").value;
+   if (!opp) return toast("対戦相手の氏名を入力してください", "err");
+   let myScore, oppScore;
+   const mm = scoreStr.match(/^(\d+)\s*[-－:]\s*(\d+)$/);
+   if (mm) { myScore = parseInt(mm[1]); oppScore = parseInt(mm[2]); }
+   try {
+     const r = await api.post("/api/players/" + playerId + "/match-records",
+       { won, opponent_name: opp, opponent_team: oppTeam,
+         my_score: myScore, opp_score: oppScore, event, date });
+     if (r.error) return toast(r.error, "err");
+     // リスト再読込
+     A._loadMatchRecords(playerId);
+     document.getElementById("mrOpp").value = "";
+     document.getElementById("mrOppTeam").value = "";
+     document.getElementById("mrScore").value = "";
+     toast("戦績を追加しました", "ok");
+   } catch (e) { toast("追加失敗: " + e.message, "err"); }
+ },
+
  async _addAchievement(playerId) {
    const year = parseInt(document.getElementById("achYear").value) || new Date().getFullYear();
    const tournament = document.getElementById("achTourn").value.trim();

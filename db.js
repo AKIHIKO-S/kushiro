@@ -741,7 +741,64 @@ function findPlayerByName(name, team, opts) {
 }
 
 // ── 大会 ────────────────────────────────────────────────
-function getTournaments() { return stmts.getTournaments.all(); }
+// 手動戦績用の隠し大会 (個別の試合記録の受け皿)
+const MANUAL_TID = "__manual_records__";
+function getOrCreateManualTournament() {
+  let t = stmts.getTournament.get(MANUAL_TID);
+  if (!t) {
+    sqlite.prepare(`INSERT INTO tournaments (id, name, date, status, level)
+      VALUES (?, ?, ?, ?, ?)`).run(MANUAL_TID, "（個別記録）", "", "archived", "other");
+    t = stmts.getTournament.get(MANUAL_TID);
+  }
+  return t;
+}
+
+function getTournaments() {
+  // 隠し大会 (個別記録) は一覧から除外
+  return stmts.getTournaments.all().filter(t => t.id !== MANUAL_TID);
+}
+
+// 選手に個別の試合戦績を手動追加
+function createManualMatch(playerId, data) {
+  const player = stmts.getPlayer.get(playerId);
+  if (!player) return { error: "選手が見つかりません" };
+  getOrCreateManualTournament();
+  const won = !!data.won;
+  const oppName = String(data.opponent_name || "").trim().slice(0, 80) || "相手不明";
+  const oppTeam = String(data.opponent_team || "").trim().slice(0, 80);
+  let myScore = parseInt(data.my_score); if (isNaN(myScore)) myScore = won ? 3 : 0;
+  let oppScore = parseInt(data.opp_score); if (isNaN(oppScore)) oppScore = won ? 0 : 3;
+  const ws = won ? myScore : oppScore;
+  const ls = won ? oppScore : myScore;
+  const rec = {
+    id: uid(),
+    tournament_id: MANUAL_TID,
+    event: String(data.event || data.tournament_name || "個別記録").slice(0, 100),
+    round: String(data.round || "").slice(0, 40),
+    round_order: 99, match_no: 0,
+    winner_id: won ? playerId : null,
+    loser_id: won ? null : playerId,
+    winner_name: won ? player.name : oppName,
+    loser_name: won ? oppName : player.name,
+    winner_team: won ? (player.team || "") : oppTeam,
+    loser_team: won ? oppTeam : (player.team || ""),
+    sets_json: "[]",
+    winner_sets: ws, loser_sets: ls,
+    played_at: data.date || "",
+    note: "manual",
+  };
+  stmts.insertMatch.run(rec);
+  // 大会日付に手動戦績の日付を反映 (一覧ソート用・任意)
+  return { ok: true, id: rec.id };
+}
+
+// 選手の試合一覧 (手動戦績の編集用)
+function getPlayerMatchesForEdit(playerId) {
+  return stmts.getMatchesByPlayer.all(playerId, playerId).map(m => ({
+    ...m, sets: JSON.parse(m.sets_json || "[]"),
+    is_manual: m.tournament_id === MANUAL_TID,
+  }));
+}
 
 function getTournament(id) {
   const t = stmts.getTournament.get(id);
@@ -4032,6 +4089,8 @@ module.exports = {
   // 試合検索 / H2H / 選手統計
   searchMatches, countMatchesForSearch, getSearchFilters,
   getPlayerOpponents, getHeadToHead, getPlayerEventStats,
+  // 個別戦績 (手動)
+  createManualMatch, getPlayerMatchesForEdit,
   // 申込
   createEntry, createTeamEntry, getEntries, setEntryStatus, setEntrySeed,
   updateEntrySettings, getOpenTournaments,
