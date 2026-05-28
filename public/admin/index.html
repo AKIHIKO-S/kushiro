@@ -6641,12 +6641,40 @@ const O = {
    }
  };
 
+ // 印刷: 新ウィンドウに bracketArea を移して印刷 (インラインstyleなので体裁保持)
+ const printBracket = () => {
+   const tName = (O.state && O.state.tournament && O.state.tournament.name) || "トーナメント表";
+   const w = window.open("", "_blank");
+   if (!w) return toast("ポップアップがブロックされました。許可してください。", "err");
+   w.document.write(
+     '<!doctype html><html lang="ja"><head><meta charset="utf-8">' +
+     '<title>' + tName + " - " + selectedEv + '</title>' +
+     '<style>' +
+     '@page{size:A3 landscape;margin:8mm}' +
+     'body{font-family:"Hiragino Sans","Yu Gothic",system-ui,sans-serif;padding:12px;color:#1c1917}' +
+     'h1{font-size:18px;margin:0 0 2px}.sub{font-size:12px;color:#666;margin-bottom:12px}' +
+     '.vb-cols{display:flex;gap:16px;align-items:stretch}' +
+     '.toolbar{margin-bottom:10px}@media print{.toolbar{display:none}}' +
+     'button{padding:8px 16px;font-size:14px;cursor:pointer;border:1px solid #ccc;border-radius:6px;background:#fff}' +
+     '</style></head><body>' +
+     '<div class="toolbar"><button onclick="window.print()">印刷する</button></div>' +
+     '<h1>' + tName + '</h1>' +
+     '<div class="sub">' + selectedEv + '　トーナメント表</div>' +
+     bracketArea.innerHTML +
+     '</body></html>');
+   w.document.close();
+   setTimeout(() => { try { w.print(); } catch (e) {} }, 400);
+ };
+
  const body = h("div", {},
    h("div", { className: "flex gap-2 mb-2", style: { alignItems: "center", flexWrap: "wrap" } },
      h("label", { className: "text-sm font-bold" }, "種目:"),
      evSel,
      h("button", { className: "btn btn-sm btn-ghost",
        onClick: reload }, "更新"),
+     h("button", { className: "btn btn-sm",
+       style: { background: "#7c3aed" },
+       onClick: printBracket }, "印刷 (A3横)"),
    ),
    bracketArea,
  );
