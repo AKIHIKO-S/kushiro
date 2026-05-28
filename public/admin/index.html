@@ -447,11 +447,36 @@
  .callable-row.waiting {
  border-left-color: var(--sub-l); background: #f8fafc;
  }
+ /* 呼出順 番号 */
+ .call-order {
+   display: inline-flex; align-items: center; justify-content: center;
+   width: 26px; height: 26px; border-radius: 50%;
+   background: var(--ink-200); color: var(--ink-700);
+   font-family: var(--font-display); font-weight: 800; font-size: 13px;
+   flex-shrink: 0;
+ }
+ /* 次に呼ぶ (先頭) を強調 */
+ .callable-row.next-up {
+   border-left-color: #16a34a;
+   background: linear-gradient(135deg, #f0fdf4, #fff);
+   box-shadow: 0 0 0 1px #86efac;
+ }
+ .callable-row.next-up .call-order {
+   background: #16a34a; color: #fff;
+ }
+ .next-tag {
+   display: inline-block; background: #16a34a; color: #fff;
+   font-size: 9px; font-weight: 800; padding: 1px 7px;
+   border-radius: 8px; letter-spacing: .05em; margin-left: 6px;
+ }
+ .player-pill .pfuri { color: var(--sub); font-size: 9px; font-weight: 500; margin-left: 3px; }
  .round-badge {
  background: var(--pri-bg); color: var(--pri);
  padding: 4px 10px; border-radius: 12px;
  font-size: 11px; font-weight: 700;
  }
+ /* 種目別の呼出優先色 (左端ドット) */
+ .ev-priority { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; }
  .vs-block {
  display: flex; gap: 8px; align-items: center;
  font-size: 13px;
@@ -5493,10 +5518,20 @@ const O = {
  }
 
  // ── 呼べる対戦 ──
+ const prioDot = (c, label) => h("span", { style: { display: "inline-flex", alignItems: "center",
+   gap: "3px", fontSize: "10px", color: "var(--ink-600)" } },
+   h("span", { className: "ev-priority", style: { background: c, marginRight: "0" } }), label);
  const callCard = h("div", { className: "card" },
- h("div", { className: "card-head" },
+ h("div", { className: "card-head", style: { flexWrap: "wrap", gap: "8px" } },
+ h("div", { className: "flex gap-2", style: { alignItems: "center" } },
  h("div", { className: "card-title" }, "呼べる対戦"),
  h("div", { className: "card-title-sub" }, `${O.state.callable.length}試合`),
+ ),
+ h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center" } },
+ h("span", { style: { fontSize: "10px", color: "var(--sub)" } }, "優先:"),
+ prioDot("#7c3aed", "団体"), prioDot("#db2777", "混合D"),
+ prioDot("#2563eb", "男D"), prioDot("#dc2626", "女D"),
+ prioDot("#a1a1aa", "シングルス")),
  ),
  );
  const callList = O.selectedEvent
@@ -5505,7 +5540,9 @@ const O = {
  if (!callList.length) {
  callCard.appendChild(h("div", { className: "empty-state" }, "現在呼べる対戦はありません。"));
  } else {
- callList.forEach(m => callCard.appendChild(O.renderCallableRow(m)));
+ // 拘束なしの先頭を「次に呼ぶ」として強調
+ const firstFreeIdx = callList.findIndex(m => !(m.blocks || []).length);
+ callList.forEach((m, idx) => callCard.appendChild(O.renderCallableRow(m, idx, idx === firstFreeIdx)));
  }
  main.appendChild(callCard);
 
@@ -5899,20 +5936,45 @@ const O = {
  openModal("審判を変更", body, foot);
  },
 
- // ── 呼べる対戦行 ──
- renderCallableRow(m) {
+ // 種目の呼出優先色 (団体=紫 / 混合D=桃 / 男D=青 / 女D=赤 / シングルス=灰)
+ _eventPriorityColor(ev) {
+   ev = ev || "";
+   if (/団体|チーム/.test(ev)) return "#7c3aed";
+   if (/混合|ミックス/.test(ev)) return "#db2777";
+   if (/ダブルス/.test(ev)) return /女/.test(ev) ? "#dc2626" : "#2563eb";
+   return "#a1a1aa";
+ },
+ // 姓のみ抽出
+ _surname(full) { return (full || "").split(/[\s　]/)[0] || full || ""; },
+
+ // ── 呼べる対戦行 (idx=順番, isNext=次に呼ぶ強調) ──
+ renderCallableRow(m, idx, isNext) {
  const blocks = m.blocks || [];
  const blocked = blocks.length > 0;
- return h("div", { className: "callable-row" + (blocked ? " waiting" : ""),
+ const num1 = m.player1_bracket_number || m.entrant1_bracket_number;
+ const num2 = m.player2_bracket_number || m.entrant2_bracket_number;
+ const pColor = O._eventPriorityColor(m.event);
+ // 選手ピル (番号 + 氏名 + ふりがな + 所属)
+ const pill = (name, furi, team, num) => h("span", { className: "player-pill" },
+   num ? h("span", { className: "pnum" }, "#" + num) : null,
+   " ", name || "",
+   furi ? h("span", { className: "pfuri" }, furi) : null,
+   h("span", { className: "pteam" }, team ? "(" + team + ")" : ""));
+ return h("div", { className: "callable-row" + (blocked ? " waiting" : "") + (isNext ? " next-up" : ""),
  style: blocked ? { borderLeftColor: "var(--accent)", background: "#fef2f2" } : {} },
- h("span", { className: "round-badge" }, `${m.event} ${m.round}`),
- h("div", {},
+ // 順番番号
+ h("div", { className: "call-order" }, idx != null ? String(idx + 1) : "—"),
+ h("div", { style: { minWidth: 0, flex: 1 } },
+ h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", marginBottom: "3px" } },
+ h("span", { className: "round-badge" },
+   h("span", { className: "ev-priority", style: { background: pColor } }),
+   `${m.event} ${m.round}`),
+ isNext ? h("span", { className: "next-tag" }, "次に呼ぶ") : null,
+ ),
  h("div", { className: "vs-block" },
- h("span", { className: "player-pill" }, m.player1_name,
- h("span", { className: "pteam" }, m.player1_team ? "(" + m.player1_team + ")" : "")),
+ pill(m.player1_name, m.player1_furigana, m.player1_team, num1),
  h("span", { className: "vs" }, "VS"),
- h("span", { className: "player-pill" }, m.player2_name,
- h("span", { className: "pteam" }, m.player2_team ? "(" + m.player2_team + ")" : "")),
+ pill(m.player2_name, m.player2_furigana, m.player2_team, num2),
  ),
  ...blocks.map(b =>
  h("div", { className: "text-xs",
@@ -5921,17 +5983,18 @@ const O = {
  ),
  h("div", { className: "flex gap-1", style: { alignItems: "center" } },
  m.referee_name
- ? h("span", { className: "text-xs text-sub" }, "" + m.referee_name)
+ ? h("span", { className: "text-xs text-sub" }, "審 " + O._surname(m.referee_name))
  : (m.referee_required === 0
  ? h("span", { className: "text-xs text-sub" }, "(審判不要)")
  : h("span", { className: "text-xs", style: { color: "var(--warn)" } }, "審判未")),
  ),
  h("div", { className: "flex gap-1" },
  h("button", { className: "btn btn-sm btn-ghost",
- onClick: () => A.openEditMatch(m), title: "試合を手動編集" }, ""),
- h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.toggleRefereeRequired(m),
- title: "審判の要否切り替え" }, m.referee_required === 0 ? "審判必要" : "審判不要"),
- h("button", { className: "btn btn-sm" + (blocked ? " btn-danger" : ""),
+ style: { padding: "4px 8px", fontSize: "11px" },
+ onClick: () => O.toggleRefereeRequired(m),
+ title: "審判の要否切り替え" }, m.referee_required === 0 ? "審判要" : "審判不要"),
+ h("button", { className: "btn btn-sm" + (blocked ? " btn-danger" : (isNext ? " btn-ok" : "")),
+ style: isNext ? { fontWeight: "700" } : {},
  onClick: () => O.openCallDialog(m) },
  blocked ? "強制呼出" : "呼ぶ"),
  ),
