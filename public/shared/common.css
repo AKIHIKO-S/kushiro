@@ -747,6 +747,13 @@ input:focus, select:focus, textarea:focus {
 .meta-chip .ic { opacity: .6; font-size: 11px; }
 .meta-chip.hot { background: #fef2f2; border-color: #fecaca; color: #b91c1c; font-weight: 700; }
 
+/* 支部タグ (色は TT.branchColor で支部名ごとに変化) */
+.branch-tag {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  padding: 1px 8px; border-radius: 10px; line-height: 1.6;
+  white-space: nowrap;
+}
+
 /* 勝敗カラー (全画面統一) */
 .win-text  { color: #15803d; font-weight: 700; }
 .loss-text { color: #b91c1c; }

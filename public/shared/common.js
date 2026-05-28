@@ -279,6 +279,44 @@
     return `<span class="${cls} status-${status || "scheduled"}">${lbl}</span>`;
   }
 
+  function _hslPair(hue, sat, light) {
+    return {
+      bg: `hsl(${hue}, ${sat}%, ${light}%)`,
+      fg: `hsl(${hue}, ${Math.min(sat + 10, 88)}%, 30%)`,
+    };
+  }
+  // 支部名 → 色 (単体バッジ用 / 全画面で同名は同色。ハッシュ分散で衝突は稀)
+  function branchColor(name) {
+    const s = String(name == null ? "" : name).trim();
+    if (!s) return { bg: "#f1f5f9", fg: "#475569" };
+    let h1 = 0, h2 = 0;
+    for (let i = 0; i < s.length; i++) {
+      h1 = (h1 * 131 + s.charCodeAt(i)) >>> 0;
+      h2 = (h2 * 31 + s.charCodeAt(i) * 7 + i) >>> 0;
+    }
+    return _hslPair(h1 % 360, 62 + (h2 % 16), 89 + ((h2 >>> 4) % 6)); // sat62-77 light89-94
+  }
+  // 支部名の集合 → name→色 Map (一覧表示用。黄金角で必ず色相が離れる=必ず違う色)
+  function branchColorMap(names) {
+    const uniq = [...new Set((names || []).map(n => String(n == null ? "" : n).trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, "ja"));
+    const map = new Map();
+    uniq.forEach((n, i) => {
+      const hue = Math.round(i * 137.508) % 360; // 黄金角 → 隣接でも最大限に離れる
+      const sat = 64 + (i % 3) * 6;   // 64/70/76
+      const light = 90 + (i % 2) * 3; // 90/93 (同色相が万一来ても明度で分離)
+      map.set(n, _hslPair(hue, sat, light));
+    });
+    return map;
+  }
+  // 支部バッジ要素を生成 (h が必要)。color を渡せばそれを使用、無ければ branchColor。
+  function branchBadge(name, extraStyle, color) {
+    if (!name) return null;
+    const c = color || branchColor(name);
+    return h("span", { className: "branch-tag",
+      style: Object.assign({ background: c.bg, color: c.fg }, extraStyle || {}) }, name);
+  }
+
   // Export
   global.TT = {
     GENDERS, CATS, EV_TYPES, ROUNDS, PLACES,
@@ -288,5 +326,6 @@
     fmtDate, fmtDateShort,
     createPoller, downloadCSV, downloadJSON, openModal,
     logoHTML, statusBadge,
+    branchColor, branchColorMap, branchBadge,
   };
 })(window);

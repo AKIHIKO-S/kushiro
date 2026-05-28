@@ -5049,6 +5049,9 @@ const A = {
  " (絞込み後)　·　男子 ", String(list.filter(p => p.gender !== "female").length),
  "名 / 女子 ", String(list.filter(p => p.gender === "female").length), "名"));
 
+ // 支部ごとに必ず異なる色を割当 (全選手で固定するためフィルタに依らず一定)
+ const branchColors = TT.branchColorMap(A.state.players.map(p => p.branch));
+
  const renderPlayerCard = (p) => {
  const gClass = p.gender === "female" ? "female" : "male";
  const wins = p.match_wins || 0;
@@ -5077,7 +5080,8 @@ const A = {
  h("div", { className: "pdb-name" }, p.name || "(無名)"),
  p.furigana ? h("div", { className: "pdb-furi" }, p.furigana) : null,
  h("div", { className: "pdb-meta" },
- p.branch ? h("span", { className: "pdb-branch" }, p.branch) : null,
+ p.branch ? (function(){ const _bc = branchColors.get(p.branch) || TT.branchColor(p.branch);
+   return h("span", { className: "pdb-branch", style: { background: _bc.bg, color: _bc.fg } }, p.branch); })() : null,
  p.team || "—",
  ),
  stats.length ? h("div", { className: "pdb-stats" }, ...stats) : null,
