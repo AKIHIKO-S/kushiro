@@ -1170,6 +1170,10 @@ const A = {
 
  showTab(name, skipHash) {
  A.activeTab = name;
+ // 進行管理タブから離れる時は 4秒ポーリングを停止 (#190: タブ切替後もポーリングが残る漏れを修正)
+ if (name !== "operations" && typeof O !== "undefined" && O.poller) {
+   clearInterval(O.poller); O.poller = null;
+ }
  document.querySelectorAll(".tab").forEach(t =>
  t.classList.toggle("active", t.dataset.tab === name));
  document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
@@ -6819,8 +6823,9 @@ const O = {
    if (!selMatch) return toast("対戦を選択してください", "err");
    if (!selectedTable) return toast("台を選択してください", "err");
    if (refSource === "manual" && !manualRefName.trim()) return toast("審判の氏名を入力してください", "err");
-   const blocked = (selMatch.blocks || []).length > 0;
-   const r = await api.post(`/api/matches/${selMatch.id}/call`, { ...buildPayload(), force: blocked });
+   // まずは force なしで試行し、サーバーが拘束を返したら確認ダイアログ経由で強制呼出する
+   // (#190: 以前は force:blocked を初回送信し確認をスキップしていた不具合を修正)
+   const r = await api.post(`/api/matches/${selMatch.id}/call`, { ...buildPayload(), force: false });
    if (r.error) {
      if (r.blocked) {
        const msg = "選手拘束で呼べません:\n" + r.blocked.map(b => `・${b.player_name}: ${b.locked_by_label}`).join("\n") + "\n\n強制呼出しますか？";

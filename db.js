@@ -977,7 +977,27 @@ function createScheduledMatch(tournamentId, data) {
   return { ok: true, id: rec.id };
 }
 
-function deleteMatch(id) { stmts.deleteMatch.run(id); }
+function deleteMatch(id) {
+  // 削除前に、この試合が次戦へ送り込んだ勝者を除去してブラケットの孤立を防ぐ (#190)
+  const m = stmts.getMatch.get(id);
+  const tx = sqlite.transaction(() => {
+    if (m && m.next_match_id) {
+      const nm = stmts.getMatch.get(m.next_match_id);
+      if (nm) {
+        const ns = (m.next_slot === 2) ? 2 : 1;
+        // 次戦の該当スロットを空にし、結果をリセットして status を再計算
+        sqlite.prepare(`UPDATE matches SET player${ns}_id=NULL, player${ns}_name='', player${ns}_team='', player${ns}_entrant_id=NULL WHERE id=?`).run(nm.id);
+        sqlite.prepare(`UPDATE matches SET winner_id=NULL,loser_id=NULL,winner_name='',loser_name='',
+          winner_team='',loser_team='',sets_json='[]',winner_sets=0,loser_sets=0,is_walkover=0,finished_at='',
+          status=CASE WHEN player1_name!='' AND player2_name!='' AND player1_name!='BYE' AND player2_name!='BYE'
+            THEN 'pending' ELSE 'waiting' END
+          WHERE id=?`).run(nm.id);
+      }
+    }
+    stmts.deleteMatch.run(id);
+  });
+  tx();
+}
 
 function getMatch(id) {
   const m = stmts.getMatch.get(id);
@@ -2996,6 +3016,15 @@ function getPlayerLiveStatus(playerId, tournamentId) {
   }
 
   const tournament = stmts.getTournament.get(activeTournamentId);
+  // 指定された tournament_id が存在しない場合の防御 (#190: 不正IDでの 500 を防ぐ)
+  if (!tournament) {
+    return {
+      player: { id: player.id, name: player.name, team: player.team, rating: player.rating },
+      tournament: null,
+      current: null, next: null, recent: [],
+      message: "指定された大会が見つかりません",
+    };
+  }
 
   // 該当選手が player1/player2/referee として関わる試合を取得
   const allMine = sqlite.prepare(`
@@ -3230,6 +3259,7 @@ function getPlayerOpponents(playerId) {
       COUNT(*) AS count
     FROM matches WHERE winner_id = ? AND loser_id IS NOT NULL
       AND status = 'completed' AND loser_name != 'BYE'
+      AND COALESCE(is_walkover,0) = 0
     GROUP BY loser_id
   `).all(playerId);
   const losses = sqlite.prepare(`
@@ -3237,6 +3267,7 @@ function getPlayerOpponents(playerId) {
       COUNT(*) AS count
     FROM matches WHERE loser_id = ? AND winner_id IS NOT NULL
       AND status = 'completed' AND winner_name != 'BYE'
+      AND COALESCE(is_walkover,0) = 0
     GROUP BY winner_id
   `).all(playerId);
   const map = {};
@@ -3259,7 +3290,7 @@ function getHeadToHead(p1Id, p2Id) {
   const matches = sqlite.prepare(`
     SELECT m.*, t.name AS tournament_name, t.date AS tournament_date
     FROM matches m LEFT JOIN tournaments t ON m.tournament_id = t.id
-    WHERE m.status = 'completed' AND
+    WHERE m.status = 'completed' AND COALESCE(m.is_walkover,0) = 0 AND
       ((m.winner_id = ? AND m.loser_id = ?) OR (m.winner_id = ? AND m.loser_id = ?))
     ORDER BY t.date DESC, m.created_at DESC
   `).all(p1Id, p2Id, p2Id, p1Id).map(m => ({ ...m, sets: JSON.parse(m.sets_json || "[]") }));
@@ -4237,6 +4268,13 @@ function editMatch(matchId, data) {
         data.loser_sets !== undefined ? data.loser_sets : ls,
         matchId,
       );
+      // 勝者を次戦へ送り込む (#190: 手動編集で結果を入れてもブラケットが進まない不具合を修正)
+      if (m2.next_match_id) {
+        try {
+          advanceWinnerInline(m2.next_match_id, m2.next_slot === 2 ? 2 : 1,
+            { id: winner.id, name: winner.name, team: winner.team });
+        } catch (e) { console.error("editMatch advance error:", e); }
+      }
     }
   }
 
