@@ -402,13 +402,14 @@ sudo ./deploy/install.sh $(curl -s ifconfig.me).nip.io
 sudo cat /etc/ktta.env | grep ADMIN_KEY
 ```
 
-下のような出力:
+下のような出力 (32文字のランダムな英数字。値は毎回異なります):
 
 ```
-ADMIN_KEY=a3f7c2e89b1d4e567890abc123def456
+ADMIN_KEY=<ここに生成されたランダムな32文字が表示されます>
 ```
 
-`=` の右側の文字列をメモ帳にコピーしてください。
+`=` の右側の文字列をメモ帳にコピーしてください。  
+※ この値は秘密鍵です。SNS やスクリーンショットで他人に見せないでください。
 
 > ⚠ よくあるトラブル
 > - **npm install で「killed」エラー** → メモリ不足。OCPU=2/12GB なら起きないはず。1OCPU/6GB なら swap 設定が必要

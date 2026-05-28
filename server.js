@@ -19,6 +19,9 @@ const mailer = require("./mailer");
 // xlsx 一時アップロード保存先 (拡張子保持)
 const uploadDir = path.join(os.tmpdir(), "tt-uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
+// 許可する拡張子 (Excel / PDF / 画像) — それ以外は拒否 (Y4 対策)
+const ALLOWED_UPLOAD_EXT = new Set([".xlsx", ".xls", ".xlsm", ".csv", ".pdf",
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
 const upload = multer({
   storage: multer.diskStorage({
     destination: uploadDir,
@@ -29,11 +32,29 @@ const upload = multer({
     },
   }),
   limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    if (ALLOWED_UPLOAD_EXT.has(ext)) return cb(null, true);
+    cb(new Error("対応していないファイル形式です (" + (ext || "不明") + ")。Excel/PDF/画像のみ許可"));
+  },
 });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
+const IS_PROD = process.env.NODE_ENV === "production";
+
+// HTML エラー応答 (本番では内部詳細を隠す — Y3 対策)
+function errHtml(title, e) {
+  const safe = (s) => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const detail = IS_PROD
+    ? "<p>時間をおいて再度お試しください。解決しない場合は管理者にご連絡ください。</p>"
+    : "<pre>" + safe(e && e.message || e) + "</pre>";
+  return "<!doctype html><meta charset='utf-8'><style>body{font-family:system-ui;padding:40px;color:#1c1917}" +
+    "h1{font-size:20px;color:#b91c1c}pre{background:#f5f5f4;padding:12px;border-radius:6px;overflow:auto}</style>" +
+    "<h1>" + safe(title) + "</h1>" + detail;
+}
 
 // gzip 圧縮 (190KB JSON → 約 30KB)
 // xlsx/zip 等の既に圧縮済みバイナリは再圧縮しない (ファイル破損防止)
@@ -114,9 +135,18 @@ app.use((req, res, next) => {
 });
 
 // ADMIN_KEY 設定時のみ管理APIを保護
+// 変更系 (POST/PUT/DELETE) は X-Admin-Key ヘッダ必須 (URLにキーを載せない/Y2対策)。
+// GET (Excel/PDF ダウンロード等・ヘッダ付与不可) のみ ?key= も許可。
 function requireAdmin(req, res, next) {
-  if (!ADMIN_KEY) return next();
-  const key = req.get("X-Admin-Key") || req.query.key;
+  if (!ADMIN_KEY) {
+    if (IS_PROD && !requireAdmin._warned) {
+      requireAdmin._warned = true;
+      console.warn("[SECURITY] ADMIN_KEY 未設定 — 管理APIが無保護です。/etc/ktta.env に設定してください。");
+    }
+    return next();
+  }
+  const headerKey = req.get("X-Admin-Key");
+  const key = headerKey || (req.method === "GET" ? req.query.key : null);
   if (key === ADMIN_KEY) return next();
   res.status(401).json({ error: "管理キーが必要です" });
 }
@@ -1009,7 +1039,7 @@ app.get("/api/tournaments/:id/receipts.html", (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.send(html);
   } catch (e) {
-    res.status(500).send("<h1>領収書生成失敗</h1><pre>" + e.message + "</pre>");
+    res.status(500).send(errHtml("領収書生成に失敗しました", e));
   }
 });
 
@@ -1197,7 +1227,7 @@ app.get("/api/tournaments/:id/entry-form.html", (req, res) => {
     res.setHeader("Referrer-Policy", "no-referrer-when-downgrade");
     res.send(html);
   } catch (e) {
-    res.status(500).send("<h1>フォーム生成失敗</h1><pre>" + e.message + "</pre>");
+    res.status(500).send(errHtml("フォーム生成に失敗しました", e));
   }
 });
 
@@ -1667,7 +1697,7 @@ app.get("/entry/:id", (req, res) => {
     res.send(html);
   } catch (e) {
     recordError(e, req, res, 500);
-    res.status(500).send("<h1>フォーム生成失敗</h1><pre>" + e.message + "</pre>");
+    res.status(500).send(errHtml("フォーム生成に失敗しました", e));
   }
 });
 
