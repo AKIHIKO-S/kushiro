@@ -7760,86 +7760,87 @@ const EnT = {
  },
 
  async openLink(entrant) {
- const sug = await api.get(`/api/entrants/${entrant.id}/suggest-player`);
  const allPlayers = await api.get("/api/players?sort=furigana");
- let selectedId = entrant.player_id || "";
+ const isDoubles = !!(entrant.is_doubles || entrant.partner_name);
 
- const searchInput = h("input", { className: "input", placeholder: "選手検索...", autocomplete: "off" });
- const resultList = h("div", { className: "autoc-list hidden",
- style: { position: "relative", maxHeight: "200px", overflowY: "auto" } });
- searchInput.addEventListener("input", () => {
- const q = searchInput.value.trim().toLowerCase();
- resultList.innerHTML = "";
- if (!q) { resultList.classList.add("hidden"); return; }
- allPlayers.filter(p =>
- p.name.toLowerCase().includes(q) || (p.furigana || "").includes(q)
- ).slice(0, 10).forEach(p => {
- resultList.appendChild(h("div", { className: "autoc-item",
- onClick: () => {
- searchInput.value = `${p.name} (${p.team || "—"})`;
- selectedId = p.id;
- resultList.classList.add("hidden");
- }},
- h("div", { className: "autoc-item-name" }, p.name),
- h("div", { className: "autoc-item-team" }, p.team || "—")));
- });
- resultList.classList.remove("hidden");
- });
+ // 1メンバー分のリンクセクション (本人 or ペア)
+ const buildSection = async (opt) => {
+   const sug = await api.get(`/api/entrants/${entrant.id}/suggest-player` + (opt.isPartner ? "?partner=1" : ""));
+   let selectedId = opt.currentId || "";
+   const doLink = async (pid) => {
+     await api.put(`/api/entrants/${entrant.id}/link`, { player_id: pid, is_partner: opt.isPartner });
+     toast(pid ? "連携しました" : "連携解除しました", "ok");
+     document.querySelector(".modal-bg")?.remove();
+     EnT.openLink(Object.assign({}, entrant)); // 最新状態で開き直し
+   };
+   const searchInput = h("input", { className: "input input-sm", placeholder: "DBから選手検索...", autocomplete: "off" });
+   const resultList = h("div", { className: "autoc-list hidden",
+     style: { position: "relative", maxHeight: "180px", overflowY: "auto" } });
+   searchInput.addEventListener("input", () => {
+     const q = searchInput.value.trim().toLowerCase();
+     resultList.innerHTML = "";
+     if (!q) { resultList.classList.add("hidden"); return; }
+     allPlayers.filter(p => p.name.toLowerCase().includes(q) || (p.furigana || "").includes(q))
+       .slice(0, 10).forEach(p => {
+       resultList.appendChild(h("div", { className: "autoc-item",
+         onClick: () => { searchInput.value = `${p.name} (${p.team || "—"})`; selectedId = p.id; resultList.classList.add("hidden"); } },
+         h("div", { className: "autoc-item-name" }, p.name),
+         h("div", { className: "autoc-item-team" }, p.team || "—")));
+     });
+     resultList.classList.remove("hidden");
+   });
+   const linked = !!opt.currentId;
+   return h("div", { className: "field" },
+     h("div", { className: "flex", style: { justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" } },
+       h("div", {},
+         h("div", { className: "field-label", style: { margin: 0 } }, opt.label),
+         h("div", { style: { fontWeight: 700, fontSize: "14px" } }, opt.memberName || "(未設定)"),
+         h("div", { className: "text-xs text-sub" }, opt.memberTeam || "(所属なし)")),
+       h("span", { style: { fontSize: "11px", fontWeight: 700, padding: "2px 9px", borderRadius: "10px",
+         background: linked ? "#dcfce7" : "#fef3c7", color: linked ? "#15803d" : "#92400e" } },
+         linked ? "連携済" : "未連携")),
+     sug.suggested ? h("div", { style: { background: "#ecfdf5", border: "1px solid #a7f3d0",
+       borderRadius: "6px", padding: "8px", margin: "6px 0" } },
+       h("div", { className: "text-xs", style: { color: "#065f46", fontWeight: 700 } },
+         "DBに同名候補: " + sug.suggested.name + " (" + (sug.suggested.team || "—") + ")"),
+       h("button", { className: "btn btn-sm", style: { marginTop: "5px" },
+         onClick: () => doLink(sug.suggested.id) }, "この選手と連携")) : null,
+     h("div", { style: { position: "relative", marginTop: "6px" } }, searchInput, resultList),
+     h("div", { className: "flex gap-1", style: { marginTop: "8px", flexWrap: "wrap" } },
+       h("button", { className: "btn btn-sm",
+         onClick: () => { if (!selectedId) return toast("選手を選択してください", "err"); doLink(selectedId); } }, "選択を連携"),
+       h("button", { className: "btn btn-sm btn-ghost",
+         onClick: async () => {
+           await api.post(`/api/entrants/${entrant.id}/create-player`, { is_partner: opt.isPartner });
+           toast("新規作成して連携しました", "ok");
+           document.querySelector(".modal-bg")?.remove();
+           EnT.openLink(Object.assign({}, entrant));
+         } }, "新規作成して連携"),
+       linked ? h("button", { className: "btn btn-sm btn-ghost", style: { color: "#b91c1c" },
+         onClick: () => doLink(null) }, "連携解除") : null,
+     ),
+   );
+ };
 
- const body = h("div", {},
- h("div", { className: "mb-3" },
- h("div", { className: "text-sm text-sub" }, "出場選手:"),
- h("div", { className: "font-bold" }, entrant.display_name),
- h("div", { className: "text-xs text-sub" }, entrant.team || "(所属なし)"),
- ),
- h("div", { className: "mb-3" },
- h("div", { className: "text-sm text-sub" }, "現在のDB連携:"),
- h("div", {}, entrant.player_id ? "連携済 (ID: " + entrant.player_id.slice(0, 8) + "...)" : "未連携"),
- ),
- sug.suggested ? h("div", { className: "card",
- style: { background: "var(--ok-bg)", padding: "10px", margin: "8px 0" } },
- h("div", { className: "text-sm font-bold" }, "DB に同名選手を発見"),
- h("div", { className: "text-sm" }, sug.suggested.name + " (" + (sug.suggested.team || "—") + ")"),
- h("button", { className: "btn btn-sm mt-2",
- onClick: async () => {
- await api.put(`/api/entrants/${entrant.id}/link`, { player_id: sug.suggested.id });
- toast("連携しました", "ok");
- document.querySelector(".modal-bg")?.remove();
- EnT.reload();
- }}, "この選手と連携")
- ) : null,
- h("div", { className: "field" },
- h("label", { className: "field-label" }, "DBから選手検索 (手動指定)"),
- h("div", { style: { position: "relative" } }, searchInput, resultList),
- ),
- h("div", { className: "text-sm text-sub mt-2" },
- "DB連携すると、この大会の結果が選手の個人成績に蓄積されます。"),
- );
- const foot = h("div", { className: "flex gap-2" },
- entrant.player_id ? h("button", { className: "btn btn-ghost",
- onClick: async () => {
- await api.put(`/api/entrants/${entrant.id}/link`, { player_id: null });
- toast("連携解除", "ok");
- document.querySelector(".modal-bg")?.remove();
- EnT.reload();
- }}, "連携解除") : null,
- h("button", { className: "btn btn-ghost",
- onClick: async () => {
- await api.post(`/api/entrants/${entrant.id}/create-player`, {});
- toast("マスタDB に新規作成して連携", "ok");
- document.querySelector(".modal-bg")?.remove();
- EnT.reload();
- }}, "新規作成して連携"),
- h("button", { className: "btn",
- onClick: async () => {
- if (!selectedId) return toast("選手を選択してください", "err");
- await api.put(`/api/entrants/${entrant.id}/link`, { player_id: selectedId });
- toast("連携しました", "ok");
- document.querySelector(".modal-bg")?.remove();
- EnT.reload();
- }}, "連携保存"),
- );
- openModal("DB連携 (マスタDB 反転 出場選手)", body, foot);
+ // 最新の entrant を取得 (連携状態を反映)
+ try { const fresh = await api.get(`/api/entrants/${entrant.id}`); if (fresh && !fresh.error) entrant = fresh; } catch (e) {}
+
+ const body = h("div", {});
+ body.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "8px" } },
+   isDoubles ? "ダブルス: ペア2名をそれぞれ個別にマスタDBへ連携できます。"
+             : "この出場選手をマスタDBの選手に連携します。"));
+ body.appendChild(await buildSection({ label: isDoubles ? "選手1 (本人)" : "選手",
+   memberName: entrant.name, memberTeam: entrant.team, isPartner: false, currentId: entrant.player_id }));
+ if (isDoubles) {
+   body.appendChild(await buildSection({ label: "選手2 (ペア)",
+     memberName: entrant.partner_name, memberTeam: entrant.partner_team || entrant.team,
+     isPartner: true, currentId: entrant.partner_player_id }));
+ }
+ body.appendChild(h("div", { className: "text-xs text-sub", style: { marginTop: "6px" } },
+   "DB連携すると、この大会の結果が各選手の個人成績に蓄積されます。"));
+ const foot = h("button", { className: "btn btn-ghost",
+   onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる");
+ openModal(isDoubles ? "DB連携 (ペア2名)" : "DB連携", body, foot);
  },
 
  async deleteEntrant(e) {
