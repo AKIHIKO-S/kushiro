@@ -1739,13 +1739,32 @@ function generateBracket(tournamentId, event, options) {
   });
 
   const N = sorted.length;
-  const bracketSize = Math.pow(2, Math.ceil(Math.log2(N)));
-  const totalRounds = Math.log2(bracketSize);
+  // placement: "as_drawn" = 選手番号(seed=通し番号)をそのまま位置に固定配置 (取込表通り)
+  //            それ以外 = 標準シード配置 (1 vs N, 2 vs N-1 …)
+  const asDrawn = options.placement === "as_drawn";
+
+  let bracketSize, totalRounds;
+  if (asDrawn) {
+    // 通し番号の最大値を収容できるサイズ (空き位置は BYE)
+    const maxSeed = Math.max(N, ...sorted.map(p => parseInt(p.seed) || 0));
+    bracketSize = Math.pow(2, Math.ceil(Math.log2(Math.max(2, maxSeed))));
+  } else {
+    bracketSize = Math.pow(2, Math.ceil(Math.log2(N)));
+  }
+  totalRounds = Math.log2(bracketSize);
   const positions = bracketPositions(bracketSize);
 
-  // seed番号→選手
+  // seed番号→選手 (標準配置用: ふりがな順の順位)
   const playerBySeed = {};
   sorted.forEach((p, i) => { playerBySeed[i + 1] = p; });
+  // 通し番号(seed)→選手 (as_drawn 用: 番号 = 線形スロット位置)
+  const playerByDrawNo = {};
+  if (asDrawn) {
+    sorted.forEach(p => {
+      const s = parseInt(p.seed) || 0;
+      if (s >= 1 && s <= bracketSize) playerByDrawNo[s] = p;
+    });
+  }
 
   // 既存の同event試合を削除（regen）
   if (options.regenerate) {
@@ -1757,13 +1776,21 @@ function generateBracket(tournamentId, event, options) {
   // round 1
   const round1 = [];
   for (let i = 0; i < bracketSize; i += 2) {
-    const seedA = positions[i], seedB = positions[i + 1];
+    let p1, p2;
+    if (asDrawn) {
+      // 通し番号 i+1 が player1、i+2 が player2 (上→下の並びそのまま)
+      p1 = playerByDrawNo[i + 1] || null;
+      p2 = playerByDrawNo[i + 2] || null;
+    } else {
+      p1 = playerBySeed[positions[i]] || null;
+      p2 = playerBySeed[positions[i + 1]] || null;
+    }
     round1.push({
       id: uid(),
       bracket_pos: i / 2,
       match_no: i / 2 + 1,
-      player1: playerBySeed[seedA] || null, // null = BYE
-      player2: playerBySeed[seedB] || null,
+      player1: p1, // null = BYE
+      player2: p2,
     });
   }
   matchesByRound.push(round1);
@@ -1874,8 +1901,11 @@ function generateBracket(tournamentId, event, options) {
       // 左半分かどうか
       const isLeft1 = slot1 < halfSize;
       const isLeft2 = slot2 < halfSize;
-      const num1 = isLeft1 ? (slot1 + 1) : (slot1 - halfSize + 1);
-      const num2 = isLeft2 ? (slot2 + 1) : (slot2 - halfSize + 1);
+      // as_drawn: 取り込んだ通し番号(seed)をそのまま表示番号に。それ以外は位置から左右別番号。
+      const num1 = asDrawn ? (parseInt(m.player1?.seed) || (slot1 + 1))
+                           : (isLeft1 ? (slot1 + 1) : (slot1 - halfSize + 1));
+      const num2 = asDrawn ? (parseInt(m.player2?.seed) || (slot2 + 1))
+                           : (isLeft2 ? (slot2 + 1) : (slot2 - halfSize + 1));
       const side1 = isLeft1 ? "L" : "R";
       const side2 = isLeft2 ? "L" : "R";
       if (m.player1 && m.player1.id) {
@@ -3603,6 +3633,7 @@ function importBracket(tournamentId, data) {
         regenerate: data.regenerate !== undefined ? data.regenerate : b.regenerate,
         auto_create_players: data.auto_create_players !== undefined
           ? data.auto_create_players : b.auto_create_players,
+        placement: data.placement !== undefined ? data.placement : b.placement,
       };
       const r = importBracket(tournamentId, merged);
       results.push({ event: b.event, ...r });
@@ -3724,6 +3755,7 @@ function importFromSeedList(tournamentId, data) {
   const r = generateBracket(tournamentId, data.event, {
     entrant_ids: entrantIds,
     regenerate: false, // 既に entrants は再生成済み (matches だけ regen)
+    placement: data.placement,
   });
 
   // matches だけ消す必要があるので generateBracket 内の regenerate を改めて呼ぶ
@@ -3731,7 +3763,7 @@ function importFromSeedList(tournamentId, data) {
     sqlite.prepare(`DELETE FROM matches WHERE tournament_id=? AND event=?`)
       .run(tournamentId, data.event);
     // 再呼出
-    const r2 = generateBracket(tournamentId, data.event, { entrant_ids: entrantIds });
+    const r2 = generateBracket(tournamentId, data.event, { entrant_ids: entrantIds, placement: data.placement });
     return { ...r2, entrants_created: entrantIds.length, linked_to_players: linkedPlayers.length };
   }
 

@@ -468,6 +468,7 @@ function processHeader(ws, header, allHeaders, formatHint, merges, verbose) {
     block: header.block,
     regenerate: true,
     auto_link_to_players: false,
+    placement: 'as_drawn', // 通し番号(seed)通りに固定配置 (取込表通りの対戦)
     players,
   };
 }

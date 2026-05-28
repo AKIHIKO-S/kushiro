@@ -710,6 +710,7 @@ app.post("/api/tournaments/:id/kumiawase/upload",
       if (dryRun) return res.json({ preview: data, message: "解析プレビュー (まだ取込されていません)" });
       data.regenerate = true;
       data.auto_link_to_players = true;
+      data.placement = "as_drawn"; // 取り込んだ表通りに対戦を固定配置 (再シードしない)
       const r = db.importBracket(req.params.id, data);
       return res.json({ ...r, source: "kumiawase_chart", used_parser: "parse_pdf_bracket.js" });
     } catch (e) {
@@ -739,6 +740,7 @@ app.post("/api/tournaments/:id/kumiawase/upload",
     if (dryRun) return res.json({ preview: data, message: "解析プレビュー (まだ取込されていません)" });
     data.regenerate = true;
     data.auto_link_to_players = true;
+    data.placement = "as_drawn"; // 取り込んだ表通りに対戦を固定配置 (再シードしない)
     const r = db.importBracket(req.params.id, data);
     return res.json({ ...r, source: "kumiawase_chart", used_parser: "parse_ktta_bracket.js" });
   } catch (e) {

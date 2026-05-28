@@ -3155,7 +3155,8 @@ const A = {
  if (!confirm("内容を確認しました。トーナメントへ取り込みますか?\n" +
  "(既存の同種目の試合は削除されます)")) return;
  // 編集された editablePlayers を反映
- const payload = { ...preview, regenerate: true, auto_link_to_players: true };
+ // placement: as_drawn = 取り込んだ表通りに対戦を固定配置 (再シードしない)
+ const payload = { ...preview, regenerate: true, auto_link_to_players: true, placement: "as_drawn" };
  if (preview._editablePlayers && preview._editablePlayers.length) {
    payload.players = preview._editablePlayers;
    // bracket-tree 形式の matches にも反映 (氏名・所属を更新)
