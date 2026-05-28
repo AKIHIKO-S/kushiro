@@ -152,6 +152,21 @@ sqlite.exec(`
   CREATE INDEX IF NOT EXISTS idx_matches_winner ON matches(winner_id);
   CREATE INDEX IF NOT EXISTS idx_matches_loser ON matches(loser_id);
   CREATE INDEX IF NOT EXISTS idx_tp_tournament ON tournament_players(tournament_id);
+
+  -- アプリ設定 (VAPID鍵などの key-value)
+  CREATE TABLE IF NOT EXISTS app_kv (
+    k TEXT PRIMARY KEY,
+    v TEXT DEFAULT ''
+  );
+
+  -- Web Push 購読 (マイ番号=選手 ごと・端末ごと)
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    endpoint TEXT PRIMARY KEY,
+    player_id TEXT NOT NULL,
+    subscription_json TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_push_player ON push_subscriptions(player_id);
 `);
 
 // 既存DBにカラムがない場合は追加
@@ -4344,7 +4359,40 @@ function cleanupInvalidPlayers() {
   return { removed: ids.length, details: ids };
 }
 
+// ─── app_kv (VAPID鍵など) + Web Push 購読 ───────────────
+const kvStmts = {
+  get: sqlite.prepare(`SELECT v FROM app_kv WHERE k=?`),
+  set: sqlite.prepare(`INSERT INTO app_kv (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`),
+};
+function kvGet(k) { const r = kvStmts.get.get(k); return r ? r.v : null; }
+function kvSet(k, v) { kvStmts.set.run(k, String(v == null ? "" : v)); }
+
+const pushStmts = {
+  upsert: sqlite.prepare(`INSERT INTO push_subscriptions (endpoint, player_id, subscription_json)
+    VALUES (@endpoint, @player_id, @subscription_json)
+    ON CONFLICT(endpoint) DO UPDATE SET player_id=excluded.player_id, subscription_json=excluded.subscription_json`),
+  byPlayer: sqlite.prepare(`SELECT * FROM push_subscriptions WHERE player_id=?`),
+  delByEndpoint: sqlite.prepare(`DELETE FROM push_subscriptions WHERE endpoint=?`),
+};
+function savePushSubscription(playerId, subscription) {
+  if (!playerId || !subscription || !subscription.endpoint) {
+    return { error: "playerId と subscription が必要です" };
+  }
+  pushStmts.upsert.run({ endpoint: subscription.endpoint, player_id: String(playerId),
+    subscription_json: JSON.stringify(subscription) });
+  return { ok: true };
+}
+function getPushSubscriptionsForPlayer(playerId) {
+  if (!playerId) return [];
+  return pushStmts.byPlayer.all(String(playerId)).map(r => {
+    try { return { endpoint: r.endpoint, sub: JSON.parse(r.subscription_json) }; }
+    catch { return null; }
+  }).filter(Boolean);
+}
+function deletePushSubscription(endpoint) { if (endpoint) pushStmts.delByEndpoint.run(endpoint); }
+
 module.exports = {
+  kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,

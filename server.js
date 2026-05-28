@@ -16,6 +16,50 @@ const reports = require("./reports");
 const entryForm = require("./entry_form");
 const mailer = require("./mailer");
 
+// ─── Web Push (任意機能) ────────────────────────────────
+// web-push 未インストールでもサーバーは動作する (プッシュのみ無効化)。
+// VAPID 鍵は初回に自動生成して DB(app_kv) に保存する。
+let webpush = null;
+let PUSH_ENABLED = false;
+let VAPID_PUBLIC = "";
+try {
+  webpush = require("web-push");
+  let pub = db.kvGet("vapid_public");
+  let priv = db.kvGet("vapid_private");
+  if (!pub || !priv) {
+    const keys = webpush.generateVAPIDKeys();
+    pub = keys.publicKey; priv = keys.privateKey;
+    db.kvSet("vapid_public", pub);
+    db.kvSet("vapid_private", priv);
+    console.log("[push] VAPID 鍵を新規生成しました");
+  }
+  const subject = process.env.PUSH_CONTACT || "mailto:admin@example.com";
+  webpush.setVapidDetails(subject, pub, priv);
+  VAPID_PUBLIC = pub;
+  PUSH_ENABLED = true;
+  console.log("[push] Web Push 有効");
+} catch (e) {
+  console.warn("[push] Web Push 無効 (web-push 未インストール等):", e.message);
+}
+
+// 指定選手の全購読端末へ通知を送信 (失効した購読は削除)
+async function sendPushToPlayer(playerId, payload) {
+  if (!PUSH_ENABLED || !playerId) return;
+  const subs = db.getPushSubscriptionsForPlayer(playerId);
+  if (!subs.length) return;
+  const body = JSON.stringify(payload);
+  await Promise.all(subs.map(async ({ endpoint, sub }) => {
+    try {
+      await webpush.sendNotification(sub, body);
+    } catch (err) {
+      // 410 Gone / 404 → 購読失効。DBから削除。
+      if (err && (err.statusCode === 410 || err.statusCode === 404)) {
+        db.deletePushSubscription(endpoint);
+      }
+    }
+  }));
+}
+
 // xlsx 一時アップロード保存先 (拡張子保持)
 const uploadDir = path.join(os.tmpdir(), "tt-uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -1477,10 +1521,43 @@ app.post("/api/matches/:id/call", requireAdmin, (req, res) => {
   );
   if (r?.error) return res.status(400).json(r);
   res.json(r);
+  // 呼出成功 → 当該試合の選手にプッシュ通知 (対戦が入った段階での通知) #188
+  try {
+    const m = db.getMatch(req.params.id);
+    if (m && PUSH_ENABLED) {
+      const tableNo = m.table_no || (parseInt(req.body?.table_no) || 0);
+      const mk = (meId, oppName) => ({
+        title: "あなたの試合です！",
+        body: `${m.event || ""} ${m.round || ""}\nvs ${oppName || "?"}` + (tableNo ? `\n台 ${tableNo} へお越しください` : ""),
+        url: "/viewer/#mynumber",
+        tag: "ktta-call",
+      });
+      if (m.player1_id) sendPushToPlayer(m.player1_id, mk(m.player1_id, m.player2_name)).catch(() => {});
+      if (m.player2_id) sendPushToPlayer(m.player2_id, mk(m.player2_id, m.player1_name)).catch(() => {});
+    }
+  } catch (e) { /* 通知失敗は無視 (呼出本体は成功済み) */ }
 });
 
 app.post("/api/matches/:id/uncall", requireAdmin, (req, res) => {
   res.json(db.uncallMatch(req.params.id));
+});
+
+// ─── Web Push 購読 API ──────────────────────────────────
+app.get("/api/push/vapid-public-key", (req, res) => {
+  res.json({ enabled: PUSH_ENABLED, key: VAPID_PUBLIC });
+});
+app.post("/api/push/subscribe", (req, res) => {
+  if (!PUSH_ENABLED) return res.status(503).json({ error: "プッシュ通知は無効です" });
+  const { player_id, subscription } = req.body || {};
+  if (!player_id || !subscription) return res.status(400).json({ error: "player_id と subscription が必要です" });
+  const r = db.savePushSubscription(player_id, subscription);
+  if (r.error) return res.status(400).json(r);
+  res.json({ ok: true });
+});
+app.post("/api/push/unsubscribe", (req, res) => {
+  const ep = (req.body || {}).endpoint;
+  if (ep) db.deletePushSubscription(ep);
+  res.json({ ok: true });
 });
 
 app.post("/api/matches/:id/referee", requireAdmin, (req, res) => {

@@ -1952,6 +1952,8 @@ const MP = {
  } else {
  await MP.fetch();
  MP.poller = setInterval(() => MP.fetch(), 5000);
+ // 既登録なら Web Push を(再)購読 (端末/許可状況が変わっている場合に備える)
+ if (("Notification" in window) && Notification.permission === "granted") MP.setupPush();
  }
  },
 
@@ -2023,6 +2025,7 @@ const MP = {
  try { await Notification.requestPermission(); } catch {}
  }
  MP.notifEnabled = ("Notification" in window) && Notification.permission === "granted";
+ if (MP.notifEnabled) MP.setupPush();
  await MP.init();
  },
 
@@ -2086,6 +2089,38 @@ const MP = {
  if (navigator.vibrate) {
  navigator.vibrate([300, 150, 300, 150, 300]);
  }
+ },
+
+ // ── Web Push 購読 (アプリを閉じていてもバックグラウンド通知) #188 ──
+ // 失敗しても致命的ではない (ページ表示中は notify() のブラウザ通知で補完される)。
+ // ※ iOS は「ホーム画面に追加」したPWAでのみプッシュが届く。
+ async setupPush() {
+ try {
+ if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+ if (!("Notification" in window) || Notification.permission !== "granted") return;
+ if (!MP.playerId) return;
+ const cfg = await api.get("/api/push/vapid-public-key");
+ if (!cfg || !cfg.enabled || !cfg.key) return;
+ const reg = await navigator.serviceWorker.register("/viewer/sw.js");
+ await navigator.serviceWorker.ready;
+ let sub = await reg.pushManager.getSubscription();
+ if (!sub) {
+ sub = await reg.pushManager.subscribe({
+ userVisibleOnly: true,
+ applicationServerKey: MP._urlB64ToUint8(cfg.key),
+ });
+ }
+ await api.post("/api/push/subscribe",
+ { player_id: MP.playerId, subscription: sub.toJSON ? sub.toJSON() : sub });
+ } catch (e) { console.warn("push setup failed", e); }
+ },
+ _urlB64ToUint8(base64) {
+ const padding = "=".repeat((4 - base64.length % 4) % 4);
+ const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+ const raw = atob(b64);
+ const arr = new Uint8Array(raw.length);
+ for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+ return arr;
  },
 
  beep() {
