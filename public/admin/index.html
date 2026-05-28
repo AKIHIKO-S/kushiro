@@ -618,6 +618,24 @@
    padding: 1px 7px; border-radius: 10px; line-height: 1.5;
  }
 
+ /* ─── 出場選手 名簿: 合計ヘッドライン + 補助折りたたみ #151 ─── */
+ .roster-total { display: flex; align-items: baseline; gap: 6px; margin-bottom: 10px; }
+ .roster-total-n { font-size: 30px; font-weight: 800; line-height: 1; color: var(--ink-900); }
+ .roster-total-l { font-size: 13px; font-weight: 700; color: var(--ink-700); }
+ .roster-total-sub { font-size: 11px; color: var(--sub); margin-left: 4px;
+   background: var(--ink-100); padding: 2px 8px; border-radius: 9px; }
+ .subtools { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
+ .subtools > summary {
+   list-style: none; cursor: pointer; font-size: 12px; font-weight: 700;
+   color: var(--sub); display: inline-flex; align-items: center; gap: 5px;
+   padding: 2px 0; user-select: none;
+ }
+ .subtools > summary::-webkit-details-marker { display: none; }
+ .subtools > summary::before { content: "▸"; transition: transform .15s; display: inline-block; }
+ .subtools[open] > summary::before { transform: rotate(90deg); }
+ .subtools-body { margin-top: 8px; }
+ .subtools-note { font-size: 11px; color: var(--sub); line-height: 1.6; margin-bottom: 8px; }
+
  /* ─── 再コール バッジ ─── */
  .call-badge {
    display: inline-flex; align-items: center; gap: 3px;
@@ -3520,19 +3538,13 @@ const A = {
  const card = h("div", { className: "card" });
  const inner = h("div", {});
  card.appendChild(h("div", { className: "card-head" },
- h("div", { className: "card-title" }, "出場選手登録 / 申込集計"),
+ h("div", {},
+   h("div", { className: "card-title" }, "出場選手 (名簿)"),
+   h("div", { className: "card-title-sub" }, "トーナメント作成・進行に使う選手名簿")),
  h("div", { className: "flex gap-2 flex-wrap" },
+ // 運営に必須の名簿操作 (主役)
  h("button", { className: "btn btn-sm",
  onClick: () => A.openExcelUpload(t.id) }, "Excel / PDF 取込"),
- h("button", { className: "btn btn-sm btn-ghost",
- onClick: () => A.openJsonImport(t.id) }, "JSON取込"),
- h("button", { className: "btn btn-sm btn-ghost",
- onClick: () => A.downloadAggregation(t) }, "集計表ダウンロード"),
- h("button", { className: "btn btn-sm btn-ghost",
- onClick: () => A.downloadMatchCards(t) }, "対戦票ダウンロード"),
- h("button", { className: "btn btn-sm btn-ghost",
- onClick: () => A.openReceiptsDialog(t) }, "領収書一括出力"),
- // ★Step 3 追加: 抽選番号自動付与 + 重複管理表 (ニッタク杯形式)
  h("button", { className: "btn btn-sm",
  style: { background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" },
  onClick: () => A.openDrawNumberDialog(t) }, "抽選番号 自動付与"),
@@ -3545,6 +3557,23 @@ const A = {
  ),
  ));
  card.appendChild(inner);
+ // 申込集計・領収書は GAS が本式 → 補助機能として折りたたみに降格 (#151)
+ card.appendChild(h("details", { className: "subtools" },
+ h("summary", {}, "申込集計・帳票 (補助)"),
+ h("div", { className: "subtools-body" },
+ h("div", { className: "subtools-note" },
+ "申込の集計・領収書・受付管理は Google スプレッドシート (GAS) が本式です。",
+ "下記は手元での確認・予備用の補助機能です。"),
+ h("div", { className: "flex gap-2 flex-wrap" },
+ h("button", { className: "btn btn-sm btn-ghost",
+ onClick: () => A.downloadAggregation(t) }, "集計表ダウンロード"),
+ h("button", { className: "btn btn-sm btn-ghost",
+ onClick: () => A.openReceiptsDialog(t) }, "領収書一括出力"),
+ h("button", { className: "btn btn-sm btn-ghost",
+ onClick: () => A.downloadMatchCards(t) }, "対戦票ダウンロード"),
+ h("button", { className: "btn btn-sm btn-ghost",
+ onClick: () => A.openJsonImport(t.id) }, "JSON取込"),
+ ))));
  // 非同期で出場選手数を取得して表示
  (async () => {
  try {
@@ -3562,6 +3591,11 @@ const A = {
  ));
  return;
  }
+ const totalEntrants = Object.values(stats).reduce((a, st) => a + (st.total || 0), 0);
+ inner.appendChild(h("div", { className: "roster-total" },
+ h("span", { className: "roster-total-n" }, String(totalEntrants)),
+ h("span", { className: "roster-total-l" }, "名 登録"),
+ h("span", { className: "roster-total-sub" }, Object.keys(stats).length + " 種目")));
  const grid = h("div", { className: "grid grid-auto" });
  Object.entries(stats).forEach(([ev, st]) => {
  const blocks_str = Object.keys(st.blocks).length > 1
