@@ -521,7 +521,7 @@
      <span class="ktta-logo-tag">KUSHIRO · TABLE TENNIS</span>
    </span>
  </a>
- <div class="live-indicator">
+ <div class="live-indicator" id="liveIndicator" style="display:none">
    <span class="live-dot"></span> LIVE
  </div>
  </div>
@@ -686,10 +686,19 @@ const V = {
  try {
  const tournaments = await api.get("/api/public/tournaments");
  V.state.tournaments = tournaments || [];
+ V.updateLiveIndicator();
  if (V.activeTab === "tournaments") V.renderTournaments();
  } catch (e) {
  console.error(e);
  }
+ },
+
+ // 進行中の大会が1件も無ければ LIVE 表記を隠す
+ updateLiveIndicator() {
+ const el = document.getElementById("liveIndicator");
+ if (!el) return;
+ const hasOngoing = (V.state.tournaments || []).some(t => t.status === "ongoing");
+ el.style.display = hasOngoing ? "" : "none";
  },
 
  // ─── 大会一覧 ────────────────────────────────
