@@ -1817,6 +1817,7 @@ const publicDir = path.join(__dirname, "public");
 app.use("/shared", express.static(path.join(publicDir, "shared")));
 app.use("/admin", express.static(path.join(publicDir, "admin")));
 app.use("/viewer", express.static(path.join(publicDir, "viewer")));
+app.use("/widget", express.static(path.join(publicDir, "widget"))); // Jimdo/STUDIO 埋込ウィジェット
 
 // 運用マニュアル (Markdown)
 for (const docName of ["OPERATIONS.md", "RENDER_DEPLOY.md", "UPDATE_WORKFLOW.md", "HOSTING.md",

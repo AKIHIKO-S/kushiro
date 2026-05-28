@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KTTA ライブウィジェット</title>
+<style>
+  :root {
+    --w-bg: #ffffff; --w-fg: #0f172a; --w-sub: #64748b; --w-line: #e2e8f0;
+    --w-accent: #dc2626; --w-card: #f8fafc; --w-pri: #1e293b;
+  }
+  body.dark {
+    --w-bg: #0f172a; --w-fg: #f1f5f9; --w-sub: #94a3b8; --w-line: #1e293b;
+    --w-accent: #f87171; --w-card: #1e293b; --w-pri: #0b1220;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--w-bg); color: var(--w-fg);
+    font-family: "Hiragino Sans","Yu Gothic UI",system-ui,sans-serif; }
+  .kw { max-width: 560px; margin: 0 auto; padding: 10px; }
+  .kw-head { display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; background: var(--w-pri); color: #fff;
+    border-radius: 10px 10px 0 0; }
+  .kw-live { display: inline-flex; align-items: center; gap: 5px;
+    background: var(--w-accent); color: #fff; font-size: 11px; font-weight: 800;
+    padding: 2px 9px; border-radius: 10px; }
+  .kw-live .dot { width: 7px; height: 7px; border-radius: 50%; background: #fff;
+    animation: kwpulse 1.4s infinite; }
+  @keyframes kwpulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .kw-title { font-size: 14px; font-weight: 800; flex: 1; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kw-body { border: 1px solid var(--w-line); border-top: none;
+    border-radius: 0 0 10px 10px; padding: 10px; background: var(--w-bg); }
+  .kw-stats { display: flex; gap: 8px; margin-bottom: 10px; }
+  .kw-stat { flex: 1; text-align: center; background: var(--w-card);
+    border: 1px solid var(--w-line); border-radius: 8px; padding: 8px 4px; }
+  .kw-stat-n { font-size: 22px; font-weight: 800; line-height: 1; }
+  .kw-stat-n.red { color: var(--w-accent); } .kw-stat-n.amber { color: #d97706; }
+  .kw-stat-l { font-size: 10px; color: var(--w-sub); margin-top: 3px; }
+  .kw-sec { font-size: 11px; font-weight: 700; color: var(--w-sub);
+    margin: 10px 0 5px; }
+  .kw-match { display: grid; grid-template-columns: 42px 1fr; gap: 8px;
+    align-items: center; background: var(--w-card); border: 1px solid var(--w-line);
+    border-left: 3px solid var(--w-accent); border-radius: 7px;
+    padding: 7px 9px; margin-bottom: 5px; }
+  .kw-tno { background: var(--w-accent); color: #fff; font-weight: 800;
+    font-size: 13px; text-align: center; padding: 4px 0; border-radius: 5px; }
+  .kw-vs { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+  .kw-p { font-size: 13px; font-weight: 700; }
+  .kw-vs-sep { font-size: 10px; color: var(--w-sub); font-weight: 700; }
+  .kw-ev { font-size: 10px; color: var(--w-sub); }
+  .kw-res { display: flex; align-items: center; gap: 8px;
+    padding: 6px 9px; border-bottom: 1px solid var(--w-line); font-size: 13px; }
+  .kw-res .win { font-weight: 800; }
+  .kw-res .sc { font-family: ui-monospace,monospace; color: var(--w-sub); }
+  .kw-res .lose { color: var(--w-sub); }
+  .kw-empty { text-align: center; color: var(--w-sub); font-size: 12px; padding: 16px; }
+  .kw-foot { text-align: right; font-size: 9px; color: var(--w-sub); margin-top: 8px; }
+  .kw-foot a { color: var(--w-sub); }
+</style>
+</head>
+<body>
+<div class="kw" id="kw"><div class="kw-empty">読み込み中…</div></div>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var tid = q.get("t") || q.get("tournament") || "";
+  var type = q.get("type") || "live";      // live | results
+  var theme = q.get("theme") || "light";   // light | dark
+  var limit = parseInt(q.get("limit")) || 8;
+  if (theme === "dark") document.body.classList.add("dark");
+  var root = document.getElementById("kw");
+  var lastVer = null;
+
+  function esc(s) { return String(s == null ? "" : s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+  function render(s) {
+    if (!s || s.error) { root.innerHTML = '<div class="kw-empty">大会が見つかりません</div>'; return; }
+    var t = s.tournament || {};
+    var onT = s.on_table || [], rec = (s.recent_finished || []).filter(function(m){return m.winner_name!=="BYE"&&m.loser_name!=="BYE";});
+    var html = '';
+    html += '<div class="kw-head"><span class="kw-live"><span class="dot"></span>LIVE</span>'
+      + '<span class="kw-title">' + esc(t.name || "大会") + '</span></div>';
+    html += '<div class="kw-body">';
+    html += '<div class="kw-stats">'
+      + '<div class="kw-stat"><div class="kw-stat-n red">' + onT.length + '</div><div class="kw-stat-l">進行中</div></div>'
+      + '<div class="kw-stat"><div class="kw-stat-n amber">' + (s.callable ? s.callable.length : 0) + '</div><div class="kw-stat-l">残り試合</div></div>'
+      + '<div class="kw-stat"><div class="kw-stat-n">' + rec.length + '</div><div class="kw-stat-l">最近終了</div></div>'
+      + '</div>';
+
+    if (type === "results") {
+      html += '<div class="kw-sec">最近の結果</div>';
+      if (!rec.length) html += '<div class="kw-empty">まだ結果がありません</div>';
+      rec.slice(0, limit).forEach(function (m) {
+        html += '<div class="kw-res"><span class="win">' + esc(m.winner_name) + '</span>'
+          + '<span class="sc">' + (m.winner_sets||0) + '-' + (m.loser_sets||0) + '</span>'
+          + '<span class="lose">' + esc(m.loser_name) + '</span></div>';
+      });
+    } else {
+      html += '<div class="kw-sec">進行中の試合</div>';
+      if (!onT.length) html += '<div class="kw-empty">現在進行中の試合はありません</div>';
+      onT.slice(0, limit).forEach(function (m) {
+        html += '<div class="kw-match"><div class="kw-tno">台' + esc(m.table_no) + '</div>'
+          + '<div><div class="kw-vs"><span class="kw-p">' + esc(m.player1_name) + '</span>'
+          + '<span class="kw-vs-sep">vs</span><span class="kw-p">' + esc(m.player2_name) + '</span></div>'
+          + '<div class="kw-ev">' + esc((m.event||"") + " " + (m.round||"")) + '</div></div></div>';
+      });
+    }
+    html += '<div class="kw-foot">KTTA Platform · 自動更新</div>';
+    html += '</div>';
+    root.innerHTML = html;
+  }
+
+  function load() {
+    if (!tid) { root.innerHTML = '<div class="kw-empty">tournament id (?t=) が必要です</div>'; return; }
+    fetch("/api/public/tournaments/" + encodeURIComponent(tid) + "/live")
+      .then(function (r) { return r.json(); })
+      .then(render)
+      .catch(function () { /* keep last */ });
+  }
+
+  // 変化検知ポーリング: ops-version が変わった時だけ /live を取得 (サーバー負荷軽減)
+  function tick() {
+    if (!tid) return;
+    fetch("/api/public/tournaments/" + encodeURIComponent(tid) + "/ops-version")
+      .then(function (r) { return r.json(); })
+      .then(function (v) {
+        var ver = v && (v.version != null ? v.version : v.v);
+        if (ver !== lastVer) { lastVer = ver; load(); }
+      })
+      .catch(function () {});
+  }
+
+  load();
+  setInterval(tick, 15000);
+})();
+</script>
+</body>
+</html>
