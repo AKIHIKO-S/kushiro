@@ -30,9 +30,10 @@ ProtectSystem=strict
 ReadWritePaths=/opt/ktta /var/data
 ProtectHome=true
 
-# リソース制限 (任意・Always Free A1 でも余裕)
-MemoryHigh=512M
-MemoryMax=1G
+# リソース制限 (任意)
+# A1(24GB)で余裕を持たせつつ、Micro(1GB)でも物理超えなので実質無制限=安全。
+MemoryHigh=2G
+MemoryMax=6G
 
 [Install]
 WantedBy=multi-user.target
