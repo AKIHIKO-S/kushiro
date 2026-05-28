@@ -82,6 +82,19 @@ app.use((req, res, next) => {
   next();
 });
 
+// セキュリティヘッダ (依存追加なしの簡易 helmet 相当)
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("X-XSS-Protection", "0");
+  // HTTPS 配信時のみ HSTS (nginx/Caddy 経由の x-forwarded-proto を信頼)
+  if (IS_PROD && (req.secure || req.get("x-forwarded-proto") === "https")) {
+    res.setHeader("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+  }
+  next();
+});
+
 // ═══ 診断モジュール (本番デバッグ用) ═══
 // メモリ上にエラー・リクエスト履歴を保持し /api/diagnostics で確認可能に
 const DIAG = {
@@ -139,11 +152,16 @@ app.use((req, res, next) => {
 // GET (Excel/PDF ダウンロード等・ヘッダ付与不可) のみ ?key= も許可。
 function requireAdmin(req, res, next) {
   if (!ADMIN_KEY) {
-    if (IS_PROD && !requireAdmin._warned) {
-      requireAdmin._warned = true;
-      console.warn("[SECURITY] ADMIN_KEY 未設定 — 管理APIが無保護です。/etc/ktta.env に設定してください。");
+    // 本番で管理キー未設定なら「フェイルクローズ」: 無保護で通さず拒否する。
+    // (キー流出やメール悪用による想定外コストを防ぐ — 開発時のみバイパス)
+    if (IS_PROD) {
+      if (!requireAdmin._warned) {
+        requireAdmin._warned = true;
+        console.error("[SECURITY] ADMIN_KEY 未設定 — 管理APIを全て 503 で停止します。/etc/ktta.env に ADMIN_KEY を設定してください。");
+      }
+      return res.status(503).json({ error: "管理機能は未設定です。サーバーに ADMIN_KEY を設定してください。" });
     }
-    return next();
+    return next(); // 開発環境のみ無保護を許可
   }
   const headerKey = req.get("X-Admin-Key");
   const key = headerKey || (req.method === "GET" ? req.query.key : null);
@@ -435,11 +453,16 @@ app.delete("/api/tournaments/:id/players/:pid", requireAdmin, (req, res) => {
 
 // ═══ Entrants (大会参加選手) API ═══════════════════════
 // マスタDB players とは完全独立。任意にリンク可能。
+// entrant.note には申込者の連絡先(氏名/メール/電話)が含まれる場合があるため、
+// 一覧APIからは常に除外する (C1: PII漏洩対策)。連絡先は申込管理(entries)側で扱う。
+function stripEntrantPII(rows) {
+  return (rows || []).map(r => { const { note, ...rest } = r; return rest; });
+}
 app.get("/api/tournaments/:id/entrants", (req, res) => {
-  res.json(db.getEntrants(req.params.id, req.query.event));
+  res.json(stripEntrantPII(db.getEntrants(req.params.id, req.query.event)));
 });
 app.get("/api/public/tournaments/:id/entrants", (req, res) => {
-  res.json(db.getEntrants(req.params.id, req.query.event));
+  res.json(stripEntrantPII(db.getEntrants(req.params.id, req.query.event)));
 });
 app.get("/api/entrants/:id", (req, res) => {
   const e = db.getEntrant(req.params.id);
@@ -1305,10 +1328,16 @@ app.get("/api/tournaments/:id/entry-form-config", (req, res) => {
 
 // GAS スプレッドシートの集計を取得 (サーバー経由でプロキシ・CORS回避)
 // GET /api/tournaments/:id/gas-stats?gas_url=...
-app.get("/api/tournaments/:id/gas-stats", async (req, res) => {
+// 外部通信を行うため、コスト/クォータ悪用防止に専用レート制限 + タイムアウトを付与 (H1/H2対策)
+const gasProxyRateLimit = rateLimit({ windowMs: 60000, max: 20,
+  message: "集計取得が多すぎます。しばらく待って再試行してください。" });
+app.get("/api/tournaments/:id/gas-stats", gasProxyRateLimit, async (req, res) => {
   const gasUrl = req.query.gas_url || "";
   if (!gasUrl) return res.status(400).json({ error: "gas_url が必要です" });
-  if (!/^https:\/\/script\.google\.com\//.test(gasUrl)) {
+  // ホストを script.google.com に固定 (任意URLへの踏み台/SSRF防止)
+  let parsed;
+  try { parsed = new URL(gasUrl); } catch { parsed = null; }
+  if (!parsed || parsed.protocol !== "https:" || parsed.hostname !== "script.google.com") {
     return res.status(400).json({ error: "gas_url は https://script.google.com/... 形式である必要があります" });
   }
   try {
@@ -1316,8 +1345,9 @@ app.get("/api/tournaments/:id/gas-stats", async (req, res) => {
     const tournamentId = tournament ? tournament.id : req.params.id;
     const sep = gasUrl.includes("?") ? "&" : "?";
     const fullUrl = gasUrl + sep + "action=stats&tournament_id=" + encodeURIComponent(tournamentId);
-    // Node 18+ なら fetch がネイティブ
-    const r = await fetch(fullUrl, { redirect: "follow" });
+    // Node 18+ なら fetch がネイティブ。GAS は googleusercontent へ 302 するため redirect は follow。
+    // 8秒でタイムアウト (ハング・スローロリス対策)。
+    const r = await fetch(fullUrl, { redirect: "follow", signal: AbortSignal.timeout(8000) });
     const txt = await r.text();
     let data;
     try { data = JSON.parse(txt); }
@@ -1638,24 +1668,11 @@ app.post("/api/import/players", requireAdmin, (req, res) => {
 app.get("/api/stats", (req, res) => { res.json(db.getStats()); });
 app.get("/api/last-updated", (req, res) => { res.json({ t: db.getLastUpdated() }); });
 app.get("/api/health", (req, res) => {
-  // 拡張ヘルスチェック: DB 状態 + メモリ + アップタイム
-  let dbOk = false, dbInfo = null;
-  try {
-    const stats = db.getStats();
-    dbOk = true;
-    dbInfo = stats;
-  } catch (e) {
-    dbInfo = { error: String(e.message || e) };
-  }
-  res.json({
-    ok: dbOk,
-    time: new Date().toISOString(),
-    uptime_sec: Math.round(process.uptime()),
-    node_version: process.version,
-    memory_mb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-    db: dbInfo,
-    env: process.env.NODE_ENV || "development",
-  });
+  // 公開ヘルスチェックは最小限のみ (M1: バージョン/メモリ/環境などの内部情報は出さない)。
+  // 詳細は admin 専用の /api/diagnostics で確認する。
+  let dbOk = false;
+  try { db.getStats(); dbOk = true; } catch (e) { dbOk = false; }
+  res.json({ ok: dbOk, time: new Date().toISOString() });
 });
 
 // ═══ 診断 API (admin 専用) ═══
