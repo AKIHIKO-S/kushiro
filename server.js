@@ -117,11 +117,35 @@ app.use(compression({
 }));
 app.use(express.json({ limit: "10mb" }));
 
+// ── 冪等性ガード: op_id 付き書込みの二重適用を防ぐ (オフライン再送対策) ──
+// クライアントが op_id (body または X-Op-Id ヘッダ) を付けて再送した場合、
+// 既に成功済みなら処理を再実行せず前回のレスポンスを返す。
+// op_id 無しのリクエストは素通り (従来通り)。成功(2xx)のみキャッシュ。
+const _idempCache = new Map(); // op_id -> { status, body, t }
+const IDEMP_MAX = 1000;
+app.use((req, res, next) => {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+  const opId = (req.body && req.body.op_id) || req.get("X-Op-Id");
+  if (!opId) return next();
+  const hit = _idempCache.get(opId);
+  if (hit) { res.set("X-Idempotent-Replay", "1"); return res.status(hit.status).json(hit.body); }
+  const origJson = res.json.bind(res);
+  res.json = (body) => {
+    const sc = res.statusCode || 200;
+    if (sc < 400) {
+      _idempCache.set(opId, { status: sc, body, t: Date.now() });
+      if (_idempCache.size > IDEMP_MAX) { const k = _idempCache.keys().next().value; _idempCache.delete(k); }
+    }
+    return origJson(body);
+  };
+  next();
+});
+
 // CORS（大会運営アプリや別ドメインのViewerから叩けるように）
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Admin-Key");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Admin-Key, X-Op-Id");
   if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });

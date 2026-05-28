@@ -6589,12 +6589,13 @@ const O = {
  const sets = (m.sets || []).map(s => Array.isArray(s) && s.length === 2 ? [s[1], s[0]] : s);
  // 新しい勝者は元 loser (= player1 か player2 のどちらか)
  const newWinnerSlot = m.winner_name === m.player1_name ? 2 : 1;
- const r = await api.post(`/api/matches/${m.id}/correct`, {
+ const r = await api.opSend("POST", `/api/matches/${m.id}/correct`, {
    winner_slot: newWinnerSlot,
    sets,
    winner_sets: m.loser_sets,  // 反転
    loser_sets: m.winner_sets,
- });
+ }, { tag: m.id });
+ if (r.queued) return toast("オフライン: 勝敗反転を保存しました（接続復帰後に自動送信）", "warn");
  if (r.error) return toast(r.error, "err");
  toast("勝敗を反転しました", "ok");
  O.reload();
@@ -6668,10 +6669,12 @@ const O = {
        const sets = setInputs
          .map(({ p1, p2 }) => [parseInt(p1.value) || 0, parseInt(p2.value) || 0])
          .filter(s => s[0] > 0 || s[1] > 0);
-       const r = await api.post(`/api/matches/${m.id}/correct`, {
+       const r = await api.opSend("POST", `/api/matches/${m.id}/correct`, {
          winner_slot: winnerSlot,
          sets,
-       });
+       }, { tag: m.id });
+       if (r.queued) { document.querySelector(".modal-bg")?.remove();
+         return toast("オフライン: 修正を保存しました（接続復帰後に自動送信）", "warn"); }
        if (r.error) {
          alert("修正失敗:\n" + r.error +
            (r.next_match_label ? "\n\n次の試合: " + r.next_match_label : ""));
@@ -7291,12 +7294,14 @@ const O = {
    if (refSource === "manual" && !manualRefName.trim()) return toast("審判の氏名を入力してください", "err");
    // まずは force なしで試行し、サーバーが拘束を返したら確認ダイアログ経由で強制呼出する
    // (#190: 以前は force:blocked を初回送信し確認をスキップしていた不具合を修正)
-   const r = await api.post(`/api/matches/${selMatch.id}/call`, { ...buildPayload(), force: false });
+   const r = await api.opSend("POST", `/api/matches/${selMatch.id}/call`, { ...buildPayload(), force: false }, { tag: selMatch.id });
+   if (r.queued) { flowModal.remove(); return toast("オフライン: 呼出を保存しました（未送信" + api.pendingCount() + "件・接続復帰後に自動送信）", "warn"); }
    if (r.error) {
      if (r.blocked) {
        const msg = "選手拘束で呼べません:\n" + r.blocked.map(b => `・${b.player_name}: ${b.locked_by_label}`).join("\n") + "\n\n強制呼出しますか？";
        if (!confirm(msg)) return;
-       const r2 = await api.post(`/api/matches/${selMatch.id}/call`, { ...buildPayload(), force: true });
+       const r2 = await api.opSend("POST", `/api/matches/${selMatch.id}/call`, { ...buildPayload(), force: true }, { tag: selMatch.id });
+       if (r2.queued) { flowModal.remove(); return toast("オフライン: 強制呼出を保存しました（接続復帰後に送信）", "warn"); }
        if (r2.error) return toast(r2.error, "err");
        toast(`台${selectedTable}に強制呼出`, "ok");
      } else { return toast(r.error, "err"); }
@@ -7434,10 +7439,12 @@ const O = {
  lsCount = Math.min(p1Sets, p2Sets);
  sets = [];
  }
- const r = await api.post(`/api/matches/${m.id}/finish`, {
+ const r = await api.opSend("POST", `/api/matches/${m.id}/finish`, {
  winner_slot: winnerSlot, sets,
  winner_sets: wsCount, loser_sets: lsCount,
- });
+ }, { tag: m.id });
+ if (r.queued) { document.querySelector(".modal-bg")?.remove();
+   return toast("オフライン: 結果を保存しました。接続復帰後に自動送信します（未送信" + api.pendingCount() + "件）", "warn"); }
  if (r.error) return toast(r.error, "err");
  toast(`結果を記録: ${r.winner_name} ${r.winner_sets}-${r.loser_sets}`, "ok");
  document.querySelector(".modal-bg")?.remove();
@@ -7447,8 +7454,10 @@ const O = {
  const submitWalkover = async (winnerSlot) => {
  const wn = winnerSlot === 1 ? m.player1_name : m.player2_name;
  if (!confirm(`「${wn}」の不戦勝として記録します。\n(この試合は選手の戦績・参加記録に算入されません)`)) return;
- const r = await api.post(`/api/matches/${m.id}/finish`, {
- winner_slot: winnerSlot, sets: [], winner_sets: 0, loser_sets: 0, walkover: true });
+ const r = await api.opSend("POST", `/api/matches/${m.id}/finish`, {
+ winner_slot: winnerSlot, sets: [], winner_sets: 0, loser_sets: 0, walkover: true }, { tag: m.id });
+ if (r.queued) { document.querySelector(".modal-bg")?.remove();
+   return toast("オフライン: 不戦勝を保存しました（接続復帰後に自動送信）", "warn"); }
  if (r.error) return toast(r.error, "err");
  toast(`不戦勝: ${r.winner_name}`, "ok");
  document.querySelector(".modal-bg")?.remove();
@@ -7471,7 +7480,8 @@ const O = {
 
  async uncallMatch(id) {
  if (!confirm("この試合を台から戻しますか？")) return;
- await api.post(`/api/matches/${id}/uncall`, {});
+ const r = await api.opSend("POST", `/api/matches/${id}/uncall`, {}, { tag: id });
+ if (r && r.queued) return toast("オフライン: 台から戻す操作を保存しました（接続復帰後に自動送信）", "warn");
  toast("台から戻しました", "ok");
  O.reload();
  },
@@ -8764,6 +8774,39 @@ const EnT = {
  downloadCSV(`entrants_${EnT.filterEvent || "all"}.csv`, rows);
  },
 };
+
+// ── オフライン/未送信 インジケータ + 自動再送フック (#202) ──
+(function () {
+  if (typeof api === "undefined" || !api.onPending) return;
+  const badge = document.createElement("div");
+  badge.id = "connBadge";
+  badge.style.cssText = "position:fixed;left:12px;bottom:12px;z-index:99999;display:none;" +
+    "align-items:center;gap:7px;padding:9px 14px;border-radius:10px;font-size:12px;font-weight:800;" +
+    "box-shadow:0 6px 20px rgba(0,0,0,.22);letter-spacing:.01em";
+  document.body.appendChild(badge);
+  const render = (count, online) => {
+    if (online && !count) { badge.style.display = "none"; return; }
+    badge.style.display = "inline-flex";
+    if (!online) {
+      badge.style.background = "#dc2626"; badge.style.color = "#fff";
+      badge.textContent = count
+        ? "● オフライン ・ 未送信 " + count + " 件（復帰後に自動送信）"
+        : "● オフライン（操作は保存して自動再送します）";
+    } else {
+      badge.style.background = "#d97706"; badge.style.color = "#fff";
+      badge.textContent = "↻ 送信中… 未送信 " + count + " 件";
+    }
+  };
+  api.onPending(render);
+  window.addEventListener("online", () => render(api.pendingCount(), true));
+  window.addEventListener("offline", () => render(api.pendingCount(), false));
+  // キューを送信し切ったら進行管理を再読込して反映
+  api.onQueueFlushed = () => {
+    try {
+      if (typeof O !== "undefined" && O.tournamentId && document.getElementById("opMain")) O.reload();
+    } catch (e) {}
+  };
+})();
 </script>
 
 </body>

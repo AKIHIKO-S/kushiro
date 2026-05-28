@@ -92,6 +92,81 @@
     },
   };
 
+  // ── オフライン耐性: 書込みのリトライキュー (op_id 冪等) ───────────────
+  // 会場の WiFi 断で結果入力が「無言で消える/二重入力」になるのを防ぐ。
+  // opSend: 即時送信を試み、ネット断なら localStorage に積んで自動再送。
+  // 各 op に op_id を付け、サーバ側で冪等判定して二重適用を防止する。
+  (function () {
+    const QKEY = "tt_op_queue_v1";
+    const listeners = [];
+    function loadQ() { try { return JSON.parse(localStorage.getItem(QKEY) || "[]"); } catch (e) { return []; } }
+    function saveQ(q) { try { localStorage.setItem(QKEY, JSON.stringify(q)); } catch (e) {} notify(); }
+    function notify() { const n = loadQ().length; listeners.forEach(cb => { try { cb(n, api.online); } catch (e) {} }); }
+    function uuid() { try { return crypto.randomUUID(); } catch (e) { return "op-" + Date.now() + "-" + Math.random().toString(16).slice(2); } }
+
+    api.online = (typeof navigator === "undefined") ? true : (navigator.onLine !== false);
+    api.onPending = function (cb) { listeners.push(cb); try { cb(loadQ().length, api.online); } catch (e) {} };
+    api.pendingCount = function () { return loadQ().length; };
+    api.pendingTags = function () { const s = {}; loadQ().forEach(o => { if (o.tag) s[o.tag] = true; }); return s; };
+    api.hasPending = function (tag) { return !!(tag && api.pendingTags()[tag]); };
+    api.onQueueFlushed = null; // アプリ側で再描画したい時に差し込む
+
+    function deliver(item) {
+      const headers = api._headers();
+      if (item.op_id) headers["X-Op-Id"] = item.op_id;
+      return fetch(api.baseUrl + item.url, {
+        method: item.method, headers,
+        body: (item.method === "DELETE") ? undefined : JSON.stringify(item.body || {}),
+      }).then(r => r.json().catch(() => ({})));
+    }
+
+    let flushing = false;
+    api.flushQueue = async function () {
+      if (flushing) return;
+      flushing = true;
+      let delivered = 0;
+      try {
+        let q = loadQ();
+        while (q.length) {
+          const item = q[0];
+          try {
+            await deliver(item);          // 応答が返れば到達成功 (成否問わずキューから除去・冪等で二重防止)
+            q = loadQ(); q.shift(); saveQ(q); delivered++;
+          } catch (e) {
+            break;                        // ネット断: 中断して残す
+          }
+        }
+        if (delivered && api.online !== true) { api.online = true; notify(); }
+      } finally {
+        flushing = false; notify();
+        if (delivered && typeof api.onQueueFlushed === "function") { try { api.onQueueFlushed(delivered); } catch (e) {} }
+      }
+    };
+
+    // 書込み送信。成功時=サーバ応答JSON / ネット断時=キューに積み {queued:true, op_id}
+    // opts: { op_id?, tag? }  tag は「この対戦の送信待ち」などの目印
+    api.opSend = async function (method, url, data, opts) {
+      opts = opts || {};
+      const op_id = opts.op_id || uuid();
+      const body = Object.assign({}, data || {}, { op_id });
+      const item = { op_id, method, url, body, tag: opts.tag || "", ts: Date.now() };
+      try {
+        return await deliver(item);       // オンライン: 即時送信
+      } catch (e) {
+        const q = loadQ(); q.push(item); saveQ(q);   // ネット断: キューへ
+        api.online = false; notify();
+        return { queued: true, op_id };
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", () => { api.online = true; notify(); api.flushQueue(); });
+      window.addEventListener("offline", () => { api.online = false; notify(); });
+      setInterval(() => { if (loadQ().length) api.flushQueue(); }, 8000);
+      setTimeout(() => { if (loadQ().length) api.flushQueue(); }, 1500);
+    }
+  })();
+
   // ── Toast ──
   function toast(msg, type) {
     const el = document.createElement("div");

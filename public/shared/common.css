@@ -654,6 +654,7 @@ input:focus, select:focus, textarea:focus {
 }
 .toast.ok { background: var(--ok); }
 .toast.err { background: var(--accent); }
+.toast.warn { background: #d97706; }
 
 /* Badges */
 .badge {
