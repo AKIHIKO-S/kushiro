@@ -620,6 +620,25 @@
  }
  .bracket-match-player.winner { background: rgba(217,119,6,.1); font-weight: 700; }
 
+ /* ビジュアル両側トーナメント */
+ .vb-callable {
+   animation: vbpulse 1.4s ease-in-out infinite;
+   box-shadow: 0 0 0 2px rgba(245,158,11,.5);
+ }
+ @keyframes vbpulse {
+   0%,100% { box-shadow: 0 0 0 2px rgba(245,158,11,.55), 0 0 8px rgba(245,158,11,.25); }
+   50%     { box-shadow: 0 0 0 5px rgba(245,158,11,0), 0 0 14px rgba(245,158,11,.5); }
+ }
+ .vb-match.vb-drag-over { outline: 3px dashed #2563eb; outline-offset: 1px; }
+ .vb-match.vb-dragging { opacity: .45; }
+ .vb-fswrap:fullscreen { background: #fff; padding: 16px; overflow: auto; }
+ .vb-fswrap:fullscreen #vbArea { max-height: calc(100vh - 70px) !important; }
+ .vb-fswrap:-webkit-full-screen #vbArea { max-height: calc(100vh - 70px) !important; }
+ .vb-call-chip {
+   display:inline-block; background:#f59e0b; color:#fff; font-size:9px; font-weight:800;
+   padding:1px 6px; border-radius:8px; margin-left:6px;
+ }
+
  /* 結果入力モーダル */
  .result-input-grid {
  display: grid; grid-template-columns: auto 1fr auto 1fr;
@@ -6851,31 +6870,39 @@ const O = {
    setTimeout(() => { try { w.print(); } catch (e) {} }, 400);
  };
 
- const body = h("div", {},
-   h("div", { className: "flex gap-2 mb-2", style: { alignItems: "center", flexWrap: "wrap" } },
-     h("label", { className: "text-sm font-bold" }, "種目:"),
-     evSel,
-     h("button", { className: "btn btn-sm btn-ghost",
-       onClick: reload }, "更新"),
-     h("button", { className: "btn btn-sm",
-       style: { background: "#7c3aed" },
-       onClick: printBracket }, "印刷 (A3横)"),
-   ),
-   bracketArea,
+ // 全画面トグル (大画面表示)
+ const fsWrap = h("div", { className: "vb-fswrap" });
+ const toggleFs = () => {
+   try {
+     if (document.fullscreenElement || document.webkitFullscreenElement) {
+       (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+     } else {
+       (fsWrap.requestFullscreen || fsWrap.webkitRequestFullscreen).call(fsWrap);
+     }
+   } catch (e) { toast("全画面表示に対応していません", "err"); }
+ };
+ const toolbar = h("div", { className: "flex gap-2 mb-2", style: { alignItems: "center", flexWrap: "wrap" } },
+   h("label", { className: "text-sm font-bold" }, "種目:"),
+   evSel,
+   h("button", { className: "btn btn-sm btn-ghost", onClick: reload }, "更新"),
+   h("button", { className: "btn btn-sm", style: { background: "#0ea5e9" }, onClick: toggleFs }, "⛶ 全画面"),
+   h("button", { className: "btn btn-sm", style: { background: "#7c3aed" }, onClick: printBracket }, "印刷 (A3横)"),
  );
+ fsWrap.appendChild(toolbar);
+ fsWrap.appendChild(bracketArea);
+ const body = h("div", {}, fsWrap);
  const foot = h("button", { className: "btn btn-ghost",
    onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる");
  openModal("トーナメント表 (ビジュアル)", body, foot);
  reload();
  },
 
- // ─── ビジュアルブラケットの実 DOM 構築 ─────
+ // ─── ビジュアルブラケットの実 DOM 構築 (両側トーナメント) ─────
  renderVisualBracket(bdata) {
  const matches = bdata.matches || [];
  if (!matches.length) {
    return h("div", { className: "empty-state" }, "試合データなし");
  }
- // ラウンドごとにグループ化
  const byRound = {};
  matches.forEach(m => {
    const r = m.bracket_round || 1;
@@ -6884,16 +6911,11 @@ const O = {
  const rounds = Object.keys(byRound).map(Number).sort((a, b) => a - b);
  const totalRounds = bdata.total_rounds || rounds.length;
  const bracketSize = bdata.bracket_size || (1 << totalRounds);
-
- // 各 round 内で bracket_pos 昇順
+ const finalRound = rounds[rounds.length - 1];
  rounds.forEach(r => byRound[r].sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0)));
 
- // 各ラウンドを列として描画
- const cols = h("div", { className: "vb-cols",
-   style: { display: "flex", gap: "16px", alignItems: "stretch", minWidth: "min-content" } });
- // 状態に応じた背景
  const stateBg = (m) => {
-   if (m.status === "completed") return "#e5e7eb";
+   if (m.status === "completed") return "#eef2f7";
    if (m.status === "on_table") return "#fef2f2";
    if (m.status === "pending") return "#fffbeb";
    return "#fff";
@@ -6902,94 +6924,96 @@ const O = {
    if (m.status === "completed") return "#9ca3af";
    if (m.status === "on_table") return "#dc2626";
    if (m.status === "pending") return "#f59e0b";
-   return "#d1d5db";
+   return "#cbd5e1";
  };
  const roundName = (r) => {
-   if (r === totalRounds) return "決勝";
-   if (r === totalRounds - 1) return "準決勝";
-   if (r === totalRounds - 2) return "準々決勝";
+   if (r === finalRound) return "決勝";
+   if (r === finalRound - 1) return "準決勝";
+   if (r === finalRound - 2) return "準々決勝";
    return r + "回戦";
  };
- const matchHeight = 60; // 1試合の最小高 (round 1)
+ const matchHeight = 82; // 1枠の高さ (カード実高さ以上にし、親が子の中央に揃うように)
 
- rounds.forEach((r, ri) => {
-   const col = h("div", { className: "vb-col",
-     style: { minWidth: "170px", display: "flex", flexDirection: "column" } });
+ // 1試合カード (side: left/right/center)
+ const makeCard = (m, side) => {
+   const callable = m.status === "pending";
+   const card = h("div", { className: "vb-match" + (callable ? " vb-callable" : ""),
+     style: {
+       border: "2px solid " + stateBorder(m), background: stateBg(m),
+       borderRadius: "6px", padding: "5px 8px", margin: "3px 0",
+       fontSize: "11px", position: "relative",
+       textAlign: side === "right" ? "right" : "left",
+     } });
+   const lbl = m.match_no ? (m.bracket_round + "-" + m.match_no)
+     : (m.bracket_round + "-" + ((m.bracket_pos || 0) + 1));
+   card.appendChild(h("div", {
+     style: { fontSize: "9px", color: "#64748b", fontWeight: 700, marginBottom: "2px" } },
+     lbl,
+     m.status === "on_table" ? h("span", {
+       style: { marginLeft: "6px", color: "#dc2626", fontWeight: 800 } }, "● LIVE") : null,
+     m.status === "completed" ? h("span", {
+       style: { marginLeft: "6px", color: "#16a34a", fontWeight: 800 } }, "✓") : null,
+     callable ? h("span", { className: "vb-call-chip" }, "▶ 呼出可能") : null,
+   ));
+   const pRow = (name, team, won, lost) => h("div", {
+     style: { fontWeight: won ? 700 : 500, color: won ? "#15803d" : "#374151",
+       textDecoration: lost ? "line-through" : "none", padding: "2px 0",
+       opacity: lost ? 0.55 : 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+     (name || "—"),
+     team ? h("span", { className: "text-xs text-sub", style: { marginLeft: "4px" } }, "(" + team + ")") : null);
+   const p1Won = m.result && m.result.winner_name === m.player1_name;
+   const p2Won = m.result && m.result.winner_name === m.player2_name;
+   card.appendChild(pRow(m.player1_name, m.player1_team, p1Won, m.result && !p1Won));
+   card.appendChild(h("div", { style: { borderTop: "1px dashed " + stateBorder(m), margin: "1px 0" } }));
+   card.appendChild(pRow(m.player2_name, m.player2_team, p2Won, m.result && !p2Won));
+   if (m.result) {
+     card.appendChild(h("div", {
+       style: { fontFamily: "var(--font-mono)", fontSize: "10px", color: "#64748b",
+         textAlign: "right", marginTop: "2px" } },
+       (m.result.winner_sets || 0) + " - " + (m.result.loser_sets || 0)));
+   }
+   // ドラッグ&ドロップ等の後付けフック (#167)
+   if (typeof O._decorateBracketCard === "function") O._decorateBracketCard(card, m, bdata, side);
+   return card;
+ };
+
+ // 1ラウンド列。side=center は縦中央寄せ
+ const makeCol = (r, list, side) => {
+   const col = h("div", { style: { minWidth: "164px", display: "flex", flexDirection: "column" } });
    col.appendChild(h("div", {
      style: { padding: "6px 10px", background: "#1e293b", color: "#fff",
        fontSize: "12px", fontWeight: 700, textAlign: "center",
-       borderRadius: "4px", marginBottom: "8px" } },
-     roundName(r) + " (" + byRound[r].length + ")"));
-
-   const ms = byRound[r];
-   const factor = Math.pow(2, ri);
-   ms.forEach(m => {
-     const card = h("div", { className: "vb-match",
-       style: {
-         border: "2px solid " + stateBorder(m),
-         background: stateBg(m),
-         borderRadius: "6px", padding: "6px 8px",
-         marginBottom: "4px",
-         minHeight: (matchHeight * factor) + "px",
-         display: "flex", flexDirection: "column",
-         justifyContent: "center",
-         fontSize: "11px",
-         position: "relative",
-       } });
-     // ラベル + ステータス
-     const lbl = m.match_no
-       ? (r + "-" + m.match_no)
-       : (r + "-" + (m.bracket_pos + 1));
-     card.appendChild(h("div", {
-       style: { fontSize: "9px", color: "#64748b", fontWeight: 700, marginBottom: "2px" } },
-       lbl,
-       m.status === "on_table" ? h("span", {
-         style: { marginLeft: "6px", color: "#dc2626", fontWeight: 800 } }, "● LIVE") : null,
-       m.status === "completed" ? h("span", {
-         style: { marginLeft: "6px", color: "#16a34a", fontWeight: 800 } }, "✓") : null,
-       m.status === "pending" ? h("span", {
-         style: { marginLeft: "6px", color: "#d97706", fontWeight: 800 } }, "呼出可") : null,
-     ));
-     // 選手1
-     const p1Won = m.result && m.result.winner_name === m.player1_name;
-     card.appendChild(h("div", {
-       style: { fontWeight: p1Won ? 700 : 500,
-         color: p1Won ? "#15803d" : "#374151",
-         textDecoration: m.result && !p1Won ? "line-through" : "none",
-         padding: "2px 0",
-         opacity: m.result && !p1Won ? 0.55 : 1 } },
-       (m.player1_name || "—"),
-       m.player1_team
-         ? h("span", { className: "text-xs text-sub",
-             style: { marginLeft: "4px" } }, "(" + m.player1_team + ")")
-         : null));
-     // セパレーター
-     card.appendChild(h("div", {
-       style: { borderTop: "1px dashed " + stateBorder(m), margin: "2px 0" } }));
-     // 選手2
-     const p2Won = m.result && m.result.winner_name === m.player2_name;
-     card.appendChild(h("div", {
-       style: { fontWeight: p2Won ? 700 : 500,
-         color: p2Won ? "#15803d" : "#374151",
-         textDecoration: m.result && !p2Won ? "line-through" : "none",
-         padding: "2px 0",
-         opacity: m.result && !p2Won ? 0.55 : 1 } },
-       (m.player2_name || "—"),
-       m.player2_team
-         ? h("span", { className: "text-xs text-sub",
-             style: { marginLeft: "4px" } }, "(" + m.player2_team + ")")
-         : null));
-     // スコア (完了済みのみ)
-     if (m.result) {
-       card.appendChild(h("div", {
-         style: { fontFamily: "var(--font-mono)", fontSize: "10px",
-           color: "#64748b", textAlign: "right", marginTop: "2px" } },
-         (m.result.winner_sets || 0) + " - " + (m.result.loser_sets || 0)));
-     }
-     col.appendChild(card);
+       borderRadius: "4px", marginBottom: "6px" } },
+     roundName(r) + " (" + list.length + ")"));
+   const factor = Math.pow(2, r - 1);
+   const cbody = h("div", { style: { flex: "1", display: "flex", flexDirection: "column",
+     justifyContent: side === "center" ? "center" : "flex-start" } });
+   list.forEach(m => {
+     cbody.appendChild(h("div", {
+       style: { minHeight: side === "center" ? "auto" : (matchHeight * factor) + "px",
+         display: "flex", flexDirection: "column", justifyContent: "center" } },
+       makeCard(m, side)));
    });
-   cols.appendChild(col);
+   col.appendChild(cbody);
+   return col;
+ };
+
+ // 上半分=左、下半分=右、決勝=中央 に分割
+ const leftCols = [], rightCols = [];
+ rounds.forEach(r => {
+   if (r === finalRound) return;
+   const ms = byRound[r];
+   const half = Math.ceil(ms.length / 2);
+   leftCols.push(makeCol(r, ms.slice(0, half), "left"));
+   rightCols.push(makeCol(r, ms.slice(half), "right"));
  });
+ const centerCol = byRound[finalRound] ? makeCol(finalRound, byRound[finalRound], "center") : null;
+
+ const cols = h("div", { className: "vb-cols",
+   style: { display: "flex", gap: "12px", alignItems: "stretch", minWidth: "min-content" } });
+ leftCols.forEach(c => cols.appendChild(c));
+ if (centerCol) cols.appendChild(centerCol);
+ rightCols.reverse().forEach(c => cols.appendChild(c));
 
  // 凡例 + 件数
  const stats = {
@@ -7003,10 +7027,10 @@ const O = {
    style: { display: "flex", gap: "12px", flexWrap: "wrap",
      padding: "8px 12px", background: "#fff",
      border: "1px solid #d1d5db", borderRadius: "6px", marginBottom: "10px",
-     fontSize: "12px" } },
+     fontSize: "12px", alignItems: "center" } },
    h("span", { className: "font-bold" }, bdata.event + " (Bracket " + bracketSize + ")"),
    h("span", { style: { color: "#dc2626" } }, "● 進行中 " + stats.on_table),
-   h("span", { style: { color: "#f59e0b" } }, "● 呼出可 " + stats.pending),
+   h("span", { style: { color: "#b45309", fontWeight: 800 } }, "▶ 呼出可 " + stats.pending),
    h("span", { style: { color: "#9ca3af" } }, "● 待機 " + stats.waiting),
    h("span", { style: { color: "#16a34a" } }, "✓ 終了 " + stats.completed),
    h("span", { className: "text-sub" }, "/ 計 " + stats.total),
