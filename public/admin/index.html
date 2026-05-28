@@ -147,6 +147,46 @@
    color: var(--sub);
  }
  .pdb-card .pdb-actions button:hover { color: var(--accent); }
+ /* 戦績バッジ (出場回数・勝敗) */
+ .pdb-stats {
+   display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap;
+ }
+ .pdb-stat {
+   display: inline-flex; align-items: center; gap: 3px;
+   padding: 1px 7px; border-radius: 10px;
+   font-size: 10px; font-weight: 700; line-height: 1.5;
+ }
+ .pdb-stat .pdb-stat-lbl { font-size: 8px; opacity: 0.7; font-weight: 600; }
+ .pdb-stat.app { background: #eef2ff; color: #3730a3; }
+ .pdb-stat.win { background: #dcfce7; color: #15803d; }
+ .pdb-stat.loss { background: #fee2e2; color: #b91c1c; }
+ .pdb-stat.medal { background: #fef9c3; color: #854d0e; }
+ .pdb-winrate-bar {
+   height: 4px; border-radius: 2px; margin-top: 5px;
+   background: #fee2e2; overflow: hidden;
+ }
+ .pdb-winrate-bar > span {
+   display: block; height: 100%;
+   background: linear-gradient(90deg, #22c55e, #15803d);
+ }
+ /* 入賞歴 (編集モーダル) */
+ .ach-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+ .ach-item {
+   display: flex; align-items: center; gap: 8px;
+   padding: 8px 10px; background: #fffbeb;
+   border: 1px solid #fde68a; border-radius: 6px; font-size: 12px;
+ }
+ .ach-item .ach-place {
+   font-weight: 700; padding: 2px 8px; border-radius: 10px;
+   background: #fef3c7; color: #854d0e; white-space: nowrap;
+ }
+ .ach-item .ach-place.gold { background: #fde047; color: #713f12; }
+ .ach-item .ach-place.silver { background: #e5e7eb; color: #374151; }
+ .ach-item .ach-place.bronze { background: #fed7aa; color: #7c2d12; }
+ .ach-item .ach-del {
+   margin-left: auto; background: none; border: none;
+   color: #b91c1c; cursor: pointer; font-size: 14px;
+ }
 
  /* 旧 player-row (互換) */
  .player-row {
@@ -4718,6 +4758,25 @@ const A = {
 
  const renderPlayerCard = (p) => {
  const gClass = p.gender === "female" ? "female" : "male";
+ const wins = p.match_wins || 0;
+ const losses = p.match_losses || 0;
+ const total = wins + losses;
+ const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
+ const app = p.appearances || 0;
+ // 戦績バッジ群
+ const stats = [];
+ if (app > 0) stats.push(h("span", { className: "pdb-stat app" },
+   h("span", { className: "pdb-stat-lbl" }, "出場"), String(app) + "回"));
+ if (total > 0) {
+   stats.push(h("span", { className: "pdb-stat win" },
+     h("span", { className: "pdb-stat-lbl" }, "勝"), String(wins)));
+   stats.push(h("span", { className: "pdb-stat loss" },
+     h("span", { className: "pdb-stat-lbl" }, "敗"), String(losses)));
+ }
+ const golds = p.wins_ach || 0;
+ const medalCount = p.total_achievements || (p.achievements ? p.achievements.length : 0) || 0;
+ if (golds > 0) stats.push(h("span", { className: "pdb-stat medal" }, "優勝" + golds));
+ else if (medalCount > 0) stats.push(h("span", { className: "pdb-stat medal" }, "入賞" + medalCount));
  return h("div", { className: "pdb-card " + gClass,
  onClick: () => A.editPlayer(p) },
  h("div", { className: "pdb-avatar" }, A._initials(p.name)),
@@ -4728,6 +4787,9 @@ const A = {
  p.branch ? h("span", { className: "pdb-branch" }, p.branch) : null,
  p.team || "—",
  ),
+ stats.length ? h("div", { className: "pdb-stats" }, ...stats) : null,
+ total > 0 ? h("div", { className: "pdb-winrate-bar", title: "勝率 " + winRate + "%" },
+   h("span", { style: { width: winRate + "%" } })) : null,
  ),
  h("div", { className: "pdb-actions",
  onClick: (e) => e.stopPropagation() },
@@ -4809,9 +4871,21 @@ const A = {
 
  newPlayer() { A.editPlayer(null); },
 
- editPlayer(p) {
+ async editPlayer(p) {
  const isNew = !p;
+ // 既存選手は入賞歴・戦績込みのフルデータを取得
+ if (!isNew && p.id) {
+   try {
+     const full = await api.get("/api/players/" + p.id);
+     if (full && !full.error) p = full;
+   } catch (e) { /* フォールバック: 一覧データのまま */ }
+ }
  p = p || { name: "", team: "", branch: "", gender: "male", note: "" };
+ const achievements = p.achievements || [];
+ const wins = p.match_wins || 0;
+ const losses = p.match_losses || 0;
+ const totalM = wins + losses;
+ const winRate = totalM > 0 ? Math.round((wins / totalM) * 100) : 0;
  const body = h("div", {},
  h("div", { className: "two-col" },
  h("div", { className: "field" },
@@ -4852,6 +4926,58 @@ const A = {
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "備考"),
  h("textarea", { id: "plNote", rows: 2 }, p.note || "")),
+
+ // ─── 通算戦績 (読み取り専用・自動集計) ───
+ !isNew && totalM > 0 ? h("div", { className: "field" },
+ h("label", { className: "field-label" }, "通算戦績 (試合データから自動集計)"),
+ h("div", { style: { display: "flex", gap: "10px", alignItems: "center",
+   padding: "10px 12px", background: "#f8fafc", borderRadius: "6px" } },
+ h("span", { style: { color: "#15803d", fontWeight: "700", fontSize: "15px" } }, wins + "勝"),
+ h("span", { style: { color: "#b91c1c", fontWeight: "700", fontSize: "15px" } }, losses + "敗"),
+ h("span", { style: { color: "#475569", fontSize: "13px" } }, "勝率 " + winRate + "%"),
+ h("div", { style: { flex: 1, height: "8px", background: "#fee2e2",
+   borderRadius: "4px", overflow: "hidden" } },
+   h("div", { style: { width: winRate + "%", height: "100%",
+     background: "linear-gradient(90deg,#22c55e,#15803d)" } })),
+ )) : null,
+
+ // ─── 入賞歴 (achievements) ───
+ !isNew ? h("div", { className: "field" },
+ h("label", { className: "field-label" }, "入賞歴 / 戦績"),
+ h("div", { className: "ach-list", id: "achList" },
+   ...(achievements.length
+     ? achievements.map(a => A._renderAchItem(p.id, a))
+     : [h("div", { style: { fontSize: "12px", color: "#a8a29e", padding: "6px" } },
+         "入賞歴がまだ登録されていません")])),
+ // 追加フォーム
+ h("div", { style: { display: "grid",
+   gridTemplateColumns: "70px 1fr 1fr 90px auto", gap: "5px", marginTop: "6px",
+   alignItems: "center" } },
+ h("input", { className: "input", id: "achYear", type: "number",
+   placeholder: "年", style: { padding: "6px", fontSize: "12px" },
+   value: new Date().getFullYear() }),
+ h("input", { className: "input", id: "achTourn",
+   placeholder: "大会名", style: { padding: "6px", fontSize: "12px" } }),
+ h("input", { className: "input", id: "achEvent",
+   placeholder: "種目 (例:男子S)", style: { padding: "6px", fontSize: "12px" } }),
+ h("select", { className: "input", id: "achPlace",
+   style: { padding: "6px", fontSize: "12px" } },
+   h("option", { value: "1" }, "優勝"),
+   h("option", { value: "2" }, "準優勝"),
+   h("option", { value: "3" }, "3位"),
+   h("option", { value: "4" }, "ベスト4"),
+   h("option", { value: "8" }, "ベスト8"),
+   h("option", { value: "16" }, "ベスト16"),
+   h("option", { value: "0" }, "出場")),
+ h("button", { className: "btn btn-sm", type: "button",
+   style: { padding: "6px 10px", fontSize: "12px" },
+   onClick: () => A._addAchievement(p.id) }, "追加"),
+ ),
+ h("div", { className: "text-xs text-sub", style: { marginTop: "4px" } },
+   "※「追加」で即保存されます")) :
+ h("div", { className: "text-xs text-sub",
+   style: { padding: "8px", background: "#f8fafc", borderRadius: "6px" } },
+   "入賞歴は、選手を保存してから登録できます"),
  );
  const foot = h("button", { className: "btn", onClick: async () => {
  const data = {
@@ -4887,6 +5013,60 @@ const A = {
  await api.del("/api/players/" + id);
  toast("削除しました", "ok");
  await A.reload();
+ },
+
+ // ─── 入賞歴 (achievements) ヘルパー ───
+ _placeLabel(place) {
+   const p = parseInt(place) || 0;
+   if (p === 1) return { label: "優勝", cls: "gold" };
+   if (p === 2) return { label: "準優勝", cls: "silver" };
+   if (p === 3) return { label: "3位", cls: "bronze" };
+   if (p === 4) return { label: "ベスト4", cls: "" };
+   if (p === 8) return { label: "ベスト8", cls: "" };
+   if (p === 16) return { label: "ベスト16", cls: "" };
+   return { label: "出場", cls: "" };
+ },
+ _renderAchItem(playerId, a) {
+   const pl = A._placeLabel(a.place);
+   return h("div", { className: "ach-item", "data-ach-id": a.id },
+     h("span", { className: "ach-place " + pl.cls }, pl.label),
+     h("span", { style: { fontWeight: "600" } }, String(a.year || "")),
+     h("span", {}, a.tournament || ""),
+     h("span", { style: { color: "#78716c" } }, a.event || ""),
+     h("button", { className: "ach-del", type: "button", title: "削除",
+       onClick: async (e) => {
+         e.stopPropagation();
+         if (!confirm("この入賞歴を削除しますか?")) return;
+         try {
+           await api.del("/api/achievements/" + a.id);
+           e.target.closest(".ach-item").remove();
+           toast("削除しました", "ok");
+         } catch (err) { toast("削除失敗: " + err.message, "err"); }
+       } }, "×"),
+   );
+ },
+ async _addAchievement(playerId) {
+   const year = parseInt(document.getElementById("achYear").value) || new Date().getFullYear();
+   const tournament = document.getElementById("achTourn").value.trim();
+   const event = document.getElementById("achEvent").value.trim();
+   const place = parseInt(document.getElementById("achPlace").value) || 0;
+   if (!tournament && !event) return toast("大会名または種目を入力してください", "err");
+   try {
+     const a = await api.post("/api/players/" + playerId + "/achievements",
+       { year, tournament, event, place, type: event });
+     if (a.error) return toast(a.error, "err");
+     // リストに追加表示
+     const list = document.getElementById("achList");
+     // 「まだありません」プレースホルダを除去
+     if (list.children.length === 1 && !list.children[0].dataset.achId) {
+       list.innerHTML = "";
+     }
+     list.appendChild(A._renderAchItem(playerId, a));
+     // 入力欄クリア
+     document.getElementById("achTourn").value = "";
+     document.getElementById("achEvent").value = "";
+     toast("入賞歴を追加しました", "ok");
+   } catch (err) { toast("追加失敗: " + err.message, "err"); }
  },
 
  // ─── インポート・エクスポート ────────────────────
