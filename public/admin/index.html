@@ -638,6 +638,14 @@
    display:inline-block; background:#f59e0b; color:#fff; font-size:9px; font-weight:800;
    padding:1px 6px; border-radius:8px; margin-left:6px;
  }
+ /* 種目/ブロック タブ */
+ .vb-tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;
+   padding-bottom:8px; border-bottom:2px solid var(--border); }
+ .vb-tab { padding:6px 14px; border:1px solid var(--border); background:#fff;
+   border-radius:8px 8px 0 0; font-size:12px; font-weight:700; cursor:pointer;
+   color:var(--ink-600); white-space:nowrap; }
+ .vb-tab:hover { border-color: var(--accent); color: var(--accent); }
+ .vb-tab.active { background: var(--ink-900); color:#fff; border-color: var(--ink-900); }
 
  /* 結果入力モーダル */
  .result-input-grid {
@@ -6841,12 +6849,17 @@ const O = {
  if (!events.length) return toast("試合データがありません", "err");
  let selectedEv = O.selectedEvent || events[0];
 
- const evSel = h("select", { className: "input",
-   style: { width: "auto", marginBottom: "8px" },
-   onChange: (e) => { selectedEv = e.target.value; reload(); } },
-   ...events.map(ev => h("option", {
-     value: ev, selected: ev === selectedEv ? "" : null,
-   }, ev)));
+ // 種目/ブロックのタブ切替
+ const tabStrip = h("div", { className: "vb-tabs" });
+ const renderTabs = () => {
+   tabStrip.innerHTML = "";
+   events.forEach(ev => {
+     tabStrip.appendChild(h("button", {
+       className: "vb-tab" + (ev === selectedEv ? " active" : ""),
+       onClick: () => { selectedEv = ev; O.selectedEvent = ev; renderTabs(); reload(); },
+     }, ev));
+   });
+ };
 
  const bracketArea = h("div", { id: "vbArea",
    style: { overflow: "auto", maxHeight: "70vh", padding: "8px",
@@ -6904,15 +6917,28 @@ const O = {
      }
    } catch (e) { toast("全画面表示に対応していません", "err"); }
  };
+ // 拡大縮小
+ let zoom = 1;
+ const zoomLabel = h("span", { className: "text-xs", style: { minWidth: "38px", textAlign: "center", fontWeight: 700 } }, "100%");
+ const applyZoom = () => { bracketArea.style.zoom = String(zoom); zoomLabel.textContent = Math.round(zoom * 100) + "%"; };
  const toolbar = h("div", { className: "flex gap-2 mb-2", style: { alignItems: "center", flexWrap: "wrap" } },
-   h("label", { className: "text-sm font-bold" }, "種目:"),
-   evSel,
    h("button", { className: "btn btn-sm btn-ghost", onClick: reload }, "更新"),
+   h("div", { className: "flex", style: { alignItems: "center", gap: "2px" } },
+     h("button", { className: "btn btn-sm btn-ghost", title: "縮小",
+       onClick: () => { zoom = Math.max(0.4, Math.round((zoom - 0.1) * 10) / 10); applyZoom(); } }, "−"),
+     zoomLabel,
+     h("button", { className: "btn btn-sm btn-ghost", title: "拡大",
+       onClick: () => { zoom = Math.min(2.5, Math.round((zoom + 0.1) * 10) / 10); applyZoom(); } }, "＋"),
+     h("button", { className: "btn btn-sm btn-ghost", title: "等倍に戻す",
+       onClick: () => { zoom = 1; applyZoom(); } }, "100%"),
+   ),
    h("button", { className: "btn btn-sm", style: { background: "#0ea5e9" }, onClick: toggleFs }, "⛶ 全画面"),
    h("button", { className: "btn btn-sm", style: { background: "#7c3aed" }, onClick: printBracket }, "印刷 (A3横)"),
    h("span", { className: "text-xs text-sub", style: { marginLeft: "auto" } },
-     "1回戦の選手はドラッグ&ドロップで位置を入れ替えできます"),
+     "1回戦の選手はドラッグ&ドロップで入替できます"),
  );
+ renderTabs();
+ if (events.length > 1) fsWrap.appendChild(tabStrip); // 複数種目/ブロック時のみタブ表示
  fsWrap.appendChild(toolbar);
  fsWrap.appendChild(bracketArea);
  const body = h("div", {}, fsWrap);
