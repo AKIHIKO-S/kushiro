@@ -348,11 +348,16 @@ function extractDoublesFromCluster(ws, cluster, region, merges, opts) {
     const n1 = normalizeName(nameCand[0].v);
     const n2 = nameCand[1] ? normalizeName(nameCand[1].v) : '';
     const team = teamCand.length ? stripParens(teamCand[0].v) : '';
-    const pairName = (n1 && n2 && n1 !== n2) ? n1 + '/' + n2 : (n1 || n2);
-    if (pairName && !isLabelLike(pairName)) {
+    // ペアは name(選手1) と partner_name(選手2) を分離 → 2名とも個別DB連携可能に
+    const member1 = n1 || n2;
+    const member2 = (n1 && n2 && n1 !== n2) ? n2 : '';
+    if (member1 && !isLabelLike(member1)) {
       players.push({
-        name: pairName, name1: n1, name2: n2,
-        team, is_doubles: true, seed: pos.value,
+        name: member1,
+        partner_name: member2,
+        team,
+        partner_team: team, // 同チーム既定 (別チームは取込後に編集可)
+        is_doubles: true, seed: pos.value,
       });
     }
   });

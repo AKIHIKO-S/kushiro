@@ -1743,11 +1743,20 @@ function generateBracket(tournamentId, event, options) {
   //            それ以外 = 標準シード配置 (1 vs N, 2 vs N-1 …)
   const asDrawn = options.placement === "as_drawn";
 
+  // as_drawn: ブロックがまたがり通し番号が途中(例:79)から始まる場合に対応するため
+  //           最小番号を 0 番スロットに正規化する (番号の相対位置=描画位置)
+  let minSeed = 1;
+  if (asDrawn) {
+    const seeds = sorted.map(p => parseInt(p.seed) || 0).filter(s => s >= 1);
+    minSeed = seeds.length ? Math.min(...seeds) : 1;
+  }
+
   let bracketSize, totalRounds;
   if (asDrawn) {
-    // 通し番号の最大値を収容できるサイズ (空き位置は BYE)
-    const maxSeed = Math.max(N, ...sorted.map(p => parseInt(p.seed) || 0));
-    bracketSize = Math.pow(2, Math.ceil(Math.log2(Math.max(2, maxSeed))));
+    const seeds = sorted.map(p => parseInt(p.seed) || 0).filter(s => s >= 1);
+    const maxSeed = seeds.length ? Math.max(...seeds) : N;
+    const span = maxSeed - minSeed + 1;            // ブロック内の番号スパン
+    bracketSize = Math.pow(2, Math.ceil(Math.log2(Math.max(2, span, N))));
   } else {
     bracketSize = Math.pow(2, Math.ceil(Math.log2(N)));
   }
@@ -1757,12 +1766,14 @@ function generateBracket(tournamentId, event, options) {
   // seed番号→選手 (標準配置用: ふりがな順の順位)
   const playerBySeed = {};
   sorted.forEach((p, i) => { playerBySeed[i + 1] = p; });
-  // 通し番号(seed)→選手 (as_drawn 用: 番号 = 線形スロット位置)
+  // 相対スロット(0始まり)→選手 (as_drawn 用: 番号-最小番号 = 線形スロット位置)
   const playerByDrawNo = {};
   if (asDrawn) {
     sorted.forEach(p => {
       const s = parseInt(p.seed) || 0;
-      if (s >= 1 && s <= bracketSize) playerByDrawNo[s] = p;
+      if (s < 1) return;
+      const rel = s - minSeed;                     // 0 始まりの線形スロット
+      if (rel >= 0 && rel < bracketSize) playerByDrawNo[rel] = p;
     });
   }
 
@@ -1778,9 +1789,9 @@ function generateBracket(tournamentId, event, options) {
   for (let i = 0; i < bracketSize; i += 2) {
     let p1, p2;
     if (asDrawn) {
-      // 通し番号 i+1 が player1、i+2 が player2 (上→下の並びそのまま)
-      p1 = playerByDrawNo[i + 1] || null;
-      p2 = playerByDrawNo[i + 2] || null;
+      // 相対スロット i が player1、i+1 が player2 (上→下の並びそのまま)
+      p1 = playerByDrawNo[i] || null;
+      p2 = playerByDrawNo[i + 1] || null;
     } else {
       p1 = playerBySeed[positions[i]] || null;
       p2 = playerBySeed[positions[i + 1]] || null;
