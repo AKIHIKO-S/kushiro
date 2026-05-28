@@ -627,11 +627,15 @@ function addEntry(eventIdx) {
       html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_m' + i + '" placeholder="メンバー' + (i + 1) + ' 氏名" oninput="recalcTotal()" style="width:100%; margin-bottom:4px; padding:6px; font-size:12px;" />';
     }
   } else if (isDoubles) {
-    html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n1" placeholder="氏名1" oninput="recalcTotal()" style="padding:6px;" />' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n2" placeholder="氏名2" oninput="recalcTotal()" style="padding:6px;" />' +
+    // 選手1 (氏名 + 所属) / 選手2 (氏名 + 所属) — 違うチーム同士のペアにも対応
+    html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:4px;">' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n1" placeholder="選手1 氏名" oninput="recalcTotal()" style="padding:6px;" />' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t1" placeholder="選手1 所属" oninput="recalcTotal()" style="padding:6px; font-size:12px;" />' +
       '</div>' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_team" placeholder="所属" oninput="recalcTotal()" style="width:100%; padding:6px; font-size:12px;" />';
+      '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n2" placeholder="選手2 氏名" oninput="recalcTotal()" style="padding:6px;" />' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t2" placeholder="選手2 所属" oninput="recalcTotal()" style="padding:6px; font-size:12px;" />' +
+      '</div>';
   } else {
     html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">' +
       '<input type="text" name="ev' + eventIdx + '_p' + idx + '_name" placeholder="氏名 (フルネーム)" oninput="recalcTotal()" style="padding:6px;" />' +
@@ -747,7 +751,9 @@ function gatherFormData() {
       } else if (ev.type === "doubles") {
         obj.name1 = (row.querySelector("input[name^='ev" + idx + "_pair" + ri + "_n1']") || {}).value || "";
         obj.name2 = (row.querySelector("input[name^='ev" + idx + "_pair" + ri + "_n2']") || {}).value || "";
-        obj.team = (row.querySelector("input[name^='ev" + idx + "_pair" + ri + "_team']") || {}).value || "";
+        obj.team1 = (row.querySelector("input[name^='ev" + idx + "_pair" + ri + "_t1']") || {}).value || "";
+        obj.team2 = (row.querySelector("input[name^='ev" + idx + "_pair" + ri + "_t2']") || {}).value || "";
+        obj.team = obj.team1; // 後方互換
         if (!obj.name1 && !obj.name2) return;
       } else {
         obj.name = (row.querySelector("input[name^='ev" + idx + "_p" + ri + "_name']") || {}).value || "";
@@ -781,7 +787,8 @@ function buildSummaryText(data) {
       lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP"));
     } else if (e.type === "doubles") {
       lines.push("・[ダブルス] " + e.event);
-      lines.push("    " + (e.name1 || "") + " / " + (e.name2 || "") + " (" + (e.team || "") + ")");
+      lines.push("    " + (e.name1 || "") + " (" + (e.team1 || e.team || "") + ")");
+      lines.push("    " + (e.name2 || "") + " (" + (e.team2 || e.team1 || e.team || "") + ")");
       lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP"));
     } else {
       lines.push("・" + e.event + ": " + (e.name || "") + " (" + (e.team || "") + ")");

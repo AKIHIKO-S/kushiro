@@ -3213,7 +3213,7 @@ function createTeamEntry(tournamentId, formData) {
       const n1 = String(ent.name1 || "").trim();
       const n2 = String(ent.name2 || "").trim();
       const team1 = String(ent.team1 || ent.team || "").trim();
-      const team2 = String(ent.team2 || ent.team || "").trim();
+      const team2 = String(ent.team2 || ent.team1 || ent.team || "").trim();
       if (!n1 && !n2) continue;
       const e = createEntrant({
         tournament_id: tournamentId,

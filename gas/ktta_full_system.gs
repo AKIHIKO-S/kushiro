@@ -900,6 +900,14 @@ function receiveApplication(data) {
   // 受付番号 (UNIX 時間ベース)
   const receiptNo = Math.floor(now.getTime() / 1000) % 100000;
 
+  // ★★★ 新形式検出: KTTA Platform /entry/:id フォーム (担当者がまとめて申込) ★★★
+  //   { team_name, contact_name, contact_tel, contact_email, note,
+  //     entries: [{event, type, name/name1/name2, team/team1/team2, members}], total_amount }
+  if (Array.isArray(data.entries) && data.entries.length > 0) {
+    return receiveTeamApplication_(ss, data, now, receiptNo);
+  }
+
+  // ↓ 旧形式 (GAS内蔵フォーム: 1人ずつ、data.events + data.player_name)
   // 各シートへ自動振分け
   const events = data.events || [];
 
@@ -1002,6 +1010,104 @@ function rosterAlreadyExists_(sh, team, name) {
   if (last < 2) return false;
   const data = sh.getRange(2, 2, last - 1, 2).getValues();
   return data.some(row => row[0] === team && row[1] === name);
+}
+
+// ═══════════════════════════════════════════════
+// 新形式 (entries[]) の申込を受信して各シートに振り分け
+// KTTA Platform /entry/:id フォームからの「担当者まとめ申込」に対応
+// ═══════════════════════════════════════════════
+function receiveTeamApplication_(ss, data, now, receiptNo) {
+  const team = data.team_name || '';
+  const repName = data.contact_name || '';
+  const email = data.contact_email || '';
+  const phone = data.contact_tel || '';
+  const note = data.note || '';
+
+  const logSh = ss.getSheetByName(SHEETS.RECEIVE_LOG);
+  const rosterSh = ss.getSheetByName(SHEETS.ROSTER);
+  let count = 0;
+
+  (data.entries || []).forEach(ent => {
+    const ev = String(ent.event || '').trim();
+    if (!ev) return;
+    const type = ent.type || 'singles';
+
+    if (type === 'team') {
+      const members = (ent.members || []).filter(m => m && String(m).trim());
+      const teamName = ent.team_name || team;
+      if (!teamName && members.length === 0) return;
+      logSh.appendRow([receiptNo, now, team, repName, email, phone,
+        ev, teamName + ' (' + members.join('、') + ')', '', '', '', '', 0, 0, '', note]);
+      const sh = ss.getSheetByName(SHEETS.TEAM);
+      const row = [sh.getLastRow(), ev, teamName, team];
+      for (let i = 0; i < 6; i++) row.push(members[i] || '');
+      sh.appendRow(row);
+      count++;
+    } else if (type === 'doubles' || /ダブルス|混合|ミックス/.test(ev)) {
+      const n1 = String(ent.name1 || '').trim();
+      const n2 = String(ent.name2 || '').trim();
+      const t1 = String(ent.team1 || ent.team || '').trim();
+      const t2 = String(ent.team2 || ent.team1 || ent.team || '').trim();
+      if (!n1 && !n2) return;
+      logSh.appendRow([receiptNo, now, team, repName, email, phone,
+        ev, n1, '', '', '', n2, 0, 0, '', note]);
+      if (/混合|ミックス/.test(ev)) {
+        const sh = ss.getSheetByName(SHEETS.MIXED);
+        sh.appendRow([sh.getLastRow(), n1, t1, n2, t2, receiptNo]);
+      } else {
+        const sh = ss.getSheetByName(SHEETS.DOUBLES);
+        sh.appendRow([sh.getLastRow(), ev, n1, t1, n2, t2, receiptNo]);
+      }
+      addRoster_(rosterSh, t1, n1, ev, email);
+      addRoster_(rosterSh, t2, n2, ev, email);
+      count++;
+    } else {
+      // singles / その他
+      const name = String(ent.name || '').trim();
+      const teamN = String(ent.team || team).trim();
+      if (!name) return;
+      logSh.appendRow([receiptNo, now, team, repName, email, phone,
+        ev, name, '', '', '', '', 0, 0, '', note]);
+      const sh = ss.getSheetByName(SHEETS.SINGLES);
+      sh.appendRow([sh.getLastRow(), ev, name, teamN, '', '', '', receiptNo]);
+      addRoster_(rosterSh, teamN, name, ev, email);
+      count++;
+    }
+  });
+
+  // 集計更新
+  try { rebuildSummary(); } catch (e) { console.warn('集計更新失敗:', e); }
+
+  // 確認メール (1通にまとめる)
+  if (email && prop('ADMIN_EMAIL')) {
+    try {
+      const lines = (data.entries || []).map(e => {
+        if (e.type === 'team') return '  ・' + e.event + ' : ' + (e.team_name || '');
+        if (e.type === 'doubles') return '  ・' + e.event + ' : ' + (e.name1 || '') + ' / ' + (e.name2 || '');
+        return '  ・' + e.event + ' : ' + (e.name || '');
+      });
+      MailApp.sendEmail({
+        to: email,
+        bcc: prop('ADMIN_EMAIL'),
+        subject: `[${prop('ASSOCIATION_NAME')}] 申込受付完了 (#${receiptNo})`,
+        body: `${team}\n${repName} 様\n\n` +
+          `申込を受付けました。\n受付番号: ${receiptNo}\n\n` +
+          `【申込内容】\n${lines.join('\n')}\n\n` +
+          `合計参加料: ¥${(data.total_amount || 0).toLocaleString('ja-JP')}\n\n` +
+          `※当日、開会式前に受付でお支払いください。\n\n` +
+          `${prop('ASSOCIATION_NAME')}\n${prop('PRESIDENT_NAME')}`,
+      });
+    } catch (err) { console.warn('メール送信失敗:', err); }
+  }
+
+  return { receipt_no: receiptNo, events: count };
+}
+
+// ロスター(選手名簿)に重複なく追加
+function addRoster_(rosterSh, team, name, event, email) {
+  if (!name || !String(name).trim()) return;
+  if (rosterAlreadyExists_(rosterSh, team, name)) return;
+  rosterSh.appendRow([rosterSh.getLastRow(), team || '', name, '', '', '', event || '', email || '']);
 }
 
 // ═══════════════════════════════════════════════
