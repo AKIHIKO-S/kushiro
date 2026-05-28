@@ -3680,6 +3680,63 @@ function swapBracketSlots(tournamentId, event, a, b) {
   return { success: true };
 }
 
+// 1回戦の1スロットを設定 (BYE化/空き/別選手に置換)。取込ズレ・シードの手動修正用。
+// data = { mode: "bye"|"clear"|"player", name, team, player_id, entrant_id }
+function setBracketSlot(tournamentId, event, pos, slot, data) {
+  if (!event) return { error: "event が必要です" };
+  const p = parseInt(pos);
+  const s = (parseInt(slot) === 2) ? 2 : 1;
+  if (!Number.isInteger(p)) return { error: "位置が不正です" };
+  data = data || {};
+  const round1 = sqlite.prepare(
+    `SELECT * FROM matches WHERE tournament_id=? AND event=? AND bracket_round=1`
+  ).all(tournamentId, event);
+  const m = round1.find(x => (x.bracket_pos || 0) === p);
+  if (!m) return { error: "対象の試合が見つかりません" };
+  if (m.status === "on_table") return { error: "進行中の試合は編集できません" };
+  let nm = null;
+  if (m.next_match_id) {
+    nm = stmts.getMatch.get(m.next_match_id);
+    if (nm && (nm.status === "completed" || nm.status === "on_table")) {
+      return { error: "次の試合が進行/確定済みのため編集できません。先にそちらを取り消してください" };
+    }
+  }
+  const resetSql = `winner_id=NULL,loser_id=NULL,winner_name='',loser_name='',winner_team='',loser_team='',
+    sets_json='[]',winner_sets=0,loser_sets=0,is_walkover=0,finished_at=''`;
+  const tx = sqlite.transaction(() => {
+    // 1) この試合が次戦へ送った勝者を取り消す
+    if (nm) {
+      const ns = m.next_slot || 1;
+      sqlite.prepare(`UPDATE matches SET player${ns}_id=NULL, player${ns}_name='', player${ns}_team='', player${ns}_entrant_id=NULL WHERE id=?`).run(nm.id);
+      const nm2 = stmts.getMatch.get(nm.id);
+      const ready2 = nm2.player1_name && nm2.player2_name && nm2.player1_name !== "BYE" && nm2.player2_name !== "BYE";
+      sqlite.prepare(`UPDATE matches SET ${resetSql}, status=? WHERE id=?`).run(ready2 ? "pending" : "waiting", nm.id);
+    }
+    // 2) この試合の結果リセット
+    sqlite.prepare(`UPDATE matches SET ${resetSql} WHERE id=?`).run(m.id);
+    // 3) スロット設定
+    let pid = null, ent = null, name = "", team = "";
+    if (data.mode === "bye") name = "BYE";
+    else if (data.mode === "clear") { /* 空 */ }
+    else { pid = data.player_id || null; ent = data.entrant_id || null; name = (data.name || "").trim(); team = (data.team || "").trim(); }
+    sqlite.prepare(`UPDATE matches SET player${s}_id=?, player${s}_name=?, player${s}_team=?, player${s}_entrant_id=? WHERE id=?`)
+      .run(pid, name, team, ent, m.id);
+    // 4) 再計算
+    const cur = stmts.getMatch.get(m.id);
+    const real1 = cur.player1_name && cur.player1_name !== "BYE";
+    const real2 = cur.player2_name && cur.player2_name !== "BYE";
+    if (real1 && real2) {
+      sqlite.prepare(`UPDATE matches SET status='pending' WHERE id=?`).run(m.id);
+    } else if ((real1 && cur.player2_name === "BYE") || (real2 && cur.player1_name === "BYE")) {
+      finishMatchInternal(m.id, { winner_slot: real1 ? 1 : 2, sets: [], walkover: true });
+    } else {
+      sqlite.prepare(`UPDATE matches SET status='waiting' WHERE id=?`).run(m.id);
+    }
+  });
+  tx();
+  return { success: true };
+}
+
 // インポート: 形式自動判別
 function importBracket(tournamentId, data) {
   if (!data) return { error: "データが空です" };
@@ -4240,7 +4297,7 @@ module.exports = {
   createEntry, createTeamEntry, getEntries, setEntryStatus, setEntrySeed,
   updateEntrySettings, getOpenTournaments,
   // ブラケット JSON I/O
-  exportBracket, exportAllBrackets, importBracket, swapBracketSlots,
+  exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
   // Entrants (大会参加選手) - マスタDBと分離
   createEntrant, updateEntrant, deleteEntrant, getEntrant, getEntrants,
   setEntrantBracketNumber, autoAssignDrawNumbers, buildRosterData,

@@ -1552,6 +1552,15 @@ app.post("/api/tournaments/:id/bracket/swap", requireAdmin, (req, res) => {
   res.json(r);
 });
 
+// 1回戦の1スロットを設定 (BYE化/空き/別選手に置換) — 取込ズレ・シードの手動修正
+app.post("/api/tournaments/:id/bracket/set-slot", requireAdmin, (req, res) => {
+  const { event, pos, slot } = req.body || {};
+  if (!event || pos == null || slot == null) return res.status(400).json({ error: "event, pos, slot が必要です" });
+  const r = db.setBracketSlot(req.params.id, event, pos, slot, req.body || {});
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
+
 app.put("/api/tournaments/:id/court-layout", requireAdmin, (req, res) => {
   const r = db.setCourtLayout(req.params.id, req.body || {});
   if (!r) return res.status(404).json({ error: "大会が見つかりません" });

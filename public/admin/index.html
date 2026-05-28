@@ -7035,6 +7035,15 @@ const O = {
          if (from.pos === pos && from.slot === slot) return;
          O._dndSwap(bdata.event, from, { pos, slot, name });
        });
+       // クリックで編集 (BYE/空き/置換)
+       if (!name || name === "BYE") row.style.cursor = "pointer";
+       row.title = (name && name !== "BYE")
+         ? "ドラッグで入替 / クリックで変更(BYE・空き・置換)"
+         : "クリックで選手を設定";
+       row.addEventListener("click", (e) => {
+         e.stopPropagation();
+         O._editSlot(bdata.event, pos, slot, name || "");
+       });
      }
      return row;
    };
@@ -7128,6 +7137,111 @@ const O = {
      toast(`「${from.name || "選手"}」の位置を入れ替えました`, "ok");
      if (typeof O._vbReload === "function") O._vbReload();
    } catch (e) { toast("入れ替えに失敗しました: " + (e.message || e), "err"); }
+ },
+
+ // 1回戦スロットの手動編集 (#177): BYE化 / 空き / 別選手に置換
+ // 取込のズレ修正・選手ごとのシード(BYE)設定をクリック操作で行う
+ async _editSlot(event, pos, slot, currentName) {
+   const slotLabel = (parseInt(slot) === 2) ? "下の選手" : "上の選手";
+   const posLabel = (pos + 1) + "枠目・" + slotLabel;
+
+   // 共通: スロット設定を送信して再描画
+   const submit = async (payload) => {
+     try {
+       const r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/set-slot`,
+         { event, pos, slot, ...payload });
+       if (r && r.error) return toast(r.error, "err");
+       toast("トーナメント表を更新しました", "ok");
+       modal.remove();
+       if (typeof O._vbReload === "function") O._vbReload();
+     } catch (e) { toast("更新に失敗しました: " + (e.message || e), "err"); }
+   };
+
+   // 現在の選手表示
+   const curBox = h("div", { className: "field" },
+     h("label", { className: "field-label" }, "現在の選手"),
+     currentName && currentName !== "BYE"
+       ? h("div", { style: { fontWeight: 700, fontSize: "15px" } }, currentName)
+       : h("div", { className: "text-sub", style: { fontSize: "15px" } },
+           currentName === "BYE" ? "BYE (シード扱い)" : "（空き）"));
+
+   // クイック操作: BYE化 / 空きに
+   const quick = h("div", { className: "flex gap-2", style: { flexWrap: "wrap" } },
+     h("button", { className: "btn btn-sm", style: { background: "#0ea5e9" },
+       onClick: () => submit({ mode: "bye" }) }, "BYE (シード扱い) にする"),
+     h("button", { className: "btn btn-sm btn-ghost",
+       onClick: () => submit({ mode: "clear" }) }, "空きにする"));
+
+   // 別の選手に置き換え (出場選手リストから選択)
+   const searchInput = h("input", { className: "input", placeholder: "氏名・所属・No. で絞り込み…" });
+   const listBox = h("div", { style: { maxHeight: "300px", overflow: "auto",
+     border: "1px solid #e2e8f0", borderRadius: "6px", marginTop: "6px", background: "#fff" } });
+   listBox.innerHTML = '<div style="padding:12px;color:#94a3b8">読込中…</div>';
+
+   let entrants = [];
+   const renderList = () => {
+     const q = (searchInput.value || "").trim().toLowerCase();
+     const items = entrants.filter(e => {
+       if (!q) return true;
+       const hay = [(e.display_name || ""), (e.team || ""), (e.partner_team || ""),
+         (e.furigana || ""), (e.partner_furigana || ""), String(e.bracket_number || "")]
+         .join(" ").toLowerCase();
+       return hay.includes(q);
+     });
+     clear(listBox);
+     if (!items.length) {
+       listBox.appendChild(h("div", { style: { padding: "12px", color: "#94a3b8" } },
+         entrants.length ? "該当する選手がいません" : "この種目の出場選手が登録されていません"));
+       return;
+     }
+     items.forEach(e => {
+       const nm = e.display_name || e.name || "（無名）";
+       const row = h("div", { className: "es-row",
+         style: { display: "flex", alignItems: "center", gap: "8px",
+           padding: "8px 10px", borderBottom: "1px solid #f1f5f9", cursor: "pointer" },
+         onClick: () => submit({ mode: "player", name: nm, team: e.team || "",
+           entrant_id: e.id, player_id: e.player_id || null }) },
+         e.bracket_number
+           ? h("span", { className: "meta-chip", style: { flex: "0 0 auto" } }, "No." + e.bracket_number) : null,
+         e.seed
+           ? h("span", { className: "meta-chip",
+               style: { flex: "0 0 auto", background: "#fef3c7", color: "#92400e" } }, "第" + e.seed + "シード") : null,
+         h("span", { style: { fontWeight: 600, flex: "1 1 auto", minWidth: 0,
+           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, nm),
+         e.team ? h("span", { className: "text-xs text-sub", style: { flex: "0 0 auto" } }, e.team) : null,
+         e.player_id
+           ? h("span", { className: "text-xs", style: { flex: "0 0 auto", color: "#16a34a" } }, "DB連携") : null);
+       row.addEventListener("mouseenter", () => row.style.background = "#f1f5f9");
+       row.addEventListener("mouseleave", () => row.style.background = "");
+       listBox.appendChild(row);
+     });
+   };
+   searchInput.addEventListener("input", renderList);
+
+   const body = h("div", {},
+     h("div", { className: "text-xs text-sub", style: { marginBottom: "8px" } },
+       event + " ／ " + posLabel),
+     curBox,
+     h("div", { className: "modal-section-title" }, "クイック操作"),
+     quick,
+     h("div", { className: "modal-section-title", style: { marginTop: "12px" } },
+       "別の選手に置き換える"),
+     searchInput,
+     listBox);
+   const foot = h("button", { className: "btn btn-ghost",
+     onClick: () => modal.remove() }, "キャンセル");
+   const modal = openModal("1回戦スロットの編集", body, foot);
+
+   // 出場選手 (entrants) を取得して一覧表示
+   try {
+     const res = await api.get(`/api/tournaments/${O.tournamentId}/entrants?event=` +
+       encodeURIComponent(event));
+     entrants = Array.isArray(res) ? res : [];
+     entrants.sort((a, b) => (a.bracket_number || 9999) - (b.bracket_number || 9999));
+     renderList();
+   } catch (e) {
+     listBox.innerHTML = '<div style="padding:12px;color:#dc2626">選手の取得に失敗しました</div>';
+   }
  },
 
  // ── トーナメント生成ダイアログ ──
