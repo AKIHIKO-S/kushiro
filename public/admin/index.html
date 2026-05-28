@@ -390,27 +390,46 @@
  }
  .court-cell {
  background: #fff; border: 2px solid var(--border-strong);
- border-radius: 6px; padding: 6px 4px;
- min-height: 64px; min-width: 70px;
+ border-radius: 8px; padding: 14px 4px 6px;
+ min-height: 72px; min-width: 78px;
  display: flex; flex-direction: column; align-items: center; justify-content: center;
  font-size: 10px; cursor: pointer; transition: all .15s;
  position: relative;
  }
- .court-cell:hover { border-color: var(--pri-l); transform: translateY(-1px); }
- .court-cell.empty { background: #f8fafc; color: var(--sub-l); }
+ .court-cell:hover { border-color: var(--pri-l); transform: translateY(-1px); box-shadow: var(--shadow); }
+ .court-cell.empty {
+ background: #f8fafc; color: var(--sub-l);
+ border-style: dashed; border-color: var(--ink-300);
+ }
+ .court-cell.empty:hover { background: #eff6ff; border-color: #60a5fa; }
  .court-cell.active {
+ background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+ border-color: #16a34a;
+ }
+ /* 呼出2回以上=赤点滅 (来ていない可能性) */
+ .court-cell.warn {
  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
  border-color: var(--accent);
+ animation: courtPulse 1.6s infinite;
  }
+ @keyframes courtPulse { 0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.3)} 50%{box-shadow:0 0 0 4px rgba(220,38,38,0)} }
  .court-cell-no {
- position: absolute; top: 2px; left: 4px;
- font-size: 9px; color: var(--sub); font-weight: 700;
+ position: absolute; top: 3px; left: 0; right: 0;
+ font-size: 10px; color: #fff; font-weight: 800;
+ background: var(--ink-700);
+ border-radius: 6px 6px 0 0; padding: 1px 0; letter-spacing: .03em;
  }
+ .court-cell.active .court-cell-no { background: #16a34a; }
+ .court-cell.warn .court-cell-no { background: var(--accent); }
  .court-cell-match {
- text-align: center; font-weight: 700; font-size: 10px;
- color: var(--accent); line-height: 1.2; margin-top: 8px;
+ text-align: center; font-weight: 700; font-size: 11px;
+ color: var(--ink-900); line-height: 1.25; margin-top: 4px;
+ width: 100%;
  }
- .court-cell-vs { font-size: 9px; color: var(--sub); font-weight: 400; }
+ .court-cell-match .cc-name { font-size: 11px; font-weight: 700; }
+ .court-cell-match .cc-furi { font-size: 8px; color: var(--sub); font-weight: 500; letter-spacing: .02em; }
+ .court-cell-match .cc-ref { font-size: 8px; color: #6d28d9; margin-top: 2px; font-weight: 600; }
+ .court-cell-vs { font-size: 9px; color: var(--sub); font-weight: 400; margin: 1px 0; }
  .court-hq {
  margin-top: 10px; padding: 10px; background: var(--pri); color: #fff;
  border-radius: 6px; text-align: center; font-weight: 700; font-size: 13px;
@@ -5662,31 +5681,37 @@ const O = {
  grid.style.maxWidth = `${court_cols * 80}px`;
 
  O.state.tables.forEach((t, i) => {
+ const m = t.match;
+ // 呼出2回以上で未着の可能性 → warn 表示
+ const cc = m ? Math.max(parseInt(m.call_count_p1) || 0, parseInt(m.call_count_p2) || 0) : 0;
+ const cls = m ? (cc >= 2 ? "warn" : "active") : "empty";
  const cell = h("div", {
- className: "court-cell " + (t.match ? "active" : "empty")
-   + (t.is_extra ? " extra" : ""),
+ className: "court-cell " + cls + (t.is_extra ? " extra" : ""),
  onClick: () => {
- if (t.match) O.openMatchActions(t.match);
+ if (m) O.openMatchActions(m);
  else O.openCallableForTable(t.table_no);
  },
- title: t.match
-   ? (t.is_extra ? "団体戦追加台 (主台は別) - クリックで結果入力"
-                 : "クリックで結果入力")
+ title: m
+   ? (t.is_extra ? "団体戦追加台 - クリックで結果入力"
+                 : "クリックで結果入力" + (cc >= 2 ? " (呼出" + cc + "回・未着の可能性)" : ""))
    : "クリックで呼べる対戦を表示",
  });
- cell.appendChild(h("div", { className: "court-cell-no" }, "台" + t.table_no));
- if (t.match) {
+ cell.appendChild(h("div", { className: "court-cell-no" }, t.table_no + "番台"));
+ if (m) {
+ // 姓だけ + ふりがな (呼出重視)
+ const shortName = (full) => (full || "").split(/[\s　]/)[0] || full || "";
  cell.appendChild(h("div", { className: "court-cell-match" },
- h("div", {}, t.match.player1_name),
- h("div", { className: "court-cell-vs" },
-   t.is_extra ? "(団体追加)" : "vs"),
- h("div", {}, t.match.player2_name),
+ h("div", { className: "cc-name" }, shortName(m.player1_name)),
+ m.player1_furigana ? h("div", { className: "cc-furi" }, m.player1_furigana) : null,
+ h("div", { className: "court-cell-vs" }, t.is_extra ? "(団体追加)" : "VS"),
+ h("div", { className: "cc-name" }, shortName(m.player2_name)),
+ m.player2_furigana ? h("div", { className: "cc-furi" }, m.player2_furigana) : null,
+ m.referee_name ? h("div", { className: "cc-ref" }, "審 " + shortName(m.referee_name)) : null,
  ));
  } else {
- cell.appendChild(h("div", { className: "text-xs text-sub" }, "空"));
- cell.appendChild(h("div", { className: "text-xs",
- style: { color: "var(--pri-l)", marginTop: "2px", fontSize: "9px" } },
- "+対戦を呼ぶ"));
+ cell.appendChild(h("div", { style: { fontSize: "11px", color: "var(--sub-l)", marginTop: "6px" } }, "空き"));
+ cell.appendChild(h("div", { style: { color: "#2563eb", marginTop: "3px",
+   fontSize: "10px", fontWeight: 700 } }, "+ 試合を置く"));
  }
  grid.appendChild(cell);
  });
@@ -5697,6 +5722,18 @@ const O = {
  style: { maxWidth: `${court_cols * 80}px`, marginLeft: "auto", marginRight: "auto" } },
  "本部"));
  }
+ // 凡例
+ const legend = (color, label) => h("span", { style: { display: "inline-flex",
+   alignItems: "center", gap: "4px", fontSize: "11px", color: "var(--ink-600)" } },
+   h("span", { style: { width: "12px", height: "12px", borderRadius: "3px",
+     background: color, display: "inline-block", border: "1px solid rgba(0,0,0,.1)" } }), label);
+ wrap.appendChild(h("div", { style: { display: "flex", gap: "14px", flexWrap: "wrap",
+   marginTop: "10px", justifyContent: "center", paddingTop: "10px",
+   borderTop: "1px dashed var(--ink-300)" } },
+   legend("#dcfce7", "進行中"),
+   legend("#fee2e2", "呼出2回+ (未着の可能性)"),
+   legend("#f8fafc", "空き (クリックで試合配置)"),
+ ));
  return wrap;
  },
 

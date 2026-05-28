@@ -2600,8 +2600,12 @@ function getOperationState(tournamentId) {
     SELECT m.*,
       e1.bracket_number AS player1_bracket_number,
       e1.bracket_side AS player1_bracket_side,
+      e1.furigana AS player1_furigana,
+      e1.partner_furigana AS player1_partner_furigana,
       e2.bracket_number AS player2_bracket_number,
-      e2.bracket_side AS player2_bracket_side
+      e2.bracket_side AS player2_bracket_side,
+      e2.furigana AS player2_furigana,
+      e2.partner_furigana AS player2_partner_furigana
     FROM matches m
     LEFT JOIN entrants e1 ON e1.id = m.player1_entrant_id
     LEFT JOIN entrants e2 ON e2.id = m.player2_entrant_id
