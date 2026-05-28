@@ -910,12 +910,37 @@ const V = {
  } catch (e) { console.error(e); }
  },
 
+ // ふりがな先頭→行(あ行/か行...)分類 (admin と共通ロジック)
+ _kanaRow(furi) {
+ if (!furi) return "他";
+ const c = furi.charAt(0);
+ const groups = [
+ { row: "あ行", h: ["あ","い","う","え","お","ぁ","ぃ","ぅ","ぇ","ぉ"], k: ["ア","イ","ウ","エ","オ","ァ","ィ","ゥ","ェ","ォ"] },
+ { row: "か行", h: ["か","き","く","け","こ","が","ぎ","ぐ","げ","ご"], k: ["カ","キ","ク","ケ","コ","ガ","ギ","グ","ゲ","ゴ"] },
+ { row: "さ行", h: ["さ","し","す","せ","そ","ざ","じ","ず","ぜ","ぞ"], k: ["サ","シ","ス","セ","ソ","ザ","ジ","ズ","ゼ","ゾ"] },
+ { row: "た行", h: ["た","ち","つ","て","と","だ","ぢ","づ","で","ど","っ"], k: ["タ","チ","ツ","テ","ト","ダ","ヂ","ヅ","デ","ド","ッ"] },
+ { row: "な行", h: ["な","に","ぬ","ね","の"], k: ["ナ","ニ","ヌ","ネ","ノ"] },
+ { row: "は行", h: ["は","ひ","ふ","へ","ほ","ば","び","ぶ","べ","ぼ","ぱ","ぴ","ぷ","ぺ","ぽ"], k: ["ハ","ヒ","フ","ヘ","ホ","バ","ビ","ブ","ベ","ボ","パ","ピ","プ","ペ","ポ"] },
+ { row: "ま行", h: ["ま","み","む","め","も"], k: ["マ","ミ","ム","メ","モ"] },
+ { row: "や行", h: ["や","ゆ","よ","ゃ","ゅ","ょ"], k: ["ヤ","ユ","ヨ","ャ","ュ","ョ"] },
+ { row: "ら行", h: ["ら","り","る","れ","ろ"], k: ["ラ","リ","ル","レ","ロ"] },
+ { row: "わ行", h: ["わ","を","ん","ゎ"], k: ["ワ","ヲ","ン","ヮ"] },
+ ];
+ for (const g of groups) { if (g.h.includes(c) || g.k.includes(c)) return g.row; }
+ return "他";
+ },
+ _initials(name) {
+ const s = (name || "").trim();
+ return s ? s.charAt(0) : "?";
+ },
+
  renderPlayerList() {
  const list = document.getElementById("playerList");
  const status = document.getElementById("searchStatus");
  clear(list);
 
  if (!V.state.players.length) {
+ list.style.display = "grid";
  status.textContent = "";
  list.appendChild(h("div", { className: "empty-state", style: { gridColumn: "1/-1" } },
  document.getElementById("searchInput").value
@@ -923,39 +948,69 @@ const V = {
  : "選手名・所属で検索してください（例：佐藤、卓球クラブ）"));
  return;
  }
- status.textContent = `${V.state.players.length}名`;
+ // アコーディオン表示のためコンテナをブロックに
+ list.style.display = "block";
+ const q = (document.getElementById("searchInput").value || "").trim();
+ const males = V.state.players.filter(p => p.gender !== "female").length;
+ const females = V.state.players.length - males;
+ status.textContent = `${V.state.players.length}名 · 男子${males} / 女子${females}`;
 
+ const renderCard = (p) => {
+ const gClass = p.gender === "female" ? "female" : "male";
+ const wins = p.match_wins || 0;
+ const losses = p.match_losses || 0;
+ const total = wins + losses;
+ const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
+ const app = p.appearances || 0;
+ const stats = [];
+ if (app > 0) stats.push(h("span", { className: "pdb-stat app" },
+ h("span", { className: "pdb-stat-lbl" }, "出場"), String(app) + "回"));
+ if (total > 0) {
+ stats.push(h("span", { className: "pdb-stat win" },
+ h("span", { className: "pdb-stat-lbl" }, "勝"), String(wins)));
+ stats.push(h("span", { className: "pdb-stat loss" },
+ h("span", { className: "pdb-stat-lbl" }, "敗"), String(losses)));
+ }
+ const golds = p.wins_ach || 0;
+ const medalCount = p.total_achievements || 0;
+ if (golds > 0) stats.push(h("span", { className: "pdb-stat medal" }, "優勝" + golds));
+ else if (medalCount > 0) stats.push(h("span", { className: "pdb-stat medal" }, "入賞" + medalCount));
+ return h("div", { className: "pdb-card " + gClass, onClick: () => V.openPlayer(p.id) },
+ h("div", { className: "pdb-avatar" }, V._initials(p.name)),
+ h("div", { className: "pdb-info" },
+ h("div", { className: "pdb-name" }, p.name || "(無名)"),
+ p.furigana ? h("div", { className: "pdb-furi" }, p.furigana) : null,
+ h("div", { className: "pdb-meta" },
+ p.branch ? h("span", { className: "pdb-branch" }, p.branch) : null,
+ p.team || "—"),
+ stats.length ? h("div", { className: "pdb-stats" }, ...stats) : null,
+ total > 0 ? h("div", { className: "pdb-winrate-bar", title: "勝率 " + winRate + "%" },
+ h("span", { style: { width: winRate + "%" } })) : null,
+ ),
+ );
+ };
+
+ // あ行/か行/さ行 アコーディオン分類 (admin と統一)
+ const rows = ["あ行","か行","さ行","た行","な行","は行","ま行","や行","ら行","わ行","他"];
+ const grouped = {};
  V.state.players.forEach(p => {
- const initial = (p.name || "?").substring(0, 1);
- list.appendChild(h("div", {
- className: "player-card",
- onClick: () => V.openPlayer(p.id),
- },
- h("div", {
- className: "player-avatar " + (p.gender === "female" ? "female" : "")
- }, initial),
- h("div", { className: "player-info" },
- h("div", { className: "player-name" }, p.name),
- p.furigana ? h("div", { style: { fontSize: "10px", color: "var(--sub)",
-   letterSpacing: ".03em", marginTop: "1px" } }, p.furigana) : null,
- h("div", { className: "player-meta", style: { marginTop: "3px" } },
- p.branch ? h("span", { style: { background: "#fef3c7", color: "#92400e",
-   padding: "1px 8px", borderRadius: "10px", fontSize: "10px",
-   fontWeight: 600, marginRight: "4px" } }, p.branch) : null,
- p.team ? h("span", {}, p.team) : null,
- ),
- ),
- h("div", { style: { display: "flex", flexDirection: "column", gap: "3px", alignItems: "flex-end" } },
- ((p.match_wins || 0) + (p.match_losses || 0) > 0)
-   ? h("div", { style: { display: "flex", gap: "4px" } },
-       h("span", { className: "win-badge" }, (p.match_wins || 0) + "勝"),
-       h("span", { className: "loss-badge" }, (p.match_losses || 0) + "敗"))
-   : null,
- (p.wins_ach > 0) ? h("span", { style: { fontSize: "10px", color: "#854d0e",
-   background: "#fef9c3", padding: "1px 7px", borderRadius: "10px", fontWeight: 700 } },
-   "優勝" + p.wins_ach) : null,
- ),
- ));
+ const r = V._kanaRow(p.furigana || V._initials(p.name));
+ (grouped[r] = grouped[r] || []).push(p);
+ });
+ rows.forEach((r, idx) => {
+ const players = grouped[r];
+ if (!players || !players.length) return;
+ const acc = h("div", { className: "pdb-acc" + (idx === 0 || q ? " open" : "") });
+ const head = h("div", { className: "pdb-acc-head", onClick: () => acc.classList.toggle("open") },
+ h("div", { className: "pdb-row-num" }, r.charAt(0)),
+ h("div", { className: "pdb-row-label" }, r),
+ h("div", { className: "pdb-row-count" }, players.length + "名"),
+ );
+ const body = h("div", { className: "pdb-acc-body" });
+ players.forEach(p => body.appendChild(renderCard(p)));
+ acc.appendChild(head);
+ acc.appendChild(body);
+ list.appendChild(acc);
  });
  },
 
