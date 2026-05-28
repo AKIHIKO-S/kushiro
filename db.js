@@ -1489,13 +1489,22 @@ function autoAssignDrawNumbers(tournamentId, opts) {
       }
 
       const all = [...seeded, ...unseeded];
-      let n = 0;
       let assigned = 0;
-      for (const e of all) {
-        n++;
-        if (!force && e.bracket_number && e.bracket_number > 0) continue; // 既存維持
-        updateNumberStmt.run(n, e.id);
-        assigned++;
+      if (force) {
+        // 全再割当: 1..N を順に
+        let n = 0;
+        for (const e of all) { n++; updateNumberStmt.run(n, e.id); assigned++; }
+      } else {
+        // 既存番号は維持し、未割当には「未使用の最小番号」を割当 (#190: 番号衝突を防止)
+        const used = new Set(all.map(e => e.bracket_number).filter(x => x && x > 0));
+        let next = 1;
+        for (const e of all) {
+          if (e.bracket_number && e.bracket_number > 0) continue; // 既存維持
+          while (used.has(next)) next++;
+          updateNumberStmt.run(next, e.id);
+          used.add(next);
+          assigned++;
+        }
       }
       summary.push({ event: ev, total: all.length, assigned });
     }
