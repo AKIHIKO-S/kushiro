@@ -363,20 +363,44 @@
 
  /* ── 進行管理 ── */
  .op-summary {
- display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+ display: grid; grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
  gap: 8px; margin-bottom: 14px;
  }
  .op-stat {
  background: #fff; border: 1px solid var(--border);
- border-radius: var(--radius); padding: 10px;
- text-align: center;
+ border-radius: 10px; padding: 12px 10px 10px;
+ text-align: center; position: relative; overflow: hidden;
+ border-top: 3px solid var(--ink-300);
  }
- .op-stat-num { font-size: 22px; font-weight: 700; line-height: 1; }
- .op-stat-num.red { color: var(--accent); }
- .op-stat-num.orange { color: var(--warn); }
- .op-stat-num.green { color: var(--ok); }
- .op-stat-num.blue { color: var(--pri); }
- .op-stat-label { font-size: 11px; color: var(--sub); margin-top: 4px; }
+ .op-stat::before {
+ content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+ }
+ .op-stat .op-stat-ic { font-size: 14px; line-height: 1; margin-bottom: 4px; }
+ .op-stat-num { font-size: 26px; font-weight: 800; line-height: 1;
+   font-family: var(--font-display); }
+ .op-stat-num.red { color: #15803d; }      /* 進行中=緑 (動いている=good) */
+ .op-stat-num.orange { color: #b45309; }    /* 呼べる=橙 (要対応) */
+ .op-stat-num.green { color: var(--ink-500); } /* 終了=灰 */
+ .op-stat-num.blue { color: #1d4ed8; }      /* 待機=青 */
+ .op-stat-label { font-size: 11px; color: var(--ink-600); margin-top: 4px; font-weight: 600; }
+ .op-stat.s-ongoing { border-top-color: #16a34a; background: linear-gradient(180deg,#f0fdf4,#fff); }
+ .op-stat.s-callable { border-top-color: #d97706; background: linear-gradient(180deg,#fffbeb,#fff); }
+ .op-stat.s-waiting { border-top-color: #2563eb; background: linear-gradient(180deg,#eff6ff,#fff); }
+ .op-stat.s-done { border-top-color: #a1a1aa; }
+ .op-stat.s-total { border-top-color: var(--ink-700); }
+ /* 種目別進捗 */
+ .ev-progress-list { display: grid; gap: 8px; }
+ .ev-progress {
+ display: grid; grid-template-columns: 1fr auto; gap: 4px 10px;
+ align-items: center; padding: 8px 12px;
+ background: #fff; border: 1px solid var(--border); border-radius: 8px;
+ }
+ .ev-progress .ev-name { font-size: 13px; font-weight: 700; color: var(--ink-800); }
+ .ev-progress .ev-count { font-size: 12px; color: var(--ink-600); font-family: var(--font-mono); white-space: nowrap; }
+ .ev-progress .ev-bar { grid-column: 1/-1; height: 7px; border-radius: 4px; background: var(--ink-100); overflow: hidden; }
+ .ev-progress .ev-bar > span { display: block; height: 100%; background: linear-gradient(90deg,#22c55e,#15803d); transition: width .3s; }
+ .ev-progress.done .ev-bar > span { background: linear-gradient(90deg,#16a34a,#15803d); }
+ .ev-progress .ev-done-tag { font-size: 10px; font-weight: 800; color: #15803d; }
 
  /* コートグリッド */
  .court-wrap {
@@ -5452,26 +5476,49 @@ const O = {
  if (!O.state) return;
  clear(main);
 
- // ── サマリ ──
+ // ── サマリ (色付きステータスカード) ──
  const events = Object.keys(O.state.event_stats);
  const totalCompleted = Object.values(O.state.event_stats).reduce((a, e) => a + (e.completed || 0), 0);
+ const statCard = (cls, ic, num, numCls, label) => h("div", { className: "op-stat " + cls },
+   h("div", { className: "op-stat-ic" }, ic),
+   h("div", { className: "op-stat-num " + numCls }, String(num)),
+   h("div", { className: "op-stat-label" }, label));
  main.appendChild(h("div", { className: "op-summary" },
- h("div", { className: "op-stat" },
- h("div", { className: "op-stat-num red" }, String(O.state.on_table.length)),
- h("div", { className: "op-stat-label" }, "進行中")),
- h("div", { className: "op-stat" },
- h("div", { className: "op-stat-num orange" }, String(O.state.callable.length)),
- h("div", { className: "op-stat-label" }, "呼べる")),
- h("div", { className: "op-stat" },
- h("div", { className: "op-stat-num blue" }, String(O.state.waiting)),
- h("div", { className: "op-stat-label" }, "待機")),
- h("div", { className: "op-stat" },
- h("div", { className: "op-stat-num green" }, String(totalCompleted)),
- h("div", { className: "op-stat-label" }, "終了")),
- h("div", { className: "op-stat" },
- h("div", { className: "op-stat-num" }, String(O.state.total_matches)),
- h("div", { className: "op-stat-label" }, "総試合")),
+ statCard("s-ongoing", "🟢", O.state.on_table.length, "red", "進行中"),
+ statCard("s-callable", "📢", O.state.callable.length, "orange", "呼べる"),
+ statCard("s-waiting", "⏳", O.state.waiting, "blue", "待機"),
+ statCard("s-done", "✓", totalCompleted, "green", "終了"),
+ statCard("s-total", "🏓", O.state.total_matches, "", "総試合"),
  ));
+
+ // ── 種目別 進捗バー ──
+ if (events.length) {
+ const overall = O.state.total_matches > 0
+   ? Math.round((totalCompleted / O.state.total_matches) * 100) : 0;
+ const progCard = h("div", { className: "card" },
+ h("div", { className: "card-head" },
+ h("div", { className: "card-title" }, "種目別 進捗"),
+ h("div", { className: "card-title-sub" }, `全体 ${totalCompleted}/${O.state.total_matches} (${overall}%)`),
+ ),
+ );
+ const progList = h("div", { className: "ev-progress-list" });
+ events.forEach(ev => {
+   const st = O.state.event_stats[ev] || {};
+   const total = st.total || 0;
+   const done = st.completed || 0;
+   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+   const isDone = total > 0 && done >= total;
+   progList.appendChild(h("div", { className: "ev-progress" + (isDone ? " done" : "") },
+     h("span", { className: "ev-name" },
+       h("span", { className: "ev-priority", style: { background: O._eventPriorityColor(ev) } }), ev),
+     h("span", { className: "ev-count" },
+       isDone ? h("span", { className: "ev-done-tag" }, "完了 ✓") : `${done} / ${total}`),
+     h("span", { className: "ev-bar" }, h("span", { style: { width: pct + "%" } })),
+   ));
+ });
+ progCard.appendChild(progList);
+ main.appendChild(progCard);
+ }
 
  // ── アクションボタン ──
  main.appendChild(h("div", { className: "flex gap-2 mb-3 flex-wrap" },

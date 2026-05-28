@@ -939,14 +939,20 @@ const LV = {
 
   async loadTournaments() {
     try {
-      LV.tournaments = await api.get("/api/public/tournaments");
+      const all = await api.get("/api/public/tournaments");
+      // ★ 観戦ビューは「進行中」の大会のみ表示
+      LV.tournaments = (all || []).filter(t => t.status === "ongoing");
       const sel = document.getElementById("tournSel");
       clear(sel);
-      sel.appendChild(h("option", { value: "" }, "— 大会を選択 —"));
-      LV.tournaments.forEach(t => {
-        sel.appendChild(h("option", { value: t.id },
-          `${t.name} (${fmtDate(t.date) || ""})`));
-      });
+      if (!LV.tournaments.length) {
+        sel.appendChild(h("option", { value: "" }, "— 進行中の大会はありません —"));
+      } else {
+        sel.appendChild(h("option", { value: "" }, "— 大会を選択 —"));
+        LV.tournaments.forEach(t => {
+          sel.appendChild(h("option", { value: t.id },
+            `${t.name} (${fmtDate(t.date) || ""})`));
+        });
+      }
     } catch (e) { console.error(e); }
   },
 
@@ -955,25 +961,21 @@ const LV = {
     if (!list) return;
     clear(list);
     if (!LV.tournaments || !LV.tournaments.length) {
-      list.appendChild(h("div", { style: { color: "var(--lv-sub)" } }, "現在大会はありません。"));
+      list.appendChild(h("div", { style: { color: "var(--lv-sub)", textAlign: "center", padding: "20px" } },
+        h("div", { style: { fontSize: "16px", marginBottom: "6px" } }, "現在、進行中の大会はありません"),
+        h("div", { style: { fontSize: "13px", opacity: ".8" } },
+          "大会が始まると、ここに自動で表示されます。")));
       return;
     }
-    const sorted = [...LV.tournaments].sort((a, b) => {
-      const order = { ongoing: 0, preparation: 1, scheduled: 2, completed: 3 };
-      return (order[a.status] || 9) - (order[b.status] || 9);
-    });
-    sorted.forEach(t => {
-      const statusLabel = {
-        ongoing: "進行中", preparation: "準備中",
-        scheduled: "予定", completed: "終了"
-      }[t.status] || t.status;
+    // 進行中のみなのでソート不要だが念のため
+    LV.tournaments.forEach(t => {
       list.appendChild(h("div", {
           className: "card",
           onClick: () => LV.selectTournament(t.id)
         },
         h("div", { className: "name" }, t.name),
         h("div", { className: "meta" },
-          `${fmtDate(t.date) || "日程未定"}  ·  ${t.venue || "会場未定"}  ·  [${statusLabel}]`),
+          `${fmtDate(t.date) || "日程未定"}  ·  ${t.venue || "会場未定"}  ·  [進行中]`),
       ));
     });
   },
