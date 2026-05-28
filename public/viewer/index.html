@@ -1119,6 +1119,28 @@ const V = {
  });
  },
 
+ // 勝率リング (SVG・アニメ付き)。total=試合数を下に表示
+ _winRateRing(pct, total, gCls) {
+ const r = 33, c = 2 * Math.PI * r;
+ const off = c * (1 - (pct || 0) / 100);
+ const wrap = h("div", { className: "wr-ring " + (gCls || "") });
+ wrap.innerHTML =
+   '<svg viewBox="0 0 84 84" width="84" height="84" aria-hidden="true">' +
+   '<circle cx="42" cy="42" r="' + r + '" fill="none" stroke="rgba(255,255,255,.22)" stroke-width="8"/>' +
+   '<circle class="wr-ring-fg" cx="42" cy="42" r="' + r + '" fill="none" stroke="#fff" stroke-width="8" ' +
+   'stroke-linecap="round" stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + c.toFixed(1) + '" ' +
+   'transform="rotate(-90 42 42)"/>' +
+   '<text x="42" y="40" text-anchor="middle" font-size="21" font-weight="800" fill="#fff">' + (pct || 0) + '</text>' +
+   '<text x="42" y="55" text-anchor="middle" font-size="9" fill="rgba(255,255,255,.85)">勝率%</text>' +
+   '</svg>' +
+   '<div class="wr-ring-sub">' + (total || 0) + ' 試合</div>';
+ requestAnimationFrame(() => {
+   const fg = wrap.querySelector(".wr-ring-fg");
+   if (fg) { fg.style.transition = "stroke-dashoffset 1.1s cubic-bezier(.2,.7,.3,1)"; fg.style.strokeDashoffset = off.toFixed(1); }
+ });
+ return wrap;
+ },
+
  // ─── 選手プロフィール ────────────────────────────────
  async openPlayer(id, updateHash = true) {
  if (updateHash) location.hash = "player/" + id;
@@ -1147,23 +1169,22 @@ const V = {
  const total = wins + losses;
  const winRate = total ? Math.round(wins / total * 100) : 0;
 
- // NPB選手名鑑風カード
+ // 選手名鑑風カード (ヒーロー強化)
  const card = h("div", { className: "player-guide-card fi" });
- // ヘッダー (深紺背景・大ポートレイト・大レーティング表示)
- card.appendChild(h("div", { className: "player-guide-head" },
- h("div", { className: "player-guide-portrait " + (p.gender === "female" ? "female" : "") },
- initial),
- h("div", {},
+ const gCls = p.gender === "female" ? "female" : "";
+ card.appendChild(h("div", { className: "player-guide-head pg-head-rich " + gCls },
+ h("div", { className: "player-guide-portrait " + gCls }, initial),
+ h("div", { className: "pg-id" },
  h("div", { className: "player-guide-name" }, p.name),
  p.furigana ? h("div", { className: "player-guide-name-en" }, p.furigana) : null,
  h("div", { className: "player-guide-team" }, p.team || "所属なし"),
- p.branch ? h("div", { style: { marginTop: "6px" } },
-   TT.branchBadge(p.branch, { fontSize: "11px", padding: "2px 10px", borderRadius: "12px", fontWeight: 700 })) : null,
+ h("div", { className: "pg-badges" },
+   h("span", { className: "pg-cat-badge" }, TT.catLabel(p.category)),
+   p.gender === "female" ? h("span", { className: "pg-cat-badge alt" }, "女子") : h("span", { className: "pg-cat-badge alt2" }, "男子"),
+   p.branch ? TT.branchBadge(p.branch, { fontSize: "11px", padding: "2px 10px", borderRadius: "12px", fontWeight: 700 }) : null),
  ),
- h("div", { className: "player-guide-rating-block" },
- h("div", { className: "player-guide-rating" }, total + "試合"),
- h("div", { className: "player-guide-rating-label" }, "CAREER MATCHES"),
- ),
+ // 勝率リング (アニメーション)
+ V._winRateRing(winRate, total, gCls),
  ));
 
  // 主要スタッツ (試合勝敗中心、レーティング・タイトルなし)
@@ -1188,7 +1209,7 @@ const V = {
  ["所属", p.team || "—"],
  ["ふりがな", p.furigana || "—"],
  ["性別", p.gender === "female" ? "女子" : "男子"],
- ["カテゴリ", { general: "一般", high: "高校", middle: "中学", elementary: "小学", senior: "シニア", junior: "ジュニア" }[p.category] || "一般"],
+ ["カテゴリ", TT.catLabel(p.category)],
  ];
  const bioDl = h("dl", {});
  bioFields.forEach(([k, v]) => {
