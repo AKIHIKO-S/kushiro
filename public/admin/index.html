@@ -5546,20 +5546,35 @@ const O = {
  }
  main.appendChild(callCard);
 
- // ── 審判プール ──
+ // ── 審判プール (敗者プール) ──
  if (O.state.referee_queue.length) {
+ // 種目別にグループ化
+ const byEv = {};
+ O.state.referee_queue.forEach(r => { (byEv[r.event || "その他"] = byEv[r.event || "その他"] || []).push(r); });
  const refCard = h("div", { className: "card" },
  h("div", { className: "card-head" },
- h("div", { className: "card-title" }, "審判候補（敗者プール）"),
+ h("div", { className: "flex gap-2", style: { alignItems: "center" } },
+ h("div", { className: "card-title" }, "審判候補 (敗者プール)"),
  h("div", { className: "card-title-sub" }, `${O.state.referee_queue.length}名`),
  ),
- h("div", { className: "flex gap-2 flex-wrap" },
- ...O.state.referee_queue.slice(0, 15).map(r =>
- h("div", { className: "badge", style: { fontSize: "12px", padding: "4px 10px" } },
- `${r.loser_name}${r.loser_team ? "(" + r.loser_team + ")" : ""}`)
- ),
+ h("div", { className: "text-xs text-sub" }, "次の試合の審判をここから割当"),
  ),
  );
+ Object.entries(byEv).forEach(([ev, rs]) => {
+   refCard.appendChild(h("div", { style: { marginBottom: "8px" } },
+   h("div", { className: "flex gap-1", style: { alignItems: "center", marginBottom: "4px" } },
+     h("span", { className: "ev-priority", style: { background: O._eventPriorityColor(ev) } }),
+     h("span", { style: { fontSize: "11px", fontWeight: "700", color: "var(--ink-700)" } }, ev),
+     h("span", { className: "text-xs text-sub" }, `(${rs.length}名)`)),
+   h("div", { className: "flex gap-2 flex-wrap" },
+     ...rs.slice(0, 20).map(r =>
+       h("span", { style: { display: "inline-flex", flexDirection: "column",
+         padding: "5px 10px", background: "#faf5ff", border: "1px solid #e9d5ff",
+         borderRadius: "8px", fontSize: "12px", lineHeight: "1.3" } },
+         h("span", { style: { fontWeight: "700" } }, O._surname(r.loser_name)),
+         r.loser_team ? h("span", { style: { fontSize: "9px", color: "var(--sub)" } }, r.loser_team) : null))),
+   ));
+ });
  main.appendChild(refCard);
  }
 
@@ -5876,13 +5891,45 @@ const O = {
  O.reload();
  },
 
- // ── 進行中試合の審判変更 ──
+ // ── 進行中試合の審判変更/割当 ──
  async openChangeReferee(m) {
  const allPlayers = await api.get("/api/players?sort=furigana");
- const input = h("input", { className: "input", placeholder: "選手名検索…", autocomplete: "off" });
+ let selectedId = m.referee_id || "";
+
+ // 即時割当 (ワンタップ)
+ const assignNow = async (pid, force) => {
+   const r = await api.post(`/api/matches/${m.id}/referee`, { referee_id: pid, force: !!force });
+   if (r.error) return toast(r.error, "err");
+   toast("審判を割当てました", "ok");
+   document.querySelector(".modal-bg")?.remove();
+   O.reload();
+ };
+
+ // 敗者プール (おすすめ審判) — この種目を優先して上に
+ const queue = (O.state.referee_queue || []);
+ const sameEvent = queue.filter(r => r.event === m.event);
+ const otherEvent = queue.filter(r => r.event !== m.event);
+ const ordered = [...sameEvent, ...otherEvent].slice(0, 12);
+
+ const poolChips = h("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px" } });
+ if (!ordered.length) {
+   poolChips.appendChild(h("div", { className: "text-xs text-sub" },
+     "敗者プールは空です。下の検索から任意の選手を割当てられます。"));
+ } else {
+   ordered.forEach(r => {
+     poolChips.appendChild(h("button", { className: "btn btn-sm",
+       style: { background: r.event === m.event ? "#15803d" : "var(--ink-700)",
+         color: "#fff", padding: "6px 12px", fontSize: "12px" },
+       title: r.event + " の敗者" + (r.event === m.event ? " (同種目・おすすめ)" : ""),
+       onClick: () => assignNow(r.loser_id, false) },
+       O._surname(r.loser_name) + (r.loser_team ? " (" + r.loser_team + ")" : "")));
+   });
+ }
+
+ // 任意選手 検索
+ const input = h("input", { className: "input", placeholder: "選手名・ふりがなで検索…", autocomplete: "off" });
  const list = h("div", { className: "autoc-list hidden",
  style: { position: "relative", maxHeight: "200px", overflowY: "auto" } });
- let selectedId = m.referee_id || "";
  input.addEventListener("input", () => {
  const q = input.value.trim().toLowerCase();
  list.innerHTML = "";
@@ -5896,22 +5943,33 @@ const O = {
  selectedId = p.id;
  list.classList.add("hidden");
  }},
- h("div", { className: "autoc-item-name" }, p.name),
+ h("div", { className: "autoc-item-name" }, p.name + (p.furigana ? "  " + p.furigana : "")),
  h("div", { className: "autoc-item-team" }, p.team || "—")));
  });
  list.classList.remove("hidden");
  });
 
  const body = h("div", {},
- h("div", { className: "mb-2 text-sm" },
- `現在: ${m.referee_name || "（未指定）"}`),
+ // 現在の審判
+ h("div", { style: { padding: "10px 12px", borderRadius: "8px", marginBottom: "14px",
+   background: m.referee_name ? "#f0fdf4" : "#fffbeb",
+   border: "1px solid " + (m.referee_name ? "#86efac" : "#fde68a") } },
+ h("div", { style: { fontSize: "11px", color: "var(--sub)", marginBottom: "2px" } }, "現在の審判"),
+ h("div", { style: { fontSize: "15px", fontWeight: "700",
+   color: m.referee_name ? "#15803d" : "#b45309" } },
+   m.referee_name || "未指定")),
+ // 敗者プール (おすすめ)
  h("div", { className: "field" },
- h("label", { className: "field-label" }, "新しい審判（任意の選手）"),
+ h("label", { className: "field-label" }, "敗者プールから選ぶ (タップで即割当・緑=同種目おすすめ)"),
+ poolChips),
+ // 任意選手検索
+ h("div", { className: "field mt-3" },
+ h("label", { className: "field-label" }, "または 任意の選手を検索して割当"),
  h("div", { style: { position: "relative" } }, input, list),
  ),
  h("label", { className: "flex gap-2 mt-2", style: { alignItems: "center" } },
  h("input", { type: "checkbox", id: "refForce" }),
- h("span", {}, "拘束を無視して強制割当"),
+ h("span", { className: "text-sm" }, "拘束を無視して強制割当"),
  ),
  );
  const foot = h("div", { className: "flex gap-2" },
@@ -5922,18 +5980,11 @@ const O = {
  O.reload();
  } }, "解除"),
  h("button", { className: "btn", onClick: async () => {
- if (!selectedId) return toast("審判を選択してください", "err");
- const force = document.getElementById("refForce").checked;
- const r = await api.post(`/api/matches/${m.id}/referee`, {
- referee_id: selectedId, force
- });
- if (r.error) return toast(r.error, "err");
- toast("審判を変更", "ok");
- document.querySelector(".modal-bg")?.remove();
- O.reload();
- } }, "変更"),
+ if (!selectedId) return toast("敗者プールから選ぶか、検索で選手を選んでください", "err");
+ await assignNow(selectedId, document.getElementById("refForce").checked);
+ } }, "検索した選手で割当"),
  );
- openModal("審判を変更", body, foot);
+ openModal("審判の割当 / 変更", body, foot);
  },
 
  // 種目の呼出優先色 (団体=紫 / 混合D=桃 / 男D=青 / 女D=赤 / シングルス=灰)
