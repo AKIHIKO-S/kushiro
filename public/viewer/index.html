@@ -355,6 +355,47 @@
  font-size: 13px;
  }
 
+ /* ── まもなく呼ばれそうな選手 ── */
+ .un-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 18px 0 8px; }
+ .un-head .un-title { font-size: 15px; font-weight: 800; color: var(--ink-900); }
+ .un-head .un-sub { font-size: 11px; color: var(--sub); }
+ .un-card {
+ display: grid; grid-template-columns: 46px 1fr; gap: 10px; align-items: center;
+ background: #fff; border: 1px solid var(--border);
+ border-radius: 10px; padding: 10px 12px; margin-bottom: 6px;
+ }
+ .un-card.is-first {
+ border-color: var(--accent);
+ background: linear-gradient(135deg, #fff5f5 0%, #fff 60%);
+ box-shadow: 0 2px 12px rgba(220,38,38,.10);
+ }
+ .un-card.is-wait { opacity: .72; }
+ .un-rank {
+ width: 46px; height: 46px; border-radius: 10px;
+ background: var(--ink-100); color: var(--ink-700);
+ display: flex; flex-direction: column; align-items: center; justify-content: center;
+ font-weight: 800; font-size: 18px; line-height: 1;
+ }
+ .un-card.is-first .un-rank { background: var(--accent); color: #fff; }
+ .un-rank .un-rank-lbl { font-size: 8px; font-weight: 700; opacity: .85; margin-top: 2px; }
+ .un-ev { font-size: 11px; color: var(--sub); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+ .un-ev .un-soon {
+ background: var(--accent); color: #fff; font-size: 10px; font-weight: 800;
+ padding: 1px 9px; border-radius: 10px;
+ }
+ .un-ev .un-wait-reason {
+ background: #fef3c7; color: #92400e; font-size: 10px; font-weight: 700;
+ padding: 1px 8px; border-radius: 10px;
+ }
+ .un-players { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+ .un-p { display: inline-flex; align-items: center; gap: 5px; font-weight: 700; color: var(--ink-900); }
+ .un-p .un-num {
+ font-family: var(--font-mono); font-size: 11px; font-weight: 800;
+ background: var(--ink-900); color: #fff; padding: 1px 7px; border-radius: 6px;
+ }
+ .un-p .un-team { font-size: 11px; color: var(--sub); font-weight: 400; }
+ .un-vs { color: var(--sub); font-weight: 800; font-size: 11px; }
+
  /* ── 試合検索フォーム ── */
  .match-search-form {
  display: grid;
@@ -1732,17 +1773,32 @@ const L = {
  });
  }
 
- // 次に呼ぶ
+ // まもなく呼ばれそうな選手 (上から順に呼ばれる予定 / その場でインライン表示)
  if (s.callable.length) {
- main.appendChild(h("div", { className: "section-title mt-3" },
- "次に呼べる対戦 (" + s.callable.length + ")"));
- s.callable.slice(0, 10).forEach(m => {
- main.appendChild(h("div", { className: "next-callable" },
- h("span", { className: "badge" }, `${m.event} ${m.round}`),
+ main.appendChild(h("div", { className: "un-head" },
+ h("span", { className: "un-title" }, "まもなく呼ばれそうな選手"),
+ h("span", { className: "un-sub" }, "上から順に呼ばれる予定です（全" + s.callable.length + "試合待ち）")));
+ const pEl = (name, num, team) => h("span", { className: "un-p" },
+ num ? h("span", { className: "un-num" }, "#" + num) : null,
+ h("span", {}, name || "?"),
+ team ? h("span", { className: "un-team" }, "(" + team + ")") : null);
+ s.callable.slice(0, 8).forEach((m, i) => {
+ const blocked = !!m.is_blocked;
+ const isFirst = i === 0 && !blocked;
+ const reason = (blocked && m.blocks && m.blocks[0]) ? m.blocks[0].label : "";
+ main.appendChild(h("div", { className: "un-card" + (isFirst ? " is-first" : "") + (blocked ? " is-wait" : "") },
+ h("div", { className: "un-rank" },
+ isFirst ? h("span", {}, "次") : h("span", {}, String(i + 1)),
+ isFirst ? null : h("span", { className: "un-rank-lbl" }, "番目")),
  h("div", {},
- `${m.player1_name} vs ${m.player2_name}`,
- m.referee_name ? h("span", { className: "text-xs text-sub", style: { marginLeft: "8px" } },
- "(審判: " + m.referee_name + ")") : null,
+ h("div", { className: "un-ev" },
+ isFirst ? h("span", { className: "un-soon" }, "まもなく") : null,
+ blocked && reason ? h("span", { className: "un-wait-reason" }, "待機: " + reason) : null,
+ h("span", {}, [m.event, m.round].filter(Boolean).join(" "))),
+ h("div", { className: "un-players" },
+ pEl(m.player1_name, m.player1_bracket_number, m.player1_team),
+ h("span", { className: "un-vs" }, "VS"),
+ pEl(m.player2_name, m.player2_bracket_number, m.player2_team)),
  ),
  ));
  });
