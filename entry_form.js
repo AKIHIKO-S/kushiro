@@ -211,11 +211,93 @@ function buildEntryFormHTML(tournament, events, opts) {
   .btn-add {
     background: #ffffff; color: #78350f;
     border: 1.5px dashed #d6d3d1;
-    padding: 8px 16px; border-radius: 6px;
-    cursor: pointer; font-size: 13px; font-weight: 600;
+    padding: 10px 18px; border-radius: 6px;
+    cursor: pointer; font-size: 14px; font-weight: 700;
     font-family: inherit; transition: all .15s;
   }
   .btn-add:hover { background: #fef3c7; border-color: #92400e; }
+  .btn-add-bulk { background: #fef3c7; border-style: solid; border-color: #f59e0b; }
+  .btn-add-bulk:hover { background: #fde68a; }
+  .add-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .count-badge {
+    display: inline-block; margin-left: auto;
+    padding: 3px 10px; background: #f0fdf4;
+    color: #14532d; border: 1px solid #86efac;
+    border-radius: 12px; font-size: 11px; font-weight: 700;
+    font-family: inherit;
+  }
+  /* 確認モーダル */
+  .confirm-overlay {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0,0,0,.55); display: flex;
+    align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .confirm-modal {
+    background: #fff; max-width: 560px; width: 100%;
+    max-height: 88vh; overflow: auto;
+    border-radius: 10px; padding: 20px 22px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.3);
+    font-family: 'Hiragino Sans', system-ui, sans-serif;
+  }
+  .confirm-modal h3 {
+    font-size: 18px; margin-bottom: 12px; color: #7c2d12;
+    border-bottom: 2px solid #b91c1c; padding-bottom: 8px;
+  }
+  .confirm-modal table {
+    width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px;
+  }
+  .confirm-modal td {
+    padding: 5px 8px; border-bottom: 1px solid #f3f4f6; vertical-align: top;
+  }
+  .confirm-modal td.label { color: #78716c; width: 80px; }
+  .confirm-modal td.val { font-weight: bold; }
+  .confirm-modal .total {
+    margin-top: 14px; padding: 12px 16px;
+    background: linear-gradient(135deg, #fef3c7, #fef9c3);
+    border-radius: 6px; display: flex; justify-content: space-between;
+    align-items: center; font-size: 15px;
+  }
+  .confirm-modal .total .amount {
+    font-size: 26px; font-weight: 700; color: #b91c1c;
+  }
+  .confirm-modal .buttons {
+    display: flex; gap: 8px; margin-top: 16px;
+  }
+  .confirm-modal .buttons button {
+    flex: 1; padding: 12px; border-radius: 6px;
+    border: none; cursor: pointer; font-size: 14px;
+    font-weight: 700; font-family: inherit;
+  }
+  .confirm-modal .btn-cancel { background: #f5f5f4; color: #44403c; }
+  .confirm-modal .btn-confirm { background: #b91c1c; color: #fff; }
+  .confirm-modal .btn-confirm:disabled { background: #a8a29e; cursor: wait; }
+  /* 送信完了画面 (LINE 共有用) */
+  .success-card {
+    margin: 20px 0; padding: 20px;
+    background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+    border: 2px solid #15803d; border-radius: 8px;
+  }
+  .success-card h3 {
+    font-size: 18px; color: #14532d; margin-bottom: 10px;
+    text-align: center;
+  }
+  .success-card .summary-text {
+    background: #fff; padding: 14px;
+    border-radius: 6px; font-size: 12px; line-height: 1.7;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: 'Hiragino Sans', monospace;
+    margin: 12px 0; max-height: 200px; overflow-y: auto;
+    border: 1px solid #d1fae5;
+  }
+  .copy-btn {
+    width: 100%; padding: 12px; border-radius: 6px;
+    background: #15803d; color: #fff; border: none;
+    cursor: pointer; font-size: 14px; font-weight: 700;
+    font-family: inherit;
+  }
+  .copy-btn:hover { background: #166534; }
+  .copy-btn.copied { background: #166534; }
   .btn-del {
     background: transparent; color: #b91c1c;
     border: 1px solid #fecaca; padding: 3px 10px;
@@ -442,26 +524,73 @@ const TOURNAMENT_NAME = ${escapeJs(tournament.name || "")};
 const GAS_URL = ${escapeJs(gasUrl)};
 const EVENTS = ${eventsJson};
 
-// 各種目ブロックを動的生成
+// 各種目ブロックを動的生成 (開いた状態 + 初期1行を表示)
 function renderEvents() {
   const c = document.getElementById("eventsContainer");
   c.innerHTML = "";
+  if (!EVENTS || !EVENTS.length) {
+    c.innerHTML =
+      '<div style="padding:16px;background:#fef2f2;border-left:4px solid #dc2626;' +
+      'border-radius:4px;color:#7f1d1d;font-size:13px;line-height:1.7;">' +
+      '<strong>出場種目が設定されていません。</strong><br>' +
+      '大会主催者にお問い合わせください。</div>';
+    return;
+  }
   EVENTS.forEach((ev, idx) => {
     const isTeam = ev.type === "team";
     const isDoubles = ev.type === "doubles";
-    const memberCount = isTeam ? (ev.per_team || 6) : (isDoubles ? 2 : 1);
     const det = document.createElement("details");
     det.className = "event-block";
     det.dataset.idx = idx;
+    det.open = true; // ★ 種目セクションは初期表示で開く
     const fee = ev.fee || 0;
+    const unit = isTeam ? "チーム" : (isDoubles ? "ペア" : "選手");
     det.innerHTML = '<summary>' +
       escapeHtml(ev.name) +
-      '<span class="fee-tag">参加料 ¥' + fee.toLocaleString("ja-JP") + (isTeam ? " / チーム" : " / 人") + '</span>' +
+      '<span class="fee-tag">参加料 ¥' + fee.toLocaleString("ja-JP") +
+        (isTeam ? " / チーム" : (isDoubles ? " / ペア" : " / 人")) + '</span>' +
+      '<span class="count-badge" id="count_' + idx + '">0 ' + unit + '</span>' +
       '</summary>' +
       '<div class="members" id="members_' + idx + '"></div>' +
-      '<button type="button" class="btn-add" onclick="addEntry(' + idx + ')">+ ' +
-        (isTeam ? "チーム" : (isDoubles ? "ペア" : "選手")) + 'を追加</button>';
+      '<div class="add-buttons">' +
+        '<button type="button" class="btn-add" onclick="addEntry(' + idx + ')">' +
+          '+ ' + unit + 'を1つ追加</button>' +
+        (isTeam ? '' :
+          '<button type="button" class="btn-add btn-add-bulk" onclick="addEntryBulk(' + idx + ', 5)">' +
+          '+ 5' + unit + 'を一括追加</button>') +
+      '</div>';
     c.appendChild(det);
+    // ★ 初期1行をプリ表示 (空行で何をすればいいか分かりやすく)
+    addEntry(idx);
+  });
+}
+
+// 複数行を一括追加 (まとめて担当者が登録するため)
+function addEntryBulk(eventIdx, n) {
+  for (let i = 0; i < n; i++) addEntry(eventIdx);
+}
+
+// 担当者所属を全選手の所属欄に一括反映
+function applyTeamNameToAll() {
+  const teamName = (document.querySelector('input[name="team_name"]') || {}).value || "";
+  if (!teamName) return;
+  document.querySelectorAll('input[name*="_team"]').forEach(inp => {
+    if (!inp.value || inp.value === "") {
+      inp.value = teamName;
+    }
+  });
+  recalcTotal();
+}
+
+// 種目別の現在エントリー数を画面に反映
+function updateCounts() {
+  EVENTS.forEach((ev, idx) => {
+    const container = document.getElementById("members_" + idx);
+    const badge = document.getElementById("count_" + idx);
+    if (container && badge) {
+      const unit = ev.type === "team" ? "チーム" : (ev.type === "doubles" ? "ペア" : "選手");
+      badge.textContent = container.children.length + " " + unit;
+    }
   });
 }
 
@@ -531,6 +660,8 @@ function recalcTotal() {
     });
   }
   document.getElementById("totalAmount").textContent = total.toLocaleString("ja-JP");
+  // ★ 種目ごとのカウント表示も更新
+  updateCounts();
 }
 
 // その他種目 (自由記入) の行を追加
@@ -548,7 +679,7 @@ function addCustomEvent() {
     '<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">' +
     '<strong style="font-size:13px;">自由記入 #' + (idx + 1) + '</strong>' +
     '<button type="button" class="btn-del" ' +
-    'onclick="this.closest(\'.entry-row\').remove(); recalcTotal();">削除</button>' +
+    'onclick="this.closest(\\'.entry-row\\').remove(); recalcTotal();">削除</button>' +
     '</div>' +
     '<div style="display:grid; grid-template-columns:2fr 1fr; gap:6px; margin-bottom:6px;">' +
     '<input type="text" name="cust_name" placeholder="種目名 (例: ミックスダブルス・小学団体 等)" style="padding:6px;" />' +
@@ -636,6 +767,85 @@ function gatherFormData() {
   return data;
 }
 
+// 申込内容を平文サマリーに変換 (LINE共有・コピー用)
+function buildSummaryText(data) {
+  const lines = [];
+  lines.push("【" + TOURNAMENT_NAME + "】 申込内容");
+  lines.push("━━━━━━━━━━━━━━━━━━");
+  lines.push("団体: " + (data.team_name || ""));
+  lines.push("担当: " + (data.contact_name || ""));
+  if (data.contact_tel) lines.push("電話: " + data.contact_tel);
+  if (data.contact_email) lines.push("メール: " + data.contact_email);
+  lines.push("");
+  lines.push("【申込内容】");
+  data.entries.forEach((e, i) => {
+    if (e.type === "team") {
+      const members = (e.members || []).join("、");
+      lines.push("・[団体] " + e.event);
+      lines.push("    " + (e.team_name || "") + ": " + members);
+      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP"));
+    } else if (e.type === "doubles") {
+      lines.push("・[ダブルス] " + e.event);
+      lines.push("    " + (e.name1 || "") + " / " + (e.name2 || "") + " (" + (e.team || "") + ")");
+      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP"));
+    } else {
+      lines.push("・" + e.event + ": " + (e.name || "") + " (" + (e.team || "") + ")");
+      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP"));
+    }
+  });
+  lines.push("━━━━━━━━━━━━━━━━━━");
+  lines.push("合計: ¥" + (data.total_amount || 0).toLocaleString("ja-JP"));
+  lines.push("");
+  lines.push("※当日、開会式前に受付で参加料をお支払いください。");
+  return lines.join("\\n");
+}
+
+// 確認モーダルを表示
+function showConfirmModal(data) {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.className = "confirm-overlay";
+    let entriesHTML = "";
+    data.entries.forEach((e, i) => {
+      let memberText = "";
+      if (e.type === "team") {
+        memberText = "[団体] " + (e.team_name || "") + " (" + (e.members || []).join("、") + ")";
+      } else if (e.type === "doubles") {
+        memberText = (e.name1 || "") + " / " + (e.name2 || "") + " (" + (e.team || "") + ")";
+      } else {
+        memberText = (e.name || "") + " (" + (e.team || "") + ")";
+      }
+      entriesHTML +=
+        '<tr><td class="label">' + escapeHtml(e.event) + '</td>' +
+        '<td class="val">' + escapeHtml(memberText) +
+          ' <span style="color:#b91c1c;font-weight:bold;">¥' +
+          (e.fee || 0).toLocaleString("ja-JP") + '</span></td></tr>';
+    });
+    ov.innerHTML =
+      '<div class="confirm-modal">' +
+      '<h3>申込内容のご確認</h3>' +
+      '<div style="font-size:13px;color:#57534e;margin-bottom:10px;">' +
+        '送信前に内容をご確認ください。修正する場合は「戻る」を押してください。</div>' +
+      '<table>' +
+      '<tr><td class="label">団体</td><td class="val">' + escapeHtml(data.team_name || "") + '</td></tr>' +
+      '<tr><td class="label">担当者</td><td class="val">' + escapeHtml(data.contact_name || "") + '</td></tr>' +
+      (data.contact_tel ? '<tr><td class="label">電話</td><td class="val">' + escapeHtml(data.contact_tel) + '</td></tr>' : '') +
+      (data.contact_email ? '<tr><td class="label">メール</td><td class="val">' + escapeHtml(data.contact_email) + '</td></tr>' : '') +
+      '</table>' +
+      '<div style="margin-top:14px;font-size:13px;font-weight:bold;color:#57534e;">申込内容 (' + data.entries.length + '件)</div>' +
+      '<table>' + entriesHTML + '</table>' +
+      '<div class="total"><div>合計参加料</div><div class="amount">¥' +
+        (data.total_amount || 0).toLocaleString("ja-JP") + '</div></div>' +
+      '<div class="buttons">' +
+      '<button type="button" class="btn-cancel">戻って修正</button>' +
+      '<button type="button" class="btn-confirm">この内容で送信する</button>' +
+      '</div></div>';
+    document.body.appendChild(ov);
+    ov.querySelector(".btn-cancel").onclick = () => { ov.remove(); resolve(false); };
+    ov.querySelector(".btn-confirm").onclick = () => { ov.remove(); resolve(true); };
+  });
+}
+
 async function submitForm(e) {
   e.preventDefault();
   const data = gatherFormData();
@@ -643,6 +853,10 @@ async function submitForm(e) {
     showMessage("少なくとも 1 種目に 1名以上の参加者を登録してください。", "err");
     return false;
   }
+  // ★ 確認モーダルを表示
+  const ok = await showConfirmModal(data);
+  if (!ok) return false;
+
   const btn = document.getElementById("submitBtn");
   btn.disabled = true;
   btn.textContent = "送信中...";
@@ -658,10 +872,54 @@ async function submitForm(e) {
     let result;
     try { result = JSON.parse(txt); } catch { result = { ok: resp.ok, raw: txt }; }
     if (result.ok || resp.ok) {
-      showMessage("申込を受け付けました。確認メールをご登録のメールアドレスに送信しました。", "ok");
-      document.getElementById("entryForm").reset();
-      renderEvents();
-      recalcTotal();
+      // ★ 送信成功 → LINE 共有用コピーカードを表示
+      const summary = buildSummaryText(data);
+      const card = document.createElement("div");
+      card.className = "success-card";
+      card.innerHTML =
+        '<h3>申込を受け付けました</h3>' +
+        '<div style="text-align:center;font-size:13px;color:#14532d;line-height:1.7;">' +
+          'ご登録のメールアドレス宛に控えメールを送信しました。<br>' +
+          'お申込内容をLINE等で関係者と共有する場合は、下記をコピーしてご利用ください。' +
+        '</div>' +
+        '<div class="summary-text" id="ttSummaryText">' + escapeHtml(summary) + '</div>' +
+        '<button type="button" class="copy-btn" id="ttCopyBtn">クリップボードにコピー (LINE等で共有可)</button>' +
+        '<button type="button" class="copy-btn" id="ttNewBtn" ' +
+          'style="margin-top:8px;background:#78716c;">新しく申込みする (リセット)</button>';
+      document.getElementById("messageBox").innerHTML = "";
+      document.getElementById("messageBox").appendChild(card);
+      // フォームを隠す
+      document.getElementById("entryForm").querySelectorAll(".form-section").forEach(s => s.style.display = "none");
+      document.getElementById("submitBtn").style.display = "none";
+      // コピーボタン
+      document.getElementById("ttCopyBtn").onclick = async function() {
+        try {
+          await navigator.clipboard.writeText(summary);
+          this.textContent = "コピーしました ✓";
+          this.classList.add("copied");
+          setTimeout(() => {
+            this.textContent = "クリップボードにコピー (LINE等で共有可)";
+            this.classList.remove("copied");
+          }, 2500);
+        } catch (e) {
+          // フォールバック: textarea 経由で選択
+          const ta = document.createElement("textarea");
+          ta.value = summary; document.body.appendChild(ta);
+          ta.select(); document.execCommand("copy"); ta.remove();
+          this.textContent = "コピーしました ✓";
+        }
+      };
+      // 新規申込ボタン
+      document.getElementById("ttNewBtn").onclick = function() {
+        document.getElementById("entryForm").reset();
+        document.getElementById("entryForm").querySelectorAll(".form-section").forEach(s => s.style.display = "");
+        document.getElementById("submitBtn").style.display = "";
+        document.getElementById("messageBox").innerHTML = "";
+        renderEvents();
+        recalcTotal();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      };
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } else {
       showMessage("送信失敗: " + (result.error || resp.statusText), "err");
     }
