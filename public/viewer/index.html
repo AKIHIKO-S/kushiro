@@ -127,6 +127,50 @@
  display: flex; align-items: center; gap: 6px;
  }
 
+ /* ★ 大会結果: 横並び 勝者-スコア-敗者 (どっちが勝ったか明快) */
+ .mr-acc { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; overflow: hidden; background: #fff; }
+ .mr-acc-head {
+   display: flex; align-items: center; gap: 10px;
+   padding: 11px 14px; cursor: pointer;
+   background: linear-gradient(135deg, #fafafa, #f4f4f5);
+   border-bottom: 1px solid var(--border);
+ }
+ .mr-acc-head:hover { background: #f4f4f5; }
+ .mr-acc-title { font-weight: 700; font-size: 14px; flex: 1; }
+ .mr-acc-count { font-size: 11px; color: var(--sub); background: var(--ink-100);
+   padding: 3px 9px; border-radius: 10px; font-family: var(--font-mono); }
+ .mr-acc-head::after { content: "›"; font-size: 20px; color: var(--sub);
+   transform: rotate(90deg); transition: transform .15s; }
+ .mr-acc.open .mr-acc-head::after { transform: rotate(-90deg); }
+ .mr-acc-body { display: none; padding: 6px 10px 10px; }
+ .mr-acc.open .mr-acc-body { display: block; }
+ .mr-round-label { font-size: 11px; font-weight: 700; color: var(--sub);
+   margin: 8px 0 4px; padding-left: 2px; }
+ .mr-row {
+   display: grid; grid-template-columns: 1fr auto 1fr;
+   align-items: center; gap: 8px;
+   padding: 8px 6px; border-bottom: 1px solid #f1f5f9;
+ }
+ .mr-row:last-child { border-bottom: none; }
+ .mr-win { text-align: right; min-width: 0; }
+ .mr-lose { text-align: left; min-width: 0; }
+ .mr-pname { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+ .mr-win .mr-pname { font-weight: 700; color: #15803d; }
+ .mr-win .mr-pname::before { content: "○ "; font-size: 12px; }
+ .mr-lose .mr-pname { color: var(--sub); }
+ .mr-lose .mr-pname::after { content: " ×"; font-size: 11px; color: #b91c1c; }
+ .mr-pname a { color: inherit; text-decoration: none; }
+ .mr-pname a:hover { text-decoration: underline; }
+ .mr-pteam { font-size: 10px; color: var(--sub-l); }
+ .mr-vs {
+   font-family: var(--font-mono); font-weight: 800; font-size: 16px;
+   color: var(--ink-800); white-space: nowrap; padding: 2px 8px;
+   background: var(--ink-50); border-radius: 6px; text-align: center;
+ }
+ @media (max-width: 480px) {
+   .mr-pname { font-size: 13px; } .mr-vs { font-size: 14px; padding: 2px 5px; }
+ }
+
  /* ★ 選手視点の試合行 (初心者向け・○勝ち/×負け) */
  .pm-row {
    display: grid; grid-template-columns: 54px 1fr auto;
@@ -603,7 +647,8 @@ const V = {
  }
  const statusLabels = { scheduled: "予定", preparation: "準備中", ongoing: "進行中", completed: "終了", cancelled: "中止" };
  const fmtD = (dt) => dt ? `${dt.getFullYear()}/${dt.getMonth()+1}/${dt.getDate()}` : "日程未定";
- V.state.tournaments.forEach(t => {
+
+ const buildCard = (t) => {
  const d = t.date ? new Date(t.date) : null;
  const st = t.status || "scheduled";
  const mc = t.match_count || 0;
@@ -615,7 +660,7 @@ const V = {
  ];
  if (t.player_count) meta.push(h("span", { className: "meta-chip" }, h("span", { className: "ic" }, "👤"), t.player_count + "名"));
  if (mc) meta.push(h("span", { className: "meta-chip" }, h("span", { className: "ic" }, "🏓"), mc + "試合"));
- const card = h("div", { className: "tcard is-" + st, onClick: () => V.openTournament(t.id) },
+ return h("div", { className: "tcard is-" + st, onClick: () => V.openTournament(t.id) },
  h("div", { className: "tcard-accent" }),
  h("div", { className: "tcard-body" },
  h("div", { className: "tcard-top" },
@@ -628,7 +673,35 @@ const V = {
  ),
  h("div", { className: "tcard-arrow" }, "›"),
  );
- list.appendChild(card);
+ };
+
+ // 年別にグループ化 (年数が増えてもスクロールを抑制)
+ const byYear = {};
+ V.state.tournaments.forEach(t => {
+   const y = (t.date && /^\d{4}/.test(t.date)) ? t.date.slice(0, 4) : "日付未定";
+   (byYear[y] = byYear[y] || []).push(t);
+ });
+ const years = Object.keys(byYear).sort((a, b) => b.localeCompare(a)); // 新しい年が上
+ // 年が1つだけならアコーディオンにせずそのまま表示
+ if (years.length <= 1) {
+   V.state.tournaments.forEach(t => list.appendChild(buildCard(t)));
+   return;
+ }
+ years.forEach((y, yi) => {
+   const ts = byYear[y];
+   const ongoingCount = ts.filter(t => t.status === "ongoing").length;
+   // 進行中を含む年 or 最新年を開く
+   const open = yi === 0 || ongoingCount > 0;
+   const acc = h("div", { className: "mr-acc" + (open ? " open" : "") });
+   const head = h("div", { className: "mr-acc-head",
+     onClick: () => acc.classList.toggle("open") },
+     h("span", { className: "mr-acc-title" }, y === "日付未定" ? y : y + "年"),
+     ongoingCount ? h("span", { className: "meta-chip hot" }, "進行中" + ongoingCount) : null,
+     h("span", { className: "mr-acc-count" }, ts.length + "大会"));
+   const bodyEl = h("div", { className: "mr-acc-body" });
+   ts.forEach(t => bodyEl.appendChild(buildCard(t)));
+   acc.appendChild(head); acc.appendChild(bodyEl);
+   list.appendChild(acc);
  });
  },
 
@@ -690,40 +763,59 @@ const V = {
  (byEvent[e] = byEvent[e] || []).push(m);
  });
 
- Object.entries(byEvent).forEach(([event, ms]) => {
- const group = h("div", { className: "event-group fi" });
- group.appendChild(h("div", { className: "event-title" },
- h("span", {}, event),
- h("span", { className: "event-count" }, `${ms.length}試合`),
- ));
+ // 種目アコーディオン (種目が多くてもスクロールを抑制。最初の種目だけ開く)
+ const eventNames = Object.keys(byEvent);
+ eventNames.forEach((event, ei) => {
+ const ms = byEvent[event];
+ const acc = h("div", { className: "mr-acc" + (ei === 0 ? " open" : "") });
+ const head = h("div", { className: "mr-acc-head",
+   onClick: () => acc.classList.toggle("open") },
+   h("span", { className: "mr-acc-title" }, event),
+   h("span", { className: "mr-acc-count" }, ms.length + "試合"));
+ const bodyEl = h("div", { className: "mr-acc-body" });
 
- // ラウンドごとにグループ化（round_order 昇順）
+ // ラウンドごと (round_order 昇順)
  const byRound = {};
- ms.forEach(m => {
- const r = m.round || "その他";
- (byRound[r] = byRound[r] || []).push(m);
- });
- const rounds = Object.entries(byRound).sort((a, b) => {
- const oa = a[1][0].round_order || 99;
- const ob = b[1][0].round_order || 99;
- return oa - ob;
+ ms.forEach(m => { const r = m.round || "その他"; (byRound[r] = byRound[r] || []).push(m); });
+ Object.entries(byRound).sort((a, b) =>
+   (a[1][0].round_order || 99) - (b[1][0].round_order || 99)
+ ).forEach(([round, rms]) => {
+   bodyEl.appendChild(h("div", { className: "mr-round-label" }, round + " (" + rms.length + ")"));
+   rms.forEach(m => bodyEl.appendChild(V.renderMatchResultRow(m)));
  });
 
- rounds.forEach(([round, rms]) => {
- const rc = h("div", { className: "card", style: { padding: 0, marginBottom: "10px" } });
- rc.appendChild(h("div", { className: "round-header" },
- h("span", {}, round),
- h("span", { className: "round-header-date" }, `${rms.length}試合`),
- ));
- rms.forEach(m => rc.appendChild(V.renderMatchCard(m)));
- group.appendChild(rc);
- });
-
- el.appendChild(group);
+ acc.appendChild(head); acc.appendChild(bodyEl);
+ el.appendChild(acc);
  });
  },
 
- // ─── 試合カード（） ────────────────────────────────
+ // 大会結果: 横並び「○勝者 — スコア — 敗者×」(どっちが勝ったか明快)
+ renderMatchResultRow(m) {
+ const isBye = !m.loser_name || m.loser_name === "BYE";
+ const nameEl = (id, name) => id
+   ? h("a", { href: "#player/" + id,
+       onClick: (e) => { e.preventDefault(); V.openPlayer(id); } }, name || "?")
+   : h("span", {}, name || "?");
+ if (isBye) {
+   return h("div", { className: "mr-row" },
+     h("div", { className: "mr-win" },
+       h("div", { className: "mr-pname" }, nameEl(m.winner_id, m.winner_name),
+         m.winner_team ? h("span", { className: "mr-pteam" }, " (" + m.winner_team + ")") : null)),
+     h("div", { className: "mr-vs", style: { fontSize: "11px" } }, "不戦勝"),
+     h("div", { className: "mr-lose" }, h("div", { className: "mr-pname", style: { color: "var(--sub-l)" } }, "—")));
+ }
+ return h("div", { className: "mr-row" },
+   h("div", { className: "mr-win" },
+     h("div", { className: "mr-pname" }, nameEl(m.winner_id, m.winner_name)),
+     m.winner_team ? h("div", { className: "mr-pteam" }, m.winner_team) : null),
+   h("div", { className: "mr-vs" }, (m.winner_sets || 0) + " - " + (m.loser_sets || 0)),
+   h("div", { className: "mr-lose" },
+     h("div", { className: "mr-pname" }, nameEl(m.loser_id, m.loser_name)),
+     m.loser_team ? h("div", { className: "mr-pteam" }, m.loser_team) : null),
+ );
+ },
+
+ // ─── 試合カード（試合検索/直近結果で使用・互換維持） ──────
  renderMatchCard(m) {
  const card = h("div", { className: "match-card fi" });
  // 勝者行
