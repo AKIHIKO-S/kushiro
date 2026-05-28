@@ -6766,7 +6766,7 @@ const O = {
  const refresh = () => { bodyContainer.innerHTML = ""; bodyContainer.appendChild(renderBody()); };
  refresh();
 
- const foot = h("button", { className: "btn btn-ok", onClick: async () => {
+ const submitNormal = async () => {
  let sets = [];
  let wsCount, lsCount, winnerSlot;
  if (mode === "detail") {
@@ -6799,7 +6799,26 @@ const O = {
  toast(`結果を記録: ${r.winner_name} ${r.winner_sets}-${r.loser_sets}`, "ok");
  document.querySelector(".modal-bg")?.remove();
  O.reload();
- } }, "結果を確定");
+ };
+ // 不戦勝(W.O.): 勝者を進めるが戦績・参加記録には算入しない
+ const submitWalkover = async (winnerSlot) => {
+ const wn = winnerSlot === 1 ? m.player1_name : m.player2_name;
+ if (!confirm(`「${wn}」の不戦勝として記録します。\n(この試合は選手の戦績・参加記録に算入されません)`)) return;
+ const r = await api.post(`/api/matches/${m.id}/finish`, {
+ winner_slot: winnerSlot, sets: [], winner_sets: 0, loser_sets: 0, walkover: true });
+ if (r.error) return toast(r.error, "err");
+ toast(`不戦勝: ${r.winner_name}`, "ok");
+ document.querySelector(".modal-bg")?.remove();
+ O.reload();
+ };
+ const foot = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", width: "100%", alignItems: "center" } },
+ h("div", { className: "flex gap-1", style: { marginRight: "auto", flexWrap: "wrap" } },
+ h("span", { className: "text-xs text-sub", style: { alignSelf: "center" } }, "不戦勝:"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => submitWalkover(1) }, (m.player1_name || "選手1")),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => submitWalkover(2) }, (m.player2_name || "選手2")),
+ ),
+ h("button", { className: "btn btn-ok", onClick: submitNormal }, "結果を確定"),
+ );
  openModal("結果入力", bodyContainer, foot);
  },
 

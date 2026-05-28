@@ -243,6 +243,7 @@ try {
   addMCol("call_count_p1", "INTEGER DEFAULT 0");  // 選手1の再コール回数
   addMCol("call_count_p2", "INTEGER DEFAULT 0");  // 選手2の再コール回数
   addMCol("match_label", "TEXT DEFAULT ''");  // "1-1", "2-1" 形式の試合番号 (R-N)
+  addMCol("is_walkover", "INTEGER DEFAULT 0");  // 1=不戦勝/BYE (DB戦績・参加記録に算入しない)
   // entrants にブロック情報・大会固有番号追加
   const ecols = sqlite.prepare("PRAGMA table_info(entrants)").all();
   if (ecols.length && !ecols.find(c => c.name === "block")) {
@@ -418,8 +419,8 @@ const stmts = {
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id AND a.place=2) AS seconds,
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id AND a.place=3) AS thirds,
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id) AS total_achievements,
-      (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE') AS match_wins,
-      (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE') AS match_losses
+      (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE' AND COALESCE(m.is_walkover,0)=0) AS match_wins,
+      (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE' AND COALESCE(m.is_walkover,0)=0) AS match_losses
     FROM players p
   `),
   getPlayer: sqlite.prepare(`SELECT * FROM players WHERE id = ?`),
@@ -483,7 +484,7 @@ const stmts = {
     SELECT m.*, t.name AS tournament_name, t.date AS tournament_date
     FROM matches m LEFT JOIN tournaments t ON m.tournament_id = t.id
     WHERE (m.winner_id = ? OR m.loser_id = ?)
-      AND m.loser_name != 'BYE' AND m.winner_name != 'BYE'
+      AND m.loser_name != 'BYE' AND m.winner_name != 'BYE' AND COALESCE(m.is_walkover,0) = 0
     ORDER BY t.date DESC, m.round_order ASC, m.match_no ASC
   `),
   insertMatch: sqlite.prepare(`
@@ -533,8 +534,8 @@ const stmts = {
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id AND a.place=2) AS seconds,
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id AND a.place=3) AS thirds,
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id) AS total,
-      (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE') AS match_wins,
-      (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE') AS match_losses
+      (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE' AND COALESCE(m.is_walkover,0)=0) AS match_wins,
+      (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE' AND COALESCE(m.is_walkover,0)=0) AS match_losses
     FROM players p
     WHERE (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id) > 0
        OR (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id OR m.loser_id=p.id) > 0
@@ -543,8 +544,8 @@ const stmts = {
   `),
   ratingRanking: sqlite.prepare(`
     SELECT p.id, p.name, p.team, p.rating, p.gender, p.category,
-      (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE') AS match_wins,
-      (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE') AS match_losses
+      (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE' AND COALESCE(m.is_walkover,0)=0) AS match_wins,
+      (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE' AND COALESCE(m.is_walkover,0)=0) AS match_losses
     FROM players p
     WHERE (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id OR m.loser_id=p.id) > 0
     ORDER BY rating DESC LIMIT 50
@@ -601,7 +602,7 @@ function getPlayerLevelStats(playerId) {
     JOIN tournaments t ON t.id = m.tournament_id
     WHERE (m.winner_id = ? OR m.loser_id = ?)
       AND m.status='completed'
-      AND m.winner_name != 'BYE' AND m.loser_name != 'BYE'
+      AND m.winner_name != 'BYE' AND m.loser_name != 'BYE' AND COALESCE(m.is_walkover,0) = 0
     GROUP BY COALESCE(t.level,'district')
   `).all(playerId, playerId, playerId, playerId);
   const out = {};
@@ -1933,6 +1934,8 @@ function generateBracket(tournamentId, event, options) {
           winner_sets: 0,
           loser_sets: 0,
         });
+        // BYE(シード不戦勝)は戦績・参加記録に算入しない
+        sqlite.prepare("UPDATE matches SET is_walkover=1 WHERE id=?").run(m.id);
         if (m.next_match_id) {
           advanceWinnerInline(m.next_match_id, m.next_slot,
             { id: winner.player_id || null, entrant_id: winner.id,
@@ -2057,9 +2060,12 @@ function finishMatchInternal(matchId, data) {
     winner_sets: data.winner_sets ?? ws,
     loser_sets: data.loser_sets ?? ls,
   });
+  // 不戦勝(W.O.)/BYE は DB戦績・参加記録に算入しないようフラグ
+  const isWO = !!data.walkover || winner.name === "BYE" || loser.name === "BYE";
+  sqlite.prepare("UPDATE matches SET is_walkover=? WHERE id=?").run(isWO ? 1 : 0, matchId);
 
-  // Elo 更新
-  if (winner.id && loser.id) {
+  // Elo 更新 (不戦勝は除外)
+  if (!isWO && winner.id && loser.id) {
     const wp = stmts.getPlayer.get(winner.id);
     const lp = stmts.getPlayer.get(loser.id);
     if (wp && lp) {
@@ -3236,7 +3242,7 @@ function getPlayerEventStats(playerId) {
       SUM(CASE WHEN winner_id = ? THEN loser_sets WHEN loser_id = ? THEN winner_sets ELSE 0 END) AS sets_lost
     FROM matches WHERE (winner_id = ? OR loser_id = ?)
       AND status = 'completed' AND event != ''
-      AND loser_name != 'BYE' AND winner_name != 'BYE'
+      AND loser_name != 'BYE' AND winner_name != 'BYE' AND COALESCE(is_walkover,0) = 0
     GROUP BY event
     ORDER BY (wins + losses) DESC
   `).all(playerId, playerId, playerId, playerId, playerId, playerId, playerId, playerId);
