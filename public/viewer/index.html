@@ -1691,7 +1691,10 @@ const L = {
  grid.style.maxWidth = `${court_cols * 80}px`;
 
  s.tables.forEach(t => {
- const cell = h("div", { className: "live-court-cell " + (t.match ? "active" : "empty") });
+ const cell = h("div", { className: "live-court-cell " + (t.match ? "active" : "empty"),
+   style: t.match ? { cursor: "pointer" } : {},
+   title: t.match ? "タップで試合詳細" : "",
+   onClick: () => { if (t.match) L.showCourtDetail(t); } });
  cell.appendChild(h("div", { className: "live-court-no" }, "台" + t.table_no));
  if (t.match) {
  cell.appendChild(h("div", { className: "live-court-match" },
@@ -1712,6 +1715,44 @@ const L = {
  "本部"));
  }
  return wrap;
+ },
+
+ // 台タップ → 進行中の試合詳細 (閲覧・読み取り専用)
+ showCourtDetail(t) {
+ const m = t.match;
+ if (!m) return;
+ const num1 = m.player1_bracket_number || m.entrant1_bracket_number;
+ const num2 = m.player2_bracket_number || m.entrant2_bracket_number;
+ const playerLine = (name, num, team, furi) => h("div", {
+   style: { padding: "10px 12px", background: "#f0fdf4",
+     border: "1px solid #bbf7d0", borderRadius: "8px" } },
+   h("div", { style: { fontSize: "16px", fontWeight: "700" } },
+     num ? h("span", { className: "pnum", style: { marginRight: "5px" } }, "#" + num) : null,
+     name || "?"),
+   furi ? h("div", { style: { fontSize: "11px", color: "var(--sub)" } }, furi) : null,
+   team ? h("div", { style: { fontSize: "12px", color: "var(--sub)" } }, team) : null,
+ );
+ const body = h("div", {},
+   h("div", { className: "flex gap-2 mb-2", style: { alignItems: "center", flexWrap: "wrap" } },
+     h("span", { className: "badge", style: { background: "#dc2626", color: "#fff" } }, "台 " + t.table_no),
+     h("span", { className: "badge" }, [m.event, m.round].filter(Boolean).join(" ")),
+     h("span", { style: { fontSize: "12px", color: "#15803d", fontWeight: "700" } }, "● 試合中")),
+   playerLine(m.player1_name, num1, m.player1_team, m.player1_furigana),
+   h("div", { style: { textAlign: "center", fontWeight: "800", color: "var(--sub)",
+     padding: "6px 0", fontSize: "18px" } }, "VS"),
+   playerLine(m.player2_name, num2, m.player2_team, m.player2_furigana),
+   m.referee_name ? h("div", { style: { marginTop: "10px", fontSize: "13px",
+     color: "#6d28d9", textAlign: "center" } }, "審判: " + m.referee_name) : null,
+ );
+ const foot = h("div", { className: "flex gap-2" },
+   m.player1_id ? h("button", { className: "btn btn-ghost",
+     onClick: () => { document.querySelector(".modal-bg")?.remove(); V.openPlayer(m.player1_id); } },
+     (m.player1_name || "選手1") + " のプロフィール") : null,
+   m.player2_id ? h("button", { className: "btn btn-ghost",
+     onClick: () => { document.querySelector(".modal-bg")?.remove(); V.openPlayer(m.player2_id); } },
+     (m.player2_name || "選手2") + " のプロフィール") : null,
+ );
+ TT.openModal("試合中 — 台 " + t.table_no, body, foot);
  },
 };
 
