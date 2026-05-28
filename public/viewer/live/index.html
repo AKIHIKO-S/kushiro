@@ -140,6 +140,31 @@
   }
 
   /* ─── 統計バー (大型カード・コンパクト化) ─── */
+  /* 全体進捗バー */
+  .lv-progress {
+    background: var(--lv-surface); border: 2px solid var(--lv-line);
+    border-radius: 8px; padding: 10px 14px; margin-bottom: 10px;
+  }
+  .lv-progress-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 7px; flex-wrap: wrap; gap: 4px;
+  }
+  .lv-progress-title { font-size: 14px; font-weight: 700; }
+  .lv-progress-figure { font-size: 13px; color: var(--lv-sub); }
+  .lv-progress-figure strong { color: #16a34a; font-size: 17px; }
+  .lv-progress-bar {
+    height: 24px; border-radius: 12px; background: var(--lv-line);
+    overflow: hidden;
+  }
+  .lv-progress-fill {
+    height: 100%; border-radius: 12px;
+    background: linear-gradient(90deg, #22c55e, #16a34a);
+    display: flex; align-items: center; justify-content: flex-end;
+    transition: width .5s ease;
+  }
+  .lv-progress-fill.done { background: linear-gradient(90deg, #16a34a, #15803d); }
+  .lv-progress-pct { color: #fff; font-size: 12px; font-weight: 800; padding-right: 10px; }
+
   .lv-stats {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -1020,6 +1045,22 @@ const LV = {
     // 統計
     const totalCompleted = Object.values(s.event_stats || {})
       .reduce((a, e) => a + (e.completed || 0), 0);
+
+    // ── 全体進捗バー (最上部) ──
+    const totalMatches = (s.total_matches != null) ? s.total_matches
+      : Object.values(s.event_stats || {}).reduce((a, e) => a + (e.total || 0), 0);
+    const lvPct = totalMatches > 0 ? Math.round((totalCompleted / totalMatches) * 100) : 0;
+    main.appendChild(h("div", { className: "lv-progress" },
+      h("div", { className: "lv-progress-head" },
+        h("span", { className: "lv-progress-title" }, "大会の進捗"),
+        h("span", { className: "lv-progress-figure" },
+          totalCompleted + " / " + totalMatches + " 試合　",
+          h("strong", {}, lvPct + "%"))),
+      h("div", { className: "lv-progress-bar" },
+        h("div", { className: "lv-progress-fill" + (lvPct >= 100 ? " done" : ""),
+          style: { width: lvPct + "%" } },
+          lvPct >= 12 ? h("span", { className: "lv-progress-pct" }, lvPct + "%") : null)),
+    ));
     main.appendChild(h("div", { className: "lv-stats" },
       h("div", { className: "lv-stat highlight-red" },
         h("div", { className: "lv-stat-num red" }, String(s.on_table.length)),

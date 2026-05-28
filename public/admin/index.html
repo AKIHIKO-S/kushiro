@@ -362,6 +362,35 @@
  }
 
  /* ── 進行管理 ── */
+ /* 全体進捗バー (最上部) */
+ .op-progress-top {
+ background: #fff; border: 1px solid var(--border);
+ border-radius: 10px; padding: 12px 16px; margin-bottom: 12px;
+ }
+ .op-progress-head {
+ display: flex; justify-content: space-between; align-items: baseline;
+ margin-bottom: 8px; flex-wrap: wrap; gap: 4px;
+ }
+ .op-progress-title { font-size: 13px; font-weight: 700; color: var(--ink-800); }
+ .op-progress-figure { font-size: 13px; color: var(--ink-600); }
+ .op-progress-figure strong { color: var(--ink-900); }
+ .op-progress-bar {
+ height: 22px; border-radius: 11px; background: var(--ink-100);
+ overflow: hidden; position: relative;
+ }
+ .op-progress-fill {
+ height: 100%; border-radius: 11px;
+ background: linear-gradient(90deg, #22c55e, #16a34a);
+ display: flex; align-items: center; justify-content: flex-end;
+ transition: width .5s ease;
+ min-width: 0;
+ }
+ .op-progress-fill.done { background: linear-gradient(90deg, #16a34a, #15803d); }
+ .op-progress-pct {
+ color: #fff; font-size: 11px; font-weight: 800; padding-right: 10px;
+ white-space: nowrap;
+ }
+
  .op-summary {
  display: grid; grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
  gap: 8px; margin-bottom: 14px;
@@ -5640,6 +5669,23 @@ const O = {
  // ── サマリ (色付きステータスカード) ──
  const events = Object.keys(O.state.event_stats);
  const totalCompleted = Object.values(O.state.event_stats).reduce((a, e) => a + (e.completed || 0), 0);
+
+ // ── 全体進捗バー (最上部) ──
+ const totalM = O.state.total_matches || 0;
+ const pct = totalM > 0 ? Math.round((totalCompleted / totalM) * 100) : 0;
+ main.appendChild(h("div", { className: "op-progress-top" },
+   h("div", { className: "op-progress-head" },
+     h("span", { className: "op-progress-title" }, "大会全体の進捗"),
+     h("span", { className: "op-progress-figure" },
+       h("strong", {}, totalCompleted + " / " + totalM), " 試合　",
+       h("strong", { style: { color: pct >= 100 ? "#15803d" : "#b45309", fontSize: "18px" } }, pct + "%")),
+   ),
+   h("div", { className: "op-progress-bar" },
+     h("div", { className: "op-progress-fill" + (pct >= 100 ? " done" : ""),
+       style: { width: pct + "%" } },
+       pct >= 12 ? h("span", { className: "op-progress-pct" }, pct + "%") : null)),
+ ));
+
  const statCard = (cls, ic, num, numCls, label) => h("div", { className: "op-stat " + cls },
    h("div", { className: "op-stat-ic" }, ic),
    h("div", { className: "op-stat-num " + numCls }, String(num)),
