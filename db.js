@@ -3169,6 +3169,32 @@ function createTeamEntry(tournamentId, formData) {
   const entries = Array.isArray(formData.entries) ? formData.entries : [];
   if (!entries.length) return { error: "出場種目を1つ以上選択してください" };
 
+  // ── 入力制限 (DoS / スパム / 巨大データ投入 対策) ──
+  if (entries.length > 100) {
+    return { error: "1回の申込は100件までです" };
+  }
+  const clip = (s, n) => String(s == null ? "" : s).slice(0, n);
+  // 各文字列フィールドを安全な長さに切り詰め (200字)
+  for (const ent of entries) {
+    if (ent.event) ent.event = clip(ent.event, 100);
+    if (ent.name) ent.name = clip(ent.name, 200);
+    if (ent.name1) ent.name1 = clip(ent.name1, 200);
+    if (ent.name2) ent.name2 = clip(ent.name2, 200);
+    if (ent.team) ent.team = clip(ent.team, 200);
+    if (ent.team1) ent.team1 = clip(ent.team1, 200);
+    if (ent.team2) ent.team2 = clip(ent.team2, 200);
+    if (ent.team_name) ent.team_name = clip(ent.team_name, 200);
+    if (Array.isArray(ent.members)) {
+      ent.members = ent.members.slice(0, 30).map(m => clip(m, 200));
+    }
+  }
+  // 連絡先・備考も制限
+  formData.team_name = clip(formData.team_name, 200);
+  formData.contact_name = clip(formData.contact_name, 100);
+  formData.contact_email = clip(formData.contact_email, 200);
+  formData.contact_tel = clip(formData.contact_tel, 50);
+  formData.note = clip(formData.note, 2000);
+
   const submittedAt = (formData.submitted_at
     ? new Date(formData.submitted_at)
     : new Date()).toISOString().slice(0, 19).replace("T", " ");

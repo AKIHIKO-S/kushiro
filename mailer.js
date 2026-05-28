@@ -57,13 +57,17 @@ function entriesTable(entries) {
   if (!entries || !entries.length) return "";
   const rows = entries.map(e => {
     let label = e.event || "(種目不明)";
+    // ★ 全てのユーザー入力を esc() でエスケープ (XSS / メールインジェクション対策)
     let detail = "";
     if (e.type === "team") {
-      detail = `団体: ${e.team_name || ""}<br>メンバー: ${(e.members || []).join("、")}`;
+      const members = (e.members || []).map(m => esc(m)).join("、");
+      detail = `団体: ${esc(e.team_name || "")}<br>メンバー: ${members}`;
     } else if (e.type === "doubles") {
-      detail = `${e.name1 || ""} / ${e.name2 || ""}<br>${e.team || ""}`;
+      const t1 = esc(e.team1 || e.team || "");
+      const t2 = esc(e.team2 || e.team1 || e.team || "");
+      detail = `${esc(e.name1 || "")} (${t1})<br>${esc(e.name2 || "")} (${t2})`;
     } else {
-      detail = `${e.name || ""} (${e.team || ""})`;
+      detail = `${esc(e.name || "")} (${esc(e.team || "")})`;
     }
     return `<tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${esc(label)}</td>

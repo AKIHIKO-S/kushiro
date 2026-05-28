@@ -121,6 +121,36 @@ function requireAdmin(req, res, next) {
   res.status(401).json({ error: "管理キーが必要です" });
 }
 
+// ── 軽量レート制限 (公開申込のスパム/DoS 対策, 依存追加なし) ──
+// IP ごとに windowMs 内 max 回まで。メモリ上の簡易実装。
+function rateLimit({ windowMs = 60000, max = 20, message = "リクエストが多すぎます。しばらく待って再試行してください。" } = {}) {
+  const hits = new Map(); // ip -> [timestamps]
+  // 定期的に古いエントリを掃除 (メモリリーク防止)
+  setInterval(() => {
+    const cutoff = Date.now() - windowMs;
+    for (const [ip, arr] of hits) {
+      const fresh = arr.filter(t => t > cutoff);
+      if (fresh.length) hits.set(ip, fresh); else hits.delete(ip);
+    }
+  }, windowMs).unref();
+  return (req, res, next) => {
+    const ip = (req.headers["x-forwarded-for"] || req.ip || req.connection?.remoteAddress || "unknown")
+      .toString().split(",")[0].trim();
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const arr = (hits.get(ip) || []).filter(t => t > cutoff);
+    arr.push(now);
+    hits.set(ip, arr);
+    if (arr.length > max) {
+      res.setHeader("Retry-After", Math.ceil(windowMs / 1000));
+      return res.status(429).json({ error: message });
+    }
+    next();
+  };
+}
+// 公開申込: 1分間に10件まで (同一IP)
+const entryRateLimit = rateLimit({ windowMs: 60000, max: 10 });
+
 // ═══ 公開API（閲覧画面用・認証なし） ═══════════════════
 app.get("/api/public/players", (req, res) => {
   const { search, gender, category, team, sort } = req.query;
@@ -168,7 +198,7 @@ app.get("/api/public/head-to-head", (req, res) => {
 app.get("/api/public/open-tournaments", (req, res) => {
   res.json(db.getOpenTournaments());
 });
-app.post("/api/public/tournaments/:id/entry", (req, res) => {
+app.post("/api/public/tournaments/:id/entry", entryRateLimit, (req, res) => {
   const r = db.createEntry(req.params.id, req.body || {});
   if (r.error) return res.status(400).json(r);
   res.status(201).json(r);
@@ -184,7 +214,8 @@ app.options("/api/public/tournaments/:id/submit-team-entry", (req, res) => {
   res.sendStatus(204);
 });
 app.post("/api/public/tournaments/:id/submit-team-entry",
-  express.text({ limit: "5mb", type: ["text/plain", "application/json"] }),
+  entryRateLimit,
+  express.text({ limit: "1mb", type: ["text/plain", "application/json"] }),
   async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     let payload = req.body;
@@ -1498,8 +1529,8 @@ app.post("/api/sync/tournament", requireAdmin, (req, res) => {
 });
 
 // ═══ インポート/エクスポート ══════════════════════════
-app.get("/api/export/all", (req, res) => { res.json(db.exportAllData()); });
-app.get("/api/export/players", (req, res) => { res.json(db.exportAllData()); });
+app.get("/api/export/all", requireAdmin, (req, res) => { res.json(db.exportAllData()); });
+app.get("/api/export/players", requireAdmin, (req, res) => { res.json(db.exportAllData()); });
 app.post("/api/import/players", requireAdmin, (req, res) => {
   res.json(db.importPlayers(req.body.players || []));
 });
