@@ -426,8 +426,9 @@
    padding: 10px; background: var(--ink-50);
    border: 1px solid var(--border); border-radius: 8px;
  }
- /* 種目別進捗 */
- .ev-progress-list { display: grid; gap: 8px; }
+ /* 種目別進捗 (全体直下・複数列で省スペース) */
+ .ev-progress-list { display: grid; gap: 8px;
+   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
  .ev-progress {
  display: grid; grid-template-columns: 1fr auto; gap: 4px 10px;
  align-items: center; padding: 8px 12px;
@@ -5758,8 +5759,7 @@ const O = {
  statCard("s-total", "🏓", O.state.total_matches, "", "総試合"),
  ));
 
- // ── 種目別 進捗バー (後でリスト下に配置するため変数化) ──
- let progressCardEl = null;
+ // ── 種目別 進捗 (全体進捗の直下に配置) ──
  if (events.length) {
  const overall = O.state.total_matches > 0
    ? Math.round((totalCompleted / O.state.total_matches) * 100) : 0;
@@ -5785,7 +5785,7 @@ const O = {
    ));
  });
  progCard.appendChild(progList);
- progressCardEl = progCard;
+ main.appendChild(progCard);
  }
 
  // ── 運用バー (常時表示: 種目フィルタ + 敗者審判ルール) ──
@@ -5897,9 +5897,6 @@ const O = {
  });
  main.appendChild(refCard);
  }
-
- // ── 種目別 進捗 (参照情報・下部に配置) ──
- if (progressCardEl) main.appendChild(progressCardEl);
 
  // ── 直近結果 (修正機能つき) ──
  if (O.state.recent_finished.length) {
@@ -6064,7 +6061,7 @@ const O = {
  className: "court-cell " + cls + (t.is_extra ? " extra" : ""),
  onClick: () => {
  if (m) O.openMatchActions(m);
- else O.openCallableForTable(t.table_no);
+ else O.openCallFlow({ table: t.table_no });
  },
  title: m
    ? (t.is_extra ? "団体戦追加台 - クリックで結果入力"
@@ -6369,7 +6366,7 @@ const O = {
  title: "審判の要否切り替え" }, m.referee_required === 0 ? "審判要" : "審判不要"),
  h("button", { className: "btn btn-sm" + (blocked ? " btn-danger" : (isNext ? " btn-ok" : "")),
  style: isNext ? { fontWeight: "700" } : {},
- onClick: () => O.openCallDialog(m) },
+ onClick: () => O.openCallFlow({ match: m }) },
  blocked ? "強制呼出" : "呼ぶ"),
  ),
  );
@@ -6395,285 +6392,215 @@ const O = {
  O.reload();
  },
 
- // ── 空台クリック: 呼べる対戦を一覧モーダル ──
- openCallableForTable(tableNo) {
- if (!O.state || !O.state.callable || !O.state.callable.length) {
- return toast("現在、呼べる対戦がありません", "err");
- }
- const list = O.state.callable;
- // 種目別グループ化
- const byEvent = {};
- list.forEach(m => { (byEvent[m.event || "その他"] = byEvent[m.event || "その他"] || []).push(m); });
-
- const body = h("div", {},
- h("div", { className: "text-sm mb-2" },
- `台 ${tableNo} に呼ぶ対戦を選択してください。 (全 ${list.length} 試合)`),
- );
- Object.entries(byEvent).forEach(([ev, ms]) => {
- body.appendChild(h("div", { className: "font-bold text-sm mt-3 mb-1",
- style: { color: "var(--pri)", borderBottom: "1px solid var(--border)", paddingBottom: "4px" } },
- `${ev} (${ms.length})`));
- ms.forEach(m => {
- const isBlocked = (m.blocks || []).length > 0;
- const row = h("div", {
- className: "callable-row",
- style: { cursor: "pointer",
- ...(isBlocked ? { borderLeftColor: "var(--accent)", background: "#fef2f2" } : {}) },
- onClick: () => {
- document.querySelector(".modal-bg")?.remove();
- // call dialog を開きつつ台を事前選択
- O.openCallDialog(m, { preselect_table: tableNo });
- },
- },
- h("span", { className: "round-badge" }, m.round || ""),
- h("div", { className: "vs-block" },
- h("span", { className: "player-pill" }, m.player1_name,
- m.player1_team ? h("span", { className: "pteam" }, "(" + m.player1_team + ")") : null),
- h("span", { className: "vs" }, "VS"),
- h("span", { className: "player-pill" }, m.player2_name,
- m.player2_team ? h("span", { className: "pteam" }, "(" + m.player2_team + ")") : null),
- ),
- isBlocked
- ? h("span", { className: "text-xs", style: { color: "var(--accent)" } }, "拘束あり")
- : h("span", { className: "text-xs text-sub" }, "選択"),
- h("button", { className: "btn btn-sm",
- onClick: (e) => {
- e.stopPropagation();
- document.querySelector(".modal-bg")?.remove();
- O.openCallDialog(m, { preselect_table: tableNo });
- } }, "選ぶ"),
- );
- body.appendChild(row);
- });
- });
- openModal(`台 ${tableNo} に対戦を呼ぶ`, body, null);
- },
-
- // ── 試合呼び出しダイアログ（台選択＋審判選択） ──
- // opts.preselect_table: 空台クリック時の事前選択
- async openCallDialog(m, opts) {
+ // ── 統合呼出フロー (#179): 1モーダルで「① 対戦 → ② 台 → ③ 審判」を完結 ──
+ // opts.table=事前選択する台(空台クリック時) / opts.match=事前選択する対戦(呼べる対戦リストから)
+ async openCallFlow(opts) {
  opts = opts || {};
- let selectedTable = opts.preselect_table || 0;
- let extraTables = [];  // 団体戦の追加台
+ const callable = (O.state && O.state.callable) || [];
+ if (!callable.length) return toast("現在、呼べる対戦がありません", "err");
+
+ let selMatch = opts.match ? (callable.find(x => x.id === opts.match.id) || opts.match) : null;
+ let selectedTable = opts.table || 0;
+ let extraTables = [];
  let selectedRefereeId = "";
  let manualRefName = "";
- let refSource = m.referee_required === 0 ? "none" : "auto"; // auto | pool | any | manual | none
- const blocked = (m.blocks || []).length > 0;
- // 団体戦判定 (event 名に "団体" を含む or matches に既に extra_tables 入ってる)
- const isTeamMatch = /団体|チーム/.test(m.event || "");
+ let refSource = "auto"; // auto | pool | any | manual | none
 
- // 使用中の台
  const busyTables = new Set(O.state.on_table.map(x => x.table_no));
  const cols = O.state.tournament.court_cols || 11;
+ const allPlayers = await api.get("/api/players?sort=furigana");
 
- // 台選択は本部から見た並び順 (display順) で描画
- // O.state.tables は既に numbering_origin 反映済み、display_row/display_col で並ぶ
- const tableChips = h("div", {});
- tableChips.style.display = "grid";
- tableChips.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
- tableChips.style.gap = "4px";
- tableChips.style.background = "#f8fafc";
- tableChips.style.padding = "8px";
- tableChips.style.borderRadius = "6px";
- tableChips.style.maxHeight = "240px";
- tableChips.style.overflowY = "auto";
+ // ===== ① 対戦ピッカー (種目別グループ・クリックで選択) =====
+ const matchListWrap = h("div", { style: { maxHeight: "240px", overflowY: "auto",
+   border: "1px solid var(--border)", borderRadius: "8px", padding: "6px", background: "#f8fafc" } });
+ const renderMatchList = () => {
+   matchListWrap.innerHTML = "";
+   const byEv = {};
+   callable.forEach(m => { (byEv[m.event || "その他"] = byEv[m.event || "その他"] || []).push(m); });
+   Object.entries(byEv).forEach(([ev, ms]) => {
+     matchListWrap.appendChild(h("div", { style: { display: "flex", alignItems: "center", gap: "6px",
+       margin: "4px 2px 3px", fontSize: "11px", fontWeight: 700, color: "var(--ink-700)" } },
+       h("span", { className: "ev-priority", style: { background: O._eventPriorityColor(ev) } }), ev,
+       h("span", { className: "text-xs text-sub" }, "(" + ms.length + ")")));
+     ms.forEach(m => {
+       const blocked = (m.blocks || []).length > 0;
+       const isSel = selMatch && selMatch.id === m.id;
+       const num1 = m.player1_bracket_number || m.entrant1_bracket_number;
+       const num2 = m.player2_bracket_number || m.entrant2_bracket_number;
+       matchListWrap.appendChild(h("div", {
+         style: { display: "flex", alignItems: "center", gap: "8px", padding: "7px 9px",
+           marginBottom: "4px", borderRadius: "7px", cursor: "pointer",
+           background: isSel ? "#eef2ff" : "#fff",
+           border: "2px solid " + (isSel ? "#4f46e5" : (blocked ? "#fecaca" : "var(--border)")) },
+         onClick: () => { selMatch = m; onMatchChange(); } },
+         h("span", { style: { width: "16px", height: "16px", borderRadius: "50%", flex: "0 0 auto",
+           border: "2px solid " + (isSel ? "#4f46e5" : "#cbd5e1"),
+           background: isSel ? "#4f46e5" : "#fff" } }),
+         h("span", { className: "round-badge", style: { flex: "0 0 auto" } }, m.round || ""),
+         h("span", { style: { flex: "1 1 auto", minWidth: 0, fontSize: "13px",
+           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+           (num1 ? "#" + num1 + " " : "") + (m.player1_name || "") +
+           "  vs  " + (num2 ? "#" + num2 + " " : "") + (m.player2_name || "")),
+         blocked ? h("span", { className: "text-xs", style: { flex: "0 0 auto", color: "var(--accent)" } }, "拘束") : null));
+     });
+   });
+ };
+
+ // ===== ② 台チップ =====
+ const tableChips = h("div", { style: { display: "grid",
+   gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: "4px", background: "#f8fafc",
+   padding: "8px", borderRadius: "6px", maxHeight: "200px", overflowY: "auto" } });
  const chipMap = {};
  const refreshChips = () => {
- Object.entries(chipMap).forEach(([no, chip]) => {
- chip.classList.remove("selected", "extra");
- if (parseInt(no) === selectedTable) chip.classList.add("selected");
- else if (extraTables.includes(parseInt(no))) chip.classList.add("extra");
- });
+   Object.entries(chipMap).forEach(([no, chip]) => {
+     chip.classList.remove("selected", "extra");
+     if (parseInt(no) === selectedTable) chip.classList.add("selected");
+     else if (extraTables.includes(parseInt(no))) chip.classList.add("extra");
+   });
  };
  O.state.tables.forEach(t => {
- const busy = busyTables.has(t.table_no);
- const chip = h("div", {
- className: "table-chip" + (busy ? " busy" : ""),
- onClick: (e) => {
- if (busy) return;
- if (e.shiftKey || e.metaKey || e.ctrlKey) {
- // Shift/Cmd/Ctrl クリックで追加台 (団体戦の2台同時使用)
- const idx = extraTables.indexOf(t.table_no);
- if (idx >= 0) extraTables.splice(idx, 1);
- else if (t.table_no !== selectedTable) extraTables.push(t.table_no);
- } else {
- // 通常クリック: 主台選択
- selectedTable = t.table_no;
- // 既に extra に入っていたら除外
- const idx = extraTables.indexOf(t.table_no);
- if (idx >= 0) extraTables.splice(idx, 1);
- }
- refreshChips();
- }
- }, String(t.table_no));
- chipMap[t.table_no] = chip;
- tableChips.appendChild(chip);
+   const busy = busyTables.has(t.table_no);
+   const chip = h("div", { className: "table-chip" + (busy ? " busy" : ""),
+     onClick: (e) => {
+       if (busy) return;
+       const isTeam = selMatch && /団体|チーム/.test(selMatch.event || "");
+       if ((e.shiftKey || e.metaKey || e.ctrlKey) && isTeam) {
+         const idx = extraTables.indexOf(t.table_no);
+         if (idx >= 0) extraTables.splice(idx, 1);
+         else if (t.table_no !== selectedTable) extraTables.push(t.table_no);
+       } else {
+         selectedTable = t.table_no;
+         const idx = extraTables.indexOf(t.table_no);
+         if (idx >= 0) extraTables.splice(idx, 1);
+       }
+       refreshChips(); updateFoot();
+     } }, String(t.table_no));
+   chipMap[t.table_no] = chip;
+   tableChips.appendChild(chip);
  });
- refreshChips();
- // 本部の位置を視覚的に示す
- if (O.state.tournament.hq_position === "bottom") {
- const hqNote = h("div", { className: "text-xs text-sub mt-1",
- style: { textAlign: "center", padding: "4px 0", background: "var(--pri)",
- color: "#fff", borderRadius: "4px", marginTop: "4px" } }, "本部 (下)");
- tableChips.parentElement && tableChips.parentElement.appendChild(hqNote);
- }
 
- // 審判候補：敗者プール
+ // ===== ③ 審判 =====
  const refPool = h("select", { className: "input" },
- h("option", { value: "" }, "（敗者プールから選択）"));
- O.state.referee_queue.forEach(r => {
- if (r.loser_id) {
- refPool.appendChild(h("option", { value: r.loser_id },
- `${r.loser_name} ${r.loser_team ? "(" + r.loser_team + ")" : ""}`));
- }
- });
+   h("option", { value: "" }, "（敗者プールから選択）"));
+ O.state.referee_queue.forEach(r => { if (r.loser_id) {
+   refPool.appendChild(h("option", { value: r.loser_id },
+     `${r.loser_name} ${r.loser_team ? "(" + r.loser_team + ")" : ""}`)); } });
  refPool.addEventListener("change", e => { selectedRefereeId = e.target.value; });
 
- // 審判候補：任意の選手から
- const allPlayers = await api.get("/api/players?sort=furigana");
- const refAny = h("input", {
- className: "input", id: "refAnyInput",
- placeholder: "選手名で検索…", autocomplete: "off",
- });
+ const refAny = h("input", { className: "input", placeholder: "選手名で検索…", autocomplete: "off" });
  const refAnyList = h("div", { className: "autoc-list hidden",
- style: { position: "relative", maxHeight: "180px", overflowY: "auto" } });
+   style: { position: "relative", maxHeight: "180px", overflowY: "auto" } });
  refAny.addEventListener("input", () => {
- const q = refAny.value.trim().toLowerCase();
- refAnyList.innerHTML = "";
- if (!q) { refAnyList.classList.add("hidden"); return; }
- const hits = allPlayers.filter(p =>
- p.name.toLowerCase().includes(q) || (p.furigana || "").includes(q) ||
- (p.team || "").toLowerCase().includes(q)).slice(0, 8);
- hits.forEach(p => {
- const item = h("div", { className: "autoc-item",
- onClick: () => {
- refAny.value = `${p.name} (${p.team || "—"})`;
- selectedRefereeId = p.id;
- refAnyList.classList.add("hidden");
- }},
- h("div", { className: "autoc-item-name" }, p.name),
- h("div", { className: "autoc-item-team" }, p.team || "—"));
- refAnyList.appendChild(item);
- });
- refAnyList.classList.remove("hidden");
+   const q = refAny.value.trim().toLowerCase();
+   refAnyList.innerHTML = "";
+   if (!q) { refAnyList.classList.add("hidden"); return; }
+   allPlayers.filter(p => p.name.toLowerCase().includes(q) || (p.furigana || "").includes(q) ||
+     (p.team || "").toLowerCase().includes(q)).slice(0, 8).forEach(p => {
+     refAnyList.appendChild(h("div", { className: "autoc-item",
+       onClick: () => { refAny.value = `${p.name} (${p.team || "—"})`; selectedRefereeId = p.id; refAnyList.classList.add("hidden"); } },
+       h("div", { className: "autoc-item-name" }, p.name),
+       h("div", { className: "autoc-item-team" }, p.team || "—")));
+   });
+   refAnyList.classList.remove("hidden");
  });
 
  const refSection = h("div", { className: "field" });
- function refreshRefUI() {
- const mkTab = (key, label) => h("button", {
- className: "btn btn-sm" + (refSource === key ? "" : " btn-ghost"),
- onClick: () => { refSource = key; selectedRefereeId = ""; manualRefName = ""; refreshRefUI(); }
- }, label);
- const newTabs = h("div", { className: "flex gap-1 mb-2 flex-wrap" },
- mkTab("auto", "自動 (同台敗者)"),
- mkTab("pool", "敗者プール"),
- mkTab("any", "DB から検索"),
- mkTab("manual", "手動入力 (DB外可)"),
- mkTab("none", "審判なし"),
- );
- let newBody;
- if (refSource === "pool") newBody = refPool;
- else if (refSource === "any") newBody = h("div", { style: { position: "relative" } }, refAny, refAnyList);
- else if (refSource === "manual") {
- const manualInput = h("input", {
- className: "input", placeholder: "氏名を直接入力 (例: 山本 満 / 外部審判員)",
- value: manualRefName,
- onInput: (e) => { manualRefName = e.target.value; },
- });
- newBody = h("div", {},
- manualInput,
- h("div", { className: "text-xs text-sub mt-1" },
- "DBに登録されていない外部審判員も指定できます。"));
- } else if (refSource === "none") {
- newBody = h("div", { className: "text-sub text-sm" }, "審判なしで呼出 (拘束チェックも軽減)");
- } else {
- // auto
- newBody = h("div", { className: "text-sub text-sm" },
- "同じ台で直前に敗れた選手を自動的に審判アサインします。 (敗者審判)");
- }
- refSection.innerHTML = "";
- refSection.append(
- h("label", { className: "field-label" }, "審判の指定"),
- newTabs, newBody
- );
- }
- refreshRefUI();
+ const refreshRefUI = () => {
+   const mkTab = (key, label) => h("button", {
+     className: "btn btn-sm" + (refSource === key ? "" : " btn-ghost"),
+     onClick: () => { refSource = key; selectedRefereeId = ""; manualRefName = ""; refreshRefUI(); } }, label);
+   const tabs = h("div", { className: "flex gap-1 mb-2 flex-wrap" },
+     mkTab("auto", "自動 (同台敗者)"), mkTab("pool", "敗者プール"),
+     mkTab("any", "DB から検索"), mkTab("manual", "手動入力 (DB外可)"), mkTab("none", "審判なし"));
+   let nb;
+   if (refSource === "pool") nb = refPool;
+   else if (refSource === "any") nb = h("div", { style: { position: "relative" } }, refAny, refAnyList);
+   else if (refSource === "manual") nb = h("div", {},
+     h("input", { className: "input", placeholder: "氏名を直接入力 (例: 山本 満 / 外部審判員)",
+       value: manualRefName, onInput: (e) => { manualRefName = e.target.value; } }),
+     h("div", { className: "text-xs text-sub mt-1" }, "DBに登録されていない外部審判員も指定できます。"));
+   else if (refSource === "none") nb = h("div", { className: "text-sub text-sm" }, "審判なしで呼出 (拘束チェックも軽減)");
+   else nb = h("div", { className: "text-sub text-sm" }, "同じ台で直前に敗れた選手を自動的に審判アサインします。 (敗者審判)");
+   refSection.innerHTML = "";
+   refSection.append(h("label", { className: "field-label" }, "③ 審判の指定 (任意)"), tabs, nb);
+ };
 
+ // ===== 警告 (選択中の対戦の拘束) + 団体戦ヒント =====
  const warnEl = h("div", { className: "text-sm",
- style: { background: "#fef2f2", padding: "8px 12px",
- borderRadius: "6px", color: "var(--accent)", marginBottom: "8px",
- display: blocked ? "block" : "none" } });
- if (blocked) {
- warnEl.appendChild(h("div", { className: "font-bold mb-1" },
- "[警告] 選手拘束あり (敗者審判ルール)"));
- (m.blocks || []).forEach(b => {
- warnEl.appendChild(h("div", {}, `・${b.player_name}: ${b.label}`));
- });
- warnEl.appendChild(h("div", { className: "mt-2 text-xs" },
- "「強制呼出」を押すと拘束を無視して呼出します。"));
- }
+   style: { background: "#fef2f2", padding: "8px 12px", borderRadius: "6px",
+     color: "var(--accent)", marginBottom: "8px", display: "none" } });
+ const teamHint = h("div", { className: "text-xs text-sub", style: { marginTop: "4px", display: "none" } },
+   "団体戦: Shift / Cmd クリックで追加台 (薄紫) を選べます (2台同時使用)");
+
+ // ===== 呼ぶボタン + 状態更新 =====
+ const callBtn = h("button", { className: "btn" });
+ const updateFoot = () => {
+   const blocked = selMatch && (selMatch.blocks || []).length > 0;
+   const ready = !!(selMatch && selectedTable);
+   callBtn.textContent = blocked ? "強制呼出" : "呼ぶ";
+   callBtn.disabled = !ready;
+   callBtn.style.opacity = ready ? "1" : ".5";
+   callBtn.style.cursor = ready ? "pointer" : "not-allowed";
+   callBtn.classList.toggle("btn-danger", !!blocked);
+ };
+ const onMatchChange = () => {
+   renderMatchList();
+   const blocks = selMatch ? (selMatch.blocks || []) : [];
+   warnEl.innerHTML = "";
+   if (blocks.length) {
+     warnEl.style.display = "block";
+     warnEl.appendChild(h("div", { className: "font-bold mb-1" }, "[警告] 選手拘束あり (敗者審判ルール)"));
+     blocks.forEach(b => warnEl.appendChild(h("div", {}, `・${b.player_name}: ${b.label}`)));
+     warnEl.appendChild(h("div", { className: "mt-2 text-xs" }, "「強制呼出」を押すと拘束を無視して呼出します。"));
+   } else { warnEl.style.display = "none"; }
+   teamHint.style.display = (selMatch && /団体|チーム/.test(selMatch.event || "")) ? "block" : "none";
+   updateFoot();
+ };
+
+ renderMatchList(); refreshChips(); refreshRefUI(); onMatchChange();
 
  const body = h("div", {},
- warnEl,
- h("div", { className: "mb-3" },
- h("div", { className: "round-badge mb-2", style: { display: "inline-block" } },
- `${m.event} ${m.round}`),
- h("div", { className: "flex gap-2 vs-block", style: { fontSize: "16px" } },
- h("span", { className: "font-bold" }, m.player1_name,
- m.player1_team ? h("span", { className: "pteam" }, "(" + m.player1_team + ")") : null),
- h("span", { className: "vs" }, "VS"),
- h("span", { className: "font-bold" }, m.player2_name,
- m.player2_team ? h("span", { className: "pteam" }, "(" + m.player2_team + ")") : null),
- ),
- ),
- h("div", { className: "field" },
- h("label", { className: "field-label" },
- isTeamMatch
- ? "台を選択 (青=主台、薄紫=追加台 ※Shift/Cmd クリックで追加・団体戦2台同時)"
- : "台を選択"),
- tableChips,
- ),
- refSection,
+   warnEl,
+   h("div", { className: "field" },
+     h("label", { className: "field-label" }, "① 対戦を選ぶ"),
+     matchListWrap),
+   h("div", { className: "field" },
+     h("label", { className: "field-label" }, "② 台を選ぶ"),
+     tableChips, teamHint),
+   refSection,
  );
+
  const buildPayload = () => {
- const p = {
- table_no: selectedTable,
- referee_id: null,
- referee_name: "",
- auto_assign_referee: refSource === "auto",
- extra_tables: extraTables.slice(),
+   const p = { table_no: selectedTable, referee_id: null, referee_name: "",
+     auto_assign_referee: refSource === "auto", extra_tables: extraTables.slice() };
+   if (refSource === "pool" || refSource === "any") p.referee_id = selectedRefereeId || null;
+   if (refSource === "manual") p.referee_name = manualRefName;
+   if (refSource === "none") p.auto_assign_referee = false;
+   return p;
  };
- if (refSource === "pool" || refSource === "any") p.referee_id = selectedRefereeId || null;
- if (refSource === "manual") p.referee_name = manualRefName;
- if (refSource === "none") p.auto_assign_referee = false;
- return p;
+ callBtn.onclick = async () => {
+   if (!selMatch) return toast("対戦を選択してください", "err");
+   if (!selectedTable) return toast("台を選択してください", "err");
+   if (refSource === "manual" && !manualRefName.trim()) return toast("審判の氏名を入力してください", "err");
+   const blocked = (selMatch.blocks || []).length > 0;
+   const r = await api.post(`/api/matches/${selMatch.id}/call`, { ...buildPayload(), force: blocked });
+   if (r.error) {
+     if (r.blocked) {
+       const msg = "選手拘束で呼べません:\n" + r.blocked.map(b => `・${b.player_name}: ${b.locked_by_label}`).join("\n") + "\n\n強制呼出しますか？";
+       if (!confirm(msg)) return;
+       const r2 = await api.post(`/api/matches/${selMatch.id}/call`, { ...buildPayload(), force: true });
+       if (r2.error) return toast(r2.error, "err");
+       toast(`台${selectedTable}に強制呼出`, "ok");
+     } else { return toast(r.error, "err"); }
+   } else { toast(`台${selectedTable}に呼びました`, "ok"); }
+   flowModal.remove();
+   O.reload();
  };
- const foot = h("div", { className: "flex gap-2" },
- h("button", { className: "btn", onClick: async () => {
- if (!selectedTable) return toast("台を選択してください", "err");
- if (refSource === "manual" && !manualRefName.trim()) {
- return toast("審判の氏名を入力してください", "err");
- }
- const payload = { ...buildPayload(), force: blocked };
- const r = await api.post(`/api/matches/${m.id}/call`, payload);
- if (r.error) {
- if (r.blocked) {
- const msg = "選手拘束で呼べません:\n" + r.blocked.map(b => `・${b.player_name}: ${b.locked_by_label}`).join("\n") + "\n\n強制呼出しますか？";
- if (!confirm(msg)) return;
- const r2 = await api.post(`/api/matches/${m.id}/call`, { ...buildPayload(), force: true });
- if (r2.error) return toast(r2.error, "err");
- toast(`台${selectedTable}に強制呼出`, "ok");
- } else {
- return toast(r.error, "err");
- }
- } else {
- toast(`台${selectedTable}に呼びました`, "ok");
- }
- document.querySelector(".modal-bg")?.remove();
- O.reload();
- } }, blocked ? "強制呼出" : "呼ぶ"),
- );
- openModal("試合を呼ぶ", body, foot);
+ const foot = h("div", { className: "flex gap-2" }, callBtn);
+ // openModal は背景(.modal-bg)要素を返す。進行管理がオーバーレイ(.modal-bg)で開いている
+ // 場合に querySelector だと親オーバーレイを閉じてしまうため、自分のモーダルを直接保持して閉じる。
+ const flowModal = openModal(selectedTable ? `台 ${selectedTable} に試合を呼ぶ` : "試合を呼ぶ", body, foot);
+ updateFoot();
  },
 
  // ── 結果入力 ──
