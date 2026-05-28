@@ -1748,23 +1748,44 @@ function generateBracket(tournamentId, event, options) {
   // 相対スロット(0始まり)→選手 (as_drawn 用)
   const playerByDrawNo = {};
   if (asDrawn) {
-    // 左右(bracket_side)が両方あれば、左=上半分/右=下半分に分けて配置。
-    // 左右で人数が異なっても境界(中央)で取り違えないようにする。
-    const twoSided = sorted.some(p => p.bracket_side === "L") && sorted.some(p => p.bracket_side === "R");
-    if (twoSided) {
-      const lefts = sorted.filter(p => p.bracket_side !== "R"); // L または未指定=左
-      const rights = sorted.filter(p => p.bracket_side === "R");
-      const lSeeds = lefts.map(seedOf).filter(s => s >= 1);
-      const rSeeds = rights.map(seedOf).filter(s => s >= 1);
-      const minL = lSeeds.length ? Math.min(...lSeeds) : 1;
-      const minR = rSeeds.length ? Math.min(...rSeeds) : 1;
-      const relL = (p) => seedOf(p) - minL;
-      const relR = (p) => seedOf(p) - minR;
-      const maxRel = Math.max(0, ...lefts.map(relL), ...rights.map(relR));
-      const sideSize = Math.pow(2, Math.ceil(Math.log2(Math.max(2, maxRel + 1))));
+    const blocks = [...new Set(sorted.map(p => (p.block || "").trim()).filter(Boolean))].sort();
+    // 1サイド(L/R)分を配置するヘルパ: 各サイド内を最小番号で正規化して相対スロットへ
+    const placeSide = (list, offset, sideSize, dest) => {
+      const seeds = list.map(seedOf).filter(s => s >= 1);
+      const minS = seeds.length ? Math.min(...seeds) : 1;
+      list.forEach(p => { const r = seedOf(p) - minS; if (r >= 0 && r < sideSize) dest[offset + r] = p; });
+    };
+    // 各グループ(ブロック or 全体)の必要サイドサイズを算出
+    const sideSpan = (list) => {
+      const lefts = list.filter(p => p.bracket_side !== "R");
+      const rights = list.filter(p => p.bracket_side === "R");
+      const span = (arr) => {
+        const s = arr.map(seedOf).filter(x => x >= 1);
+        return s.length ? (Math.max(...s) - Math.min(...s) + 1) : 0;
+      };
+      return Math.max(1, span(lefts), span(rights));
+    };
+
+    if (blocks.length >= 2) {
+      // 複数ブロック → 各ブロック=1セクション(クォーター)。ブロック内は左右二分。
+      let maxSpan = 1;
+      blocks.forEach(bk => { maxSpan = Math.max(maxSpan, sideSpan(sorted.filter(p => (p.block || "").trim() === bk))); });
+      const sideSize = Math.pow(2, Math.ceil(Math.log2(Math.max(2, maxSpan))));
+      const blockSize = sideSize * 2;
+      const nBlocks = Math.pow(2, Math.ceil(Math.log2(blocks.length))); // 2,4,8 に丸め
+      bracketSize = blockSize * nBlocks;
+      blocks.forEach((bk, bi) => {
+        const bp = sorted.filter(p => (p.block || "").trim() === bk);
+        const off = bi * blockSize;
+        placeSide(bp.filter(p => p.bracket_side !== "R"), off, sideSize, playerByDrawNo);
+        placeSide(bp.filter(p => p.bracket_side === "R"), off + sideSize, sideSize, playerByDrawNo);
+      });
+    } else if (sorted.some(p => p.bracket_side === "L") && sorted.some(p => p.bracket_side === "R")) {
+      // 単一の両側トーナメント: 左=上半分/右=下半分 (左右の人数差でも境界を取り違えない)
+      const sideSize = Math.pow(2, Math.ceil(Math.log2(Math.max(2, sideSpan(sorted)))));
       bracketSize = sideSize * 2;
-      lefts.forEach(p => { const r = relL(p); if (r >= 0 && r < sideSize) playerByDrawNo[r] = p; });
-      rights.forEach(p => { const r = relR(p); if (r >= 0 && r < sideSize) playerByDrawNo[sideSize + r] = p; });
+      placeSide(sorted.filter(p => p.bracket_side !== "R"), 0, sideSize, playerByDrawNo);
+      placeSide(sorted.filter(p => p.bracket_side === "R"), sideSize, sideSize, playerByDrawNo);
     } else {
       // 片側 / サイド情報なし: 最小番号を0スロットに正規化した連続配置 (ブロックまたぎ対応)
       const seeds = sorted.map(seedOf).filter(s => s >= 1);
@@ -1923,8 +1944,10 @@ function generateBracket(tournamentId, event, options) {
                            : (isLeft1 ? (slot1 + 1) : (slot1 - halfSize + 1));
       const num2 = asDrawn ? (parseInt(m.player2?.seed) || (slot2 + 1))
                            : (isLeft2 ? (slot2 + 1) : (slot2 - halfSize + 1));
-      const side1 = isLeft1 ? "L" : "R";
-      const side2 = isLeft2 ? "L" : "R";
+      // as_drawn は取込時の左右(bracket_side)を保持 (再生成2回目で潰さないため)。
+      // 無ければスロット位置から判定。
+      const side1 = asDrawn ? (m.player1?.bracket_side || (isLeft1 ? "L" : "R")) : (isLeft1 ? "L" : "R");
+      const side2 = asDrawn ? (m.player2?.bracket_side || (isLeft2 ? "L" : "R")) : (isLeft2 ? "L" : "R");
       if (m.player1 && m.player1.id) {
         entrantStmts.setBracketNumber.run(num1, side1, m.player1.id);
       }
