@@ -388,6 +388,15 @@
  .op-stat.s-waiting { border-top-color: #2563eb; background: linear-gradient(180deg,#eff6ff,#fff); }
  .op-stat.s-done { border-top-color: #a1a1aa; }
  .op-stat.s-total { border-top-color: var(--ink-700); }
+ /* ツール折りたたみ */
+ .op-tools { display: inline-block; }
+ .op-tools > summary { list-style: none; cursor: pointer; }
+ .op-tools > summary::-webkit-details-marker { display: none; }
+ .op-tools-body {
+   display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;
+   padding: 10px; background: var(--ink-50);
+   border: 1px solid var(--border); border-radius: 8px;
+ }
  /* 種目別進捗 */
  .ev-progress-list { display: grid; gap: 8px; }
  .ev-progress {
@@ -5491,7 +5500,8 @@ const O = {
  statCard("s-total", "🏓", O.state.total_matches, "", "総試合"),
  ));
 
- // ── 種目別 進捗バー ──
+ // ── 種目別 進捗バー (後でリスト下に配置するため変数化) ──
+ let progressCardEl = null;
  if (events.length) {
  const overall = O.state.total_matches > 0
    ? Math.round((totalCompleted / O.state.total_matches) * 100) : 0;
@@ -5517,54 +5527,47 @@ const O = {
    ));
  });
  progCard.appendChild(progList);
- main.appendChild(progCard);
+ progressCardEl = progCard;
  }
 
- // ── アクションボタン ──
- main.appendChild(h("div", { className: "flex gap-2 mb-3 flex-wrap" },
- h("button", { className: "btn btn-sm",
-   style: { background: "#7c3aed" },
-   onClick: () => O.openVisualBracket() }, "トーナメント表"),
- h("button", { className: "btn btn-sm", onClick: () => O.openBracketGen() }, "トーナメント生成"),
- h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openImportBracket() }, "JSON 読込"),
- h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.exportBracket() }, "JSON 書出"),
- h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openLayoutSettings() },
- `台レイアウト (${O.state.tournament.court_rows}×${O.state.tournament.court_cols} = ${O.state.tournament.court_rows * O.state.tournament.court_cols}台)`),
+ // ── 運用バー (常時表示: 種目フィルタ + 敗者審判ルール) ──
+ main.appendChild(h("div", { className: "flex gap-2 mb-2 flex-wrap",
+   style: { alignItems: "center" } },
  events.length ? h("select", {
  className: "input input-sm", style: { width: "180px" },
  onChange: (e) => { O.selectedEvent = e.target.value; O.render(); }
  },
- h("option", { value: "" }, "全種目"),
+ h("option", { value: "" }, "全種目を表示"),
  ...events.map(ev => h("option", {
  value: ev, selected: ev === O.selectedEvent ? "" : null
  }, ev))
  ) : null,
- h("a", { href: `/viewer/#tournament/${O.tournamentId}`, target: "_blank",
- className: "btn btn-sm btn-ghost" }, "公開ページ"),
  h("button", {
  className: "btn btn-sm " + (O.state.tournament.enforce_referee_rule !== 0 ? "btn-ok" : "btn-ghost"),
  onClick: () => O.toggleRefereeRule(),
  title: "敗者は次の試合まで審判担当。OFFにすると拘束チェックを無効化"
  },
- (O.state.tournament.enforce_referee_rule !== 0 ? "" : "") + " 敗者審判ルール"),
+ (O.state.tournament.enforce_referee_rule !== 0 ? "● " : "○ ") + "敗者審判ルール"),
+ // ツール (折りたたみ)
+ h("details", { className: "op-tools" },
+ h("summary", { className: "btn btn-sm btn-ghost", style: { display: "inline-block" } }, "ツール・設定 ▾"),
+ h("div", { className: "op-tools-body" },
+ h("button", { className: "btn btn-sm", style: { background: "#7c3aed" },
+   onClick: () => O.openVisualBracket() }, "トーナメント表"),
+ h("button", { className: "btn btn-sm", onClick: () => O.openBracketGen() }, "トーナメント生成"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openImportBracket() }, "JSON 読込"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.exportBracket() }, "JSON 書出"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openLayoutSettings() },
+ `台レイアウト (${O.state.tournament.court_rows}×${O.state.tournament.court_cols}=${O.state.tournament.court_rows * O.state.tournament.court_cols}台)`),
+ h("a", { href: `/viewer/#tournament/${O.tournamentId}`, target: "_blank",
+ className: "btn btn-sm btn-ghost" }, "公開ページ"),
+ )),
  ));
 
- // ── コート配置図 ──
+ // ── コート配置図 (運用の中心) ──
  main.appendChild(O.renderCourtGrid());
 
- // ── 進行中 ──
- if (O.state.on_table.length) {
- const onCard = h("div", { className: "card" },
- h("div", { className: "card-head" },
- h("div", { className: "card-title" }, "進行中"),
- h("div", { className: "card-title-sub" }, `${O.state.on_table.length}試合`),
- ),
- );
- O.state.on_table.forEach(m => onCard.appendChild(O.renderOnTableRow(m)));
- main.appendChild(onCard);
- }
-
- // ── 呼べる対戦 ──
+ // ── 呼べる対戦 (次に呼ぶ — 最頻アクションを上に) ──
  const prioDot = (c, label) => h("span", { style: { display: "inline-flex", alignItems: "center",
    gap: "3px", fontSize: "10px", color: "var(--ink-600)" } },
    h("span", { className: "ev-priority", style: { background: c, marginRight: "0" } }), label);
@@ -5592,6 +5595,18 @@ const O = {
  callList.forEach((m, idx) => callCard.appendChild(O.renderCallableRow(m, idx, idx === firstFreeIdx)));
  }
  main.appendChild(callCard);
+
+ // ── 進行中 (結果入力) ──
+ if (O.state.on_table.length) {
+ const onCard = h("div", { className: "card" },
+ h("div", { className: "card-head" },
+ h("div", { className: "card-title" }, "進行中 (結果入力)"),
+ h("div", { className: "card-title-sub" }, `${O.state.on_table.length}試合`),
+ ),
+ );
+ O.state.on_table.forEach(m => onCard.appendChild(O.renderOnTableRow(m)));
+ main.appendChild(onCard);
+ }
 
  // ── 審判プール (敗者プール) ──
  if (O.state.referee_queue.length) {
@@ -5624,6 +5639,9 @@ const O = {
  });
  main.appendChild(refCard);
  }
+
+ // ── 種目別 進捗 (参照情報・下部に配置) ──
+ if (progressCardEl) main.appendChild(progressCardEl);
 
  // ── 直近結果 (修正機能つき) ──
  if (O.state.recent_finished.length) {
