@@ -1739,24 +1739,40 @@ function generateBracket(tournamentId, event, options) {
   });
 
   const N = sorted.length;
-  // placement: "as_drawn" = 選手番号(seed=通し番号)をそのまま位置に固定配置 (取込表通り)
+  // placement: "as_drawn" = 選手番号(通し番号)をそのまま位置に固定配置 (取込表通り)
   //            それ以外 = 標準シード配置 (1 vs N, 2 vs N-1 …)
   const asDrawn = options.placement === "as_drawn";
-
-  // as_drawn: ブロックがまたがり通し番号が途中(例:79)から始まる場合に対応するため
-  //           最小番号を 0 番スロットに正規化する (番号の相対位置=描画位置)
-  let minSeed = 1;
-  if (asDrawn) {
-    const seeds = sorted.map(p => parseInt(p.seed) || 0).filter(s => s >= 1);
-    minSeed = seeds.length ? Math.min(...seeds) : 1;
-  }
+  const seedOf = (p) => parseInt(p.seed) || 0;
 
   let bracketSize, totalRounds;
+  // 相対スロット(0始まり)→選手 (as_drawn 用)
+  const playerByDrawNo = {};
   if (asDrawn) {
-    const seeds = sorted.map(p => parseInt(p.seed) || 0).filter(s => s >= 1);
-    const maxSeed = seeds.length ? Math.max(...seeds) : N;
-    const span = maxSeed - minSeed + 1;            // ブロック内の番号スパン
-    bracketSize = Math.pow(2, Math.ceil(Math.log2(Math.max(2, span, N))));
+    // 左右(bracket_side)が両方あれば、左=上半分/右=下半分に分けて配置。
+    // 左右で人数が異なっても境界(中央)で取り違えないようにする。
+    const twoSided = sorted.some(p => p.bracket_side === "L") && sorted.some(p => p.bracket_side === "R");
+    if (twoSided) {
+      const lefts = sorted.filter(p => p.bracket_side !== "R"); // L または未指定=左
+      const rights = sorted.filter(p => p.bracket_side === "R");
+      const lSeeds = lefts.map(seedOf).filter(s => s >= 1);
+      const rSeeds = rights.map(seedOf).filter(s => s >= 1);
+      const minL = lSeeds.length ? Math.min(...lSeeds) : 1;
+      const minR = rSeeds.length ? Math.min(...rSeeds) : 1;
+      const relL = (p) => seedOf(p) - minL;
+      const relR = (p) => seedOf(p) - minR;
+      const maxRel = Math.max(0, ...lefts.map(relL), ...rights.map(relR));
+      const sideSize = Math.pow(2, Math.ceil(Math.log2(Math.max(2, maxRel + 1))));
+      bracketSize = sideSize * 2;
+      lefts.forEach(p => { const r = relL(p); if (r >= 0 && r < sideSize) playerByDrawNo[r] = p; });
+      rights.forEach(p => { const r = relR(p); if (r >= 0 && r < sideSize) playerByDrawNo[sideSize + r] = p; });
+    } else {
+      // 片側 / サイド情報なし: 最小番号を0スロットに正規化した連続配置 (ブロックまたぎ対応)
+      const seeds = sorted.map(seedOf).filter(s => s >= 1);
+      const minSeed = seeds.length ? Math.min(...seeds) : 1;
+      const maxSeed = seeds.length ? Math.max(...seeds) : N;
+      bracketSize = Math.pow(2, Math.ceil(Math.log2(Math.max(2, maxSeed - minSeed + 1, N))));
+      sorted.forEach(p => { const s = seedOf(p); if (s < 1) return; const r = s - minSeed; if (r >= 0 && r < bracketSize) playerByDrawNo[r] = p; });
+    }
   } else {
     bracketSize = Math.pow(2, Math.ceil(Math.log2(N)));
   }
@@ -1766,16 +1782,6 @@ function generateBracket(tournamentId, event, options) {
   // seed番号→選手 (標準配置用: ふりがな順の順位)
   const playerBySeed = {};
   sorted.forEach((p, i) => { playerBySeed[i + 1] = p; });
-  // 相対スロット(0始まり)→選手 (as_drawn 用: 番号-最小番号 = 線形スロット位置)
-  const playerByDrawNo = {};
-  if (asDrawn) {
-    sorted.forEach(p => {
-      const s = parseInt(p.seed) || 0;
-      if (s < 1) return;
-      const rel = s - minSeed;                     // 0 始まりの線形スロット
-      if (rel >= 0 && rel < bracketSize) playerByDrawNo[rel] = p;
-    });
-  }
 
   // 既存の同event試合を削除（regen）
   if (options.regenerate) {
@@ -3760,6 +3766,10 @@ function importFromSeedList(tournamentId, data) {
     }
 
     const e = createEntrant(entrantData);
+    // パーサが付けた左右(side)を entrant に保持 → as_drawn 配置で左右半分に分離するため
+    if (e && (p.side === "L" || p.side === "R")) {
+      entrantStmts.setBracketNumber.run(parseInt(p.seed) || 0, p.side, e.id);
+    }
     entrantIds.push(e.id);
   });
 

@@ -433,32 +433,39 @@ function processHeader(ws, header, allHeaders, formatHint, merges, verbose) {
   if (!clusters.length) return null;
 
   const fmt = detectFormat(header.event, formatHint);
+  // 番号列(クラスタ)の水平位置で左右(L/R)を判定。中央より左=L、右=R。
+  // 両側トーナメントで左右の人数が異なっても境界を取り違えないために使用。
+  const regCenter = (region.cMin + region.cMax) / 2;
+  const sideOfCluster = (cl) => (cl.x < regCenter ? 'L' : 'R');
   let players = [];
   if (fmt === 'team') {
     // 団体戦: 各クラスタからチーム抽出 → 統合 (重複除外)
     clusters.forEach(cl => {
+      const side = sideOfCluster(cl);
       const ts = extractTeamFromCluster(ws, cl, region, merges);
       ts.forEach(t => {
         if (!players.find(p => p.name === t.name && p.seed === t.seed)) {
-          players.push(t);
+          t.side = side; players.push(t);
         }
       });
     });
   } else if (fmt === 'doubles') {
     clusters.forEach(cl => {
+      const side = sideOfCluster(cl);
       const ps = extractDoublesFromCluster(ws, cl, region, merges);
       ps.forEach(p => {
         if (!players.find(x => x.name === p.name && x.seed === p.seed)) {
-          players.push(p);
+          p.side = side; players.push(p);
         }
       });
     });
   } else {
     clusters.forEach(cl => {
+      const side = sideOfCluster(cl);
       const ps = extractSinglesFromCluster(ws, cl, region, merges);
       ps.forEach(p => {
         if (!players.find(x => x.name === p.name && x.team === p.team)) {
-          players.push(p);
+          p.side = side; players.push(p);
         }
       });
     });
