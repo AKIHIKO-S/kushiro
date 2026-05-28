@@ -541,6 +541,33 @@
  .call-chk input { width: 18px; height: 18px; cursor: pointer; accent-color: #16a34a; }
  .callable-row.announced { opacity: .52; }
  .callable-row.announced .call-chk { color: #15803d; }
+ /* 大会運営ガイド (5ステップ導線) #195 */
+ .flow-guide { background: linear-gradient(135deg,#eef2ff 0%,#fff 60%);
+   border-left: 4px solid var(--pri, #4f46e5); }
+ .flow-guide-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+ .flow-guide-title { font-size:16px; font-weight:800; color:var(--ink-900); }
+ .flow-guide-sub { font-size:11px; color:var(--sub); }
+ .flow-steps { display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); }
+ .flow-step { display:flex; gap:10px; background:#fff; border:1px solid var(--border);
+   border-radius:10px; padding:11px 12px; position:relative; transition:box-shadow .15s,border-color .15s; }
+ .flow-step-num { flex:0 0 auto; width:26px; height:26px; border-radius:50%;
+   background:var(--ink-200,#e2e8f0); color:var(--ink-600,#475569);
+   display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px;
+   font-family:var(--font-display,inherit); }
+ .flow-step.done .flow-step-num { background:#16a34a; color:#fff; }
+ .flow-step.active { border-color:var(--pri,#4f46e5); box-shadow:0 0 0 2px rgba(79,70,229,.25); }
+ .flow-step.active .flow-step-num { background:var(--pri,#4f46e5); color:#fff; }
+ .flow-step-main { min-width:0; flex:1; }
+ .flow-step-title { font-size:13px; font-weight:700; color:var(--ink-900); }
+ .flow-step-hint { font-size:11px; color:var(--sub); line-height:1.45; margin:3px 0 6px; }
+ .flow-step-status { margin-bottom:7px; }
+ .flow-chip { display:inline-block; font-size:10px; font-weight:700; padding:2px 8px; border-radius:9px; }
+ .flow-chip.ok { background:#dcfce7; color:#15803d; }
+ .flow-chip.warn { background:#fef3c7; color:#92400e; }
+ .flow-chip.done { background:#e0e7ff; color:#3730a3; }
+ .flow-chip.todo { background:#f1f5f9; color:#64748b; }
+ .flow-step-actions { display:flex; gap:5px; flex-wrap:wrap; }
+ .flow-step-actions .btn { padding:5px 9px; font-size:11px; }
  .round-badge {
  background: var(--pri-bg); color: var(--pri);
  padding: 4px 10px; border-radius: 12px;
@@ -1822,6 +1849,9 @@ const A = {
  ),
  ));
 
+ // ─── 大会運営ガイド (5ステップの導線) #195 ───
+ panel.appendChild(A.renderFlowGuide(t));
+
  // ─── トーナメント表 (Excel/PDF 取込) ───
  // 申込・名簿・領収書・集計は GAS 側で処理。本システムは試合運営に特化。
  panel.appendChild(h("div", { className: "card" },
@@ -1908,6 +1938,102 @@ const A = {
  if (t.matches && t.matches.length) {
    panel.appendChild(A.renderMatchListSection(t));
  }
+ },
+
+ // ─── 大会運営ガイド: 申込→集計→名簿→トーナメント→運営 の5ステップ導線 (#195) ───
+ renderFlowGuide(t) {
+ const matches = (t.matches || []).length;
+ const card = h("div", { className: "card flow-guide" });
+ card.appendChild(h("div", { className: "flow-guide-head" },
+   h("div", { className: "flow-guide-title" }, "大会の進め方ガイド"),
+   h("div", { className: "flow-guide-sub" }, "① 申込フォーム → ② 申込確認 → ③ 名簿 → ④ トーナメント → ⑤ 運営")));
+ const steps = h("div", { className: "flow-steps" });
+ card.appendChild(steps);
+
+ const chip = (txt, cls) => h("span", { className: "flow-chip " + (cls || "todo") }, txt);
+ const mk = (n, title, hint, statusEl, actions) => {
+   const el = h("div", { className: "flow-step", dataset: { step: String(n) } },
+     h("div", { className: "flow-step-num" }, String(n)),
+     h("div", { className: "flow-step-main" },
+       h("div", { className: "flow-step-title" }, title),
+       h("div", { className: "flow-step-hint" }, hint),
+       h("div", { className: "flow-step-status" }, statusEl),
+       h("div", { className: "flow-step-actions" }, ...actions.filter(Boolean))));
+   steps.appendChild(el);
+   return el;
+ };
+ const openOps = () => {
+   if (typeof O !== "undefined") O.tournamentId = t.id;
+   A.showTab("operations");
+   setTimeout(() => {
+     const sel = document.getElementById("opTournamentSel");
+     if (sel) sel.value = t.id;
+     if (typeof O !== "undefined") O.selectTournament(t.id);
+   }, 60);
+ };
+
+ const s1 = t.entries_open ? chip("● 受付中", "ok") : chip("受付停止 / 未設定", "warn");
+ mk(1, "申込フォームを作る・公開",
+   "Jimdo/STUDIOに貼る埋込コードと公開URLを発行。受付ON/OFFと締切を設定。", s1, [
+   h("button", { className: "btn btn-sm", onClick: () => A.openEntryFormGenerator(t) }, "フォーム設定 / 埋込"),
+   h("button", { className: "btn btn-sm btn-ghost", onClick: () => window.open(`/entry/${t.id}`, "_blank") }, "プレビュー"),
+ ]);
+
+ const s2 = chip("確認中…", "");
+ mk(2, "申込を確認する",
+   "届いた申込を一覧で確認・承認。Googleフォーム集計(GAS)とも連携。", s2, [
+   h("button", { className: "btn btn-sm", onClick: () => A.openEntriesFullView(t) }, "申込一覧を見る"),
+   h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.fetchGasStats(t) }, "GAS集計取得"),
+ ]);
+
+ const s3 = chip("確認中…", "");
+ mk(3, "名簿を作る（抽選番号・確認）",
+   "申込Excelを取込み、抽選番号を付与。重複・所属相違をチェックして名簿確定。", s3, [
+   h("button", { className: "btn btn-sm", onClick: () => A.openExcelUpload(t.id) }, "申込Excel取込"),
+   h("button", { className: "btn btn-sm",
+     style: { background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" },
+     onClick: () => A.openDrawNumberDialog(t) }, "抽選番号 付与"),
+   h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openEntrantsTab(t.id) }, "名簿を編集"),
+ ]);
+
+ const s4 = matches > 0 ? chip(matches + "試合 作成済", "ok") : chip("未作成", "todo");
+ mk(4, "トーナメント表を作る",
+   "名簿からブラケット自動生成、またはExcel/PDF組合せ表を取込。", s4, [
+   h("button", { className: "btn btn-sm", onClick: () => A.openExcelUpload(t.id) }, "Excel/PDF 取込"),
+   h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openEntrantsTab(t.id) }, "名簿から生成"),
+ ]);
+
+ const s5 = t.status === "ongoing" ? chip("● 進行中", "ok")
+   : (t.status === "completed" ? chip("終了", "done")
+   : (matches > 0 ? chip("準備OK", "warn") : chip("未開始", "todo")));
+ mk(5, "大会を運営（LIVE）",
+   "試合呼出・台割当・審判・結果入力。トーナメント表もここで補正。観戦ビューを共有。", s5, [
+   h("button", { className: "btn btn-sm", onClick: openOps }, "進行管理を開く"),
+   h("a", { className: "btn btn-sm btn-ghost",
+     href: `/viewer/live/?t=${encodeURIComponent(t.id)}`, target: "_blank" }, "観戦ビュー"),
+ ]);
+
+ // 完了判定・現在地ハイライト (件数は非同期取得)
+ const mark = (n, klass) => steps.querySelector(`.flow-step[data-step="${n}"]`)?.classList.add(klass);
+ (async () => {
+   let entries = [], entrantTotal = 0;
+   try { entries = await api.get(`/api/tournaments/${t.id}/entries`) || []; } catch (e) {}
+   try {
+     const st = await api.get(`/api/tournaments/${t.id}/entrants/stats`) || {};
+     entrantTotal = Object.values(st).reduce((a, e) => a + (e.total || 0), 0);
+   } catch (e) {}
+   s2.textContent = entries.length ? (entries.length + "件 申込") : "申込なし";
+   s2.className = "flow-chip " + (entries.length ? "ok" : "todo");
+   s3.textContent = entrantTotal ? (entrantTotal + "名 登録") : "名簿なし";
+   s3.className = "flow-chip " + (entrantTotal ? "ok" : "todo");
+   const done = { 1: !!t.entries_open, 2: entries.length > 0, 3: entrantTotal > 0,
+     4: matches > 0, 5: t.status === "completed" };
+   [1, 2, 3, 4, 5].forEach(n => { if (done[n]) mark(n, "done"); });
+   const cur = [1, 2, 3, 4, 5].find(n => !done[n]) || 5;
+   mark(cur, "active");
+ })();
+
+ return card;
  },
 
  // ─── 試合一覧 (折りたたみ・補助) ───
