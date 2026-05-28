@@ -1915,7 +1915,8 @@ const A = {
  if (config.error) return toast(config.error, "err");
 
  let events = config.events || [];
- let gasUrl = localStorage.getItem("tt_gas_url_" + t.id) || "";
+ // GAS URL: 優先順位 = サーバーDB > localStorage
+ let gasUrl = t.entry_gas_url || localStorage.getItem("tt_gas_url_" + t.id) || "";
  let adminEmail = localStorage.getItem("tt_admin_email") || "";
  let deadline = "";
  let paymentNote = "参加料は、大会当日の開会式前に受付でお支払いください。";
@@ -2242,7 +2243,7 @@ const A = {
  h("button", { className: "btn btn-sm",
    style: { background: "#15803d", color: "#fff" },
  onClick: async () => {
-   // event_config + 受付ON/OFF + 締切 をサーバーに保存
+   // event_config + 受付ON/OFF + 締切 + GAS URL をサーバーに保存
    try {
      const eventNames = events.map(e => e.name);
      const openEl = document.getElementById("efgOpen");
@@ -2254,18 +2255,23 @@ const A = {
        entry_events: eventNames,
        event_config: events,
        organizer: orgEl ? orgEl.value.trim() : (t.organizer || "釧路卓球協会"),
+       entry_gas_url: gasUrl || "",  // GAS URL も DB に保存
      });
      if (r.error) return toast("保存失敗: " + r.error, "err");
+     // localStorage にも保存 (将来 admin で参照しやすいよう)
+     if (gasUrl) localStorage.setItem("tt_gas_url_" + t.id, gasUrl);
      const statusMsg = (openEl && openEl.checked) ? "受付中" : "停止中";
-     toast("保存しました (" + events.length + "種目, " + statusMsg + ")", "ok");
+     const gasMsg = gasUrl ? " + GAS連携" : "";
+     toast("保存しました (" + events.length + "種目, " + statusMsg + gasMsg + ")", "ok");
      // 大会データを reload して画面更新
      t.entries_open = openEl ? openEl.checked : t.entries_open;
      t.entry_deadline = dlEl ? dlEl.value : t.entry_deadline;
      t.organizer = orgEl ? orgEl.value.trim() : t.organizer;
+     t.entry_gas_url = gasUrl;
    } catch (e) {
      toast("保存失敗: " + e.message, "err");
    }
- } }, "▼ サーバーに保存 (受付ON/OFF + 締切 + 種目)"),
+ } }, "▼ サーバーに保存 (受付ON/OFF + 締切 + 種目 + GAS URL)"),
  h("button", { className: "btn btn-sm",
  onClick: () => {
  codeArea.select(); document.execCommand("copy");

@@ -1613,13 +1613,17 @@ app.get("/entry/:id", (req, res) => {
       );
     }
     const events = _resolveEvents(tournament);
-    // 自己 POST URL (絶対 URL で渡す → iframe 埋込でも正しく動作)
+    // POST 先: 大会に GAS URL が設定されていればそちらへ (スプレッドシート連携)
+    //          設定されていなければ本サーバーへ (自己完結)
     const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
     const host = req.headers["x-forwarded-host"] || req.headers.host;
     const selfUrl = `${proto}://${host}/api/public/tournaments/${tournament.id}/submit-team-entry`;
+    const postUrl = (tournament.entry_gas_url && /^https:\/\/script\.google\.com\//.test(tournament.entry_gas_url))
+      ? tournament.entry_gas_url
+      : (req.query.gas_url || selfUrl);
 
     const html = entryForm.buildEntryFormHTML(tournament, events, {
-      gas_url: selfUrl,
+      gas_url: postUrl,
       admin_email: req.query.admin_email || "",
       deadline: tournament.entry_deadline || req.query.deadline || "",
       payment_note: req.query.payment_note || "",

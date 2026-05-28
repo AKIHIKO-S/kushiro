@@ -478,17 +478,6 @@ function buildEntryFormHTML(tournament, events, opts) {
 <div class="form-section">
   <h2>出場種目</h2>
   <div id="eventsContainer"></div>
-  <details class="event-block" style="margin-top:12px;border-style:dashed;">
-    <summary>その他の種目を申し込む (自由記入)</summary>
-    <div style="font-size:12px;color:#6b7280;margin:8px 0;">
-      上記に掲載のない種目をお申込みされる場合はこちらから入力してください。
-      種目名・人数を確認のうえ大会主催者にて参加料を再計算します。
-    </div>
-    <div class="members" id="customEvents"></div>
-    <button type="button" class="btn-add" onclick="addCustomEvent()">
-      + その他種目を追加
-    </button>
-  </details>
 </div>
 
 <div class="form-section">
@@ -582,15 +571,32 @@ function applyTeamNameToAll() {
   recalcTotal();
 }
 
-// 種目別の現在エントリー数を画面に反映
+// 種目別の現在エントリー数を画面に反映 (記入済みのみカウント)
 function updateCounts() {
   EVENTS.forEach((ev, idx) => {
     const container = document.getElementById("members_" + idx);
     const badge = document.getElementById("count_" + idx);
-    if (container && badge) {
-      const unit = ev.type === "team" ? "チーム" : (ev.type === "doubles" ? "ペア" : "選手");
-      badge.textContent = container.children.length + " " + unit;
-    }
+    if (!container || !badge) return;
+    let filled = 0;
+    Array.from(container.children).forEach((row) => {
+      let hasContent = false;
+      if (ev.type === "team") {
+        const tn = row.querySelector('input[name$="_name"]');
+        const members = row.querySelectorAll('input[name*="_m"]');
+        if (tn && tn.value.trim()) hasContent = true;
+        Array.from(members).forEach(m => { if (m.value.trim()) hasContent = true; });
+      } else if (ev.type === "doubles") {
+        const n1 = row.querySelector('input[name*="_n1"]');
+        const n2 = row.querySelector('input[name*="_n2"]');
+        if ((n1 && n1.value.trim()) || (n2 && n2.value.trim())) hasContent = true;
+      } else {
+        const n = row.querySelector('input[name*="_name"]');
+        if (n && n.value.trim()) hasContent = true;
+      }
+      if (hasContent) filled++;
+    });
+    const unit = ev.type === "team" ? "チーム" : (ev.type === "doubles" ? "ペア" : "選手");
+    badge.textContent = filled + " " + unit;
   });
 }
 
@@ -615,21 +621,21 @@ function addEntry(eventIdx) {
     '</div>';
 
   if (isTeam) {
-    html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_name" placeholder="チーム名" style="width:100%; margin-bottom:6px; padding:6px;" />';
+    html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_name" placeholder="チーム名" oninput="recalcTotal()" style="width:100%; margin-bottom:6px; padding:6px;" />';
     const per = ev.per_team || 6;
     for (let i = 0; i < per; i++) {
-      html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_m' + i + '" placeholder="メンバー' + (i + 1) + ' 氏名" style="width:100%; margin-bottom:4px; padding:6px; font-size:12px;" />';
+      html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_m' + i + '" placeholder="メンバー' + (i + 1) + ' 氏名" oninput="recalcTotal()" style="width:100%; margin-bottom:4px; padding:6px; font-size:12px;" />';
     }
   } else if (isDoubles) {
     html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n1" placeholder="氏名1" style="padding:6px;" />' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n2" placeholder="氏名2" style="padding:6px;" />' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n1" placeholder="氏名1" oninput="recalcTotal()" style="padding:6px;" />' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n2" placeholder="氏名2" oninput="recalcTotal()" style="padding:6px;" />' +
       '</div>' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_team" placeholder="所属" style="width:100%; padding:6px; font-size:12px;" />';
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_team" placeholder="所属" oninput="recalcTotal()" style="width:100%; padding:6px; font-size:12px;" />';
   } else {
     html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">' +
-      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_name" placeholder="氏名 (フルネーム)" style="padding:6px;" />' +
-      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_team" placeholder="所属" style="padding:6px; font-size:12px;" />' +
+      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_name" placeholder="氏名 (フルネーム)" oninput="recalcTotal()" style="padding:6px;" />' +
+      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_team" placeholder="所属" oninput="recalcTotal()" style="padding:6px; font-size:12px;" />' +
       '</div>';
   }
   row.innerHTML = html;
@@ -647,20 +653,29 @@ function recalcTotal() {
   EVENTS.forEach((ev, idx) => {
     const container = document.getElementById("members_" + idx);
     if (!container) return;
-    const count = container.children.length;
-    total += count * (ev.fee || 0);
-  });
-  // その他種目 (自由記入) の合計
-  const cust = document.getElementById("customEvents");
-  if (cust) {
-    Array.from(cust.children).forEach((row) => {
-      const feeInp = row.querySelector('input[name="cust_fee"]');
-      const fee = parseInt((feeInp && feeInp.value) || "0", 10) || 0;
-      total += fee;
+    // ★ 空入力行はカウントしない (氏名 or チーム名が1文字以上ある行のみ)
+    let filled = 0;
+    Array.from(container.children).forEach((row) => {
+      let hasContent = false;
+      if (ev.type === "team") {
+        const tn = row.querySelector('input[name*="_team"][name$="_name"]');
+        const members = row.querySelectorAll('input[name*="_m"]');
+        if (tn && tn.value.trim()) hasContent = true;
+        Array.from(members).forEach(m => { if (m.value.trim()) hasContent = true; });
+      } else if (ev.type === "doubles") {
+        const n1 = row.querySelector('input[name*="_n1"]');
+        const n2 = row.querySelector('input[name*="_n2"]');
+        if ((n1 && n1.value.trim()) || (n2 && n2.value.trim())) hasContent = true;
+      } else {
+        const n = row.querySelector('input[name*="_name"]');
+        if (n && n.value.trim()) hasContent = true;
+      }
+      if (hasContent) filled++;
     });
-  }
+    total += filled * (ev.fee || 0);
+  });
   document.getElementById("totalAmount").textContent = total.toLocaleString("ja-JP");
-  // ★ 種目ごとのカウント表示も更新
+  // ★ 種目ごとのカウント表示も更新 (記入済みのみ)
   updateCounts();
 }
 
@@ -743,26 +758,6 @@ function gatherFormData() {
       data.total_amount += obj.fee;
     });
   });
-
-  // その他種目 (自由記入)
-  const cust = document.getElementById("customEvents");
-  if (cust) {
-    Array.from(cust.children).forEach((row) => {
-      const name = (row.querySelector('input[name="cust_name"]') || {}).value || "";
-      const fee = parseInt((row.querySelector('input[name="cust_fee"]') || {}).value || "0", 10) || 0;
-      const players = (row.querySelector('input[name="cust_players"]') || {}).value || "";
-      const team = (row.querySelector('input[name="cust_team"]') || {}).value || "";
-      if (!name.trim() && !players.trim()) return;
-      data.entries.push({
-        event: name.trim() || "(自由記入)",
-        type: "custom",
-        fee: fee,
-        name: players.trim(),
-        team: team.trim(),
-      });
-      data.total_amount += fee;
-    });
-  }
 
   return data;
 }

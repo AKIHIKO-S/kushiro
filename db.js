@@ -190,6 +190,7 @@ try {
   addTCol("entry_deadline", "TEXT DEFAULT ''");
   addTCol("entry_events", "TEXT DEFAULT ''"); // JSON配列: ["男子シングルス","女子シングルス",...]
   addTCol("event_config", "TEXT DEFAULT ''"); // JSON配列: 詳細 [{name, fee, type, per_team, note}]
+  addTCol("entry_gas_url", "TEXT DEFAULT ''"); // GAS Web App URL (申込先 スプレッドシート)
   addTCol("category", "TEXT DEFAULT 'general'"); // 公式戦/オープン/練習試合 等
   addTCol("organizer", "TEXT DEFAULT ''");
 
@@ -3327,6 +3328,7 @@ function updateEntrySettings(tournamentId, settings) {
       event_config = ?,
       category = ?,
       organizer = ?,
+      entry_gas_url = ?,
       updated_at = datetime('now','localtime')
     WHERE id = ?
   `).run(
@@ -3336,6 +3338,7 @@ function updateEntrySettings(tournamentId, settings) {
     typeof evCfg === "string" ? evCfg : JSON.stringify(evCfg || []),
     settings.category || t.category || "general",
     settings.organizer || t.organizer || "",
+    settings.entry_gas_url !== undefined ? settings.entry_gas_url : (t.entry_gas_url || ""),
     tournamentId
   );
   return stmts.getTournament.get(tournamentId);
