@@ -1387,8 +1387,32 @@ function validateEntrants(tournamentId, event) {
     }
   });
 
-  // ブロック未割当の警告は廃止 (ブロック指定は任意のため)
-  // 旧 no_block 警告で大量に出ていたが、運用上は不要
+  // 所属相違の検出 (進学/転職などでマスタDBと所属(team)が違う可能性) #192
+  // シングルス本人のみ対象 (ダブルスはペア構造が複雑なため除外)。
+  const masters = stmts.getPlayers.all();
+  const normN = (s) => String(s || "").replace(/\s+/g, "");
+  all.forEach(e => {
+    if (!e.name || e.is_doubles) return;
+    const et = (e.team || "").trim();
+    if (!et) return; // 今回の所属が未入力ならスキップ
+    const en = normN(e.name);
+    const sameName = masters.filter(p => normN(p.name) === en);
+    if (!sameName.length) return;
+    // 所属一致のマスタが居れば相違なし
+    if (sameName.some(p => (p.team || "").trim() === et)) return;
+    // 同名で所属が異なるマスタが存在 → 所属相違の可能性
+    const diff = sameName.find(p => (p.team || "").trim() && (p.team || "").trim() !== et);
+    if (diff) {
+      warnings.push({
+        type: "branch_mismatch",
+        message: `所属相違の可能性: ${e.name} は今回「${et}」、選手DBでは「${diff.team}」（進学/転職などで所属が変わった可能性）`,
+        entrant_ids: [e.id],
+        player_id: diff.id,
+        old_team: diff.team || "",
+        new_team: et,
+      });
+    }
+  });
 
   return {
     total: all.length,
@@ -1397,6 +1421,18 @@ function validateEntrants(tournamentId, event) {
     error_count: errors.length,
     warning_count: warnings.length,
   };
+}
+
+// 所属相違の解決: 同一人物としてマスタDBの所属を更新 (+entrant をその選手にリンク)
+function resolveBranchChange(entrantId, playerId, newTeam) {
+  const e = entrantStmts.get.get(entrantId);
+  const p = stmts.getPlayer.get(playerId);
+  if (!e || !p) return { error: "対象が見つかりません" };
+  // マスタの所属を新所属へ更新
+  updatePlayer(playerId, { team: (newTeam != null ? newTeam : e.team) || "" });
+  // entrant をこの選手にリンク
+  entrantStmts.setPlayerLink.run(playerId, entrantId);
+  return { ok: true, player_id: playerId, team: (newTeam != null ? newTeam : e.team) || "" };
 }
 
 // イベント内 entrant 統計 (admin UI 用)
@@ -2629,11 +2665,9 @@ function callMatch(matchId, tableNo, refereeId, opts) {
     }
   }
 
-  opStmts.setTable.run(tableNo, matchId);
-
-  // 団体戦の追加台 (extra_tables)
+  // 団体戦の追加台 — 状態変更の「前」に競合チェック (#198: ロールバック不要に・原子性確保)
+  let extrasStr = "";
   if (opts.extra_tables && Array.isArray(opts.extra_tables) && opts.extra_tables.length) {
-    // 同じ台に別試合がいないかチェック
     for (const et of opts.extra_tables) {
       const etNo = parseInt(et);
       if (!etNo || etNo === tableNo) continue;
@@ -2642,38 +2676,26 @@ function callMatch(matchId, tableNo, refereeId, opts) {
           (table_no=? OR ','||extra_tables||',' LIKE '%,'||?||',%')
          AND id != ?`
       ).get(m.tournament_id, etNo, String(etNo), matchId);
-      if (conflict) {
-        // ロールバック (簡易): table_no をクリア
-        opStmts.clearTable.run(matchId);
-        return { error: `追加台${etNo}は既に使用中です` };
-      }
+      if (conflict) return { error: `追加台${etNo}は既に使用中です` }; // まだ何も変更していない
     }
-    const extras = opts.extra_tables
-      .map(n => parseInt(n)).filter(n => n > 0 && n !== tableNo)
-      .join(",");
-    sqlite.prepare(`UPDATE matches SET extra_tables = ? WHERE id = ?`).run(extras, matchId);
+    extrasStr = opts.extra_tables
+      .map(n => parseInt(n)).filter(n => n > 0 && n !== tableNo).join(",");
   }
 
-  // 審判アサイン
+  // 審判を決定 (状態変更の前に算出し、書き込みはトランザクション内で実施)
+  let refAssign = null; // { id, name }
   if (refereeId) {
-    // DB 選手指定
     const ref = stmts.getPlayer.get(refereeId);
-    if (ref) {
-      opStmts.setReferee.run(refereeId, ref.name, matchId);
-    }
+    if (ref) refAssign = { id: refereeId, name: ref.name };
   } else if (opts.referee_name) {
-    // 手動入力の氏名 (DB 外でも OK)
-    opStmts.setReferee.run(null, String(opts.referee_name).trim(), matchId);
+    refAssign = { id: null, name: String(opts.referee_name).trim() };
   } else if (opts.auto_assign_referee !== false && tableNo > 0) {
-    // 自動: 同じ台で直前に試合終了した敗者を審判に
     const prev = sqlite.prepare(`
       SELECT loser_id, loser_name FROM matches
       WHERE tournament_id = ? AND table_no = ? AND status = 'completed'
         AND loser_name != '' AND loser_name != 'BYE'
       ORDER BY finished_at DESC LIMIT 1
     `).get(m.tournament_id, tableNo);
-    // ※ finish 時に table_no=0 にしているので、上のクエリは即座にはマッチしない。
-    //   代替: 「called_at が最も新しい completed」を referee_queue から取る
     if (!prev) {
       const recent = sqlite.prepare(`
         SELECT loser_id, loser_name FROM matches
@@ -2684,13 +2706,19 @@ function callMatch(matchId, tableNo, refereeId, opts) {
               AND m2.status IN ('pending','on_table'))
         ORDER BY finished_at DESC LIMIT 1
       `).get(m.tournament_id);
-      if (recent && recent.loser_name) {
-        opStmts.setReferee.run(recent.loser_id || null, recent.loser_name, matchId);
-      }
+      if (recent && recent.loser_name) refAssign = { id: recent.loser_id || null, name: recent.loser_name };
     } else {
-      opStmts.setReferee.run(prev.loser_id || null, prev.loser_name, matchId);
+      refAssign = { id: prev.loser_id || null, name: prev.loser_name };
     }
   }
+
+  // 検証はすべて通過。台割当・追加台・審判を原子的に適用。
+  const applyTx = sqlite.transaction(() => {
+    opStmts.setTable.run(tableNo, matchId);
+    if (extrasStr) sqlite.prepare(`UPDATE matches SET extra_tables = ? WHERE id = ?`).run(extrasStr, matchId);
+    if (refAssign) opStmts.setReferee.run(refAssign.id, refAssign.name, matchId);
+  });
+  applyTx();
 
   return stmts.getMatch.get(matchId);
 }
@@ -4435,7 +4463,7 @@ module.exports = {
   createEntrant, updateEntrant, deleteEntrant, getEntrant, getEntrants,
   setEntrantBracketNumber, autoAssignDrawNumbers, buildRosterData,
   linkEntrantToPlayer, suggestPlayerForEntrant, createPlayerFromEntrant,
-  validateEntrants, getEntrantStats,
+  validateEntrants, getEntrantStats, resolveBranchChange,
   // 名前ユーティリティ
   normalizeName, parsePersonName, joinPersonName, buildEntrantNames,
 };

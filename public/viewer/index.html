@@ -2077,7 +2077,7 @@ const MP = {
  if ("Notification" in window && Notification.permission === "granted") {
  try {
  const n = new Notification(title, {
- body, icon: "/favicon.ico", tag: "tt-call",
+ body, icon: "/shared/assets/icon-192.png", tag: "tt-call",
  requireInteraction: true,
  });
  n.onclick = () => { window.focus(); n.close(); };

@@ -1003,6 +1003,14 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
 app.get("/api/tournaments/:id/entrants/validate", (req, res) => {
   res.json(db.validateEntrants(req.params.id, req.query.event || ""));
 });
+// 所属相違の解決: 同一人物としてマスタDBの所属を更新 (#192)
+app.post("/api/entrants/:id/resolve-branch", requireAdmin, (req, res) => {
+  const { player_id, new_team } = req.body || {};
+  if (!player_id) return res.status(400).json({ error: "player_id が必要です" });
+  const r = db.resolveBranchChange(req.params.id, player_id, new_team);
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
 
 // ─── 集計表 Excel 出力 ───
 app.get("/api/tournaments/:id/aggregation.xlsx", (req, res) => {

@@ -7886,14 +7886,40 @@ const EnT = {
  style: { borderLeft: "3px solid var(--accent)", padding: "10px 14px" } });
  wrap.appendChild(h("div", { className: "font-bold mb-2" },
  `データチェック (${EnT.filterEvent || '全体'}): エラー ${v.error_count} 件, 警告 ${v.warning_count} 件`));
- [...v.errors, ...v.warnings].slice(0, 8).forEach(e => {
+
+ // 所属相違 (進学/転職) は確認カードで個別対応 (#192)
+ const branchIssues = (v.warnings || []).filter(w => w.type === "branch_mismatch");
+ const others = [...(v.errors || []), ...(v.warnings || []).filter(w => w.type !== "branch_mismatch")];
+
+ branchIssues.forEach(w => {
+   const card = h("div", { style: { background: "#fffbeb", border: "1px solid #fde68a",
+     borderRadius: "8px", padding: "10px 12px", margin: "6px 0" } },
+     h("div", { className: "text-sm", style: { fontWeight: 700, color: "#92400e", marginBottom: "6px" } },
+       "⚠ 所属が変わった可能性 (進学・転職など)"),
+     h("div", { className: "text-sm", style: { marginBottom: "8px" } }, w.message),
+     h("div", { className: "flex gap-2", style: { flexWrap: "wrap" } },
+       h("button", { className: "btn btn-sm btn-ok",
+         onClick: async () => {
+           const r = await api.post(`/api/entrants/${w.entrant_ids[0]}/resolve-branch`,
+             { player_id: w.player_id, new_team: w.new_team });
+           if (r && r.error) return toast(r.error, "err");
+           toast(`同一人物として所属を「${w.new_team}」に更新しました`, "ok");
+           EnT.reload();
+         } }, `同一人物 → 所属を「${w.new_team}」に更新`),
+       h("button", { className: "btn btn-sm btn-ghost",
+         title: "別人として扱う (このentrantは新規選手のまま)",
+         onClick: () => toast("別人として扱います (変更なし)", "ok") }, "別人として扱う")));
+   wrap.appendChild(card);
+ });
+
+ others.slice(0, 8).forEach(e => {
  wrap.appendChild(h("div", { className: "text-sm",
  style: { color: e.type === "duplicate" || e.type === "missing_name" ? "var(--accent)" : "var(--warn)" }
  }, `・${e.message}`));
  });
- if (v.error_count + v.warning_count > 8) {
+ if (others.length > 8) {
  wrap.appendChild(h("div", { className: "text-xs text-sub" },
- `他 ${v.error_count + v.warning_count - 8} 件...`));
+ `他 ${others.length - 8} 件...`));
  }
  return wrap;
  },
