@@ -242,7 +242,17 @@
   .lv-legend-swatch.extra   { background: var(--lv-purple); border-color: var(--lv-purple); }
 
   .lv-board-inner {
-    display: grid; gap: 8px;
+    display: grid; gap: 8px; margin: 0 auto;
+    grid-template-columns: repeat(var(--lv-cols, 4), 1fr);
+    max-width: var(--lv-maxw, none);
+  }
+  /* スマホで横スクロール案内 (overflow時のみ JS で表示) */
+  .lv-scroll-hint {
+    display: none; align-items: center; justify-content: center; gap: 6px;
+    font-size: 11px; font-weight: 700; color: var(--lv-accent);
+    background: var(--lv-surface-2); border: 1px dashed var(--lv-accent);
+    border-radius: 20px; padding: 4px 12px;
+    margin: 0 auto 8px; width: max-content;
   }
 
   /* ─── 台 (コート) - 上部にヘッダーストリップ / 下部に審判 ─── */
@@ -864,8 +874,10 @@
     .lv-stat { padding: 7px 8px; }
     .lv-stat-num { font-size: 15px; }
     .lv-stat-label { font-size: 8px; letter-spacing: 0.08em; }
-    .lv-board { padding: 12px 10px; }
-    .lv-court { min-height: 64px; padding: 6px 3px; }
+    .lv-board { padding: 12px 10px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    /* 1fr で潰れて縦長になるのを防ぎ、固定幅+横スクロールに */
+    .lv-board-inner { grid-template-columns: repeat(var(--lv-cols, 4), 92px); max-width: none; width: max-content; }
+    .lv-court { min-height: 64px; padding: 16px 3px 14px; }
     .lv-court-p { font-size: 10px; }
     .lv-court-team { font-size: 8px; }
     .lv-court-vs { font-size: 7px; margin: 1px 0; }
@@ -1126,10 +1138,13 @@ const LV = {
         h("span", {}, "団体追加台 (" + extraCount + "台)")) : null,
     ));
 
+    // 横スクロール案内 (スマホでオーバーフロー時のみ JS で表示)
+    const scrollHint = h("div", { className: "lv-scroll-hint" }, "← 横にスワイプで全ての台を表示 →");
+    wrap.appendChild(scrollHint);
+
     const grid = h("div", { className: "lv-board-inner" });
-    grid.style.gridTemplateColumns = `repeat(${court_cols}, 1fr)`;
-    grid.style.maxWidth = `${court_cols * 130}px`;
-    grid.style.margin = "0 auto";
+    grid.style.setProperty("--lv-cols", String(court_cols));
+    grid.style.setProperty("--lv-maxw", `${court_cols * 130}px`);
 
     s.tables.forEach(t => {
       const cell = h("div", {
@@ -1182,6 +1197,10 @@ const LV = {
         style: { maxWidth: `${court_cols * 130}px`, margin: "14px auto 0" } },
         "本部"));
     }
+    // 描画後にオーバーフロー判定して案内を表示 (スマホで台が画面に収まらない時)
+    requestAnimationFrame(() => {
+      if (wrap.scrollWidth > wrap.clientWidth + 4) scrollHint.style.display = "flex";
+    });
     return wrap;
   },
 

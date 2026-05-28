@@ -283,17 +283,28 @@
  background: #f1f5f9; border: 2px solid var(--border-strong);
  border-radius: var(--radius); padding: 16px;
  margin-bottom: 14px; overflow-x: auto;
+ -webkit-overflow-scrolling: touch;
+ }
+ /* 横スクロール案内 (台が画面幅に収まらない時のみ表示) */
+ .live-court-hint {
+ display: none; align-items: center; justify-content: center; gap: 6px;
+ font-size: 11px; font-weight: 700; color: var(--accent);
+ background: #fff5f5; border: 1px dashed var(--accent);
+ border-radius: 20px; padding: 4px 12px;
+ margin: 0 auto 10px; width: max-content;
  }
  .live-court-grid {
- display: grid; gap: 6px;
+ display: grid; gap: 8px;
  margin: 0 auto;
+ width: max-content;
  }
  .live-court-cell {
  background: #fff; border: 2px solid var(--border-strong);
- border-radius: 6px; padding: 6px 4px;
- min-height: 64px; min-width: 70px;
+ border-radius: 8px; padding: 18px 6px 6px;
+ min-height: 72px; width: 96px;
  display: flex; flex-direction: column; align-items: center; justify-content: center;
- font-size: 10px; position: relative;
+ font-size: 11px; position: relative;
+ box-sizing: border-box;
  }
  .live-court-cell.empty { background: #f8fafc; color: var(--sub-l); }
  .live-court-cell.active {
@@ -306,12 +317,16 @@
  50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
  }
  .live-court-no {
- position: absolute; top: 2px; left: 4px;
- font-size: 9px; color: var(--sub); font-weight: 700;
+ position: absolute; top: 3px; left: 0; right: 0;
+ font-size: 10px; color: #fff; background: var(--sub);
+ font-weight: 700; text-align: center;
+ padding: 1px 0; border-radius: 6px 6px 0 0;
  }
+ .live-court-cell.active .live-court-no { background: var(--accent); }
  .live-court-match {
- text-align: center; font-weight: 700; font-size: 10px;
- color: var(--accent); line-height: 1.2; margin-top: 8px;
+ text-align: center; font-weight: 700; font-size: 11px;
+ color: var(--accent); line-height: 1.25; margin-top: 2px;
+ width: 100%; word-break: break-word;
  }
  .live-court-hq {
  margin-top: 10px; padding: 10px; background: var(--pri); color: #fff;
@@ -1740,10 +1755,14 @@ const L = {
 
  renderCourtGrid(s) {
  const { court_rows, court_cols, hq_position } = s.tournament;
+ const CELL_W = 96, GAP = 8;
+ const gridW = court_cols * CELL_W + (court_cols - 1) * GAP;
  const wrap = h("div", { className: "live-court-wrap" });
+ // 横スクロール案内 (オーバーフロー時のみ JS で表示)
+ const hint = h("div", { className: "live-court-hint" }, "← 横にスワイプで全ての台を表示 →");
+ wrap.appendChild(hint);
  const grid = h("div", { className: "live-court-grid" });
- grid.style.gridTemplateColumns = `repeat(${court_cols}, 1fr)`;
- grid.style.maxWidth = `${court_cols * 80}px`;
+ grid.style.gridTemplateColumns = `repeat(${court_cols}, ${CELL_W}px)`;
 
  s.tables.forEach(t => {
  const cell = h("div", { className: "live-court-cell " + (t.match ? "active" : "empty"),
@@ -1766,9 +1785,13 @@ const L = {
  wrap.appendChild(grid);
  if (hq_position === "bottom") {
  wrap.appendChild(h("div", { className: "live-court-hq",
- style: { maxWidth: `${court_cols * 80}px`, marginLeft: "auto", marginRight: "auto" } },
- "本部"));
+ style: { width: `${gridW}px`, marginLeft: "auto", marginRight: "auto" } },
+ h("span", { style: { position: "sticky", left: "12px", display: "inline-block" } }, "本部")));
  }
+ // 描画後にオーバーフロー判定して案内を表示
+ requestAnimationFrame(() => {
+ if (wrap.scrollWidth > wrap.clientWidth + 4) hint.style.display = "flex";
+ });
  return wrap;
  },
 
