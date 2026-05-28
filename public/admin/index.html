@@ -1093,19 +1093,49 @@ const A = {
  t.addEventListener("click", () => A.showTab(t.dataset.tab));
  });
 
+ // ハッシュ履歴ルーティング (戻るで直前のページへ)
+ window.addEventListener("hashchange", () => A.handleHash());
+
  await A.reload();
+ // 初期表示: ハッシュがあれば復元
+ A.handleHash();
  },
 
- showTab(name) {
+ // URLハッシュから画面を復元 (ブラウザ戻る/進む対応)
+ handleHash() {
+ const hash = location.hash.slice(1);
+ if (!hash) { A.showTab("tournaments", true); return; }
+ const [type, id] = hash.split("/");
+ if (type === "t" && id) {
+   // 大会詳細 (存在すれば)
+   if (A.state.tournaments && A.state.tournaments.find(x => x.id === id)) {
+     A.openTournament(id, true);
+   } else {
+     A.showTab("tournaments", true);
+   }
+ } else {
+   A.showTab(["tournaments","players","operations","entrants"].includes(type) ? type : "tournaments", true);
+ }
+ },
+
+ showTab(name, skipHash) {
  A.activeTab = name;
  document.querySelectorAll(".tab").forEach(t =>
  t.classList.toggle("active", t.dataset.tab === name));
  document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
  document.getElementById("tab-" + name)?.classList.remove("hidden");
+ // タブ切替もブラウザ履歴に積む
+ if (!skipHash && location.hash.slice(1) !== name) location.hash = name;
  if (name === "tournaments") A.renderTournaments();
  else if (name === "players") A.renderPlayers();
  else if (name === "operations") O.init();
  else if (name === "entrants") EnT.init();
+ },
+
+ // 直前のページに戻る (履歴がなければ大会一覧へ)
+ goBack() {
+ if (history.length > 1) history.back();
+ else A.showTab("tournaments");
  },
 
  async reload() {
@@ -1675,7 +1705,7 @@ const A = {
  },
 
  // ─── 大会詳細（試合入力画面） ───────────────────
- async openTournament(id) {
+ async openTournament(id, skipHash) {
  const t = await api.get("/api/tournaments/" + id);
  if (t.error) return toast(t.error, "err");
  A.state.currentTournament = t;
@@ -1684,16 +1714,18 @@ const A = {
  document.getElementById("tab-tournament-detail").classList.remove("hidden");
  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
  document.querySelector('.tab[data-tab="tournaments"]')?.classList.add("active");
+ // ブラウザ履歴に積む (戻るで一覧へ)
+ if (!skipHash && location.hash.slice(1) !== ("t/" + id)) location.hash = "t/" + id;
  },
 
  renderTournamentDetail(t) {
  const panel = document.getElementById("tab-tournament-detail");
  clear(panel);
 
- // 戻るリンク
+ // 戻るリンク (直前のページへ)
  panel.appendChild(h("div", { className: "breadcrumb", style: { padding: "10px 0" } },
- h("a", { href: "#", onClick: (e) => { e.preventDefault(); A.showTab("tournaments"); } },
- "← 大会一覧に戻る"),
+ h("a", { href: "#", onClick: (e) => { e.preventDefault(); A.goBack(); } },
+ "← 戻る"),
  ));
 
  // ─── 大会情報カード ───

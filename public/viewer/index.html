@@ -491,7 +491,7 @@
  <!-- 大会詳細 (トーナメント表) -->
  <div class="tab-panel hidden" id="tab-detail">
  <div class="breadcrumb">
- <a href="#" onclick="V.showTab('tournaments');return false">大会一覧に戻る</a>
+ <a href="#" onclick="V.goBack();return false">← 戻る</a>
  </div>
  <div id="tournamentDetail"></div>
  </div>
@@ -499,7 +499,7 @@
  <!-- 選手プロフィール -->
  <div class="tab-panel hidden" id="tab-player">
  <div class="breadcrumb">
- <a href="#" onclick="history.back();return false">戻る</a>
+ <a href="#" onclick="V.goBack();return false">← 戻る</a>
  </div>
  <div id="playerDetail"></div>
  </div>
@@ -549,14 +549,15 @@ const V = {
 
  handleHash() {
  const h = location.hash.slice(1);
- if (!h) return V.showTab("tournaments");
+ if (!h) return V.showTab("tournaments", true);
  const [type, id] = h.split("/");
- if (type === "tournament" && id) V.openTournament(id);
- else if (type === "player" && id) V.openPlayer(id);
- else V.showTab(type || "live");
+ if (type === "tournament" && id) V.openTournament(id, false);
+ else if (type === "player" && id) V.openPlayer(id, false);
+ else V.showTab(type || "live", true);
  },
 
- showTab(name) {
+ // skipHash=true: ハッシュを更新しない (hashchange からの呼び出し時)
+ showTab(name, skipHash) {
  V.activeTab = name;
  document.querySelectorAll(".tab").forEach(t =>
  t.classList.toggle("active", t.dataset.tab === name)
@@ -565,10 +566,20 @@ const V = {
  const panel = document.getElementById("tab-" + name);
  if (panel) panel.classList.remove("hidden");
  document.getElementById("searchBar").classList.toggle("hidden", name !== "search");
+ // タブ切替もブラウザ履歴に積む (戻るで直前のタブ/ページへ)
+ if (!skipHash && location.hash.slice(1) !== name) {
+   location.hash = name;
+ }
  if (name === "tournaments") V.renderTournaments();
  else if (name === "search") V.doSearch();
  else if (name === "live") L.init();
  else if (name === "myportal") MP.init();
+ },
+
+ // 直前のページに戻る (履歴がなければ大会一覧へ)
+ goBack() {
+ if (history.length > 1) history.back();
+ else V.showTab("tournaments");
  },
 
  async reload() {
