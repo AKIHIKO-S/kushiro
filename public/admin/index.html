@@ -962,9 +962,10 @@
  <option value="female">女子</option>
  </select>
  <select class="input" id="pView" style="width:160px" onchange="A.renderPlayers()">
- <option value="accordion">あ行ごとに表示</option>
- <option value="flat">フラット一覧</option>
+ <option value="accordion">ふりがな順</option>
  <option value="team">所属チーム別</option>
+ <option value="category">カテゴリ別</option>
+ <option value="flat">フラット一覧</option>
  </select>
  </div>
  <div id="playerList"></div>
@@ -5103,14 +5104,17 @@ const A = {
  return;
  }
 
- // 件数サマリー
- el.appendChild(h("div", {
- style: { padding: "10px 14px", background: "#fafafa",
-   borderRadius: "6px", marginBottom: "12px",
-   fontSize: "13px", color: "var(--ink-700)" } },
- h("strong", { style: { color: "var(--ink-900)" } }, `${list.length}名`),
- " (絞込み後)　·　男子 ", String(list.filter(p => p.gender !== "female").length),
- "名 / 女子 ", String(list.filter(p => p.gender === "female").length), "名"));
+ // ヒーロー件数バナー (閲覧ビューと統一)
+ const males = list.filter(p => p.gender !== "female").length;
+ const heroNum = h("span", { className: "pdb-total-num" }, "0");
+ el.appendChild(h("div", { className: "pdb-total pdb-hero" },
+   h("div", { className: "pdb-total-main" }, heroNum, h("span", { className: "pdb-total-unit" }, "名")),
+   h("div", { className: "pdb-total-side" },
+     h("div", { className: "pdb-total-lbl" }, (q || g !== "all") ? "絞込み結果" : "登録選手数"),
+     h("div", { className: "pdb-total-sub" }, `男子 ${males} ・ 女子 ${list.length - males}`))));
+ (function(){ const dur=600,t0=performance.now(),tgt=list.length;
+   const step=(n)=>{const k=Math.min(1,(n-t0)/dur);heroNum.textContent=String(Math.round(tgt*(1-Math.pow(1-k,3))));if(k<1)requestAnimationFrame(step);};
+   requestAnimationFrame(step); })();
 
  const renderPlayerCard = (p) => {
  const gClass = p.gender === "female" ? "female" : "male";
@@ -5140,6 +5144,7 @@ const A = {
  h("div", { className: "pdb-name" }, p.name || "(無名)"),
  p.furigana ? h("div", { className: "pdb-furi" }, p.furigana) : null,
  h("div", { className: "pdb-meta" },
+ h("span", { className: "pdb-cat" }, TT.catLabel(p.category)),
  p.branch ? (function(){ const _bc = TT.branchColor(p.branch);
    return h("span", { className: "pdb-branch", style: { background: _bc.bg, color: _bc.fg } }, TT.normalizeBranch(p.branch)); })() : null,
  p.team || "—",
@@ -5174,9 +5179,12 @@ const A = {
      const t = p.team || "(無所属)";
      (byTeam[t] = byTeam[t] || []).push(p);
    });
-   const tKeys = Object.keys(byTeam).sort((a, b) => a.localeCompare(b, "ja"));
+   const tKeys = Object.keys(byTeam).sort((a, b) =>
+     a === "(無所属)" ? 1 : b === "(無所属)" ? -1 : a.localeCompare(b, "ja"));
    tKeys.forEach((tn, idx) => {
-     const players = byTeam[tn];
+     // チーム内は出場回数の多い選手を上に (#194)
+     const players = byTeam[tn].sort((a, b) => (b.appearances || 0) - (a.appearances || 0)
+       || (a.furigana || "").localeCompare(b.furigana || "", "ja"));
      const acc = h("div", { className: "pdb-acc" + (idx === 0 ? " open" : "") });
      const head = h("div", { className: "pdb-acc-head",
        onClick: () => acc.classList.toggle("open") },
@@ -5189,6 +5197,30 @@ const A = {
      acc.appendChild(head);
      acc.appendChild(body);
      el.appendChild(acc);
+   });
+   return;
+ }
+
+ if (view === "category") {
+   // カテゴリ別 (小学生/中学生/.../個人) — 各カテゴリ内は出場回数の多い順
+   const order = (CATS || []).map(x => x.v).concat(["senior", "general"]);
+   const byCat = {};
+   list.forEach(p => { const k = p.category || "general"; (byCat[k] = byCat[k] || []).push(p); });
+   const cKeys = Object.keys(byCat).sort((a, b) => {
+     const ia = order.indexOf(a), ib = order.indexOf(b);
+     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+   });
+   cKeys.forEach((ck, idx) => {
+     const players = byCat[ck].sort((a, b) => (b.appearances || 0) - (a.appearances || 0)
+       || (a.furigana || "").localeCompare(b.furigana || "", "ja"));
+     const acc = h("div", { className: "pdb-acc" + (idx === 0 ? " open" : "") });
+     const head = h("div", { className: "pdb-acc-head", onClick: () => acc.classList.toggle("open") },
+       h("div", { className: "pdb-row-num", style: { fontSize: "14px" } }, "◆"),
+       h("div", { className: "pdb-row-label" }, TT.catLabel(ck)),
+       h("div", { className: "pdb-row-count" }, players.length + "名"));
+     const body = h("div", { className: "pdb-acc-body" });
+     players.forEach(p => body.appendChild(renderPlayerCard(p)));
+     acc.appendChild(head); acc.appendChild(body); el.appendChild(acc);
    });
    return;
  }
@@ -5720,6 +5752,17 @@ const O = {
  O.poller = setInterval(() => O.reload(true), 4000);
  },
 
+ // #opMain のスクロール親 (オーバーレイの win or window) を返す
+ _opScrollEl() {
+   let el = document.getElementById("opMain");
+   while (el && el !== document.body) {
+     const oy = getComputedStyle(el).overflowY;
+     if (oy === "auto" || oy === "scroll") return el;
+     el = el.parentElement;
+   }
+   return window;
+ },
+
  async reload(silent) {
  if (!O.tournamentId) return;
  const main = document.getElementById("opMain");
@@ -5736,7 +5779,13 @@ const O = {
  }
  O.state = state;
  try {
+   // 再描画でスクロール位置が先頭に戻らないよう保持 (4秒ポーリング/対戦操作後も維持)
+   const sc = O._opScrollEl();
+   const sy = sc ? (sc === window ? window.scrollY : sc.scrollTop) : 0;
    O.render();
+   if (sc && sy) requestAnimationFrame(() => {
+     try { if (sc === window) window.scrollTo(0, sy); else sc.scrollTop = sy; } catch (e) {}
+   });
  } catch (renderErr) {
    console.error("[Operations render error]", renderErr);
    if (main) {
@@ -5866,6 +5915,10 @@ const O = {
  // ── コート配置図 (運用の中心) ──
  main.appendChild(O.renderCourtGrid());
 
+ // ── トーナメント表 (常時表示・対戦の追加/削除) #194: 下部→上部(コート直下)へ ──
+ try { main.appendChild(O._getOpBracketPanel()); }
+ catch (e) { console.warn("[opBracket]", e); }
+
  // ── 呼べる対戦 (次に呼ぶ — 最頻アクションを上に) ──
  const prioDot = (c, label) => h("span", { style: { display: "inline-flex", alignItems: "center",
    gap: "3px", fontSize: "10px", color: "var(--ink-600)" } },
@@ -5975,10 +6028,6 @@ const O = {
  });
  main.appendChild(recentCard);
  }
-
- // ── トーナメント表 (常時表示・対戦の追加/削除) #180 ──
- try { main.appendChild(O._getOpBracketPanel()); }
- catch (e) { console.warn("[opBracket]", e); }
  },
 
  // 埋め込みトーナメント表パネルを取得 (4秒ポーリングでのちらつき防止のためキャッシュ)
@@ -7067,7 +7116,7 @@ const O = {
  };
 
  const bracketArea = h("div", { id: "vbArea",
-   style: { overflow: "auto", maxHeight: "70vh", padding: "8px",
+   style: { overflow: "auto", maxHeight: "84vh", padding: "8px",
      background: "#f9fafb", borderRadius: "6px" } });
 
  const reload = async () => {
@@ -7148,8 +7197,11 @@ const O = {
  fsWrap.appendChild(bracketArea);
  const body = h("div", {}, fsWrap);
  const foot = h("button", { className: "btn btn-ghost",
-   onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる");
- openModal("トーナメント表 (ビジュアル)", body, foot);
+   onClick: () => modalBg.remove() }, "閉じる");
+ const modalBg = openModal("トーナメント表 (ビジュアル)", body, foot);
+ // モーダルをほぼ全画面に拡大 (#194: 小さすぎる問題を解消)
+ const box = modalBg.querySelector(".modal-box");
+ if (box) { box.style.width = "97vw"; box.style.maxWidth = "1600px"; box.style.height = "94vh"; }
  reload();
  },
 
@@ -7196,8 +7248,8 @@ const O = {
    const card = h("div", { className: "vb-match" + (callable ? " vb-callable" : ""),
      style: {
        border: "2px solid " + stateBorder(m), background: stateBg(m),
-       borderRadius: "6px", padding: "5px 8px", margin: "3px 0",
-       fontSize: "11px", position: "relative",
+       borderRadius: "6px", padding: "6px 9px", margin: "3px 0",
+       fontSize: "13px", position: "relative",
        textAlign: side === "right" ? "right" : "left",
      } });
    const lbl = m.match_no ? (m.bracket_round + "-" + m.match_no)
