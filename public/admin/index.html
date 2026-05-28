@@ -6297,7 +6297,15 @@ const O = {
                  : "クリックで結果入力" + (cc >= 2 ? " (呼出" + cc + "回・未着の可能性)" : ""))
    : "クリックで呼べる対戦を表示",
  });
- cell.appendChild(h("div", { className: "court-cell-no" }, t.table_no + "番台"));
+ // 進行中の台は種目ごとに色分け (#182)。warn(呼出2回+)は赤のまま注意喚起。
+ if (m && cls === "active") {
+   const ec = TT.eventColor(m.event);
+   cell.style.borderColor = ec.border;
+   cell.style.background = ec.soft;
+ }
+ cell.appendChild(h("div", { className: "court-cell-no",
+   style: (m && cls === "active") ? { background: TT.eventColor(m.event).bg, color: TT.eventColor(m.event).fg } : {} },
+   t.table_no + "番台"));
  if (m) {
  // 姓だけ + ふりがな (呼出重視)
  const shortName = (full) => (full || "").split(/[\s　]/)[0] || full || "";

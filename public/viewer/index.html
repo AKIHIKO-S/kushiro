@@ -300,9 +300,9 @@
  }
  .live-court-cell {
  background: #fff; border: 2px solid var(--border-strong);
- border-radius: 8px; padding: 18px 6px 6px;
+ border-radius: 8px; padding: 20px 6px 6px;
  min-height: 72px; width: 96px;
- display: flex; flex-direction: column; align-items: center; justify-content: center;
+ display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
  font-size: 11px; position: relative;
  box-sizing: border-box;
  }
@@ -1016,9 +1016,20 @@ const V = {
  // アコーディオン表示のためコンテナをブロックに
  list.style.display = "block";
  const q = (document.getElementById("searchInput").value || "").trim();
+ const g = (document.getElementById("searchGender") || {}).value;
+ const c = (document.getElementById("searchCat") || {}).value;
+ const filtered = !!q || (g && g !== "all") || (c && c !== "all");
  const males = V.state.players.filter(p => p.gender !== "female").length;
  const females = V.state.players.length - males;
- status.textContent = `${V.state.players.length}名 · 男子${males} / 女子${females}`;
+ status.textContent = "";
+ // 登録人数を大きく分かりやすく表示 (#183)
+ list.appendChild(h("div", { className: "pdb-total" },
+   h("div", { className: "pdb-total-main" },
+     h("span", { className: "pdb-total-num" }, String(V.state.players.length)),
+     h("span", { className: "pdb-total-unit" }, "名")),
+   h("div", { className: "pdb-total-side" },
+     h("div", { className: "pdb-total-lbl" }, filtered ? "検索結果" : "登録選手"),
+     h("div", { className: "pdb-total-sub" }, `男子 ${males} ・ 女子 ${females}`))));
 
  const renderCard = (p) => {
  const gClass = p.gender === "female" ? "female" : "male";
@@ -1798,7 +1809,7 @@ const L = {
  num ? h("span", { className: "un-num" }, "#" + num) : null,
  h("span", {}, name || "?"),
  team ? h("span", { className: "un-team" }, "(" + team + ")") : null);
- s.callable.slice(0, 8).forEach((m, i) => {
+ s.callable.slice(0, 5).forEach((m, i) => {
  const blocked = !!m.is_blocked;
  const isFirst = i === 0 && !blocked;
  const reason = (blocked && m.blocks && m.blocks[0]) ? m.blocks[0].label : "";
@@ -1847,9 +1858,18 @@ const L = {
    style: t.match ? { cursor: "pointer" } : {},
    title: t.match ? "タップで試合詳細" : "",
    onClick: () => { if (t.match) L.showCourtDetail(t); } });
- cell.appendChild(h("div", { className: "live-court-no" }, "台" + t.table_no));
+ // 進行中の台は種目ごとに色分け (#182)
+ let ec = null;
  if (t.match) {
- cell.appendChild(h("div", { className: "live-court-match" },
+   ec = TT.eventColor(t.match.event);
+   cell.style.borderColor = ec.border;
+   cell.style.background = ec.soft;
+ }
+ cell.appendChild(h("div", { className: "live-court-no",
+   style: t.match ? { background: ec.bg, color: ec.fg } : {} }, "台" + t.table_no));
+ if (t.match) {
+ cell.appendChild(h("div", { className: "live-court-match",
+   style: { color: ec.border } },
  h("div", {}, t.match.player1_name),
  h("div", { style: { fontSize: "9px", color: "var(--sub)" } }, "vs"),
  h("div", {}, t.match.player2_name),

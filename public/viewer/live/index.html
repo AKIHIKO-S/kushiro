@@ -348,10 +348,17 @@
     color: #fff;
   }
 
+  /* 種目色で塗られるため box-shadow は色中立に (脈動のみ) */
   @keyframes lvCourtPulse {
-    0%, 100% { box-shadow: 0 2px 8px rgba(220,38,38,.3), 0 0 0 0 rgba(220,38,38,.5); }
-    50%      { box-shadow: 0 2px 8px rgba(220,38,38,.3), 0 0 0 6px rgba(220,38,38,0); }
+    0%, 100% { box-shadow: 0 2px 8px rgba(0,0,0,.20), 0 0 0 0 rgba(0,0,0,.16); }
+    50%      { box-shadow: 0 2px 8px rgba(0,0,0,.20), 0 0 0 6px rgba(0,0,0,0); }
   }
+  /* 種目色の凡例 */
+  .lv-ev-legend { display:flex; flex-wrap:wrap; gap:6px 12px; margin:6px 0 2px;
+    font-size:11px; color:var(--lv-sub); align-items:center; }
+  .lv-ev-legend .lv-ev-item { display:inline-flex; align-items:center; gap:5px; }
+  .lv-ev-legend .lv-ev-swatch { width:13px; height:13px; border-radius:4px;
+    border:1px solid rgba(0,0,0,.15); flex:0 0 auto; }
 
   /* 旧 lv-court-no / lv-court-round は廃止 (lv-court-header に統合) */
 
@@ -442,10 +449,11 @@
     border: 2px solid var(--lv-accent);
     border-radius: 6px;
     padding: 8px 12px;
-    margin-bottom: 6px;
+    margin: 0 auto 6px;
+    max-width: 680px;           /* 視線移動を抑えるため横幅を制限 (#186) */
     display: grid;
-    grid-template-columns: 58px 1fr auto;
-    gap: 12px;
+    grid-template-columns: 54px minmax(0,1fr) auto;
+    gap: 10px;
     align-items: center;
     cursor: pointer;
     transition: all .12s;
@@ -468,13 +476,14 @@
     box-shadow: 0 2px 4px rgba(220,38,38,.3);
   }
   .lv-match-players {
-    display: flex; align-items: center; gap: 12px;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
     overflow: hidden;
   }
+  /* 両選手を VS の近くにまとめて視線移動を最小化 (#186) */
   .lv-match-side {
-    flex: 1; min-width: 0;
+    flex: 0 1 auto; min-width: 0; max-width: 44%; text-align: right;
   }
-  .lv-match-side.right { text-align: right; }
+  .lv-match-side.right { text-align: left; }
   .lv-match-name {
     font-size: 14px; font-weight: 700;
     overflow: hidden; text-overflow: ellipsis;
@@ -507,9 +516,10 @@
     border: 2px solid var(--lv-line);
     border-radius: 6px;
     padding: 8px 14px;
-    margin-bottom: 6px;
+    margin: 0 auto 6px;
+    max-width: 620px;           /* 視線移動を抑える (#186) */
     display: grid;
-    grid-template-columns: 1fr 100px 1fr;
+    grid-template-columns: minmax(0,1fr) 96px minmax(0,1fr);
     gap: 10px;
     align-items: center;
   }
@@ -735,6 +745,19 @@
   body.lv-big .lv-court-team { font-size: 12px; }
   body.lv-big .lv-stat-num { font-size: 32px; }
   body.lv-big .lv-match-name { font-size: 17px; }
+  /* 全画面/大画面 終了ボタン (#185) — 大画面 or 全画面時のみ表示 */
+  .lv-exit-big { display: none; }
+  body.lv-big .lv-exit-big,
+  body.lv-fs .lv-exit-big {
+    display: inline-flex; align-items: center; gap: 6px;
+    position: fixed; top: 12px; right: 12px; z-index: 99999;
+    padding: 11px 18px; border-radius: 26px;
+    background: rgba(15,23,42,.88); color: #fff;
+    border: 1px solid rgba(255,255,255,.28);
+    font-size: 14px; font-weight: 800; cursor: pointer;
+    box-shadow: 0 4px 18px rgba(0,0,0,.45);
+  }
+  .lv-exit-big:hover { background: #dc2626; border-color: #dc2626; }
 
   /* ─── モーダル (台クリック詳細) ─── */
   .lv-overlay {
@@ -939,6 +962,10 @@
 
 </div>
 
+<!-- 全画面/大画面モードの終了ボタン (#185) -->
+<button class="lv-exit-big" id="lvExitBig" onclick="LV.exitBigscreen()"
+  title="大画面/全画面を終了">✕ 表示を戻す</button>
+
 <!-- 動的オーバーレイ (台詳細・QR) -->
 <div id="lvOverlay"></div>
 
@@ -972,6 +999,11 @@ const LV = {
       document.body.classList.add("lv-big");
       document.getElementById("bsBtn").classList.add("active");
     }
+
+    // 全画面状態を body.lv-fs に反映 (#185 終了ボタンの表示制御)
+    document.addEventListener("fullscreenchange", () => {
+      document.body.classList.toggle("lv-fs", !!document.fullscreenElement);
+    });
   },
 
   async loadTournaments() {
@@ -1148,6 +1180,20 @@ const LV = {
         h("span", {}, "団体追加台 (" + extraCount + "台)")) : null,
     ));
 
+    // 種目ごとの色 凡例 (進行中の台に出ている種目のみ) #182
+    const activeEvents = [...new Set(s.tables.filter(t => t.match && t.match.event)
+      .map(t => t.match.event))];
+    if (activeEvents.length) {
+      const legend2 = h("div", { className: "lv-ev-legend" });
+      activeEvents.forEach(ev => {
+        const ec = TT.eventColor(ev);
+        legend2.appendChild(h("div", { className: "lv-ev-item" },
+          h("span", { className: "lv-ev-swatch", style: { background: ec.bg } }),
+          h("span", {}, ev)));
+      });
+      wrap.appendChild(legend2);
+    }
+
     // 横スクロール案内 (スマホでオーバーフロー時のみ JS で表示)
     const scrollHint = h("div", { className: "lv-scroll-hint" }, "← 横にスワイプで全ての台を表示 →");
     wrap.appendChild(scrollHint);
@@ -1163,6 +1209,13 @@ const LV = {
         onClick: () => t.match && LV.showCourtDetail(t),
         title: t.match ? "クリックで詳細" : "空き台",
       });
+      // 進行中の台は種目ごとに色分け (#182)
+      if (t.match) {
+        const ec = TT.eventColor(t.match.event);
+        cell.style.background = ec.bg;
+        cell.style.borderColor = ec.border;
+        cell.style.color = ec.fg;
+      }
       // 上部ストリップ: 台番号 + 種目 (重なり解消)
       const eventLabel = t.match
         ? ((t.match.event || "") + (t.match.round ? " " + t.match.round : ""))
@@ -1518,6 +1571,15 @@ const LV = {
     } else {
       document.exitFullscreen?.();
     }
+  },
+
+  // 大画面/全画面を終了して通常表示に戻す (#185)
+  exitBigscreen() {
+    document.body.classList.remove("lv-big");
+    const bs = document.getElementById("bsBtn");
+    if (bs) bs.classList.remove("active");
+    localStorage.setItem("ktta_lv_big", "0");
+    if (document.fullscreenElement) document.exitFullscreen?.();
   },
 
   showShareDialog() {

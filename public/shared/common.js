@@ -344,6 +344,47 @@
       style: Object.assign({ background: c.bg, color: c.fg }, extraStyle || {}) }, label);
   }
 
+  // 種目 → 色。性別×形式のキーワードで直感的な基本色を割り当て、
+  // 同カテゴリ内の細分(年齢別など)は名前ハッシュで少しずらして識別性を確保。
+  // 例: 男子S=青 / 女子S=赤 / 男子D=緑 / 女子D=黄 / 混合=紫 / 団体=ティール。
+  // 返り値: { hue, bg(濃・白文字想定), fg, border, soft(淡背景) }
+  function eventColor(event) {
+    const e = String(event == null ? "" : event);
+    const hasW = /女|レディース|ガール/.test(e);
+    const hasM = /男|メンズ|ボーイ/.test(e);
+    const isMix = /混合|ミックス|MIX/i.test(e);
+    const isTeam = /団体|チーム/.test(e);
+    const isDbl = /ダブルス|複|ペア/.test(e);
+    let hue;
+    if (isMix) hue = 288;            // 紫
+    else if (isTeam) hue = 172;      // ティール
+    else if (hasW && isDbl) hue = 46;  // 女子D 黄
+    else if (hasW) hue = 352;        // 女子S 赤
+    else if (hasM && isDbl) hue = 142; // 男子D 緑
+    else if (hasM) hue = 214;        // 男子S 青
+    else hue = null;
+    // 名前ハッシュ
+    let hsh = 0; for (let i = 0; i < e.length; i++) hsh = (hsh * 131 + e.charCodeAt(i)) >>> 0;
+    if (hue == null) hue = hsh % 360;            // キーワード無し → 完全ハッシュ
+    else hue = (hue + (hsh % 18) - 9 + 360) % 360; // ±9°のゆらぎで同系統を区別
+    const yellowish = hue >= 40 && hue <= 80;     // 黄〜黄緑は白文字だと見えにくい
+    return {
+      hue,
+      bg: `hsl(${hue}, 70%, ${yellowish ? 50 : 46}%)`,
+      fg: yellowish ? "#1c1917" : "#ffffff",
+      border: `hsl(${hue}, 66%, 38%)`,
+      soft: `hsl(${hue}, 72%, 94%)`,
+    };
+  }
+  // 種目バッジ要素 (h が必要)
+  function eventBadge(event, extraStyle) {
+    const label = String(event == null ? "" : event).trim();
+    if (!label) return null;
+    const c = eventColor(label);
+    return h("span", { className: "event-tag",
+      style: Object.assign({ background: c.bg, color: c.fg }, extraStyle || {}) }, label);
+  }
+
   // Export
   global.TT = {
     GENDERS, CATS, EV_TYPES, ROUNDS, PLACES,
@@ -354,5 +395,6 @@
     createPoller, downloadCSV, downloadJSON, openModal,
     logoHTML, statusBadge,
     HOKKAIDO_BRANCHES, normalizeBranch, branchColor, branchColorMap, branchBadge,
+    eventColor, eventBadge,
   };
 })(window);

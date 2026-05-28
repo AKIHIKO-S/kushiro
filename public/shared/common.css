@@ -819,6 +819,24 @@ input:focus, select:focus, textarea:focus {
 .tcard .tcard-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .tcard .tcard-arrow { display: flex; align-items: center; padding: 0 16px; font-size: 22px; color: var(--ink-300); }
 
+/* 登録人数を大きく表示 (viewer 選手DB) */
+.pdb-total {
+  display: flex; align-items: center; gap: 16px;
+  background: linear-gradient(135deg, var(--pri-bg, #eef2ff) 0%, #fff 70%);
+  border: 1px solid var(--border); border-left: 5px solid var(--pri, #4f46e5);
+  border-radius: 12px; padding: 14px 20px; margin-bottom: 12px;
+}
+.pdb-total .pdb-total-main { display: flex; align-items: baseline; gap: 4px; }
+.pdb-total .pdb-total-num {
+  font-size: 44px; font-weight: 800; line-height: 1;
+  font-family: var(--font-display, inherit); color: var(--pri, #4f46e5);
+  letter-spacing: -0.02em;
+}
+.pdb-total .pdb-total-unit { font-size: 18px; font-weight: 700; color: var(--ink-700); }
+.pdb-total .pdb-total-side { display: flex; flex-direction: column; gap: 3px; }
+.pdb-total .pdb-total-lbl { font-size: 13px; font-weight: 700; color: var(--ink-800); }
+.pdb-total .pdb-total-sub { font-size: 12px; color: var(--sub); }
+
 /* ─── 選手DB アコーディオン+カード (admin/viewer 共通) ─── */
 .pdb-acc {
   background: #fff;
