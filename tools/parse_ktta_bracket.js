@@ -557,43 +557,16 @@ function parseWorkbook(filePath, opts) {
     };
   }
 
-  // ブロックが付いている event を 1 つの種目に統合
-  //   例: "男子シングルス Ａブロック"+"Bブロック"+… → "男子シングルス" (各ブロック=1セクション)
-  //   各選手に block を付与し、配置側(generateBracket)でブロック毎=クォーターに二分配置する
-  const baseNameOf = (ev) => String(ev || '').replace(BLOCK_RE, '').trim();
-  const groups = {};
-  allBrackets.forEach(b => {
-    const base = baseNameOf(b.event) || b.event;
-    (groups[base] = groups[base] || []).push(b);
-  });
-  const mergedBrackets = [];
-  Object.keys(groups).forEach(base => {
-    const grp = groups[base];
-    const withBlock = grp.filter(b => b.block);
-    if (withBlock.length >= 2) {
-      // 複数ブロック → 統合 (block タグ付きの players を結合)
-      grp.sort((a, b) => String(a.block || '').localeCompare(String(b.block || '')));
-      const players = [];
-      grp.forEach(b => (b.players || []).forEach(p => { p.block = b.block || ''; players.push(p); }));
-      mergedBrackets.push({
-        format: 'tabletennis-seed-list-v1',
-        event: base,
-        type: grp[0].type,
-        placement: 'as_drawn',
-        blocks: grp.map(b => b.block).filter(Boolean),
-        players,
-      });
-    } else {
-      // 単一 → そのまま (ブロック名は base に正規化)
-      grp.forEach(b => { b.event = base; mergedBrackets.push(b); });
-    }
-  });
+  // ブロックは「別々のトーナメント表」として保持する。
+  //   例: "男子シングルス Ａブロック" / "Bブロック" … をそれぞれ独立した event として取込み、
+  //   運営ビューでタブ切替する。各ブロックは側(L/R)+最小番号正規化で正しく両側配置される。
+  //   (※以前は1つの512に統合していたが、実際の組合せ表とのズレが出るため統合を解除)
 
-  if (mergedBrackets.length === 1) return mergedBrackets[0];
+  if (allBrackets.length === 1) return allBrackets[0];
   return {
     format: 'tabletennis-tournament-v1',
     tournament: { name: path.parse(filePath).name },
-    brackets: mergedBrackets,
+    brackets: allBrackets,
   };
 }
 
