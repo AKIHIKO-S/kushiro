@@ -2957,7 +2957,21 @@ function getOperationState(tournamentId) {
     ORDER BY m.bracket_round ASC, m.bracket_pos ASC, m.match_no ASC
   `).all(tournamentId).map(m => ({ ...m, sets: JSON.parse(m.sets_json || "[]") }));
 
-  const onTable = allMatches.filter(m => m.status === "on_table");
+  // localtime 文字列 ("YYYY-MM-DD HH:MM:SS") を分差に (サーバー時計基準で一貫)
+  const _minsSince = (s) => {
+    if (!s) return null;
+    const t = Date.parse(String(s).replace(" ", "T"));
+    return isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t) / 60000));
+  };
+  const _durMin = (a, b) => {
+    if (!a || !b) return null;
+    const ta = Date.parse(String(a).replace(" ", "T")), tb = Date.parse(String(b).replace(" ", "T"));
+    if (isNaN(ta) || isNaN(tb)) return null;
+    const d = (tb - ta) / 60000;
+    return d > 0 ? d : null;
+  };
+  const onTable = allMatches.filter(m => m.status === "on_table")
+    .map(m => ({ ...m, elapsed_min: _minsSince(m.started_at) }));
   const callableRaw = allMatches.filter(m => m.status === "pending");
   const waiting = allMatches.filter(m => m.status === "waiting");
   const finished = allMatches.filter(m => m.status === "completed");
@@ -3095,6 +3109,23 @@ function getOperationState(tournamentId) {
     referee_queue: getRefereeQueue(tournamentId),
     event_stats: eventStats,
     total_matches: allMatches.length,
+    progress: (() => {
+      // 平均試合時間と推定終了時刻 (目安)。不戦勝/BYE は除外。
+      const durs = finished
+        .filter(m => m.winner_name !== "BYE" && m.loser_name !== "BYE" && !m.is_walkover)
+        .map(m => _durMin(m.started_at, m.finished_at))
+        .filter(d => d != null && d < 240);
+      const avg = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length) : 0;
+      const remaining = callableRaw.length + waiting.length + onTable.length;
+      const lanes = Math.max(1, onTable.length);
+      let etaText = "";
+      if (avg && remaining) {
+        const minsLeft = Math.ceil(remaining / lanes) * avg;
+        etaText = new Date(Date.now() + minsLeft * 60000)
+          .toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+      }
+      return { avg_match_min: avg, remaining, eta_text: etaText };
+    })(),
   };
 }
 
@@ -4556,6 +4587,41 @@ function undoLastOp(tournamentId) {
   try { matchIds = JSON.parse(row.match_ids || "[]"); } catch (e) {}
   return { ok: true, summary: row.summary, action: row.action, match_ids: matchIds };
 }
+
+// ─── 順位判定 (表彰状/入賞者一覧用) ───────────────────────────
+// 決勝の勝者=優勝, 敗者=準優勝, 準決勝の敗者=第3位(ベスト4の2名)。
+function getEventPlacements(tournamentId, event) {
+  const ms = sqlite.prepare(
+    `SELECT * FROM matches WHERE tournament_id=? AND event=? ORDER BY bracket_round DESC, bracket_pos ASC`
+  ).all(tournamentId, event);
+  if (!ms.length) return null;
+  const maxRound = Math.max(0, ...ms.map(m => m.bracket_round || 0));
+  const clean = (n) => (n && n !== "BYE") ? n : "";
+  if (maxRound < 1) return { event, complete: false, first: "", second: "", thirds: [] };
+  const finalM = ms.find(m => (m.bracket_round || 0) === maxRound && m.status === "completed"
+                   && m.winner_name && m.winner_name !== "BYE")
+    || ms.find(m => (m.bracket_round || 0) === maxRound);
+  const complete = !!(finalM && finalM.status === "completed" && clean(finalM.winner_name));
+  const thirds = [];
+  if (maxRound >= 2) {
+    ms.filter(m => (m.bracket_round || 0) === maxRound - 1 && m.status === "completed")
+      .forEach(m => { const l = clean(m.loser_name); if (l) thirds.push(l); });
+  }
+  return {
+    event, complete,
+    first: complete ? clean(finalM.winner_name) : "",
+    second: complete ? clean(finalM.loser_name) : "",
+    first_team: complete ? clean(finalM.winner_team) : "",
+    second_team: complete ? clean(finalM.loser_team) : "",
+    thirds,
+  };
+}
+function getAllPlacements(tournamentId) {
+  const events = sqlite.prepare(
+    `SELECT DISTINCT event FROM matches WHERE tournament_id=? AND event<>'' ORDER BY event`
+  ).all(tournamentId).map(r => r.event);
+  return events.map(ev => getEventPlacements(tournamentId, ev)).filter(Boolean);
+}
 // スナップショットから復元 (破壊的)。現状の安全網スナップを取ってから DB を差し替える。
 // 差し替え後は sqlite ハンドルを閉じるため、呼び出し側はプロセスを再起動すること。
 function restoreSnapshot(name) {
@@ -4613,6 +4679,8 @@ module.exports = {
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, hasOngoingTournament,
   // 操作ログ + Undo
   snapshotMatchRows, recordOp, getOpLog, undoLastOp,
+  // 順位判定 (表彰状/入賞者)
+  getEventPlacements, getAllPlacements,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,

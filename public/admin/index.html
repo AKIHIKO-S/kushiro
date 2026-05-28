@@ -658,6 +658,15 @@
  .oplog-sum { flex: 1; min-width: 0; color: var(--ink-900); }
  .oplog-undone { font-size: 10px; font-weight: 700; color: var(--accent); white-space: nowrap; }
 
+ /* 経過時間バッジ + 推定終了 #204 */
+ .elapsed-badge { font-size: 11px; font-weight: 800; padding: 1px 8px; border-radius: 9px;
+   white-space: nowrap; font-family: var(--font-mono); }
+ .elapsed-ok { background: #f1f5f9; color: #475569; }
+ .elapsed-amber { background: #fef3c7; color: #92400e; }
+ .elapsed-red { background: #fee2e2; color: #b91c1c; animation: callPulse 1.6s infinite; }
+ .op-eta { margin-top: 6px; font-size: 12px; font-weight: 700; color: #0f766e;
+   background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 8px; padding: 5px 10px; display: inline-block; }
+
  /* ─── 再コール バッジ ─── */
  .call-badge {
    display: inline-flex; align-items: center; gap: 3px;
@@ -2043,6 +2052,8 @@ const A = {
    onClick: () => A.openWidgetEmbed(t) }, "サイト埋込ウィジェット"),
  h("button", { className: "btn btn-sm btn-ghost",
    onClick: () => A.downloadMatchCards(t) }, "対戦票 (審判用)"),
+ h("button", { className: "btn btn-sm btn-ghost",
+   onClick: () => window.open(`/api/tournaments/${t.id}/awards.html`, "_blank") }, "表彰状 / 入賞者"),
  ),
  ),
  h("div", { className: "text-sm text-sub" },
@@ -6190,6 +6201,11 @@ const O = {
        h("strong", {}, totalCompleted + " / " + totalM), " 試合　",
        h("strong", { style: { color: pct >= 100 ? "#15803d" : "#b45309", fontSize: "18px" } }, pct + "%")),
    ),
+   (O.state.progress && O.state.progress.eta_text)
+     ? h("div", { className: "op-eta", title: "終了済み試合の平均時間からの推定 (目安)" },
+         "⏱ 推定終了 " + O.state.progress.eta_text + " ごろ（目安・平均 "
+         + O.state.progress.avg_match_min + "分/試合・残り " + O.state.progress.remaining + "試合）")
+     : null,
    h("div", { className: "op-progress-bar" },
      h("div", { className: "op-progress-fill" + (pct >= 100 ? " done" : ""),
        style: { width: pct + "%" } },
@@ -6782,6 +6798,14 @@ const O = {
  return wrap;
  },
 
+ // 経過時間バッジ (長時間の台を色で警告) #204
+ _elapsedBadge(m) {
+ const e = m.elapsed_min;
+ if (e == null) return null;
+ const cls = e >= 45 ? "elapsed-red" : (e >= 30 ? "elapsed-amber" : "elapsed-ok");
+ return h("span", { className: "elapsed-badge " + cls, title: "開始からの経過時間" }, "⏱ " + e + "分");
+ },
+
  // ── 進行中の試合行 ──
  renderOnTableRow(m) {
  const cc1 = parseInt(m.call_count_p1) || 0;
@@ -6803,6 +6827,7 @@ const O = {
  h("div", {},
  h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
  h("span", { className: "round-badge" }, `${m.event} ${m.round}`),
+ O._elapsedBadge(m),
  // 選手1 pill (badge付き)
  h("span", { className: "player-pill" },
    num1 ? h("span", { className: "pnum" }, "#" + num1) : null,
