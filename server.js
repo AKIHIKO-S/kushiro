@@ -1378,16 +1378,42 @@ app.delete("/api/tournaments/:id/bracket", requireAdmin, (req, res) => {
   res.json(db.deleteEventMatches(req.params.id, event));
 });
 
+// ── 進行状態(getOperationState)のフィンガープリント・キャッシュ ──
+// 多数の観戦者が同時にポーリングしても、進行に変化が無ければ1回の計算結果を共有。
+// キーは軽量フィンガープリント(呼出/結果/再コールで変化)なので、
+// 変化が無い間は重い計算を一切行わず、変化直後は1回だけ再計算して全員で共有する。
+// (TTLではなくフィンガープリント方式なので、運営の操作結果は即時反映され古い表示が出ない)
+const _liveCache = new Map(); // tid -> { key, state }
+function getCachedOperationState(tid) {
+  const fp = db.getOpsFingerprint(tid);
+  if (!fp || fp.error) return db.getOperationState(tid); // 大会なし等は通常処理(404)
+  const key = fp.v + "|" + (fp.status || "");
+  const c = _liveCache.get(tid);
+  if (c && c.key === key) return c.state;
+  const state = db.getOperationState(tid);
+  _liveCache.set(tid, { key, state });
+  if (_liveCache.size > 300) { // 古いエントリを軽く掃除
+    const it = _liveCache.keys();
+    while (_liveCache.size > 200) { const k = it.next().value; if (k === undefined) break; _liveCache.delete(k); }
+  }
+  return state;
+}
+
 app.get("/api/tournaments/:id/operations", (req, res) => {
-  const state = db.getOperationState(req.params.id);
+  const state = getCachedOperationState(req.params.id);
   if (!state) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(state);
 });
 
 app.get("/api/public/tournaments/:id/live", (req, res) => {
-  const state = db.getOperationState(req.params.id);
+  const state = getCachedOperationState(req.params.id);
   if (!state) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(state);
+});
+
+// 進行の変化検知用 軽量エンドポイント (クライアントは変化時のみ重い /live を取得)
+app.get("/api/public/tournaments/:id/ops-version", (req, res) => {
+  res.json(db.getOpsFingerprint(req.params.id));
 });
 
 // 選手個人の試合状況 (マイ番号ポータル用)

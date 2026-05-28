@@ -1019,6 +1019,7 @@ const LV = {
 
   selectTournament(id) {
     LV.tournamentId = id;
+    LV._ver = null;
     document.getElementById("tournSel").value = id || "";
     if (LV.poller) clearInterval(LV.poller);
     if (!id) {
@@ -1028,7 +1029,16 @@ const LV = {
     }
     history.replaceState({}, "", location.pathname + "?t=" + encodeURIComponent(id));
     LV.fetch();
-    LV.poller = setInterval(() => LV.fetch(), 4000);
+    // 変化検知: 軽量 ops-version を見て、変化時だけ重い /live を取得
+    LV.poller = setInterval(() => LV.tick(), 4000);
+  },
+
+  async tick() {
+    if (!LV.tournamentId) return;
+    try {
+      const r = await api.get("/api/public/tournaments/" + LV.tournamentId + "/ops-version");
+      if (r && r.v !== undefined && r.v !== LV._ver) { LV._ver = r.v; LV.fetch(); }
+    } catch (e) {}
   },
 
   async fetch() {

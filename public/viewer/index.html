@@ -1712,10 +1712,20 @@ const L = {
 
  select(id) {
  L.tournamentId = id;
+ L._ver = null;
  if (L.poller) clearInterval(L.poller);
  if (!id) { document.getElementById("liveMain").innerHTML = ""; return; }
  L.fetch();
- L.poller = setInterval(() => L.fetch(), 4000);
+ // 変化検知: 軽量 ops-version を見て、変化時だけ重い /live を取得 (サーバ負荷を最小化)
+ L.poller = setInterval(() => L.tick(), 4000);
+ },
+
+ async tick() {
+ if (!L.tournamentId) return;
+ try {
+ const r = await api.get("/api/public/tournaments/" + L.tournamentId + "/ops-version");
+ if (r && r.v !== undefined && r.v !== L._ver) { L._ver = r.v; L.fetch(); }
+ } catch (e) {}
  },
 
  async fetch() {

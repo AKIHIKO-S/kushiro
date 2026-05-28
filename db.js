@@ -1101,6 +1101,23 @@ function getLastUpdated() {
   return [p, t, m].filter(Boolean).sort().reverse()[0] || new Date().toISOString();
 }
 
+// 進行(matches)の軽量フィンガープリント。呼出/結果/再コールで変化する。
+// クライアントの変化検知用 (重い getOperationState を変化時のみ取得させる)。
+function getOpsFingerprint(tournamentId) {
+  const t = stmts.getTournament.get(tournamentId);
+  if (!t) return { v: "0", status: null, error: true };
+  const r = sqlite.prepare(
+    `SELECT COUNT(*) AS c,
+            COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) AS done,
+            COALESCE(SUM(CASE WHEN status='on_table' THEN 1 ELSE 0 END),0) AS live,
+            COALESCE(SUM(table_no),0) AS tsum,
+            COALESCE(SUM(call_count_p1 + call_count_p2),0) AS calls,
+            COALESCE(MAX(finished_at),'') AS f
+       FROM matches WHERE tournament_id = ?`
+  ).get(tournamentId);
+  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.f}`, status: t.status };
+}
+
 // ═══════════════════════════════════════════════════════
 // Entrants (大会参加選手 - マスタDBと完全分離)
 // ═══════════════════════════════════════════════════════
@@ -4196,7 +4213,7 @@ module.exports = {
   createMatch, updateMatch, deleteMatch, getMatch, getMatchesByTournament,
   bulkImportMatches,
   addTournamentPlayer, removeTournamentPlayer, getTournamentPlayers,
-  exportAllData, importPlayers, getStats, getLastUpdated,
+  exportAllData, importPlayers, getStats, getLastUpdated, getOpsFingerprint,
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
   generateBracket, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
