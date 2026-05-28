@@ -636,6 +636,15 @@
  .subtools-body { margin-top: 8px; }
  .subtools-note { font-size: 11px; color: var(--sub); line-height: 1.6; margin-bottom: 8px; }
 
+ /* データ保護: バックアップ一覧 #201 */
+ .bk-row { display: flex; align-items: center; gap: 10px; padding: 8px 11px;
+   border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; background: #fff; }
+ .bk-name { font-size: 13px; font-weight: 700; color: var(--ink-900); }
+ .bk-kind { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 8px; margin-left: 8px; }
+ .bk-auto { background: #dbeafe; color: #1e40af; }
+ .bk-manual { background: #dcfce7; color: #15803d; }
+ .bk-prerestore { background: #fef3c7; color: #92400e; }
+
  /* ─── 再コール バッジ ─── */
  .call-badge {
    display: inline-flex; align-items: center; gap: 3px;
@@ -1425,6 +1434,10 @@ const A = {
  h("button", { className: "btn btn-sm",
  onClick: () => { document.querySelector(".modal-bg")?.remove();
    A.openDiagnostics(); } }, "本番診断パネルを開く"),
+ h("button", { className: "btn btn-sm",
+ style: { background: "#ecfdf5", color: "#065f46", borderColor: "#6ee7b7" },
+ onClick: () => { document.querySelector(".modal-bg")?.remove();
+   A.openBackups(); } }, "データ保護 (バックアップ/復元)"),
  h("a", { className: "btn btn-sm btn-ghost",
  href: "/OPERATIONS.md", target: "_blank" }, "運用マニュアル"),
  h("a", { className: "btn btn-sm btn-ghost",
@@ -1443,6 +1456,88 @@ const A = {
  onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"),
  );
  openModal("管理設定 / 本番運用チェック", body, foot);
+ },
+
+ // ── データ保護: DBスナップショット (バックアップ/復元) #201 ──
+ async openBackups() {
+ const fmtSize = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + " MB"
+   : Math.max(1, Math.round(n / 1024)) + " KB";
+ const fmtTime = (iso) => { try { return new Date(iso).toLocaleString("ja-JP"); } catch (e) { return iso; } };
+ const listWrap = h("div", {});
+
+ const downloadSnap = async (name) => {
+   if (!api.adminKey) return toast("管理キーが必要です（管理設定で入力してください）", "err");
+   try {
+     const res = await fetch("/api/admin/snapshots/download", {
+       method: "POST",
+       headers: { "Content-Type": "application/json", "X-Admin-Key": api.adminKey },
+       body: JSON.stringify({ name }),
+     });
+     if (!res.ok) return toast("ダウンロード失敗 (" + res.status + ")", "err");
+     const blob = await res.blob();
+     const url = URL.createObjectURL(blob);
+     const a = document.createElement("a");
+     a.href = url; a.download = name; document.body.appendChild(a); a.click();
+     a.remove(); URL.revokeObjectURL(url);
+     toast("ダウンロードしました", "ok");
+   } catch (e) { toast("通信エラー: " + e.message, "err"); }
+ };
+ const restoreSnap = async (name) => {
+   if (!api.adminKey) return toast("管理キーが必要です", "err");
+   if (!confirm("「" + name + "」で現在のデータを上書き復元します。\n直前の状態は自動で安全網バックアップに保存されます。\n復元後サーバーが再起動します。続行しますか？")) return;
+   const r = await api.post("/api/admin/snapshots/restore", { name });
+   if (r && r.ok) {
+     toast("復元しました。サーバー再起動を待っています…", "ok");
+     setTimeout(() => location.reload(), 4500);
+   } else { toast("復元失敗: " + ((r && r.error) || ""), "err"); }
+ };
+ const load = async () => {
+   clear(listWrap);
+   listWrap.appendChild(h("div", { className: "text-sm text-sub" }, "読み込み中…"));
+   const data = await api.get("/api/admin/snapshots");
+   clear(listWrap);
+   const snaps = (data && data.snapshots) || [];
+   listWrap.appendChild(h("div", { className: "text-xs", style: { marginBottom: "8px",
+     color: (data && data.ongoing) ? "#15803d" : "var(--sub)" } },
+     (data && data.ongoing) ? "● 進行中の大会あり — 自動バックアップ作動中（約7分ごと）"
+       : "○ 進行中の大会なし — 自動バックアップは待機中"));
+   if (!snaps.length) {
+     listWrap.appendChild(h("div", { className: "empty-state", style: { padding: "16px" } },
+       "まだバックアップがありません。「今すぐ保存」で作成できます。"));
+     return;
+   }
+   snaps.forEach(s => {
+     listWrap.appendChild(h("div", { className: "bk-row" },
+       h("div", { style: { flex: 1, minWidth: 0 } },
+         h("div", { className: "bk-name" }, fmtTime(s.created_at),
+           h("span", { className: "bk-kind bk-" + s.kind },
+             s.kind === "auto" ? "自動" : s.kind === "prerestore" ? "復元前" : "手動")),
+         h("div", { className: "text-xs text-sub" }, s.name + " ・ " + fmtSize(s.size))),
+       h("div", { className: "flex gap-1" },
+         h("button", { className: "btn btn-sm btn-ghost", onClick: () => downloadSnap(s.name) }, "ダウンロード"),
+         h("button", { className: "btn btn-sm", style: { background: "#fee2e2", color: "#7c2d12", borderColor: "#fca5a5" },
+           onClick: () => restoreSnap(s.name) }, "復元"))));
+   });
+ };
+ const saveBtn = h("button", { className: "btn btn-sm", onClick: async () => {
+   if (!api.adminKey) return toast("管理キーが必要です（管理設定で入力してください）", "err");
+   saveBtn.disabled = true; saveBtn.textContent = "保存中…";
+   const r = await api.post("/api/admin/snapshots", {});
+   saveBtn.disabled = false; saveBtn.textContent = "今すぐ保存";
+   if (r && r.ok) toast("保存しました", "ok"); else toast("保存失敗: " + ((r && r.error) || ""), "err");
+   load();
+ } }, "今すぐ保存");
+ const body = h("div", {},
+   h("div", { className: "text-sm text-sub", style: { lineHeight: "1.7", marginBottom: "12px" } },
+     "進行中の大会があると約7分ごとに自動でバックアップします。ここでは手動保存・PCへの保存・復元ができます。",
+     h("br"), h("strong", { style: { color: "#b45309" } }, "「復元」は現在のデータを上書きします"),
+     "（直前の状態は自動で安全網バックアップに残します）。"),
+   h("div", { className: "flex gap-2 flex-wrap", style: { marginBottom: "12px" } },
+     saveBtn,
+     h("button", { className: "btn btn-sm btn-ghost", onClick: () => load() }, "一覧を更新")),
+   listWrap);
+ openModal("データ保護 (バックアップ / 復元)", body, null);
+ load();
  },
 
  // ── 本番診断パネル (リアルタイムサーバー状態+エラーログ) ──

@@ -4450,6 +4450,78 @@ const kvStmts = {
 function kvGet(k) { const r = kvStmts.get.get(k); return r ? r.v : null; }
 function kvSet(k, v) { kvStmts.set.run(k, String(v == null ? "" : v)); }
 
+// ─── DB スナップショット (試合中の自動バックアップ + 手動保存/復元) ───────────
+const SNAP_DIR = process.env.SNAPSHOT_DIR || path.join(path.dirname(DB_PATH), "snapshots");
+const SNAP_KEEP = parseInt(process.env.SNAPSHOT_KEEP) || 40;
+
+function listSnapshots() {
+  if (!fs.existsSync(SNAP_DIR)) return [];
+  return fs.readdirSync(SNAP_DIR)
+    .filter(f => /\.db$/.test(f))
+    .map(f => { const st = fs.statSync(path.join(SNAP_DIR, f));
+      return { name: f, size: st.size, mtime: st.mtimeMs,
+        created_at: new Date(st.mtimeMs).toISOString(),
+        kind: f.startsWith("auto_") ? "auto" : f.startsWith("prerestore_") ? "prerestore" : "manual" }; })
+    .sort((a, b) => b.mtime - a.mtime);
+}
+function rotateSnapshots(keep) {
+  keep = keep || SNAP_KEEP;
+  // prerestore_* は安全網なので別枠で少数だけ残す
+  const auto = listSnapshots().filter(s => s.kind !== "prerestore");
+  auto.slice(keep).forEach(s => { try { fs.unlinkSync(path.join(SNAP_DIR, s.name)); } catch (e) {} });
+  const pre = listSnapshots().filter(s => s.kind === "prerestore");
+  pre.slice(5).forEach(s => { try { fs.unlinkSync(path.join(SNAP_DIR, s.name)); } catch (e) {} });
+}
+// オンラインバックアップ (WAL/同時書込み下でも安全)。Promise を返す。
+function createSnapshot(reason) {
+  fs.mkdirSync(SNAP_DIR, { recursive: true });
+  const kind = reason === "auto" ? "auto" : "manual";
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
+  const name = `${kind}_${ts}.db`;
+  const dest = path.join(SNAP_DIR, name);
+  return sqlite.backup(dest).then(() => {
+    rotateSnapshots();
+    let size = 0; try { size = fs.statSync(dest).size; } catch (e) {}
+    return { ok: true, name, size, created_at: new Date().toISOString(), reason: reason || "manual" };
+  });
+}
+// 名前を安全化してフルパスを返す (パストラバーサル防止)。存在しなければ null。
+function snapshotPath(name) {
+  if (!name || !/^[A-Za-z0-9_.\-]+\.db$/.test(name)) return null;
+  const p = path.join(SNAP_DIR, path.basename(name));
+  if (!p.startsWith(SNAP_DIR) || !fs.existsSync(p)) return null;
+  return p;
+}
+function hasOngoingTournament() {
+  return !!sqlite.prepare(`SELECT 1 FROM tournaments WHERE status='ongoing' LIMIT 1`).get();
+}
+// スナップショットから復元 (破壊的)。現状の安全網スナップを取ってから DB を差し替える。
+// 差し替え後は sqlite ハンドルを閉じるため、呼び出し側はプロセスを再起動すること。
+function restoreSnapshot(name) {
+  const src = snapshotPath(name);
+  if (!src) return { error: "スナップショットが見つかりません" };
+  // SQLite ファイルか検証
+  try {
+    const head = Buffer.alloc(16);
+    const fd = fs.openSync(src, "r"); fs.readSync(fd, head, 0, 16, 0); fs.closeSync(fd);
+    if (head.toString("latin1", 0, 15) !== "SQLite format 3") {
+      return { error: "正しいSQLiteファイルではありません" };
+    }
+  } catch (e) { return { error: "ファイル検証に失敗: " + e.message }; }
+  // 1) 現状の安全網スナップショット (復元自体を取り消せるように)
+  fs.mkdirSync(SNAP_DIR, { recursive: true });
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
+  const safety = path.join(SNAP_DIR, `prerestore_${ts}.db`);
+  try { sqlite.pragma("wal_checkpoint(TRUNCATE)"); } catch (e) {}
+  try { fs.copyFileSync(DB_PATH, safety); } catch (e) {}
+  // 2) ハンドルを閉じてファイルを差し替え (以後この forge では DB 操作不可)
+  try { sqlite.close(); } catch (e) {}
+  try { fs.rmSync(DB_PATH + "-wal", { force: true }); } catch (e) {}
+  try { fs.rmSync(DB_PATH + "-shm", { force: true }); } catch (e) {}
+  fs.copyFileSync(src, DB_PATH);
+  return { ok: true, restored: name, safety_snapshot: path.basename(safety), restart_required: true };
+}
+
 const pushStmts = {
   upsert: sqlite.prepare(`INSERT INTO push_subscriptions (endpoint, player_id, subscription_json)
     VALUES (@endpoint, @player_id, @subscription_json)
@@ -4476,6 +4548,8 @@ function deletePushSubscription(endpoint) { if (endpoint) pushStmts.delByEndpoin
 
 module.exports = {
   kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription,
+  // DB スナップショット (バックアップ/復元)
+  createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, hasOngoingTournament,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,

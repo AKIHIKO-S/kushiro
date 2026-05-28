@@ -1506,6 +1506,38 @@ app.get("/api/tournaments/:id/team-rosters", (req, res) => {
   res.json({ rosters: db.getTeamRosters(req.params.id) });
 });
 
+// ─── DB スナップショット (試合中の自動バックアップ + 手動保存/復元) ───────────
+// 一覧 (名前/サイズ/日時のみ・中身は返さない → GET 可)
+app.get("/api/admin/snapshots", (req, res) => {
+  res.json({ snapshots: db.listSnapshots(), auto_enabled: true,
+    ongoing: db.hasOngoingTournament() });
+});
+// 今すぐ保存 (管理者)
+app.post("/api/admin/snapshots", requireAdmin, async (req, res) => {
+  try { res.json(await db.createSnapshot("manual")); }
+  catch (e) { res.status(500).json({ error: "保存に失敗しました: " + e.message }); }
+});
+// ダウンロード (管理者・POST で X-Admin-Key を送らせる。ファイルをそのまま返す)
+app.post("/api/admin/snapshots/download", requireAdmin, (req, res) => {
+  const p = db.snapshotPath((req.body && req.body.name) || "");
+  if (!p) return res.status(404).json({ error: "スナップショットが見つかりません" });
+  res.download(p);
+});
+// 復元 (管理者・破壊的)。安全網スナップを取ってから差し替え、プロセス再起動。
+app.post("/api/admin/snapshots/restore", requireAdmin, (req, res) => {
+  const name = (req.body && req.body.name) || "";
+  let r;
+  try { r = db.restoreSnapshot(name); }
+  catch (e) { return res.status(500).json({ error: "復元に失敗しました: " + e.message }); }
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+  if (r.restart_required) {
+    console.log("[restore] スナップショット復元 → プロセスを再起動します:", name);
+    // 応答を送り切ってからプロセス終了 (systemd 等が再起動して復元後DBで再オープン)
+    setTimeout(() => process.exit(0), 400);
+  }
+});
+
 app.get("/api/public/tournaments/:id/live", (req, res) => {
   const state = getCachedOperationState(req.params.id);
   if (!state) return res.status(404).json({ error: "大会が見つかりません" });
@@ -1927,3 +1959,14 @@ app.listen(PORT, () => {
   if (ADMIN_KEY) console.log(`   ADMIN_KEY: 設定あり（管理API保護）`);
   console.log("");
 });
+
+// 試合中の自動スナップショット: 進行中の大会がある時だけ定期バックアップ (既定7分)。
+// データ消失リスクを「最大7分」に抑える。進行中でなければ何もしない (ノイズ防止)。
+const SNAPSHOT_INTERVAL_MS = parseInt(process.env.SNAPSHOT_INTERVAL_MS) || 7 * 60 * 1000;
+setInterval(() => {
+  try {
+    if (!db.hasOngoingTournament()) return;
+    db.createSnapshot("auto").catch((e) =>
+      console.error("[snapshot] 自動バックアップ失敗:", e.message));
+  } catch (e) { /* 進行中判定の失敗は無視 */ }
+}, SNAPSHOT_INTERVAL_MS).unref();
