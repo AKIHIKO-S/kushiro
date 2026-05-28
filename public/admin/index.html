@@ -2060,6 +2060,60 @@ const A = {
  };
 
  const body = h("div", {},
+ // ★ 受付ステータス + 締切日 (最重要設定を先頭に)
+ h("div", { style: { padding: "16px 18px", background: "#fefce8",
+   border: "2px solid #fbbf24", borderRadius: "8px", marginBottom: "16px" } },
+ h("div", { className: "font-bold mb-2",
+   style: { fontSize: "13px", color: "#78350f", letterSpacing: "1px" } },
+   "■ 申込受付の基本設定"),
+ h("div", { style: { display: "flex", gap: "20px", alignItems: "center",
+   flexWrap: "wrap" } },
+   // 受付 ON/OFF (大きめチェック)
+   h("label", { style: { display: "flex", alignItems: "center", gap: "8px",
+     cursor: "pointer", padding: "8px 14px",
+     background: t.entries_open ? "#dcfce7" : "#fef2f2",
+     border: "2px solid " + (t.entries_open ? "#15803d" : "#dc2626"),
+     borderRadius: "6px", fontWeight: "bold" } },
+     h("input", { type: "checkbox", id: "efgOpen",
+       checked: t.entries_open ? "" : null,
+       style: { width: "18px", height: "18px" },
+       onChange: (e) => {
+         const lbl = e.target.closest("label");
+         lbl.style.background = e.target.checked ? "#dcfce7" : "#fef2f2";
+         lbl.style.borderColor = e.target.checked ? "#15803d" : "#dc2626";
+         const statusEl = document.getElementById("efgStatusText");
+         if (statusEl) {
+           statusEl.textContent = e.target.checked ? "● 受付中" : "○ 停止中";
+           statusEl.style.color = e.target.checked ? "#15803d" : "#dc2626";
+         }
+       } }),
+     h("span", { id: "efgStatusText",
+       style: { color: t.entries_open ? "#15803d" : "#dc2626", fontSize: "14px" } },
+       t.entries_open ? "● 受付中" : "○ 停止中"),
+   ),
+   // 申込締切 (カレンダー型)
+   h("div", { style: { display: "flex", alignItems: "center", gap: "6px" } },
+     h("label", { style: { fontSize: "13px", color: "#78350f", fontWeight: "bold" } },
+       "申込締切:"),
+     h("input", { type: "date", className: "input", id: "efgDeadline",
+       value: t.entry_deadline || "",
+       style: { padding: "6px 10px", fontSize: "14px" } }),
+   ),
+   // 主催 (デフォルト 釧路卓球協会)
+   h("div", { style: { display: "flex", alignItems: "center", gap: "6px", flex: 1, minWidth: "200px" } },
+     h("label", { style: { fontSize: "13px", color: "#78350f", fontWeight: "bold" } },
+       "主催:"),
+     h("input", { className: "input", id: "efgOrganizer",
+       value: t.organizer || "釧路卓球協会",
+       placeholder: "釧路卓球協会",
+       style: { padding: "6px 10px", fontSize: "14px", flex: 1 } }),
+   ),
+ ),
+ h("div", { style: { fontSize: "11px", color: "#78350f", marginTop: "8px", lineHeight: "1.6" } },
+   "「受付中」になっていないと、公開URLにアクセスしても申込できません。",
+   "下の「保存して閉じる」で設定が反映されます。"),
+ ),
+
  h("div", { className: "text-sm mb-3",
  style: { padding: "10px 14px", background: "#f0fdf4",
  borderLeft: "3px solid #059669", borderRadius: "0 4px 4px 0" } },
@@ -2188,22 +2242,30 @@ const A = {
  h("button", { className: "btn btn-sm",
    style: { background: "#15803d", color: "#fff" },
  onClick: async () => {
-   // event_config をサーバーに保存 (URL に乗せず参照)
+   // event_config + 受付ON/OFF + 締切 をサーバーに保存
    try {
      const eventNames = events.map(e => e.name);
+     const openEl = document.getElementById("efgOpen");
+     const dlEl = document.getElementById("efgDeadline");
+     const orgEl = document.getElementById("efgOrganizer");
      const r = await api.put(`/api/tournaments/${t.id}/entry-settings`, {
-       entries_open: true,
-       entry_deadline: t.entry_deadline || "",
+       entries_open: openEl ? openEl.checked : !!t.entries_open,
+       entry_deadline: dlEl ? dlEl.value : (t.entry_deadline || ""),
        entry_events: eventNames,
        event_config: events,
-       organizer: t.organizer || "釧路卓球協会",
+       organizer: orgEl ? orgEl.value.trim() : (t.organizer || "釧路卓球協会"),
      });
      if (r.error) return toast("保存失敗: " + r.error, "err");
-     toast("種目をサーバーに保存しました (" + events.length + "件)", "ok");
+     const statusMsg = (openEl && openEl.checked) ? "受付中" : "停止中";
+     toast("保存しました (" + events.length + "種目, " + statusMsg + ")", "ok");
+     // 大会データを reload して画面更新
+     t.entries_open = openEl ? openEl.checked : t.entries_open;
+     t.entry_deadline = dlEl ? dlEl.value : t.entry_deadline;
+     t.organizer = orgEl ? orgEl.value.trim() : t.organizer;
    } catch (e) {
      toast("保存失敗: " + e.message, "err");
    }
- } }, "▼ 種目をサーバーに保存"),
+ } }, "▼ サーバーに保存 (受付ON/OFF + 締切 + 種目)"),
  h("button", { className: "btn btn-sm",
  onClick: () => {
  codeArea.select(); document.execCommand("copy");
