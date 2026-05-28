@@ -127,6 +127,57 @@
  display: flex; align-items: center; gap: 6px;
  }
 
+ /* ★ 選手視点の試合行 (初心者向け・○勝ち/×負け) */
+ .pm-row {
+   display: grid; grid-template-columns: 54px 1fr auto;
+   gap: 10px; align-items: center;
+   padding: 10px 12px; border-radius: 8px; margin-bottom: 6px;
+   border: 1px solid var(--border); background: #fff;
+ }
+ .pm-row.win  { border-left: 5px solid #16a34a; background: #f0fdf4; }
+ .pm-row.loss { border-left: 5px solid #dc2626; background: #fef2f2; }
+ .pm-result {
+   font-size: 13px; font-weight: 800; text-align: center;
+   border-radius: 8px; padding: 6px 0; line-height: 1.2;
+   white-space: pre-line;
+ }
+ .pm-row.win  .pm-result { background: #16a34a; color: #fff; }
+ .pm-row.loss .pm-result { background: #dc2626; color: #fff; }
+ .pm-opp { min-width: 0; }
+ .pm-opp-label { font-size: 10px; color: var(--sub); }
+ .pm-opp-name { font-size: 15px; font-weight: 700; color: var(--ink-900);
+   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+ .pm-opp-name a { color: var(--ink-900); text-decoration: none; }
+ .pm-opp-name a:hover { text-decoration: underline; }
+ .pm-opp-team { font-size: 11px; color: var(--sub); font-weight: 400; }
+ .pm-opp-ev { font-size: 10px; color: var(--sub); margin-top: 1px; }
+ .pm-score {
+   text-align: right; font-family: var(--font-mono);
+   font-size: 20px; font-weight: 800; white-space: nowrap;
+ }
+ .pm-row.win  .pm-score { color: #15803d; }
+ .pm-row.loss .pm-score { color: #b91c1c; }
+ .pm-score .pm-score-sets { font-size: 10px; color: var(--sub); font-weight: 400; display: block; }
+
+ /* H2H 平易版 */
+ .h2h-clean { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+ .h2h-c-row {
+   display: grid; grid-template-columns: 1fr auto;
+   gap: 10px; align-items: center; padding: 8px 12px;
+   border: 1px solid var(--border); border-radius: 8px; background: #fff; cursor: pointer;
+ }
+ .h2h-c-row:hover { border-color: var(--pri-l); }
+ .h2h-c-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+ .h2h-c-team { font-size: 11px; color: var(--sub); font-weight: 400; margin-left: 4px; }
+ .h2h-c-record { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+ .h2h-c-record .w { color: #15803d; font-weight: 800; font-size: 15px; }
+ .h2h-c-record .l { color: #b91c1c; font-weight: 800; font-size: 15px; }
+ .h2h-c-record .sep { color: var(--sub-l); }
+ .h2h-c-verdict { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+ .h2h-c-verdict.lead { background: #dcfce7; color: #15803d; }
+ .h2h-c-verdict.even { background: var(--ink-100); color: var(--ink-600); }
+ .h2h-c-verdict.behind { background: #fee2e2; color: #b91c1c; }
+
  /* イベントグループ */
  .event-group { margin-bottom: 16px; }
  .event-title {
@@ -703,6 +754,37 @@ const V = {
  }).join(" ");
  },
 
+ // 選手視点の試合行 (○勝ち / ×負け を色とラベルで明快に)
+ renderPlayerMatchRow(m, playerId) {
+ const won = m.winner_id === playerId;
+ const oppId = won ? m.loser_id : m.winner_id;
+ const oppName = won ? (m.loser_name || "?") : (m.winner_name || "?");
+ const oppTeam = won ? m.loser_team : m.winner_team;
+ const myScore = won ? (m.winner_sets || 0) : (m.loser_sets || 0);
+ const oppScore = won ? (m.loser_sets || 0) : (m.winner_sets || 0);
+ // 各セットの点数 (自分視点)
+ const setsStr = Array.isArray(m.sets) && m.sets.length
+   ? m.sets.map(s => Array.isArray(s) && s.length === 2
+       ? (won ? s[0] + "-" + s[1] : s[1] + "-" + s[0]) : "").filter(Boolean).join("  ")
+   : "";
+ const oppNameEl = oppId
+   ? h("a", { href: "#player/" + oppId,
+       onClick: (e) => { e.preventDefault(); V.openPlayer(oppId); } }, oppName)
+   : h("span", {}, oppName);
+ return h("div", { className: "pm-row " + (won ? "win" : "loss") },
+ h("div", { className: "pm-result" }, won ? "○\n勝ち" : "×\n負け"),
+ h("div", { className: "pm-opp" },
+   h("div", { className: "pm-opp-label" }, "対戦相手"),
+   h("div", { className: "pm-opp-name" }, oppNameEl,
+     oppTeam ? h("span", { className: "pm-opp-team" }, " (" + oppTeam + ")") : null),
+   (m.event || m.round) ? h("div", { className: "pm-opp-ev" },
+     [m.event, m.round].filter(Boolean).join(" ")) : null,
+ ),
+ h("div", { className: "pm-score" }, myScore + " - " + oppScore,
+   setsStr ? h("span", { className: "pm-score-sets" }, setsStr) : null),
+ );
+ },
+
  // ─── 選手検索 ────────────────────────────────
  async doSearch() {
  const q = document.getElementById("searchInput").value.trim();
@@ -875,46 +957,29 @@ const V = {
  body.appendChild(grid);
  }
 
- // 対戦相手別戦績 (H2H)
+ // 対戦相手別戦績 (H2H) — 平易な「○○さんに N勝M敗」表示
  if (p.opponents && p.opponents.length) {
- body.appendChild(h("div", { className: "section-title" }, `⚔️ 対戦相手別戦績 (${p.opponents.length}名)`));
- const tWrap = h("div", { className: "card",
- style: { padding: "0", overflow: "auto", marginBottom: "16px" } });
- const t = h("table", { className: "h2h-table" });
- t.appendChild(h("thead", {},
- h("tr", {},
- h("th", { className: "h2h-name", style: { textAlign: "left" } }, "対戦相手"),
- h("th", {}, "勝"),
- h("th", {}, "敗"),
- h("th", {}, "勝率"),
- h("th", { style: { width: "100px" } }, ""),
- )));
- const tbody = h("tbody", {});
- p.opponents.slice(0, 15).forEach(o => {
- tbody.appendChild(h("tr", {
- onClick: () => o.opp_id && V.openPlayer(o.opp_id),
- },
- h("td", { className: "h2h-name" }, o.name,
- h("span", { className: "text-xs text-sub",
- style: { marginLeft: "6px" } }, o.team ? "(" + o.team + ")" : "")),
- h("td", { className: "h2h-wl", style: {
- color: o.wins > o.losses ? "var(--warn)" : "inherit",
- fontWeight: o.wins > o.losses ? "700" : "400"
- } }, String(o.wins)),
- h("td", { className: "h2h-wl",
- style: { color: o.losses > o.wins ? "var(--sub)" : "inherit" } },
- String(o.losses)),
- h("td", { className: "h2h-wl font-bold" }, o.win_rate + "%"),
- h("td", {},
- h("div", { className: "h2h-rate-bar" },
- h("div", { className: "h2h-rate-bar-fill",
- style: { width: o.win_rate + "%",
- background: o.win_rate >= 50 ? "var(--ok)" : "var(--accent)" } }))),
+ body.appendChild(h("div", { className: "section-title" }, `対戦相手別の成績 (${p.opponents.length}名)`));
+ const list = h("div", { className: "h2h-clean" });
+ p.opponents.slice(0, 20).forEach(o => {
+ const verdict = o.wins > o.losses
+   ? { cls: "lead", label: "勝ち越し" }
+   : (o.wins < o.losses ? { cls: "behind", label: "負け越し" } : { cls: "even", label: "五分" });
+ list.appendChild(h("div", { className: "h2h-c-row",
+   onClick: () => o.opp_id && V.openPlayer(o.opp_id) },
+ h("div", { style: { minWidth: 0 } },
+   h("div", { className: "h2h-c-name" }, o.name,
+     o.team ? h("span", { className: "h2h-c-team" }, "(" + o.team + ")") : null),
+ ),
+ h("div", { className: "h2h-c-record" },
+   h("span", { className: "w" }, o.wins + "勝"),
+   h("span", { className: "sep" }, "-"),
+   h("span", { className: "l" }, o.losses + "敗"),
+   h("span", { className: "h2h-c-verdict " + verdict.cls }, verdict.label),
+ ),
  ));
  });
- t.appendChild(tbody);
- tWrap.appendChild(t);
- body.appendChild(tWrap);
+ body.appendChild(list);
  }
 
  // 戦績
@@ -939,9 +1004,9 @@ const V = {
  body.appendChild(ul);
  }
 
- // 試合履歴（）
+ // 試合履歴 — 選手視点で「○勝ち / ×負け」を明快に
  if (p.matches && p.matches.length) {
- body.appendChild(h("div", { className: "section-title" }, `試合履歴 (${p.matches.length}試合)`));
+ body.appendChild(h("div", { className: "section-title" }, `試合の記録 (${p.matches.length}試合)`));
  const groupByTournament = {};
  p.matches.forEach(m => {
  const key = m.tournament_id;
@@ -951,20 +1016,19 @@ const V = {
  groupByTournament[key].matches.push(m);
  });
  Object.entries(groupByTournament).forEach(([tid, grp]) => {
- const mc = h("div", { className: "card", style: { padding: 0, marginBottom: "10px" } });
+ const mc = h("div", { className: "card", style: { padding: "10px", marginBottom: "10px" } });
  mc.appendChild(h("div", { className: "round-header",
- style: { cursor: "pointer" },
+ style: { cursor: "pointer", marginBottom: "8px" },
  onClick: () => V.openTournament(tid) },
  h("span", {}, grp.name),
- h("span", { className: "round-header-date" },
- fmtDateShort(grp.date) + " "),
+ h("span", { className: "round-header-date" }, fmtDateShort(grp.date)),
  ));
- grp.matches.forEach(m => mc.appendChild(V.renderMatchCard(m)));
+ grp.matches.forEach(m => mc.appendChild(V.renderPlayerMatchRow(m, p.id)));
  body.appendChild(mc);
  });
  } else {
  body.appendChild(h("div", { className: "empty-state" },
- "まだ試合履歴がありません。"));
+ "まだ試合の記録がありません。"));
  }
 
  // body は カードの下に追加 (NPB風レイアウト: 名鑑+本文)
