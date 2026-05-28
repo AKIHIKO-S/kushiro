@@ -721,6 +721,9 @@ const V = {
  renderTournamentDetail(t, matches) {
  const el = document.getElementById("tournamentDetail");
  clear(el);
+ // BYE は実試合ではない (シードの繰り上がり) → 結果表示から除外
+ matches = (matches || []).filter(m =>
+   m.winner_name !== "BYE" && m.loser_name !== "BYE");
 
  // ヘッダ
  const statusLabels = { scheduled: "予定", ongoing: "進行中", completed: "終了" };

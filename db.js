@@ -418,8 +418,8 @@ const stmts = {
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id AND a.place=2) AS seconds,
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id AND a.place=3) AS thirds,
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id) AS total_achievements,
-      (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id) AS match_wins,
-      (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id) AS match_losses
+      (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE') AS match_wins,
+      (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE') AS match_losses
     FROM players p
   `),
   getPlayer: sqlite.prepare(`SELECT * FROM players WHERE id = ?`),
@@ -482,7 +482,8 @@ const stmts = {
   getMatchesByPlayer: sqlite.prepare(`
     SELECT m.*, t.name AS tournament_name, t.date AS tournament_date
     FROM matches m LEFT JOIN tournaments t ON m.tournament_id = t.id
-    WHERE m.winner_id = ? OR m.loser_id = ?
+    WHERE (m.winner_id = ? OR m.loser_id = ?)
+      AND m.loser_name != 'BYE' AND m.winner_name != 'BYE'
     ORDER BY t.date DESC, m.round_order ASC, m.match_no ASC
   `),
   insertMatch: sqlite.prepare(`
@@ -532,8 +533,8 @@ const stmts = {
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id AND a.place=2) AS seconds,
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id AND a.place=3) AS thirds,
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id) AS total,
-      (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id) AS match_wins,
-      (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id) AS match_losses
+      (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE') AS match_wins,
+      (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE') AS match_losses
     FROM players p
     WHERE (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id) > 0
        OR (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id OR m.loser_id=p.id) > 0
@@ -542,8 +543,8 @@ const stmts = {
   `),
   ratingRanking: sqlite.prepare(`
     SELECT p.id, p.name, p.team, p.rating, p.gender, p.category,
-      (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id) AS match_wins,
-      (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id) AS match_losses
+      (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE') AS match_wins,
+      (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE') AS match_losses
     FROM players p
     WHERE (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id OR m.loser_id=p.id) > 0
     ORDER BY rating DESC LIMIT 50
@@ -2701,8 +2702,9 @@ function getOperationState(tournamentId) {
   const callableRaw = allMatches.filter(m => m.status === "pending");
   const waiting = allMatches.filter(m => m.status === "waiting");
   const finished = allMatches.filter(m => m.status === "completed");
+  // 直近結果: BYE (シード繰り上がり) は実試合ではないため除外
   const recent = finished
-    .filter(m => m.finished_at)
+    .filter(m => m.finished_at && m.winner_name !== "BYE" && m.loser_name !== "BYE")
     .sort((a, b) => (b.finished_at || "").localeCompare(a.finished_at || ""))
     .slice(0, 10);
 
