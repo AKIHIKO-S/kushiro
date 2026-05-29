@@ -1335,9 +1335,34 @@ app.get("/api/tournaments/:id/receipts.html", (req, res) => {
       }
       if (!sealUrl) sealUrl = "/shared/assets/seal.png";
     }
+    // 協会ロゴURL: アップロード済み logo.* があれば優先、なければ既定アイコン (#272)
+    let logoUrl = req.query.logo_url;
+    if (!logoUrl) {
+      if (SEAL_DIR_PERSISTENT) {
+        for (const e of [".png", ".jpg", ".jpeg"]) {
+          if (fs.existsSync(path.join(SEAL_DIR_PERSISTENT, "logo" + e))) {
+            logoUrl = "/uploads/logo" + e;
+            break;
+          }
+        }
+      }
+      if (!logoUrl) {
+        // 永続ディスク未設定(ローカル/単純デプロイ)では public/shared/assets を確認
+        for (const e of [".png", ".jpg", ".jpeg"]) {
+          if (fs.existsSync(path.join(SEAL_DIR_DEFAULT, "logo" + e))) {
+            logoUrl = "/shared/assets/logo" + e;
+            break;
+          }
+        }
+      }
+      if (!logoUrl) logoUrl = "/shared/assets/icon-192.png";
+    }
     const html = reports.buildReceiptsHTML(tournament, entrants, {
       fees,
       seal_url: sealUrl,
+      logo_url: logoUrl,
+      only_team: req.query.team || undefined,   // 個別発行: 指定団体のみ (#272)
+      start_no: req.query.start_no,             // 連番の開始番号 (#272)
       issuer: req.query.issuer || "釧路卓球協会",
       president: req.query.president || "会長  山本 満",
     });
@@ -1402,7 +1427,30 @@ app.post("/api/settings/seal", requireAdmin, upload.single("seal"), (req, res) =
   res.json({ ok: true, path: url, size: req.file.size });
 });
 
-// 永続ディスク用 印鑑画像 配信
+// ─── 協会ロゴ画像アップロード (領収書ヘッダ用) #272 ───
+app.post("/api/settings/logo", requireAdmin, upload.single("logo"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "ファイルが添付されていません" });
+  if (req.file.size < 100) {
+    try { fs.unlinkSync(req.file.path); } catch {}
+    return res.status(400).json({ error: "ファイルが空または小さすぎます (画像が破損している可能性)" });
+  }
+  const mt = req.file.mimetype || "";
+  if (!mt.startsWith("image/")) {
+    try { fs.unlinkSync(req.file.path); } catch {}
+    return res.status(400).json({ error: "画像ファイル (.png/.jpg) を選択してください: " + mt });
+  }
+  const targetDir = SEAL_DIR_PERSISTENT || SEAL_DIR_DEFAULT;
+  fs.mkdirSync(targetDir, { recursive: true });
+  const ext = path.extname(req.file.originalname || ".png").toLowerCase() || ".png";
+  const dest = path.join(targetDir, "logo" + ext);
+  fs.renameSync(req.file.path, dest);
+  const url = SEAL_DIR_PERSISTENT
+    ? "/uploads/logo" + ext
+    : "/shared/assets/logo" + ext;
+  res.json({ ok: true, path: url, size: req.file.size });
+});
+
+// 永続ディスク用 印鑑/ロゴ画像 配信
 if (SEAL_DIR_PERSISTENT) {
   app.use("/uploads", express.static(SEAL_DIR_PERSISTENT));
 }

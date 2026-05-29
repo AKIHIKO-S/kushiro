@@ -247,8 +247,10 @@ function buildReceiptsHTML(tournament, entrants, opts) {
   opts = opts || {};
   const { teams, fees: F } = buildAggregation(tournament, entrants, opts.fees);
   const sealPath = opts.seal_url || "/shared/assets/seal.png";
+  const logoPath = opts.logo_url || "/shared/assets/icon-192.png";   // 協会ロゴ (#272)
   const issuer = opts.issuer || "釧路卓球協会";
   const president = opts.president || "会長  山本 満";
+  const startNo = parseInt(opts.start_no) > 0 ? parseInt(opts.start_no) : 1;
   const dateStr = tournament.date
     ? new Date(tournament.date).toLocaleDateString("ja-JP", { year:"numeric", month:"long", day:"numeric" })
     : "";
@@ -283,6 +285,9 @@ function buildReceiptsHTML(tournament, entrants, opts) {
       });
       items.push({ team: teamName, total: sum, breakdown });
     });
+
+  // 個別発行: 指定団体だけに絞る (#272)。未指定なら全団体一括。
+  const shown = opts.only_team ? items.filter(it => it.team === opts.only_team) : items;
 
   // HTML 構築
   const html = `<!DOCTYPE html>
@@ -334,6 +339,10 @@ function buildReceiptsHTML(tournament, entrants, opts) {
   .receipt-no {
     position: absolute; top: 6mm; right: 10mm;
     font-size: 9px;
+  }
+  .receipt-logo {
+    position: absolute; top: 5mm; left: 10mm;
+    width: 13mm; height: 13mm; object-fit: contain; opacity: .92;
   }
   .receipt-to {
     font-size: 15px;
@@ -414,25 +423,27 @@ function buildReceiptsHTML(tournament, entrants, opts) {
 </head>
 <body>
 <div class="toolbar">
-  <h1>領収書 一括出力</h1>
-  <div class="info">${escapeHtml(tournament.name || "")} ${dateStr} / ${items.length} 団体分</div>
+  <h1>領収書 ${opts.only_team ? "（個別）" : "一括出力"}</h1>
+  <div class="info">${escapeHtml(tournament.name || "")} ${dateStr} / ${shown.length} 団体分</div>
   <button onclick="window.print()">PDF で保存 / 印刷</button>
 </div>
-${items.map((item, i) => renderReceipt(item, i, tournament, dateStr, sealPath, issuer, president)).join("")}
+${shown.map((item, i) => renderReceipt(item, i, tournament, dateStr, sealPath, issuer, president, logoPath, startNo)).join("")}
 </body>
 </html>`;
 
   return html;
 }
 
-function renderReceipt(item, i, tournament, dateStr, sealPath, issuer, president) {
+function renderReceipt(item, i, tournament, dateStr, sealPath, issuer, president, logoPath, startNo) {
+  const serialNo = (startNo || 1) + i;
   const amountStr = item.total.toLocaleString("ja-JP");
   const sealHtml = sealPath
     ? `<div class="seal-wrap"><img src="${sealPath}" alt="印鑑" onerror="this.outerHTML='<span class=no-seal>印</span>'"></div>`
     : `<div class="seal-wrap"><span class="no-seal">印</span></div>`;
   return `
 <div class="receipt-page">
-  <div class="receipt-no">No. ${String(i + 1).padStart(4, "0")}</div>
+  <img class="receipt-logo" src="${logoPath}" alt="" onerror="this.style.display='none'">
+  <div class="receipt-no">No. ${String(serialNo).padStart(4, "0")}</div>
   <div class="receipt-title">領収書</div>
   <div class="receipt-to">${escapeHtml(item.team)}<span class="receipt-to-sub"> 様</span></div>
   <div class="receipt-amount">

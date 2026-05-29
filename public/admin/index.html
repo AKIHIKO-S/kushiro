@@ -1503,6 +1503,33 @@ const A = {
  h("div", { className: "text-xs text-sub mt-2" },
  "領収書出力時に右下に押印画像として印字されます。背景透過 PNG を推奨。"),
  ),
+ h("div", { className: "card", style: { padding: "14px", marginBottom: "14px" } },
+ h("div", { className: "card-title", style: { marginBottom: "10px" } }, "協会ロゴ (領収書ヘッダ用)"),
+ h("img", { id: "logoPreview", src: "/shared/assets/icon-192.png",
+ style: { maxHeight: "80px", display: "block", marginBottom: "8px",
+ background: "#f8f8f8", padding: "4px", border: "1px solid var(--border)" },
+ onError: function() { this.style.display = "none"; }
+ }),
+ h("input", { type: "file", id: "logoFile", accept: "image/*", className: "input" }),
+ h("button", { className: "btn btn-sm mt-2", onClick: async () => {
+ const f = document.getElementById("logoFile").files[0];
+ if (!f) return toast("ファイルを選択してください", "err");
+ const fd = new FormData();
+ fd.append("logo", f);
+ const resp = await fetch("/api/settings/logo", {
+ method: "POST",
+ headers: api.adminKey ? { "X-Admin-Key": api.adminKey } : {},
+ body: fd,
+ });
+ const r = await resp.json();
+ if (r.error) return toast("失敗: " + r.error, "err");
+ toast("協会ロゴを保存しました", "ok");
+ document.getElementById("logoPreview").src = r.path + "?t=" + Date.now();
+ document.getElementById("logoPreview").style.display = "block";
+ } }, "ロゴをアップロード"),
+ h("div", { className: "text-xs text-sub mt-2" },
+ "領収書の左上に印字されます。未設定なら既定のタンチョウロゴが入ります。背景透過 PNG を推奨。"),
+ ),
  // ── メール送信 (申込控え) ──
  h("div", { className: "card", style: { padding: "14px", marginBottom: "14px" } },
  h("div", { className: "card-title", style: { marginBottom: "10px" } }, "メール送信 (申込控え)"),
@@ -4186,6 +4213,7 @@ const A = {
  h("th", {}, "申込団体"),
  h("th", { className: "text-right" }, "合計金額"),
  h("th", {}, "内訳"),
+ h("th", { style: { width: "76px" } }, "個別発行"),
  )));
  const tbody = h("tbody", {});
  list.items.forEach(item => {
@@ -4196,7 +4224,11 @@ const A = {
  style: { fontWeight: 700, color: "var(--pri)" } },
  "¥" + item.total.toLocaleString("ja-JP")),
  h("td", { className: "text-xs text-sub" },
- item.breakdown.map(b => `${b.label} ${b.n}件`).join(" / "))));
+ item.breakdown.map(b => `${b.label} ${b.n}件`).join(" / ")),
+ h("td", {},
+ h("button", { className: "btn btn-sm btn-ghost",
+ title: item.team + " 1団体のみの領収書を開く",
+ onClick: () => A.openReceiptsHtmlWindow(t, item.team) }, "発行"))));
  });
  tbl.appendChild(tbody);
  // 合計行
@@ -4209,13 +4241,18 @@ const A = {
  h("td", {}, ""))));
 
  const body = h("div", {},
- h("div", { className: "text-sm mb-3" },
- `発行者: ${list.issuer} ${list.president}`),
+ h("div", { className: "flex gap-2 items-center mb-3", style: { flexWrap: "wrap" } },
+ h("span", { className: "text-sm" }, `発行者: ${list.issuer} ${list.president}`),
+ h("span", { style: { flex: "1" } }),
+ h("label", { className: "text-xs text-sub" }, "連番の開始番号"),
+ h("input", { type: "number", id: "rcptStartNo", className: "input", min: "1",
+ placeholder: "1", style: { width: "84px" } })),
  h("div", { className: "mb-3" }, tbl),
  previewArea,
  h("div", { className: "text-xs text-sub mt-2" },
- "Excelファイルは1団体=1シートで出力されます (印刷時にA5横レイアウト)。"
- + " HTMLプレビューは画面内で確認後、ブラウザ印刷からPDF化できます。"),
+ "各領収書には No.0001 から連番が入ります (開始番号を変えると続き番号で発行可)。"
+ + " 一覧右端の「発行」で1団体のみの個別領収書を開けます。"
+ + " HTMLプレビューは印刷からPDF化できます。"),
  );
 
  const foot = h("div", { className: "flex gap-2 flex-wrap" },
@@ -4261,6 +4298,16 @@ const A = {
  }
  },
 
+ // 領収書HTMLのURLを組み立て (個別発行=team / 連番開始=start_no) #272
+ _receiptsUrl(t, team) {
+ const params = new URLSearchParams();
+ if (team) params.set("team", team);
+ const sn = document.getElementById("rcptStartNo");
+ if (sn && parseInt(sn.value) > 0) params.set("start_no", sn.value);
+ const qs = params.toString();
+ return `/api/tournaments/${t.id}/receipts.html${qs ? "?" + qs : ""}`;
+ },
+
  // モーダル内に iframe で領収書を表示
  async previewReceiptsHtml(t) {
  const area = document.getElementById("rcptPreview");
@@ -4268,7 +4315,7 @@ const A = {
  area.style.display = "block";
  area.innerHTML = '<div style="padding:20px;text-align:center;color:var(--sub)">読込中...</div>';
  try {
- const resp = await fetch(`/api/tournaments/${t.id}/receipts.html`);
+ const resp = await fetch(A._receiptsUrl(t));
  if (!resp.ok) {
  const txt = await resp.text();
  area.innerHTML = '<div style="padding:20px;color:var(--accent)">取得失敗 ('
@@ -4295,11 +4342,11 @@ const A = {
  }
  },
 
- // 別ウィンドウで HTML 領収書を開く (確実な方法)
- async openReceiptsHtmlWindow(t) {
+ // 別ウィンドウで HTML 領収書を開く (確実な方法)。team 指定で1団体のみ #272
+ async openReceiptsHtmlWindow(t, team) {
  // window.open + fetch + Blob URL で確実に開く (navigation 介入を回避)
  try {
- const resp = await fetch(`/api/tournaments/${t.id}/receipts.html`);
+ const resp = await fetch(A._receiptsUrl(t, team));
  if (!resp.ok) return toast("取得失敗: " + resp.status, "err");
  const html = await resp.text();
  if (!html || html.length < 100) return toast("空のレスポンス", "err");
@@ -4311,7 +4358,7 @@ const A = {
  // フォールバック: 強制ダウンロード
  const a = document.createElement("a");
  a.href = url;
- a.download = `領収書_${t.name}.html`;
+ a.download = `領収書_${t.name}${team ? "_" + team : ""}.html`;
  document.body.appendChild(a);
  a.click();
  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
