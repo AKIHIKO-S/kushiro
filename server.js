@@ -2132,7 +2132,7 @@ app.use("/ref", express.static(path.join(publicDir, "ref"), staticOpts)); // 審
 
 // 運用マニュアル (Markdown)
 for (const docName of ["OPERATIONS.md", "RENDER_DEPLOY.md", "UPDATE_WORKFLOW.md", "HOSTING.md",
-                       "ORACLE_CLOUD_DEPLOY.md", "ORACLE_BEGINNER.md"]) {
+                       "ORACLE_CLOUD_DEPLOY.md", "ORACLE_BEGINNER.md", "CLOUDFLARE_SETUP.md"]) {
   app.get("/" + docName, (req, res) => {
     const f = path.join(__dirname, docName);
     if (!fs.existsSync(f)) return res.status(404).send("Not Found");
