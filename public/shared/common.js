@@ -396,7 +396,7 @@
     const table = (rows) => { const t = h("div", { className: "pstat-table" }); rows.forEach(r => t.appendChild(r)); return t; };
 
     wrap.appendChild(h("div", { className: "section-title" }, "数値で見る成績"));
-    wrap.appendChild(h("div", { className: "pstat-tiles" },
+    const tiles = [
       tile(st.rate + "%", "通算勝率", st.wins + "勝 " + st.losses + "敗", cmpPct(st.rate, 50, true)),
       tile(String(st.total), "通算試合数", st.tournaments.length + " 大会"),
       tile(st.setRate + "%", "セット取得率", st.setsWon + "-" + st.setsLost, cmpPct(st.setRate, 50, true)),
@@ -410,7 +410,24 @@
       tile(String(st.tournaments.length), "出場大会数", st.total + " 試合"),
       tile(st.avgDur ? fmtDuration(st.avgDur) : "—", "平均対戦時間", st.durCount ? (st.durCount + " 試合") : "記録なし", (avg && st.avgDur) ? cmpDur(st.avgDur, avg.avgDurationSec) : null),
       tile(st.maxDur ? fmtDuration(st.maxDur) : "—", "最長の対戦", "呼出→結果入力"),
-      tile(st.totalDur ? fmtDuration(st.totalDur) : "—", "総試合時間", st.durCount + " 試合の合計")));
+      tile(st.totalDur ? fmtDuration(st.totalDur) : "—", "総試合時間", st.durCount + " 試合の合計"),
+    ];
+    // 細かい指標も「数値で見る成績」に内包 (データがある時のみタイル追加)
+    if (st.finalGame && st.finalGame.n > 0)
+      tiles.push(tile(st.finalGame.rate + "%", "ファイナルゲーム勝率", st.finalGame.w + " / " + st.finalGame.n + " 接戦"));
+    if (st.recent10 && st.recent10.n > 0)
+      tiles.push(tile(st.recent10.rate + "%", "直近" + st.recent10.n + "戦勝率", st.recent10.w + "勝 " + (st.recent10.n - st.recent10.w) + "敗"));
+    if (st.points && st.points.games > 0) {
+      tiles.push(tile(st.points.rate + "%", "得点率", "1G平均 " + st.points.avgFor + "-" + st.points.avgAgainst + "（" + st.points.games + "G）"));
+      tiles.push(tile((st.pointDiff > 0 ? "+" : "") + st.pointDiff, "得点デフ", "総得点−総失点"));
+    }
+    if (st.deuce && st.deuce.n > 0)
+      tiles.push(tile(st.deuce.rate + "%", "デュース勝率", st.deuce.w + " / " + st.deuce.n + " (10-10〜)"));
+    if (st.seedBattle && st.seedBattle.killN > 0)
+      tiles.push(tile(st.seedBattle.killRate + "%", "対格上 勝率", "格上撃破 " + st.seedBattle.killW + " / " + st.seedBattle.killN + " 戦"));
+    if (st.seedBattle && st.seedBattle.upsetN > 0)
+      tiles.push(tile(String(st.seedBattle.upsetL), "格下取りこぼし", "対格下 " + st.seedBattle.upsetN + " 戦"));
+    wrap.appendChild(h("div", { className: "pstat-tiles" }, ...tiles));
 
     if (st.recent.length) {
       wrap.appendChild(h("div", { className: "pform" },
@@ -447,29 +464,7 @@
       wrap.appendChild(h("div", { className: "section-sub" }, "ラウンド別 勝率（勝負強さ）"));
       wrap.appendChild(table(st.rounds_wl.map(r => rateRow(r.name, r))));
     }
-    // さらに細かい指標: 得点率(ゲーム別点数入力時) / 対格上・格下(シード設定時) #得点率 #250
-    {
-      const extra = [];
-      if (st.points && st.points.games > 0)
-        extra.push(tile(st.points.rate + "%", "得点率", "1G平均 " + st.points.avgFor + "-" + st.points.avgAgainst + "（" + st.points.games + "G）"));
-      if (st.seedBattle && st.seedBattle.killN > 0)
-        extra.push(tile(st.seedBattle.killRate + "%", "対格上 勝率", "格上撃破 " + st.seedBattle.killW + " / " + st.seedBattle.killN + " 戦"));
-      if (st.seedBattle && st.seedBattle.upsetN > 0)
-        extra.push(tile(String(st.seedBattle.upsetL), "格下取りこぼし", "対格下 " + st.seedBattle.upsetN + " 戦"));
-      // ファイナルゲーム勝率 / 直近10戦 / 得点デフ / デュース勝率 (仮実装)
-      if (st.finalGame && st.finalGame.n > 0)
-        extra.push(tile(st.finalGame.rate + "%", "ファイナルゲーム勝率", st.finalGame.w + " / " + st.finalGame.n + " 接戦"));
-      if (st.recent10 && st.recent10.n > 0)
-        extra.push(tile(st.recent10.rate + "%", "直近" + st.recent10.n + "戦勝率", st.recent10.w + "勝 " + (st.recent10.n - st.recent10.w) + "敗"));
-      if (st.points && st.points.games > 0)
-        extra.push(tile((st.pointDiff > 0 ? "+" : "") + st.pointDiff, "得点デフ", "総得点−総失点"));
-      if (st.deuce && st.deuce.n > 0)
-        extra.push(tile(st.deuce.rate + "%", "デュース勝率", st.deuce.w + " / " + st.deuce.n + " (10-10〜)"));
-      if (extra.length) {
-        wrap.appendChild(h("div", { className: "section-sub" }, "さらに細かい指標"));
-        wrap.appendChild(h("div", { className: "pstat-tiles" }, ...extra));
-      }
-    }
+    // (得点率/対格上・格下/ファイナルゲーム/直近10/得点デフ/デュースは上の「数値で見る成績」に内包済み)
     if (st.events.length) {
       wrap.appendChild(h("div", { className: "section-sub" }, "種目別 勝率"));
       wrap.appendChild(table(st.events.map(e => rateRow(e.event, e))));

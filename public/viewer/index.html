@@ -1928,7 +1928,8 @@ const L = {
  if (s.on_table.length) {
  main.appendChild(h("div", { className: "section-title mt-3" }, "進行中"));
  s.on_table.forEach(m => {
- main.appendChild(h("div", { className: "live-match-card" },
+ main.appendChild(h("div", { className: "live-match-card", style: { cursor: "pointer" },
+   title: "タップで試合詳細", onClick: () => L.showCourtDetail({ match: m, table_no: m.table_no }) },
  h("div", { className: "live-tno" }, "コート" + m.table_no),
  h("div", {},
  h("div", { className: "text-xs text-sub mb-1 lmc-ev" }, `${m.event} ${m.round}`),
