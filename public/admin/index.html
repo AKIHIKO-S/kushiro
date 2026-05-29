@@ -5800,6 +5800,9 @@ const A = {
    style: { padding: "8px", background: "#f8fafc", borderRadius: "6px" } },
    "入賞歴は、選手を保存してから登録できます"),
 
+ // ── 数値で見る成績 (閲覧と同一の拡充スタッツ #210) ──
+ !isNew ? TT.playerStatsSection(p) : null,
+
  // ─── 個別戦績 (試合) の手動入力・削除 ───
  !isNew ? h("div", { className: "field" },
  h("label", { className: "field-label" }, "個別戦績 (試合の勝敗) — 手動入力・削除"),

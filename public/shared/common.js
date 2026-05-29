@@ -182,8 +182,11 @@
   function computePlayerStats(player) {
     const pid = player && player.id;
     const ms = ((player && player.matches) || []).filter(m => m && (m.winner_id === pid || m.loser_id === pid));
-    let wins = 0, losses = 0, setsWon = 0, setsLost = 0;
-    const byT = {}, byE = {};
+    let wins = 0, losses = 0, setsWon = 0, setsLost = 0, fullW = 0, fullL = 0;
+    const byT = {}, byE = {}, byM = {}, byOpp = {}, grp = {};
+    const time = { am: { w: 0, l: 0 }, pm: { w: 0, l: 0 }, eve: { w: 0, l: 0 } };
+    const roundRank = (r) => { r = String(r || ""); if (r.indexOf("準々決勝") >= 0) return 1; if (r.indexOf("準決勝") >= 0) return 2; if (r.indexOf("決勝") >= 0) return 3; return 0; };
+    const hourOf = (s) => { const mm = /\s(\d{2}):/.exec(String(s || "")); return mm ? parseInt(mm[1]) : null; };
     // 古い順 (連勝計算用)
     const chrono = ms.slice().sort((a, b) =>
       String(a.tournament_date || "").localeCompare(String(b.tournament_date || "")) ||
@@ -198,6 +201,18 @@
       (byT[tk] = byT[tk] || { name: m.tournament_name || "?", date: m.tournament_date || "", w: 0, l: 0 })[won ? "w" : "l"]++;
       const ek = m.event || "?";
       (byE[ek] = byE[ek] || { event: ek, w: 0, l: 0 })[won ? "w" : "l"]++;
+      if (ws > 0 && ls === ws - 1) { if (won) fullW++; else fullL++; }
+      const ym = String(m.tournament_date || "").slice(0, 7);
+      if (ym) (byM[ym] = byM[ym] || { ym: ym, w: 0, l: 0 })[won ? "w" : "l"]++;
+      const oppName = won ? (m.loser_name || "") : (m.winner_name || "");
+      if (oppName) (byOpp[oppName] = byOpp[oppName] || { name: oppName, w: 0, l: 0 })[won ? "w" : "l"]++;
+      const hr = hourOf(m.finished_at);
+      if (hr != null) { const tb = hr < 12 ? "am" : (hr < 16 ? "pm" : "eve"); time[tb][won ? "w" : "l"]++; }
+      const gk = (m.tournament_id || "") + "|" + (m.event || "");
+      const g = grp[gk] = grp[gk] || { deepest: 0, champ: false };
+      const rk = roundRank(m.round);
+      if (rk > g.deepest) g.deepest = rk;
+      if (rk === 3 && won) g.champ = true;
     });
     const recent = ms.slice(0, 10).map(m => (m.winner_id === pid ? "W" : "L")); // 新しい順 (queryがdate DESC)
     const total = wins + losses;
@@ -209,12 +224,95 @@
     const events = Object.values(byE)
       .sort((a, b) => (b.w + b.l) - (a.w + a.l))
       .map(e => ({ event: e.event, w: e.w, l: e.l, total: e.w + e.l, rate: pctOf(e.w, e.w + e.l) }));
+    const months = Object.values(byM).sort((a, b) => b.ym.localeCompare(a.ym))
+      .map(x => ({ ym: x.ym, w: x.w, l: x.l, total: x.w + x.l, rate: pctOf(x.w, x.w + x.l) }));
+    const h2h = Object.values(byOpp).sort((a, b) => (b.w + b.l) - (a.w + a.l))
+      .map(o => ({ name: o.name, w: o.w, l: o.l, total: o.w + o.l, rate: pctOf(o.w, o.w + o.l) }));
+    const byTime = [["am", "午前"], ["pm", "午後"], ["eve", "夕方〜"]]
+      .map(kv => ({ label: kv[1], w: time[kv[0]].w, l: time[kv[0]].l, total: time[kv[0]].w + time[kv[0]].l, rate: pctOf(time[kv[0]].w, time[kv[0]].w + time[kv[0]].l) }))
+      .filter(x => x.total > 0);
+    const grps = Object.values(grp);
+    const rounds = {
+      entries: grps.length,
+      champion: grps.filter(g => g.champ).length,
+      final: grps.filter(g => g.champ || g.deepest >= 3).length,
+      best4: grps.filter(g => g.champ || g.deepest >= 2).length,
+      best8: grps.filter(g => g.champ || g.deepest >= 1).length,
+    };
+    const fullTotal = fullW + fullL;
     return {
       total, wins, losses, rate: pctOf(wins, total),
       setsWon, setsLost, setRate: pctOf(setsWon, setsTotal),
+      avgWon: total ? (setsWon / total).toFixed(1) : "0", avgLost: total ? (setsLost / total).toFixed(1) : "0",
+      fullSet: { w: fullW, l: fullL, total: fullTotal, rate: pctOf(fullW, fullTotal) },
       recent, streakCurrent: cur, streakLongest: longest,
-      tournaments, events,
+      tournaments, events, months, h2h, byTime, rounds,
     };
+  }
+
+  // ── 選手スタッツ セクション (閲覧/admin 共通描画) ──
+  function playerStatsSection(player) {
+    const st = computePlayerStats(player);
+    const wrap = h("div", {});
+    if (!st.total) {
+      wrap.appendChild(h("div", { className: "section-title" }, "数値で見る成績"));
+      wrap.appendChild(h("div", { className: "pstat-empty" }, "記録された試合がまだありません。"));
+      return wrap;
+    }
+    const tile = (v, l, s) => h("div", { className: "pstat-tile" },
+      h("div", { className: "pstat-v" }, v), h("div", { className: "pstat-l" }, l),
+      s ? h("div", { className: "pstat-s" }, s) : null);
+    const rateRow = (label, o) => h("div", { className: "pstat-row" },
+      h("span", { className: "pstat-rk" }, label),
+      h("span", { className: "pstat-rv" }, o.w + "勝 " + o.l + "敗"),
+      h("span", { className: "pstat-rp" + (o.rate >= 50 ? " hi" : "") }, o.rate + "%"));
+    const table = (rows) => { const t = h("div", { className: "pstat-table" }); rows.forEach(r => t.appendChild(r)); return t; };
+
+    wrap.appendChild(h("div", { className: "section-title" }, "数値で見る成績"));
+    wrap.appendChild(h("div", { className: "pstat-tiles" },
+      tile(st.rate + "%", "通算勝率", st.wins + "勝 " + st.losses + "敗"),
+      tile(st.setRate + "%", "セット取得率", st.setsWon + "-" + st.setsLost),
+      tile(st.avgWon + " / " + st.avgLost, "平均 取/失セット", "1試合あたり"),
+      tile(st.fullSet.total ? st.fullSet.rate + "%" : "—", "フルセット勝率", st.fullSet.w + "-" + st.fullSet.l + " 接戦"),
+      tile(String(st.streakLongest), "最多連勝", "現在 " + st.streakCurrent + " 連勝中"),
+      tile(String(st.tournaments.length), "出場大会数", st.total + " 試合")));
+
+    if (st.recent.length) {
+      wrap.appendChild(h("div", { className: "pform" },
+        h("span", { className: "pform-label" }, "直近 (新しい順)"),
+        ...st.recent.map(r => h("span", { className: "pform-dot " + (r === "W" ? "win" : "lose") }, r === "W" ? "勝" : "敗"))));
+    }
+    if (st.rounds.entries) {
+      const chip = (label, n, cls) => h("span", { className: "preach-chip " + (cls || "") }, label + " " + n);
+      wrap.appendChild(h("div", { className: "section-sub" }, "トーナメント到達"));
+      wrap.appendChild(h("div", { className: "preach" },
+        chip("優勝", st.rounds.champion, "gold"),
+        chip("決勝", st.rounds.final, "silver"),
+        chip("ベスト4", st.rounds.best4, "bronze"),
+        chip("ベスト8", st.rounds.best8, ""),
+        chip("出場", st.rounds.entries, "muted")));
+    }
+    if (st.byTime.length) {
+      wrap.appendChild(h("div", { className: "section-sub" }, "時間帯別 勝率"));
+      wrap.appendChild(table(st.byTime.map(b => rateRow(b.label, b))));
+    }
+    if (st.events.length) {
+      wrap.appendChild(h("div", { className: "section-sub" }, "種目別 勝率"));
+      wrap.appendChild(table(st.events.map(e => rateRow(e.event, e))));
+    }
+    if (st.tournaments.length) {
+      wrap.appendChild(h("div", { className: "section-sub" }, "大会別成績"));
+      wrap.appendChild(table(st.tournaments.slice(0, 12).map(t => rateRow(t.name + (t.date ? " (" + t.date + ")" : ""), t))));
+    }
+    if (st.months.length >= 2) {
+      wrap.appendChild(h("div", { className: "section-sub" }, "月別成績"));
+      wrap.appendChild(table(st.months.slice(0, 12).map(m => rateRow(m.ym, m))));
+    }
+    if (st.h2h.length) {
+      wrap.appendChild(h("div", { className: "section-sub" }, "対戦成績 (相手別・対戦数順)"));
+      wrap.appendChild(table(st.h2h.slice(0, 10).map(o => rateRow(o.name, o))));
+    }
+    return wrap;
   }
 
   // ── Toast ──
@@ -523,7 +621,7 @@
     h, esc, clear, api, toast,
     ratingLabel, ratingBadge,
     lookupFurigana, parsePaste,
-    fmtDate, fmtDateShort, fmtDuration, computePlayerStats,
+    fmtDate, fmtDateShort, fmtDuration, computePlayerStats, playerStatsSection,
     createPoller, downloadCSV, downloadJSON, openModal,
     logoHTML, statusBadge,
     HOKKAIDO_BRANCHES, normalizeBranch, branchColor, branchColorMap, branchBadge,

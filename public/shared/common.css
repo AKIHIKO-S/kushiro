@@ -676,6 +676,14 @@ input:focus, select:focus, textarea:focus {
 .pstat-rv { color: var(--sub); white-space: nowrap; font-size: 12px; }
 .pstat-rp { font-weight: 800; color: var(--sub); white-space: nowrap; min-width: 40px; text-align: right; }
 .pstat-rp.hi { color: #16a34a; }
+.pstat-empty { font-size: 13px; color: var(--sub); padding: 10px 0 16px; }
+.preach { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.preach-chip { font-size: 12px; font-weight: 800; padding: 4px 12px; border-radius: 14px;
+  background: var(--ink-100); color: var(--ink-700); border: 1px solid var(--border); }
+.preach-chip.gold { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.preach-chip.silver { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
+.preach-chip.bronze { background: #fff7ed; color: #9a3412; border-color: #fdba74; }
+.preach-chip.muted { background: transparent; color: var(--sub); }
 
 /* Badges */
 .badge {
