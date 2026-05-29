@@ -2438,23 +2438,52 @@ const MP = {
  MP.render();
  },
  // 通知有効化カード(状態に応じて案内/ボタン/完了を出し分け)
+ // iPhone / Android の詳しい設定手順 (実機の操作どおり) #284
+ _pushHowto() {
+ const li = (t) => h("li", { style: { marginBottom: "2px" } }, t);
+ const block = (title, color, steps, note) => h("div", { style: { marginBottom: "10px" } },
+   h("div", { className: "font-bold", style: { color, marginBottom: "3px", fontSize: "13px" } }, title),
+   h("ol", { style: { margin: "0 0 0 18px", padding: 0, fontSize: "12.5px", lineHeight: "1.85" } }, ...steps.map(li)),
+   note ? h("div", { className: "text-xs text-sub", style: { marginTop: "3px" } }, note) : null);
+ const d = h("details", { className: "card", style: { padding: "0", marginTop: "8px", background: "#fff", borderColor: "var(--border)" } });
+ d.appendChild(h("summary", { style: { cursor: "pointer", padding: "10px 14px", fontWeight: 700, fontSize: "13px" } },
+   "iPhone / Android の通知設定 手順を見る"));
+ const body = h("div", { style: { padding: "0 14px 12px" } },
+   block("iPhone・iPad（Safari）", "#1e40af", [
+     "Safari でこのページを開く（LINEやInstagram内のブラウザでは不可）",
+     "画面下の「共有」ボタン（□に↑が付いた四角いマーク）をタップ",
+     "メニューを下にスクロールして「ホーム画面に追加」をタップ",
+     "右上の「追加」をタップ",
+     "ホーム画面にできた「KTTA」アイコンから開き直す",
+     "この画面の「通知をオンにする」→「許可」をタップ",
+   ], "※ iPhoneはホーム画面に追加したアプリからのみ通知が届きます（Apple仕様・iOS16.4以降）。"),
+   block("Android（Chrome）", "#15803d", [
+     "Chrome でこのページを開く",
+     "「通知をオンにする」をタップ→ 表示された「許可」をタップ（これで受信できます）",
+     "（おすすめ）右上の三点リーダー「⋮」→「アプリをインストール」または「ホーム画面に追加」でアプリ化すると安定します",
+     "届かない時:「⋮」→「設定」→「サイトの設定」→「通知」でこのサイトを許可。端末の「設定→アプリ→Chrome→通知」もONに",
+   ], null));
+ d.appendChild(body);
+ return d;
+ },
  _notifCard() {
  const e = MP._pushEnv();
+ const withHowto = (cardEl) => { const w = h("div", {}); w.appendChild(cardEl); w.appendChild(MP._pushHowto()); return w; };
  if (e.isIOS && !e.standalone) {
  // iPhone/iPad: ホーム画面追加が必須
- return h("div", { className: "card", style: { background: "#eff6ff", borderColor: "#3b82f6", padding: "12px 14px" } },
-   h("div", { className: "font-bold", style: { marginBottom: "6px", color: "#1e40af" } }, "iPhone・iPad で通知を受け取る手順"),
+ return withHowto(h("div", { className: "card", style: { background: "#eff6ff", borderColor: "#3b82f6", padding: "12px 14px" } },
+   h("div", { className: "font-bold", style: { marginBottom: "6px", color: "#1e40af" } }, "iPhone・iPad で通知を受け取るには"),
    h("ol", { style: { margin: "0 0 0 18px", padding: 0, fontSize: "13px", lineHeight: "1.9" } },
-     h("li", {}, "画面下の「共有」ボタンをタップ"),
+     h("li", {}, "画面下の「共有」ボタン（□に↑のマーク）をタップ"),
      h("li", {}, "「ホーム画面に追加」を選ぶ"),
      h("li", {}, "追加されたアイコンから開き直す"),
      h("li", {}, "もう一度この画面で「通知をオンにする」")),
    h("div", { className: "text-xs text-sub", style: { marginTop: "6px" } },
-     "※ iPhoneはホーム画面に追加したアプリからのみ通知を受け取れます (Apple仕様)。"));
+     "※ iPhoneはホーム画面に追加したアプリからのみ通知を受け取れます (Apple仕様)。")));
  }
  if (!e.supported) {
- return h("div", { className: "card", style: { background: "#f5f5f4", padding: "10px 14px" } },
-   h("div", { className: "text-sm text-sub" }, "このブラウザは通知に対応していません。Chrome などでお試しください。"));
+ return withHowto(h("div", { className: "card", style: { background: "#f5f5f4", padding: "10px 14px" } },
+   h("div", { className: "text-sm text-sub" }, "このブラウザは通知に対応していません。iPhoneはSafari、AndroidはChromeでお試しください。")));
  }
  if (e.perm === "granted" && MP._pushReady) {
  return h("div", { className: "card", style: { background: "#f0fdf4", borderColor: "#16a34a", padding: "10px 14px" } },
@@ -2462,14 +2491,14 @@ const MP = {
      "通知ON — 呼び出し時にこの端末へ届きます"));
  }
  if (e.perm === "denied") {
- return h("div", { className: "card", style: { background: "#fef2f2", borderColor: "#dc2626", padding: "10px 14px" } },
-   h("div", { className: "text-sm" }, "通知がブロックされています。ブラウザ設定でこのサイトの通知を「許可」に変更してください。"));
+ return withHowto(h("div", { className: "card", style: { background: "#fef2f2", borderColor: "#dc2626", padding: "10px 14px" } },
+   h("div", { className: "text-sm" }, "通知がブロックされています。ブラウザ設定でこのサイトの通知を「許可」に変更してください。")));
  }
  // default、または granted だが未購読 → 有効化ボタン
- return h("div", { className: "card", style: { background: "#fef3c7", borderColor: "#d97706", padding: "12px 14px" } },
+ return withHowto(h("div", { className: "card", style: { background: "#fef3c7", borderColor: "#d97706", padding: "12px 14px" } },
    h("div", { className: "flex gap-2", style: { alignItems: "center" } },
      h("div", { className: "flex-1 text-sm" }, "呼び出しをこのスマホで受け取れます"),
-     h("button", { className: "btn btn-sm", id: "mpEnablePush", onClick: () => MP.enablePush() }, "通知をオンにする")));
+     h("button", { className: "btn btn-sm", id: "mpEnablePush", onClick: () => MP.enablePush() }, "通知をオンにする"))));
  },
  _urlB64ToUint8(base64) {
  const padding = "=".repeat((4 - base64.length % 4) % 4);
