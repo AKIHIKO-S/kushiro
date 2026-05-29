@@ -520,6 +520,31 @@
  }
  .event-stat-title { font-size: 12px; font-weight: 700; color: var(--pri); margin-bottom: 4px; }
  .event-stat-row { font-size: 11px; color: var(--sub); display: flex; justify-content: space-between; }
+
+ /* ── モバイル: 横はみ出し防止 + ハンバーガーメニュー (#235) ── */
+ html, body { overflow-x: hidden; max-width: 100%; }
+ .v-burger { display: none; }
+ @media (max-width: 640px) {
+   .v-burger {
+     display: flex; align-items: center; gap: 8px; width: 100%;
+     padding: 13px 16px; background: #fff; border: none;
+     border-bottom: 1px solid var(--border); font-size: 15px; font-weight: 800;
+     color: var(--ink-900); text-align: left; cursor: pointer;
+   }
+   .tabs { overflow-x: visible; }
+   .tabs-in { display: none; flex-direction: column; padding: 0; max-width: none; }
+   .tabs-in.open { display: flex; }
+   .tabs-in .tab, .tabs-in a.tab {
+     width: 100%; text-align: left; padding: 14px 18px;
+     border: none; border-bottom: 1px solid var(--border);
+     margin: 0 !important; font-size: 15px;
+   }
+   .tabs-in .tab.active { background: #f1f5f9; }
+   /* 選手DB等の横はみ出し対策 (スマホ) */
+   .player-list { grid-template-columns: 1fr; }
+   .search-bar-in { flex-wrap: wrap; }
+   .ms-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
+ }
 </style>
 </head>
 <body>
@@ -542,7 +567,8 @@
 
 <!-- タブ -->
 <div class="tabs">
- <div class="tabs-in">
+ <button class="v-burger" id="vBurger" aria-label="メニューを開く">☰ メニュー</button>
+ <div class="tabs-in" id="tabsIn">
  <button class="tab active" data-tab="live">大会進行</button>
  <button class="tab" data-tab="myportal">マイ番号</button>
  <button class="tab" data-tab="search">選手データベース</button>
@@ -633,6 +659,10 @@ const V = {
  document.querySelectorAll(".tab").forEach(t => {
  t.addEventListener("click", () => V.showTab(t.dataset.tab));
  });
+ // ハンバーガーメニュー (スマホ) トグル
+ const burger = document.getElementById("vBurger");
+ if (burger) burger.addEventListener("click", () =>
+ document.getElementById("tabsIn")?.classList.toggle("open"));
 
  // 検索入力
  const si = document.getElementById("searchInput");
@@ -672,6 +702,7 @@ const V = {
  // skipHash=true: ハッシュを更新しない (hashchange からの呼び出し時)
  showTab(name, skipHash) {
  V.activeTab = name;
+ document.getElementById("tabsIn")?.classList.remove("open"); // 選択でメニューを閉じる
  document.querySelectorAll(".tab").forEach(t =>
  t.classList.toggle("active", t.dataset.tab === name)
  );
