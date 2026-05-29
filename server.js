@@ -157,7 +157,16 @@ app.use((req, res, next) => {
 // セキュリティヘッダ (依存追加なしの簡易 helmet 相当)
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  // 埋込許可パス(Jimdo/STUDIO等の外部サイトに iframe 埋込するウィジェット/申込フォーム)は
+  // X-Frame-Options:SAMEORIGIN を付けると外部ドメインで真っ白になるため、frame-ancestors * を使う。
+  // (X-Frame-Options に「任意元許可」値は無い。ALLOWALL は非標準で無視されるため CSP を使用。)
+  const p = req.path || "";
+  const embeddable = p.startsWith("/widget") || p.startsWith("/entry") || p.includes("/entry-form");
+  if (embeddable) {
+    res.setHeader("Content-Security-Policy", "frame-ancestors *");
+  } else {
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  }
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("X-XSS-Protection", "0");
   // HTTPS 配信時のみ HSTS (nginx/Caddy 経由の x-forwarded-proto を信頼)
