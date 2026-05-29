@@ -111,7 +111,8 @@ app.use(compression({
     if (typeof ct === "string") {
       if (ct.includes("spreadsheet") || ct.includes("excel") ||
           ct.includes("zip") || ct.includes("octet-stream") ||
-          ct.includes("image/") || ct.includes("pdf")) {
+          ct.includes("image/") || ct.includes("pdf") ||
+          ct.includes("event-stream")) {   // SSE はバッファ厳禁 (#264 リアルタイムpush)
         return false;
       }
     }
@@ -1716,6 +1717,59 @@ app.get("/api/public/tournaments/:id/live", (req, res) => {
 // 進行の変化検知用 軽量エンドポイント (クライアントは変化時のみ重い /live を取得)
 app.get("/api/public/tournaments/:id/ops-version", (req, res) => {
   res.json(db.getOpsFingerprint(req.params.id));
+});
+
+// ─── 進行リアルタイム通知 (SSE: Server-Sent Events) #264 ───
+// 変化したら各クライアントへ即push。送るのは「reload合図」のみでデータ本体やPIIは載せない
+// (公開可)。実データ取得は従来どおり認証付きエンドポイントで行う。
+// nginx 等のバッファリングは X-Accel-Buffering:no で無効化、~5秒ハートビートで切断を防ぐ。
+const sseClients = new Map();    // tid -> Set<res>
+const sseLastFp = new Map();     // tid -> fingerprint
+const sseLastEmit = new Map();   // tid -> ms
+let sseTotal = 0;
+const SSE_MAX = 300;             // 同時接続の上限 (リソース枯渇/DoS 対策)
+function sseSend(res, obj) { try { res.write("data: " + JSON.stringify(obj) + "\n\n"); } catch (e) {} }
+function sseBroadcast(tid, obj) {
+  const set = sseClients.get(tid); if (!set) return;
+  for (const r of set) sseSend(r, obj);
+  sseLastEmit.set(tid, Date.now());
+}
+// 変化検知 + ハートビート (in-process。SQLite fingerprint は軽量)。クライアントがいる大会のみ。
+setInterval(() => {
+  if (sseClients.size === 0) return;
+  const now = Date.now();
+  for (const [tid, set] of sseClients) {
+    if (!set || set.size === 0) { sseClients.delete(tid); sseLastFp.delete(tid); sseLastEmit.delete(tid); continue; }
+    let fp; try { fp = JSON.stringify(db.getOpsFingerprint(tid)); } catch (e) { continue; }
+    if (fp !== sseLastFp.get(tid)) { sseLastFp.set(tid, fp); sseBroadcast(tid, { type: "ops" }); }
+    else if (now - (sseLastEmit.get(tid) || 0) > 5000) { sseBroadcast(tid, { type: "ping" }); }
+  }
+}, 800);
+
+app.get("/api/public/tournaments/:id/ops-stream", (req, res) => {
+  if (sseTotal >= SSE_MAX) return res.status(503).end();
+  const tid = String(req.params.id);
+  res.set({
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",   // nginx/Cloudflare: この応答はバッファせず即流す (SSE 必須)
+  });
+  if (res.flushHeaders) res.flushHeaders();
+  res.write("retry: 3000\n\n");
+  sseSend(res, { type: "hello" });
+  let set = sseClients.get(tid); if (!set) { set = new Set(); sseClients.set(tid, set); }
+  set.add(res); sseTotal++;
+  // 接続直後は現fingerprintを基準化 (直後の誤push防止。初期データはクライアントが別途取得済み)
+  try { sseLastFp.set(tid, JSON.stringify(db.getOpsFingerprint(tid))); } catch (e) {}
+  sseLastEmit.set(tid, Date.now());
+  let closed = false;
+  const cleanup = () => {
+    if (closed) return; closed = true;
+    const s = sseClients.get(tid); if (s) s.delete(res);
+    sseTotal = Math.max(0, sseTotal - 1);
+  };
+  req.on("close", cleanup);
+  res.on("error", cleanup);
 });
 
 // 選手個人の試合状況 (マイ番号ポータル用)

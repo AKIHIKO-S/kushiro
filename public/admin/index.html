@@ -6208,6 +6208,8 @@ const O = {
  tournamentId: null,
  state: null,
  poller: null,
+ _es: null,            // SSE (EventSource) 接続 (#264)
+ _sseLastMsg: 0,       // 直近にSSEメッセージを受けた時刻 (健全性判定用)
  selectedEvent: "",
 
  async init() {
@@ -6269,6 +6271,7 @@ const O = {
  selectTournament(id) {
  O.tournamentId = id;
  if (O.poller) clearInterval(O.poller);
+ O._closeOpsStream();
  const liveLink = document.getElementById("opLiveLink");
  if (liveLink) {
    liveLink.href = id ? ("/viewer/live/?t=" + encodeURIComponent(id)) : "#";
@@ -6288,14 +6291,37 @@ const O = {
  O.reload();
  O.initPullToRefresh();   // スワイプ更新を有効化 (#238)
  O._initNet();            // オフライン/送信待ち監視を有効化 (#線断対策)
- // 自動更新 (1.2秒): 軽量な ops-version (フィンガープリント) を見て、変化した時だけ全再描画。
- // 審判報告→本部の「承認待ち」表示や他端末の操作が最大1.2秒で届く (管理は常にフレッシュ取得)。
- O.poller = setInterval(() => O.tick(), 1200);
+ O._initOpsStream();      // SSE リアルタイム push を有効化 (#264)
+ // 自動更新 (1.5秒): SSE が生きている間は省略。SSE 断時のフォールバックとして ops-version をポーリング。
+ O.poller = setInterval(() => O.tick(), 1500);
  },
 
- // 変化検知ティック (重い /operations 取得・再描画は変化時のみ)
+ // ── SSE リアルタイム push (#264) ──
+ // サーバが変化を即push。EventSource は自動再接続。SSE 不可/断の環境では tick がポーリング代替。
+ _initOpsStream() {
+   O._closeOpsStream();
+   if (typeof EventSource === "undefined" || !O.tournamentId) return;
+   try {
+     const es = new EventSource("/api/public/tournaments/" + encodeURIComponent(O.tournamentId) + "/ops-stream");
+     O._es = es;
+     es.onmessage = (e) => {
+       O._sseLastMsg = Date.now();   // ping/hello/ops いずれでも健全性を更新
+       let d = null; try { d = JSON.parse(e.data || "{}"); } catch (_) {}
+       if (d && d.type === "ops") O.reload(true);   // 変化 → 即時リロード
+     };
+     es.onerror = () => { /* 自動再接続。復帰までは tick(ポーリング)が代替 */ };
+   } catch (e) { /* SSE 不可環境 → tick が代替 */ }
+ },
+ _closeOpsStream() {
+   if (O._es) { try { O._es.close(); } catch (e) {} O._es = null; }
+   O._sseLastMsg = 0;
+ },
+
+ // 変化検知ティック (重い /operations 取得・再描画は変化時のみ)。
+ // SSE が生きている間 (直近メッセージ < 7秒) はポーリングを省略 (SSE が変化を即push)。
  async tick() {
  if (!O.tournamentId) return;
+ if (O._sseLastMsg && (Date.now() - O._sseLastMsg) < 7000) return;
  try {
    const v = await api.get("/api/public/tournaments/" + O.tournamentId + "/ops-version");
    const ver = JSON.stringify(v || {});
