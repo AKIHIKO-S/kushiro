@@ -1237,7 +1237,8 @@ const V = {
    }).map(k => ({ label: TT.catLabel(k), players: m[k].sort((x, y) => (y.appearances || 0) - (x.appearances || 0)) }));
  } else if (V.groupMode === "branch") {
    const m = {};
-   V.state.players.forEach(p => { const k = TT.normalizeBranch(p.branch || p.team) || "（支部なし）"; (m[k] = m[k] || []).push(p); });
+   // 支部別: 公式24支部のみで集計 (#267: 所属チーム名が支部扱いになる誤りを修正)
+   V.state.players.forEach(p => { const k = TT.officialBranch(p.branch || p.team) || "（支部なし）"; (m[k] = m[k] || []).push(p); });
    groups = Object.keys(m).sort((a, b) =>
      a === "（支部なし）" ? 1 : b === "（支部なし）" ? -1 : a.localeCompare(b, "ja"))
      .map(k => { const bc = TT.branchColor(k);

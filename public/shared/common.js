@@ -746,6 +746,13 @@
     const base = _branchBase(s);
     return base ? base + "支部" : s;
   }
+  // 公式24支部のみに正規化 (#267)。公式支部なら "◯◯支部"、それ以外/空は "" を返す。
+  // 支部別グルーピング用: 所属チーム名がそのまま支部扱いになる誤りを防ぐ
+  // (normalizeBranch は非公式入力をそのまま返すため、グルーピングには使わない)。
+  function officialBranch(raw) {
+    const base = _branchBase(raw);
+    return base ? base + "支部" : "";
+  }
   // 支部名 → 色。公式24支部は固定の異色、対象外/空はグレー。同名は常に同色。
   function branchColor(raw) {
     const base = _branchBase(raw);
@@ -846,7 +853,7 @@
     elapsedMinSince, fmtElapsedClock, startElapsedTicker,
     createPoller, downloadCSV, downloadJSON, openModal,
     logoHTML, statusBadge,
-    HOKKAIDO_BRANCHES, normalizeBranch, branchColor, branchColorMap, branchBadge,
+    HOKKAIDO_BRANCHES, normalizeBranch, officialBranch, branchColor, branchColorMap, branchBadge,
     branchGradient, branchHeroBg,
     eventColor, eventBadge, catLabel,
   };

@@ -5699,9 +5699,9 @@ const A = {
  }
 
  if (view === "branch") {
-   // 支部別 (支部が無ければ所属から推定。色分けつき)
+   // 支部別: 公式24支部のみで集計 (#267: 所属チーム名が支部扱いになる誤りを修正)
    const byBr = {};
-   list.forEach(p => { const b = TT.normalizeBranch(p.branch || p.team) || "(支部なし)"; (byBr[b] = byBr[b] || []).push(p); });
+   list.forEach(p => { const b = TT.officialBranch(p.branch || p.team) || "(支部なし)"; (byBr[b] = byBr[b] || []).push(p); });
    const bKeys = Object.keys(byBr).sort((a, b) =>
      a === "(支部なし)" ? 1 : b === "(支部なし)" ? -1 : a.localeCompare(b, "ja"));
    bKeys.forEach((bn, idx) => {
