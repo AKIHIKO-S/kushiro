@@ -934,6 +934,47 @@ app.post("/api/tournaments/:id/kumiawase/upload",
     try { fs.unlinkSync(filePath); } catch {}
     return res.status(500).json({ error: "Excel パーサーが利用できません" });
   }
+  // ── 主系統: 実データ駆動の seed-list パーサー (#268・実測100%) ──
+  // 組合せExcelからシード順の選手リストを抽出し、種目ごとに取込む(複数シート=複数種目を一括)。
+  if (seedListParser && seedListParser.parseSeedList) {
+    try {
+      const parsed = seedListParser.parseSeedList(filePath, {
+        sheet: sheet || null,
+        eventHint: (sheet && event) ? event : null,
+        formatHint: (sheet && ["singles", "doubles", "team"].includes(format)) ? format : null,
+      });
+      const events = (parsed.events || []).filter(ev => (ev.players || []).length >= 2);
+      if (events.length) {
+        if (dryRun) {
+          try { fs.unlinkSync(filePath); } catch {}
+          return res.json({
+            preview: { events: events.map(e => ({ event: e.event, format: e.format, count: e.players.length, players: e.players })) },
+            message: `解析プレビュー: ${events.length}種目 / 計${events.reduce((s, e) => s + e.players.length, 0)}人 (まだ取込されていません)`,
+            used_parser: "parse_bracket_seedlist.js",
+          });
+        }
+        const imported = [];
+        for (const ev of events) {
+          const r = db.importBracket(req.params.id, {
+            format: "tabletennis-seed-list-v1",
+            event: ev.event,
+            players: ev.players,
+            regenerate: true,
+            auto_link_to_players: true,
+            auto_create_players: true,
+          });
+          imported.push({ event: ev.event, format: ev.format, count: ev.players.length, result: r });
+        }
+        try { fs.unlinkSync(filePath); } catch {}
+        return res.json({ ok: true, source: "kumiawase_seedlist", used_parser: "parse_bracket_seedlist.js", imported });
+      }
+      // 何も取れなければ旧パーサーにフォールバック
+    } catch (e) {
+      // seed-list 失敗時も旧パーサーにフォールバック
+      console.warn("[kumiawase] seed-list parse failed, fallback:", e.message);
+    }
+  }
+  // ── フォールバック: 旧 parse_ktta_bracket (テンプレ/特殊形式向け) ──
   try {
     const data = kttaParser.parseWorkbook(filePath, {
       formatHint: format && ["singles", "doubles", "team"].includes(format) ? format : null,
@@ -962,10 +1003,17 @@ let kttaParser = null;
 let pdfParser = null;
 let templateParser = null;
 let templateBuilder = null;
+let seedListParser = null;
 try {
   kttaParser = require("./tools/parse_ktta_bracket.js");
 } catch (e) {
   console.warn("[startup] parse_ktta_bracket.js のロード失敗:", e.message);
+}
+try {
+  // 実データ駆動の新パーサー (#268): シングルス/ダブルス 4種目で実測100%。Excel取込の主系統。
+  seedListParser = require("./tools/parse_bracket_seedlist.js");
+} catch (e) {
+  console.warn("[startup] parse_bracket_seedlist.js のロード失敗:", e.message);
 }
 try {
   pdfParser = require("./tools/parse_pdf_bracket.js");
