@@ -684,6 +684,20 @@
  .dur-badge { font-size: 10px; font-weight: 700; color: #475569; background: #f1f5f9;
    border: 1px solid var(--border); border-radius: 8px; padding: 1px 7px; white-space: nowrap; }
 
+ /* 種目別ベスト8 #208 */
+ .b8-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+ .b8-event { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: #fff; }
+ .b8-event-name { font-size: 13px; font-weight: 800; color: var(--ink-900); margin-bottom: 6px;
+   display: flex; align-items: baseline; gap: 6px; }
+ .b8-count { font-size: 10px; font-weight: 700; color: var(--sub); background: var(--ink-100);
+   padding: 1px 7px; border-radius: 8px; margin-left: auto; }
+ .b8-players { display: flex; flex-direction: column; gap: 2px; }
+ .b8-player { display: flex; align-items: baseline; gap: 6px; font-size: 13px; padding: 3px 2px;
+   border-bottom: 1px dashed var(--border); }
+ .b8-player:last-child { border-bottom: none; }
+ .b8-pname { font-weight: 700; color: var(--ink-900); }
+ .b8-pteam { font-size: 11px; color: var(--sub); margin-left: auto; }
+
  /* ─── 再コール バッジ ─── */
  .call-badge {
    display: inline-flex; align-items: center; gap: 3px;
@@ -2096,8 +2110,6 @@ const A = {
    onClick: () => A.openWidgetEmbed(t) }, "サイト埋込ウィジェット"),
  h("button", { className: "btn btn-sm btn-ghost",
    onClick: () => A.downloadMatchCards(t) }, "対戦票 (審判用)"),
- h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => window.open(`/api/tournaments/${t.id}/awards.html`, "_blank") }, "表彰状 / 入賞者"),
  ),
  ),
  h("div", { className: "text-sm text-sub" },
@@ -6192,6 +6204,13 @@ const O = {
      O.teamRosterMap = map; O.teamRosterByEid = byEid;
    } catch (e) { /* 名簿取得失敗は非致命 (進行管理は継続) */ }
  }
+ // 各種目のベスト8。結果入力で変化するが、結果入力は非silent reload を伴うため非silent時に更新。
+ if (!silent || !O.best8) {
+   try {
+     const b = await api.get("/api/tournaments/" + O.tournamentId + "/best8");
+     O.best8 = (b && b.events) || [];
+   } catch (e) { /* 非致命 */ }
+ }
  try {
    // 再描画でスクロール位置が先頭に戻らないよう保持 (4秒ポーリング/対戦操作後も維持)
    const sc = O._opScrollEl();
@@ -6454,6 +6473,27 @@ const O = {
  ));
  });
  main.appendChild(recentCard);
+ }
+
+ // ── 各種目 ベスト8 (準々決勝進出者・常時表示) #208 ──
+ const best8 = O.best8 || [];
+ if (best8.length) {
+   const b8card = h("div", { className: "card" });
+   b8card.appendChild(h("div", { className: "card-head" },
+     h("div", { className: "card-title" }, "種目別 ベスト8"),
+     h("div", { className: "card-title-sub" }, "準々決勝進出者 (勝ち上がりで順次確定)")));
+   const grid = h("div", { className: "b8-grid" });
+   best8.forEach(ev => {
+     grid.appendChild(h("div", { className: "b8-event" },
+       h("div", { className: "b8-event-name" }, ev.event,
+         h("span", { className: "b8-count" }, ev.players.length + "/8")),
+       h("div", { className: "b8-players" },
+         ...ev.players.map(p => h("div", { className: "b8-player" },
+           h("span", { className: "b8-pname" }, p.name),
+           p.team ? h("span", { className: "b8-pteam" }, p.team) : null)))));
+   });
+   b8card.appendChild(grid);
+   main.appendChild(b8card);
  }
  },
 

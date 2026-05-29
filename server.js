@@ -572,105 +572,6 @@ app.get("/api/tournaments/:id/roster.html", (req, res) => {
   res.send(html);
 });
 
-// 表彰状 + 入賞者一覧 (印刷用HTML → ブラウザでPDF印刷) #204
-app.get("/api/tournaments/:id/awards.html", (req, res) => {
-  const t = db.getTournament(req.params.id);
-  if (!t) return res.status(404).type("html").send("<h1>大会が見つかりません</h1>");
-  const placements = db.getAllPlacements(req.params.id).filter(p => p.complete);
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.setHeader("Cache-Control", "no-store");
-  res.send(buildAwardsHTML(t, placements));
-});
-
-function buildAwardsHTML(t, placements) {
-  const esc = _escHtml;
-  const fmtDate = (d) => {
-    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || ""));
-    return m ? `${m[1]}年${parseInt(m[2])}月${parseInt(m[3])}日` : esc(d || "");
-  };
-  const dateStr = fmtDate(t.date);
-  const host = "釧路卓球協会";
-  // 一覧行 + 賞状カードのデータ
-  const rows = placements.map(p =>
-    `<tr><td class="ev">${esc(p.event)}</td>`
-    + `<td>${esc(p.first || "—")}${p.first_team ? `<span class="tm">${esc(p.first_team)}</span>` : ""}</td>`
-    + `<td>${esc(p.second || "—")}${p.second_team ? `<span class="tm">${esc(p.second_team)}</span>` : ""}</td>`
-    + `<td>${(p.thirds && p.thirds.length) ? p.thirds.map(esc).join("、") : "—"}</td></tr>`
-  ).join("");
-
-  const awards = [];
-  placements.forEach(p => {
-    if (p.first) awards.push({ event: p.event, place: "優勝", name: p.first });
-    if (p.second) awards.push({ event: p.event, place: "準優勝", name: p.second });
-    (p.thirds || []).forEach(n => awards.push({ event: p.event, place: "第3位", name: n }));
-  });
-  const certs = awards.map(a => `
-    <section class="cert">
-      <div class="cert-inner">
-        <div class="cert-title">表彰状</div>
-        <div class="cert-place">${esc(a.place)}</div>
-        <div class="cert-name">${esc(a.name)} <span class="dono">殿</span></div>
-        <div class="cert-body">あなたは <b>${esc(t.name || "")}</b> ${esc(a.event)} において<br>
-          頭書のとおり優秀な成績を収められました<br>よってこれを賞します</div>
-        <div class="cert-foot"><div>${esc(dateStr)}</div><div class="host">${esc(host)}</div></div>
-      </div>
-    </section>`).join("");
-
-  const empty = !placements.length;
-  return `<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>表彰状 / 入賞者一覧 — ${esc(t.name || "")}</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:"Hiragino Mincho ProN","Yu Mincho",serif;color:#1a1a1a;background:#f4f4f5;padding:20px}
-  .wrap{max-width:760px;margin:0 auto}
-  .toolbar{display:flex;gap:10px;justify-content:flex-end;margin-bottom:14px}
-  .btn{font-family:sans-serif;border:1px solid #0d9488;background:#0d9488;color:#fff;border-radius:6px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer}
-  .btn.ghost{background:#fff;color:#0d9488}
-  .summary{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:22px 24px;margin-bottom:20px}
-  .summary h1{font-size:20px;font-weight:800;margin-bottom:2px;font-family:sans-serif}
-  .summary .meta{font-family:sans-serif;font-size:12px;color:#64748b;margin-bottom:14px}
-  table{width:100%;border-collapse:collapse;font-size:14px}
-  th,td{border:1px solid #cbd5e1;padding:8px 10px;text-align:center}
-  th{background:#0f766e;color:#fff;font-family:sans-serif;font-size:12px}
-  td.ev{text-align:left;font-weight:700;background:#f8fafc}
-  .tm{display:block;font-size:10px;color:#64748b;font-family:sans-serif}
-  .empty{font-family:sans-serif;color:#64748b;padding:30px;text-align:center}
-  /* 賞状: 1枚=1ページ */
-  .cert{background:#fff;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:18px;padding:14px}
-  .cert-inner{border:3px double #b45309;padding:34px 40px;text-align:center;min-height:360px;display:flex;flex-direction:column;justify-content:center}
-  .cert-title{font-size:34px;font-weight:800;letter-spacing:.5em;text-indent:.5em;margin-bottom:18px}
-  .cert-place{display:inline-block;align-self:center;font-size:18px;font-weight:800;color:#b45309;border:2px solid #b45309;border-radius:999px;padding:4px 22px;margin-bottom:22px}
-  .cert-name{font-size:30px;font-weight:800;margin-bottom:26px;border-bottom:1px solid #cbd5e1;display:inline-block;align-self:center;padding:0 24px 8px}
-  .cert-name .dono{font-size:18px;font-weight:500;margin-left:8px}
-  .cert-body{font-size:15px;line-height:2.1;margin-bottom:30px}
-  .cert-foot{display:flex;justify-content:space-between;align-items:flex-end;font-size:15px;padding:0 10px}
-  .cert-foot .host{font-size:18px;font-weight:800}
-  @media print{
-    body{background:#fff;padding:0}
-    .toolbar{display:none}
-    .summary{border:none;border-radius:0;page-break-after:always}
-    .cert{border:none;border-radius:0;margin:0;padding:0;page-break-after:always}
-    .cert-inner{min-height:90vh}
-  }
-</style></head><body>
-<div class="wrap">
-  <div class="toolbar">
-    <button class="btn" onclick="window.print()">印刷 / PDF保存</button>
-    <button class="btn ghost" onclick="window.close()">閉じる</button>
-  </div>
-  <div class="summary">
-    <h1>入賞者一覧</h1>
-    <div class="meta">${esc(t.name || "")}${t.venue ? " ・ " + esc(t.venue) : ""}${dateStr ? " ・ " + esc(dateStr) : ""}　主催: ${esc(host)}</div>
-    ${empty
-      ? `<div class="empty">まだ確定した入賞者がありません。<br>各種目の決勝が終了すると自動で表示されます。</div>`
-      : `<table><thead><tr><th>種目</th><th>優勝</th><th>準優勝</th><th>第3位</th></tr></thead><tbody>${rows}</tbody></table>`}
-  </div>
-  ${certs}
-</div>
-</body></html>`;
-}
-
 function _escHtml(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -1627,6 +1528,11 @@ app.get("/api/tournaments/:id/operations", (req, res) => {
 // メンバー名のみ返却 (連絡先などの PII は含めない)。
 app.get("/api/tournaments/:id/team-rosters", (req, res) => {
   res.json({ rosters: db.getTeamRosters(req.params.id) });
+});
+
+// 各種目のベスト8 (準々決勝進出者・氏名+所属) — 進行管理で常時表示 #208
+app.get("/api/tournaments/:id/best8", (req, res) => {
+  res.json({ events: db.getAllBest8(req.params.id) });
 });
 
 // ─── DB スナップショット (試合中の自動バックアップ + 手動保存/復元) ───────────

@@ -4605,39 +4605,37 @@ function undoLastOp(tournamentId) {
   return { ok: true, summary: row.summary, action: row.action, match_ids: matchIds };
 }
 
-// ─── 順位判定 (表彰状/入賞者一覧用) ───────────────────────────
-// 決勝の勝者=優勝, 敗者=準優勝, 準決勝の敗者=第3位(ベスト4の2名)。
-function getEventPlacements(tournamentId, event) {
+// ─── ベスト8 (準々決勝進出者) ───────────────────────────
+// 準々決勝 = ちょうど4試合のラウンド (8名)。その両選手=ベスト8。勝ち上がりで順次埋まる。
+// 8名未満の小規模種目は最初のラウンドの全選手 (最大8名)。氏名+所属を返す。
+function getEventBest8(tournamentId, event) {
   const ms = sqlite.prepare(
-    `SELECT * FROM matches WHERE tournament_id=? AND event=? ORDER BY bracket_round DESC, bracket_pos ASC`
+    `SELECT * FROM matches WHERE tournament_id=? AND event=? ORDER BY bracket_round ASC, bracket_pos ASC`
   ).all(tournamentId, event);
-  if (!ms.length) return null;
-  const maxRound = Math.max(0, ...ms.map(m => m.bracket_round || 0));
+  if (!ms.length) return { event, players: [] };
   const clean = (n) => (n && n !== "BYE") ? n : "";
-  if (maxRound < 1) return { event, complete: false, first: "", second: "", thirds: [] };
-  const finalM = ms.find(m => (m.bracket_round || 0) === maxRound && m.status === "completed"
-                   && m.winner_name && m.winner_name !== "BYE")
-    || ms.find(m => (m.bracket_round || 0) === maxRound);
-  const complete = !!(finalM && finalM.status === "completed" && clean(finalM.winner_name));
-  const thirds = [];
-  if (maxRound >= 2) {
-    ms.filter(m => (m.bracket_round || 0) === maxRound - 1 && m.status === "completed")
-      .forEach(m => { const l = clean(m.loser_name); if (l) thirds.push(l); });
-  }
-  return {
-    event, complete,
-    first: complete ? clean(finalM.winner_name) : "",
-    second: complete ? clean(finalM.loser_name) : "",
-    first_team: complete ? clean(finalM.winner_team) : "",
-    second_team: complete ? clean(finalM.loser_team) : "",
-    thirds,
+  const byRound = {};
+  ms.forEach(m => { const r = m.bracket_round || 0; (byRound[r] = byRound[r] || []).push(m); });
+  const rounds = Object.keys(byRound).map(Number).sort((a, b) => a - b);
+  const qfRound = rounds.find(r => byRound[r].length === 4);
+  const players = [];
+  const seen = new Set();
+  const push = (name, team) => {
+    const n = clean(name); if (!n) return;
+    const key = n + "|" + (team || ""); if (seen.has(key)) return; seen.add(key);
+    players.push({ name: n, team: team || "" });
   };
+  const src = qfRound != null ? byRound[qfRound] : (byRound[rounds[0]] || []);
+  src.slice().sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0)).forEach(m => {
+    push(m.player1_name, m.player1_team); push(m.player2_name, m.player2_team);
+  });
+  return { event, players: players.slice(0, 8) };
 }
-function getAllPlacements(tournamentId) {
+function getAllBest8(tournamentId) {
   const events = sqlite.prepare(
     `SELECT DISTINCT event FROM matches WHERE tournament_id=? AND event<>'' ORDER BY event`
   ).all(tournamentId).map(r => r.event);
-  return events.map(ev => getEventPlacements(tournamentId, ev)).filter(Boolean);
+  return events.map(ev => getEventBest8(tournamentId, ev)).filter(x => x.players.length);
 }
 // スナップショットから復元 (破壊的)。現状の安全網スナップを取ってから DB を差し替える。
 // 差し替え後は sqlite ハンドルを閉じるため、呼び出し側はプロセスを再起動すること。
@@ -4696,8 +4694,8 @@ module.exports = {
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, hasOngoingTournament,
   // 操作ログ + Undo
   snapshotMatchRows, recordOp, getOpLog, undoLastOp,
-  // 順位判定 (表彰状/入賞者)
-  getEventPlacements, getAllPlacements,
+  // ベスト8 (準々決勝進出者)
+  getEventBest8, getAllBest8,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,
