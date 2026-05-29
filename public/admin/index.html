@@ -453,7 +453,11 @@
  background: #e7eef4; border: 2px solid var(--border-strong);
  border-radius: var(--radius); padding: 14px;
  margin-bottom: 14px; overflow-x: visible;   /* 左寄せ・横スクロール無し */
+ display: flex; flex-direction: column; gap: 10px;   /* 本部バナーの配置用 #280 */
  }
+ .court-wrap > .court-grid { flex: 1 1 auto; min-width: 0; }
+ /* 本部=左/右: 横並び + 縦帯バナー #280 */
+ .court-wrap-hq-left, .court-wrap-hq-right { flex-direction: row; align-items: stretch; }
  .court-grid {
  display: grid; gap: 8px;
  margin: 0; width: 100%;                       /* 左寄せ + 横幅いっぱい */
@@ -535,8 +539,13 @@
    .court-cell-match .cc-name { font-size: 14px; }
  }
  .court-hq {
- margin-top: 10px; padding: 10px; background: var(--pri); color: #fff;
+ padding: 10px; background: var(--pri); color: #fff;
  border-radius: 6px; text-align: center; font-weight: 700; font-size: 13px;
+ }
+ /* 左右の本部=縦帯 (「本部」を縦書きで表示) #280 */
+ .court-hq-left, .court-hq-right {
+ width: 44px; min-width: 44px; display: flex; align-items: center; justify-content: center;
+ writing-mode: vertical-rl; text-orientation: upright; letter-spacing: .35em;
  }
 
  /* 呼べる対戦リスト */
@@ -7349,9 +7358,12 @@ const O = {
  });
 
  wrap.appendChild(grid);
- if (hq_position === "bottom") {
- wrap.appendChild(h("div", { className: "court-hq", style: { width: "100%" } }, "本部"));
- }
+ // 本部バナー: 上/下=横帯、左/右=縦帯 #280
+ const hq = hq_position || "bottom";
+ wrap.classList.add("court-wrap-hq-" + hq);
+ const hqEl = h("div", { className: "court-hq court-hq-" + hq }, "本部");
+ if (hq === "top" || hq === "left") wrap.insertBefore(hqEl, grid);
+ else wrap.appendChild(hqEl);
  // 経過時間の1分カウントアップ開始 (#218)
  requestAnimationFrame(() => { if (TT.startElapsedTicker) TT.startElapsedTicker(); });
  // 凡例
@@ -8959,22 +8971,36 @@ const O = {
  h("select", { className: "input", id: "lyHq" },
  h("option", { value: "bottom", selected: hq_position === "bottom" ? "" : null }, "下"),
  h("option", { value: "top", selected: hq_position === "top" ? "" : null }, "上"),
+ h("option", { value: "left", selected: hq_position === "left" ? "" : null }, "左"),
+ h("option", { value: "right", selected: hq_position === "right" ? "" : null }, "右"),
  )),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "コート番号の振り方"),
  h("select", { className: "input", id: "lyOrigin" },
  h("option", { value: "bottom-right",
  selected: (O.state.tournament.numbering_origin || "bottom-right") === "bottom-right" ? "" : null },
- "右下から1番 (左へ上へ折返) 卓球協会 標準"),
+ "右下から1番 (左へ→上へ折返) 卓球協会 標準"),
  h("option", { value: "bottom-left",
  selected: O.state.tournament.numbering_origin === "bottom-left" ? "" : null },
- "左下から1番"),
+ "左下から1番 (右へ→上へ折返)"),
  h("option", { value: "top-right",
  selected: O.state.tournament.numbering_origin === "top-right" ? "" : null },
  "右上から1番"),
  h("option", { value: "top-left",
  selected: O.state.tournament.numbering_origin === "top-left" ? "" : null },
  "左上から1番"),
+ h("option", { value: "bottom-right-snake",
+ selected: O.state.tournament.numbering_origin === "bottom-right-snake" ? "" : null },
+ "右下から蛇行 (行ごと反転・歩行最短)"),
+ h("option", { value: "bottom-left-snake",
+ selected: O.state.tournament.numbering_origin === "bottom-left-snake" ? "" : null },
+ "左下から蛇行"),
+ h("option", { value: "col-top-left",
+ selected: O.state.tournament.numbering_origin === "col-top-left" ? "" : null },
+ "左上から縦 (列優先・本部が左右向き)"),
+ h("option", { value: "col-bottom-right",
+ selected: O.state.tournament.numbering_origin === "col-bottom-right" ? "" : null },
+ "右下から縦 (列優先)"),
  )),
  ),
  h("div", { className: "text-sm text-sub" },

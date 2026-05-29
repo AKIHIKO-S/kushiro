@@ -3320,6 +3320,22 @@ function getOperationState(tournamentId) {
         case "top-right":
           table_no = (r - 1) * cols + (cols - c + 1);
           break;
+        case "bottom-right-snake": { // 蛇行: 右下開始・行ごとに向き反転 (歩行距離が最短)
+          const br = rows - r;        // 0 = 最下行
+          table_no = br * cols + (br % 2 === 0 ? (cols - c + 1) : c);
+          break;
+        }
+        case "bottom-left-snake": {  // 蛇行: 左下開始
+          const br = rows - r;
+          table_no = br * cols + (br % 2 === 0 ? c : (cols - c + 1));
+          break;
+        }
+        case "col-top-left":         // 列優先(縦): 左上開始・各列を上→下
+          table_no = (c - 1) * rows + r;
+          break;
+        case "col-bottom-right":     // 列優先(縦): 右下開始・右列から・各列 下→上
+          table_no = (cols - c) * rows + (rows - r + 1);
+          break;
         case "top-left":
         default:
           table_no = (r - 1) * cols + c;
