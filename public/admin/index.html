@@ -8551,9 +8551,12 @@ const O = {
  const foot = h("button", { className: "btn btn-ghost",
    onClick: () => modalBg.remove() }, "閉じる");
  const modalBg = openModal("トーナメント表 (ビジュアル)", body, foot);
- // モーダルをほぼ全画面に拡大 (#194: 小さすぎる問題を解消)
+ // モーダルを画面いっぱいに拡大 (PC想定・上限撤廃で広いモニタをフル活用) #283
  const box = modalBg.querySelector(".modal-box");
- if (box) { box.style.width = "97vw"; box.style.maxWidth = "1600px"; box.style.height = "94vh"; }
+ if (box) {
+   box.style.width = "99vw"; box.style.maxWidth = "none"; box.style.height = "96vh";
+   const mb = box.querySelector(".modal-body"); if (mb) mb.style.padding = "8px";
+ }
  reload();
  },
 
