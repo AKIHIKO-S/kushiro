@@ -705,151 +705,255 @@ function _escHtml(s) {
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+// 名簿用 支部ヘルパ (common.js と同一ロジックをサーバ側に複製し、印刷HTMLを自己完結に保つ) #273
+const _HOKKAIDO_BRANCHES = ["札幌","函館","旭川","釧路","十勝","千歳","苫小牧","江別","室蘭","名寄","根室","後志","滝川","北見","岩見沢","留萌","日高","稚内","紋別","小樽","深川","網走","富良野","斜里"];
+function _branchBase(raw) {
+  let s = String(raw == null ? "" : raw).trim();
+  if (!s) return null;
+  s = s.replace(/[\s　]+/g, "");
+  const base = s.replace(/管内/g, "").replace(/(卓球)?(協会|連盟|クラブ|協議会)$/g, "").replace(/支部$/g, "").trim();
+  if (_HOKKAIDO_BRANCHES.includes(base)) return base;
+  for (const b of _HOKKAIDO_BRANCHES) { if (s.indexOf(b) === 0) return b; }
+  return null;
+}
+function _officialBranch(raw) { const b = _branchBase(raw); return b ? b + "支部" : ""; }
+function _branchColor(raw) {
+  const base = _branchBase(raw);
+  if (base == null) return { bg: "#f1f5f9", fg: "#64748b" };
+  const idx = _HOKKAIDO_BRANCHES.indexOf(base);
+  const hue = Math.round(idx * 137.508) % 360;
+  const sat = 64 + (idx % 3) * 6;
+  const light = 90 + (idx % 2) * 3;
+  return { bg: `hsl(${hue}, ${sat}%, ${light}%)`, fg: `hsl(${hue}, ${Math.min(sat + 10, 88)}%, 30%)` };
+}
+
 function buildRosterHTML(data) {
   const t = data.tournament;
   const dateStr = t.date || "";
   const venue = t.venue || "";
-  // 重複セクション
+  // 支部の集計 (凡例 + 各行の色)
+  const branchSet = new Map();
+  let totalEntrants = 0;
+  data.events.forEach(ev => {
+    totalEntrants += ev.entrants.length;
+    ev.entrants.forEach(e => {
+      const label = _officialBranch(e.region) || _officialBranch(e.team);
+      if (label && !branchSet.has(label)) branchSet.set(label, _branchColor(e.region || e.team));
+    });
+  });
+  const legend = Array.from(branchSet.entries())
+    .sort((a, b) => a[0].localeCompare(b[0], "ja"))
+    .map(([name, c]) => `<span class="lg" style="background:${c.bg};color:${c.fg}">${_escHtml(name)}</span>`).join("");
+
+  // 重複セクション (複数種目にエントリーしている選手)
   const dupSection = data.duplicates.length
     ? `<section class="dup-section">
-      <h2>重複申込チェック (${data.duplicates.length}名)</h2>
+      <h2>重複出場チェック <span class="dc">${data.duplicates.length}名</span></h2>
       <p class="dup-note">複数種目にエントリーしている選手 (要確認):</p>
       <table class="dup-table">
         <thead><tr><th>選手名</th><th>所属</th><th>出場種目</th></tr></thead>
-        <tbody>${data.duplicates.map(d => `
-          <tr>
-            <td>${_escHtml(d.name)}</td>
-            <td>${_escHtml(d.team)}</td>
-            <td>${d.events.map(e => `<span class="ev-tag">${_escHtml(e)}</span>`).join("")}</td>
-          </tr>`).join("")}
-        </tbody>
+        <tbody>${data.duplicates.map(d => `<tr><td>${_escHtml(d.name)}</td><td>${_escHtml(d.team)}</td><td>${d.events.map(e => `<span class="ev-tag">${_escHtml(e)}</span>`).join("")}</td></tr>`).join("")}</tbody>
       </table>
     </section>`
-    : `<section class="dup-section ok">
-      <h2>重複申込チェック</h2>
-      <p>重複申込はありません ✓</p>
-    </section>`;
+    : `<section class="dup-section ok"><h2>重複出場チェック</h2><p>複数種目への重複申込はありません。</p></section>`;
 
-  // 種目別シート
-  const eventSections = data.events.map(ev => {
+  // 種目タブ
+  const eventTabs = data.events.map((ev, i) =>
+    `<button class="tab" data-ev="${i}" onclick="pickEv('${i}',this)">${_escHtml(ev.name)} <b>${ev.count}</b></button>`).join("");
+
+  // 種目別 名簿 (支部色分け・ふりがな・男女属性つき)
+  const eventSections = data.events.map((ev, i) => {
     const rows = ev.entrants.map(e => {
-      const num = `<td class="no">${e.no}</td>`;
+      const dup = (e.dup_self || e.dup_partner) ? "1" : "0";
+      const brLabel = _officialBranch(e.region) || _officialBranch(e.team);
+      const brColor = _branchColor(e.region || e.team);
+      const brBadge = brLabel ? `<span class="br" style="background:${brColor.bg};color:${brColor.fg}">${_escHtml(brLabel)}</span>` : "";
+      const bar = `border-left:4px solid ${brColor.bg};`;
+      const attrs = `data-gender="${e.gender}" data-dup="${dup}" data-furi="${_escHtml(e.furigana || "")}" data-no="${e.no}"`;
       if (e.is_doubles) {
-        return `<tr${e.dup_self || e.dup_partner ? ' class="dup"' : ""}>
-          ${num}
-          <td class="name${e.dup_self ? " dup-cell" : ""}">${_escHtml(e.name)}</td>
-          <td class="name${e.dup_partner ? " dup-cell" : ""}">${_escHtml(e.partner_name)}</td>
-          <td class="team">(${_escHtml(e.team)})</td>
-          <td class="team">(${_escHtml(e.partner_team)})</td>
+        return `<tr ${attrs} style="${bar}">
+          <td class="no">${e.no}</td>
+          <td class="nm"><div class="${e.dup_self ? "d" : ""}">${_escHtml(e.name)}${e.furigana ? `<span class="fr">${_escHtml(e.furigana)}</span>` : ""}</div><div class="${e.dup_partner ? "d" : ""}">${_escHtml(e.partner_name)}${e.partner_furigana ? `<span class="fr">${_escHtml(e.partner_furigana)}</span>` : ""}</div></td>
+          <td class="tm"><div>${_escHtml(e.team)}</div><div>${_escHtml(e.partner_team)}</div></td>
+          <td class="brc">${brBadge}</td>
         </tr>`;
       }
-      return `<tr${e.dup_self ? ' class="dup"' : ""}>
-        ${num}
-        <td class="name${e.dup_self ? " dup-cell" : ""}" colspan="2">${_escHtml(e.name)}</td>
-        <td class="team" colspan="2">(${_escHtml(e.team)})</td>
+      return `<tr ${attrs} style="${bar}">
+        <td class="no">${e.no}</td>
+        <td class="nm"><div class="${e.dup_self ? "d" : ""}">${_escHtml(e.name)}${e.furigana ? `<span class="fr">${_escHtml(e.furigana)}</span>` : ""}</div></td>
+        <td class="tm">${_escHtml(e.team)}</td>
+        <td class="brc">${brBadge}</td>
       </tr>`;
     }).join("");
-    return `<section class="event-section">
-      <h3>${_escHtml(ev.name)} <span class="count">(${ev.count}名${ev.type === "double" ? "組" : ""})</span></h3>
-      <table class="roster-table">${rows}</table>
+    return `<section class="event-section" data-ev="${i}">
+      <h3>${_escHtml(ev.name)} <span class="count">${ev.count}${ev.type === "double" ? "組" : "名"}</span></h3>
+      <table class="roster-table"><thead><tr><th class="no">No</th><th>氏名（ふりがな）</th><th>所属</th><th class="brc">支部</th></tr></thead><tbody>${rows}</tbody></table>
     </section>`;
   }).join("");
 
+  const outDate = new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" });
   return `<!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8">
-<title>${_escHtml(t.name)} - 重複管理表 (名簿)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${_escHtml(t.name)} 名簿</title>
 <style>
-  @page { size: A4; margin: 14mm; }
+  @import url('https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: "Hiragino Mincho ProN", "Yu Mincho", "Yu Gothic UI", system-ui, sans-serif;
-    color: #1c1917; background: #fff; padding: 16px;
+    font-family: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif;
+    color: #1c1917; background: #f1f5f9; padding: 16px 16px 60px;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
-  header {
-    text-align: right; margin-bottom: 24px; padding-bottom: 14px;
-    border-bottom: 2px solid #b91c1c;
+  .topbar { position: fixed; top: 10px; right: 12px; display: flex; gap: 8px; z-index: 30; }
+  .topbar button { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 700; }
+  .topbar .pr { background: #0f766e; color: #fff; }
+  .topbar .cl { background: #fff; color: #334155; border: 1px solid #cbd5e1; }
+  header.hd {
+    background: linear-gradient(135deg, #1e293b 0%, #0f766e 100%);
+    color: #fff; border-radius: 12px; padding: 16px 20px; margin-bottom: 14px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.12);
   }
-  header h1 { font-size: 18px; margin-bottom: 4px; }
-  header .meta { font-size: 12px; color: #57534e; }
+  header.hd .assoc { font-size: 12px; letter-spacing: .14em; opacity: .85; }
+  header.hd h1 { font-size: 22px; font-weight: 700; margin: 2px 0 4px; }
+  header.hd .meta { font-size: 12.5px; opacity: .9; }
+  header.hd .chips { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+  header.hd .chip { background: rgba(255,255,255,.16); border-radius: 999px; padding: 3px 12px; font-size: 12px; font-weight: 700; }
 
-  .dup-section {
-    margin-bottom: 20px; padding: 12px 14px;
-    background: #fef3c7; border-left: 4px solid #d97706;
-    border-radius: 4px;
+  .controls {
+    position: sticky; top: 0; z-index: 20; background: #fff; border-radius: 10px;
+    padding: 10px 12px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    display: flex; flex-direction: column; gap: 8px;
   }
-  .dup-section.ok {
-    background: #f0fdf4; border-left-color: #15803d;
+  .ctl-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .ctl-label { font-size: 11px; font-weight: 700; color: #64748b; margin-right: 2px; }
+  .tab, .gtab, .stab {
+    padding: 5px 11px; border: 1px solid #cbd5e1; background: #fff; color: #334155;
+    border-radius: 999px; cursor: pointer; font-family: inherit; font-size: 12px;
   }
+  .tab b { color: #0f766e; margin-left: 3px; }
+  .tab.on, .gtab.on, .stab.on { background: #0f766e; color: #fff; border-color: #0f766e; }
+  .tab.on b { color: #d1fae5; }
+  .dup-toggle { font-size: 12px; color: #334155; display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px; }
+  .legend .lg { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; font-weight: 700; }
+
+  .dup-section { margin-bottom: 14px; padding: 12px 14px; background: #fffbeb; border: 1px solid #fde68a; border-left: 5px solid #d97706; border-radius: 8px; }
+  .dup-section.ok { background: #f0fdf4; border-color: #bbf7d0; border-left-color: #15803d; }
   .dup-section h2 { font-size: 14px; margin-bottom: 6px; color: #78350f; }
+  .dup-section .dc { background: #d97706; color: #fff; border-radius: 999px; font-size: 11px; padding: 1px 9px; margin-left: 4px; }
   .dup-section.ok h2 { color: #14532d; }
   .dup-note { font-size: 12px; margin-bottom: 8px; color: #78716c; }
   .dup-table { width: 100%; border-collapse: collapse; font-size: 12px; background: #fff; }
-  .dup-table th, .dup-table td {
-    padding: 6px 8px; border: 1px solid #e7e5e4; text-align: left;
-  }
-  .dup-table th { background: #f5f5f4; font-weight: bold; }
-  .ev-tag {
-    display: inline-block; padding: 1px 6px; margin: 1px 3px 1px 0;
-    background: #fee2e2; border-radius: 3px; font-size: 11px; color: #7c2d12;
-  }
+  .dup-table th, .dup-table td { padding: 6px 8px; border: 1px solid #e7e5e4; text-align: left; }
+  .dup-table th { background: #f5f5f4; font-weight: 700; }
+  .ev-tag { display: inline-block; padding: 1px 7px; margin: 1px 3px 1px 0; background: #fee2e2; border-radius: 999px; font-size: 11px; color: #7c2d12; }
 
-  .event-section {
-    margin-bottom: 18px; page-break-inside: avoid;
-  }
-  .event-section h3 {
-    font-size: 14px; padding: 6px 10px;
-    background: linear-gradient(to right, #fef9c3, #fef3c7);
-    border-left: 5px solid #b91c1c;
-    margin-bottom: 6px;
-  }
-  .event-section h3 .count {
-    font-size: 11px; color: #57534e; font-weight: normal; margin-left: 6px;
-  }
-  .roster-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .roster-table tr { page-break-inside: avoid; }
-  .roster-table td {
-    padding: 5px 8px; border-bottom: 1px solid #e7e5e4;
-    vertical-align: middle;
-  }
-  .roster-table tr.dup { background: #fef3c7; }
-  .roster-table .no {
-    width: 36px; text-align: center; font-weight: bold;
-    color: #7c2d12; font-family: "Hiragino Sans", system-ui, sans-serif;
-  }
-  .roster-table .name { font-weight: bold; }
-  .roster-table .name.dup-cell { color: #b91c1c; }
-  .roster-table .name.dup-cell::before { content: "● "; font-size: 10px; }
-  .roster-table .team { color: #78716c; font-size: 12px; }
+  .events { }
+  .event-section { margin-bottom: 14px; background: #fff; border-radius: 8px; padding: 8px 10px 4px; box-shadow: 0 1px 3px rgba(0,0,0,.06); break-inside: avoid; }
+  .event-section h3 { font-size: 14px; padding: 4px 4px 6px; border-bottom: 2px solid #0f766e; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: baseline; }
+  .event-section h3 .count { font-size: 11px; color: #fff; background: #0f766e; border-radius: 999px; padding: 1px 9px; font-weight: 700; }
+  .roster-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .roster-table thead th { font-size: 10.5px; color: #64748b; text-align: left; padding: 2px 6px; border-bottom: 1px solid #e2e8f0; font-weight: 700; }
+  .roster-table tbody tr { border-bottom: 1px solid #f1f5f9; }
+  .roster-table tbody tr[data-dup="1"] { background: #fffbeb; }
+  .roster-table td { padding: 4px 6px; vertical-align: middle; }
+  .roster-table .no { width: 34px; text-align: center; font-weight: 700; color: #0f766e; }
+  .roster-table .nm { font-weight: 700; }
+  .roster-table .nm .fr { font-weight: 400; font-size: 10px; color: #94a3b8; margin-left: 5px; }
+  .roster-table .nm .d { color: #b91c1c; }
+  .roster-table .nm .d::before { content: "● "; font-size: 8px; vertical-align: 2px; }
+  .roster-table .tm { color: #64748b; font-size: 11px; }
+  .roster-table .brc { width: 76px; text-align: right; }
+  .roster-table .br { font-size: 10px; padding: 1px 7px; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+  .empty { text-align: center; padding: 40px; color: #a8a29e; }
 
-  .toolbar {
-    position: fixed; top: 12px; right: 12px;
-    display: flex; gap: 8px;
+  @media print {
+    body { background: #fff; padding: 0; }
+    .topbar, .controls { display: none !important; }
+    header.hd { box-shadow: none; border-radius: 0; }
+    .events { column-count: 2; column-gap: 9mm; }
+    .event-section { box-shadow: none; border: 1px solid #e2e8f0; margin-bottom: 8px; }
+    .roster-table tr { break-inside: avoid; }
+    @page { size: A4; margin: 11mm; }
   }
-  .toolbar button {
-    padding: 6px 14px; border: 1px solid #d6d3d1;
-    background: #fff; border-radius: 4px; cursor: pointer;
-    font-family: inherit; font-size: 12px;
-  }
-  .toolbar button:hover { background: #fafaf9; }
-  @media print { .toolbar { display: none !important; } }
 </style></head><body>
-<div class="toolbar">
-  <button onclick="window.print()">印刷</button>
-  <button onclick="window.close()">閉じる</button>
+<div class="topbar">
+  <button class="pr" onclick="window.print()">印刷 / PDF</button>
+  <button class="cl" onclick="window.close()">閉じる</button>
 </div>
-<header>
-  <div class="meta">釧路卓球協会</div>
-  <h1>${_escHtml(t.name)}</h1>
-  <div class="meta">
-    ${dateStr ? "日時: " + _escHtml(dateStr) : ""}
-    ${venue ? " / 会場: " + _escHtml(venue) : ""}
-    / 出力: ${new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" })}
-  </div>
+<header class="hd">
+  <div class="assoc">KUSHIRO TABLE TENNIS ASSOCIATION</div>
+  <h1>${_escHtml(t.name)} 名簿</h1>
+  <div class="meta">${dateStr ? _escHtml(dateStr) : ""}${venue ? "　/　" + _escHtml(venue) : ""}　/　出力: ${outDate}</div>
+  <div class="chips"><span class="chip">${data.events.length} 種目</span><span class="chip">${totalEntrants} 件</span>${data.duplicates.length ? `<span class="chip">重複 ${data.duplicates.length} 名</span>` : ""}</div>
 </header>
+<div class="controls">
+  <div class="ctl-row"><span class="ctl-label">種目</span><button class="tab on" data-ev="all" onclick="pickEv('all',this)">全種目</button>${eventTabs}</div>
+  <div class="ctl-row">
+    <span class="ctl-label">性別</span>
+    <button class="gtab on" onclick="pickGender('all',this)">全</button>
+    <button class="gtab" onclick="pickGender('male',this)">男子</button>
+    <button class="gtab" onclick="pickGender('female',this)">女子</button>
+    <span class="ctl-label" style="margin-left:8px">並び</span>
+    <button class="stab on" onclick="setSort('no',this)">番号順</button>
+    <button class="stab" onclick="setSort('furi',this)">ふりがな順</button>
+    <label class="dup-toggle"><input type="checkbox" onchange="toggleDup(this)"> 重複のみ</label>
+  </div>
+  ${legend ? `<div class="ctl-row"><span class="ctl-label">支部</span><div class="legend">${legend}</div></div>` : ""}
+</div>
 ${dupSection}
-${eventSections || '<p style="text-align:center;padding:40px;color:#a8a29e;">エントリーがまだありません</p>'}
+<div class="events">
+${eventSections || '<p class="empty">エントリーがまだありません</p>'}
+</div>
+<script>
+(function(){
+  var st = { ev: "all", gender: "all", dupOnly: false, sort: "no" };
+  function secs(){ return Array.prototype.slice.call(document.querySelectorAll(".event-section")); }
+  function apply(){
+    secs().forEach(function(sec){
+      var evOk = (st.ev === "all") || (sec.getAttribute("data-ev") === st.ev);
+      if (!evOk) { sec.style.display = "none"; return; }
+      var vis = 0;
+      Array.prototype.slice.call(sec.querySelectorAll("tbody tr")).forEach(function(tr){
+        var gOk = (st.gender === "all") || (tr.getAttribute("data-gender") === st.gender);
+        var dOk = (!st.dupOnly) || (tr.getAttribute("data-dup") === "1");
+        var show = gOk && dOk;
+        tr.style.display = show ? "" : "none";
+        if (show) vis++;
+      });
+      sec.style.display = vis > 0 ? "" : "none";
+    });
+  }
+  window.pickEv = function(v, btn){
+    st.ev = String(v);
+    document.querySelectorAll(".tab").forEach(function(b){ b.classList.toggle("on", b.getAttribute("data-ev") === st.ev); });
+    apply();
+  };
+  window.pickGender = function(g, btn){
+    st.gender = g;
+    document.querySelectorAll(".gtab").forEach(function(b){ b.classList.remove("on"); });
+    if (btn) btn.classList.add("on");
+    apply();
+  };
+  window.toggleDup = function(cb){ st.dupOnly = cb.checked; apply(); };
+  window.setSort = function(mode, btn){
+    st.sort = mode;
+    document.querySelectorAll(".stab").forEach(function(b){ b.classList.remove("on"); });
+    if (btn) btn.classList.add("on");
+    secs().forEach(function(sec){
+      var tb = sec.querySelector("tbody"); if (!tb) return;
+      var rows = Array.prototype.slice.call(tb.querySelectorAll("tr"));
+      rows.sort(function(a, b){
+        if (mode === "furi") return (a.getAttribute("data-furi") || "").localeCompare(b.getAttribute("data-furi") || "", "ja");
+        return (parseInt(a.getAttribute("data-no")) || 9999) - (parseInt(b.getAttribute("data-no")) || 9999);
+      });
+      rows.forEach(function(r){ tb.appendChild(r); });
+    });
+  };
+})();
+</script>
 </body></html>`;
 }
 

@@ -1744,6 +1744,10 @@ function buildRosterData(tournamentId) {
         is_doubles: !!e.is_doubles,
         status: e.status,
         seed: e.seed,
+        gender: e.gender || "",
+        furigana: e.furigana || "",
+        partner_furigana: e.partner_furigana || "",
+        region: e.region || "",
         dup_self: dups1,
         dup_partner: dups2,
       };
