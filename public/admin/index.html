@@ -4700,7 +4700,7 @@ const A = {
  ...levelOpts.map(([v, l]) =>
  h("option", { value: v, selected: (t.level || "district") === v ? "" : null }, l))),
  h("div", { className: "text-xs text-sub", style: { marginTop: "3px" } },
- "全道/全国は選手DBの戦績がレベル別に記録されます")),
+ "全道/全国は選手DBの戦績に反映されません（独立運用・大会内では通常どおり進行）")),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "会場"),
  h("input", { className: "input", id: "etVenue", value: t.venue || "" })),
@@ -6209,8 +6209,9 @@ const O = {
  }
  O._lastOpsVer = undefined;
  O.reload();
- // 自動更新 (4秒): 軽量な ops-version を見て、変化した時だけ全再描画 (毎回の全再描画を回避→高速化)
- O.poller = setInterval(() => O.tick(), 4000);
+ // 自動更新 (2秒): 軽量な ops-version を見て、変化した時だけ全再描画。
+ // 審判報告→本部の「承認待ち」表示が最大2秒で届く (管理は常にフレッシュ取得)。
+ O.poller = setInterval(() => O.tick(), 2000);
  },
 
  // 変化検知ティック (重い /operations 取得・再描画は変化時のみ)

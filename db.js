@@ -521,6 +521,7 @@ const stmts = {
     FROM matches m LEFT JOIN tournaments t ON m.tournament_id = t.id
     WHERE (m.winner_id = ? OR m.loser_id = ?)
       AND m.loser_name != 'BYE' AND m.winner_name != 'BYE' AND COALESCE(m.is_walkover,0) = 0
+      AND COALESCE(t.level,'district') NOT IN ('hokkaido','national')
     ORDER BY t.date DESC, m.round_order ASC, m.match_no ASC
   `),
   insertMatch: sqlite.prepare(`
@@ -628,7 +629,8 @@ function getPlayer(id) {
   return player;
 }
 
-// 選手の勝敗を大会レベル(地区/全道/全国)別に集計
+// 選手の勝敗を大会レベル(地区/オープン)別に集計。
+// 全道/全国(hokkaido/national)は「選手DBに反映しない独立運用」のため除外 (#227)。
 function getPlayerLevelStats(playerId) {
   const rows = sqlite.prepare(`
     SELECT COALESCE(t.level,'district') AS level,
@@ -639,6 +641,7 @@ function getPlayerLevelStats(playerId) {
     WHERE (m.winner_id = ? OR m.loser_id = ?)
       AND m.status='completed'
       AND m.winner_name != 'BYE' AND m.loser_name != 'BYE' AND COALESCE(m.is_walkover,0) = 0
+      AND COALESCE(t.level,'district') NOT IN ('hokkaido','national')
     GROUP BY COALESCE(t.level,'district')
   `).all(playerId, playerId, playerId, playerId);
   const out = {};
@@ -4785,11 +4788,15 @@ function setPendingResult(matchId, data) {
   const m = stmts.getMatch.get(matchId);
   if (!m) return { error: "試合が見つかりません" };
   if (m.status !== "on_table") return { error: "この試合は現在コートに入っていません" };
+  const clamp = (v) => Math.max(0, Math.min(99, parseInt(v) || 0));
   const payload = {
     winner_slot: data.winner_slot === 2 ? 2 : 1,
-    sets: Array.isArray(data.sets) ? data.sets : [],
-    winner_sets: parseInt(data.winner_sets) || 0,
-    loser_sets: parseInt(data.loser_sets) || 0,
+    // 審判入力をサニタイズ: 最大9セット・各[整数,整数]・0..99 にクランプ (不正入力/肥大化対策)
+    sets: (Array.isArray(data.sets) ? data.sets : []).slice(0, 9)
+      .filter(s => Array.isArray(s) && s.length === 2)
+      .map(s => [clamp(s[0]), clamp(s[1])]),
+    winner_sets: clamp(data.winner_sets),
+    loser_sets: clamp(data.loser_sets),
     winner_name: data.winner_slot === 2 ? m.player2_name : m.player1_name,
     loser_name: data.winner_slot === 2 ? m.player1_name : m.player2_name,
     by: data.by || "referee",

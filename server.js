@@ -1534,7 +1534,9 @@ function getCachedOperationState(tid) {
 }
 
 app.get("/api/tournaments/:id/operations", (req, res) => {
-  const state = getCachedOperationState(req.params.id);
+  // 管理(進行管理)は常にフレッシュ取得 (キャッシュ非経由)。
+  // 審判の報告→承認待ちが本部に即座に届くように。公開 /live はキャッシュ維持で負荷を抑える。
+  const state = db.getOperationState(req.params.id);
   if (!state) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(state);
 });
@@ -1793,7 +1795,10 @@ app.put("/api/admin/tournaments/:id/referee-input", requireAdmin, (req, res) => 
 });
 
 // 審判ビュー: 現在台に入っている試合 (PII除外・管理キー不要・トークンのみ)
-app.get("/api/ref/state", requireReferee, (req, res) => {
+// トークン漏洩時のスクレイピング/DoS 対策にレート制限 (正規の審判は12秒間隔ポーリング)。
+app.get("/api/ref/state",
+  rateLimit({ windowMs: 60000, max: 120, message: "リクエストが多すぎます。少し待って再試行してください。" }),
+  requireReferee, (req, res) => {
   const v = db.getRefereeView(req.refTournament.id);
   if (!v) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(v);

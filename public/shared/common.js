@@ -261,6 +261,10 @@
       if (rk === 4 && won) g.champ = true;
     });
     const recent = ms.slice(0, 10).map(m => (m.winner_id === pid ? "W" : "L")); // 新しい順 (queryがdate DESC)
+    // 対戦時間 (duration_sec: 呼出→結果入力)。0や異常値は除外。
+    const durs = ms.map(m => parseInt(m.duration_sec) || 0).filter(d => d > 0 && d < 24 * 3600);
+    const avgDur = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length) : 0;
+    const maxDur = durs.length ? Math.max.apply(null, durs) : 0;
     const total = wins + losses;
     const pctOf = (w, n) => (n ? Math.round((w / n) * 100) : 0);
     const setsTotal = setsWon + setsLost;
@@ -296,6 +300,7 @@
       avgWon: total ? (setsWon / total).toFixed(1) : "0", avgLost: total ? (setsLost / total).toFixed(1) : "0",
       fullSet: { w: fullW, l: fullL, total: fullTotal, rate: pctOf(fullW, fullTotal) },
       recent, streakCurrent: cur, streakLongest: longest,
+      avgDur, maxDur, durCount: durs.length,
       tournaments, events, months, h2h, byTime, rounds, branches,
     };
   }
@@ -325,7 +330,9 @@
       tile(st.avgWon + " / " + st.avgLost, "平均 取/失セット", "1試合あたり"),
       tile(st.fullSet.total ? st.fullSet.rate + "%" : "—", "フルセット勝率", st.fullSet.w + "-" + st.fullSet.l + " 接戦"),
       tile(String(st.streakLongest), "最多連勝", "現在 " + st.streakCurrent + " 連勝中"),
-      tile(String(st.tournaments.length), "出場大会数", st.total + " 試合")));
+      tile(String(st.tournaments.length), "出場大会数", st.total + " 試合"),
+      tile(st.avgDur ? fmtDuration(st.avgDur) : "—", "平均対戦時間", st.durCount ? (st.durCount + " 試合で計測") : "記録なし"),
+      tile(st.maxDur ? fmtDuration(st.maxDur) : "—", "最長の対戦", "呼出→結果入力")));
 
     if (st.recent.length) {
       wrap.appendChild(h("div", { className: "pform" },
