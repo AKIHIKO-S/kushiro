@@ -821,6 +821,7 @@ const V = {
  // ─── 大会詳細 ────────────────────────────────
  async openTournament(id, updateHash = true) {
  if (updateHash) location.hash = "tournament/" + id;
+ TT.showLoading();
  try {
  const t = await api.get("/api/public/tournaments/" + id);
  if (t.error) { toast("大会が見つかりません", "err"); return; }
@@ -828,7 +829,7 @@ const V = {
  V.state.currentTournament = t;
  V.renderTournamentDetail(t, matches || []);
  V.showTabPanelOnly("detail");
- } catch (e) { console.error(e); }
+ } catch (e) { console.error(e); } finally { TT.hideLoading(); }
  },
 
  renderTournamentDetail(t, matches) {
@@ -1218,6 +1219,7 @@ const V = {
  // ─── 選手プロフィール ────────────────────────────────
  async openPlayer(id, updateHash = true) {
  if (updateHash) location.hash = "player/" + id;
+ TT.showLoading();
  try {
  const reqs = [
  api.get("/api/public/players/" + id),
@@ -1234,7 +1236,7 @@ const V = {
  V.state.currentPlayer = p;
  V.renderPlayerDetail(p);
  V.showTabPanelOnly("player");
- } catch (e) { console.error(e); }
+ } catch (e) { console.error(e); } finally { TT.hideLoading(); }
  },
 
  renderPlayerDetail(p) {
@@ -2087,24 +2089,33 @@ const L = {
  if (!m) return;
  const num1 = m.player1_bracket_number || m.entrant1_bracket_number;
  const num2 = m.player2_bracket_number || m.entrant2_bracket_number;
- const playerLine = (name, num, team, furi) => h("div", {
-   style: { padding: "10px 12px", background: "#f0fdf4",
-     border: "1px solid #bbf7d0", borderRadius: "8px" } },
-   h("div", { style: { fontSize: "16px", fontWeight: "700" } },
+ // 選手名そのものをタップで個人DBへ (シングルス/ダブルス両名・#選手名クリック)
+ const nameLink = (mem) => mem.id
+   ? h("a", { href: "#player/" + mem.id,
+       style: { color: "inherit", textDecorationLine: "underline", textDecorationStyle: "dotted", cursor: "pointer" },
+       onClick: (e) => { e.preventDefault(); document.querySelector(".modal-bg")?.remove(); V.openPlayer(mem.id); } }, mem.name)
+   : h("span", {}, mem.name || "?");
+ const playerLine = (side, num, team, furi) => {
+   const members = V.sideMembers(m, side);
+   const nameRow = h("div", { style: { fontSize: "16px", fontWeight: "700" } },
      num ? h("span", { className: "pnum", style: { marginRight: "5px" } }, "#" + num) : null,
-     name || "?"),
-   furi ? h("div", { style: { fontSize: "11px", color: "var(--sub)" } }, furi) : null,
-   team ? h("div", { style: { fontSize: "12px", color: "var(--sub)" } }, team) : null,
- );
+     ...members.map((mem, i) => i === 0 ? nameLink(mem)
+       : [h("span", { style: { color: "var(--sub)", margin: "0 4px" } }, "・"), nameLink(mem)]));
+   return h("div", { style: { padding: "10px 12px", background: "#f0fdf4",
+     border: "1px solid #bbf7d0", borderRadius: "8px" } },
+     nameRow,
+     furi ? h("div", { style: { fontSize: "11px", color: "var(--sub)" } }, furi) : null,
+     team ? h("div", { style: { fontSize: "12px", color: "var(--sub)" } }, team) : null);
+ };
  const body = h("div", {},
    h("div", { className: "flex gap-2 mb-2", style: { alignItems: "center", flexWrap: "wrap" } },
      h("span", { className: "badge", style: { background: "#dc2626", color: "#fff" } }, "コート " + t.table_no),
      h("span", { className: "badge" }, [m.event, m.round].filter(Boolean).join(" ")),
      h("span", { style: { fontSize: "12px", color: "#15803d", fontWeight: "700" } }, "● 試合中")),
-   playerLine(m.player1_name, num1, m.player1_team, m.player1_furigana),
+   playerLine(1, num1, m.player1_team, m.player1_furigana),
    h("div", { style: { textAlign: "center", fontWeight: "800", color: "var(--sub)",
      padding: "6px 0", fontSize: "18px" } }, "VS"),
-   playerLine(m.player2_name, num2, m.player2_team, m.player2_furigana),
+   playerLine(2, num2, m.player2_team, m.player2_furigana),
    m.referee_name ? h("div", { style: { marginTop: "10px", fontSize: "13px",
      color: "#6d28d9", textAlign: "center" } }, "審判: " + m.referee_name) : null,
  );

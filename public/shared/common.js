@@ -510,6 +510,21 @@
     setTimeout(() => el.remove(), 2100);
   }
 
+  // ── 読み込み中スピナー (円タイプ・多重呼び出しはカウンタで管理) ──
+  let _loadEl = null, _loadN = 0;
+  function showLoading() {
+    _loadN++;
+    if (_loadEl || typeof document === "undefined") return;
+    _loadEl = document.createElement("div");
+    _loadEl.className = "tt-loading";
+    _loadEl.innerHTML = '<div class="tt-spin" role="status" aria-label="読み込み中"></div>';
+    document.body.appendChild(_loadEl);
+  }
+  function hideLoading() {
+    _loadN = Math.max(0, _loadN - 1);
+    if (_loadN === 0 && _loadEl) { _loadEl.remove(); _loadEl = null; }
+  }
+
   // ── レーティングバッジ ──
   function ratingLabel(r) {
     r = r || 1500;
@@ -824,7 +839,7 @@
   // Export
   global.TT = {
     GENDERS, CATS, EV_TYPES, ROUNDS, PLACES,
-    h, esc, clear, api, toast,
+    h, esc, clear, api, toast, showLoading, hideLoading,
     ratingLabel, ratingBadge,
     lookupFurigana, parsePaste,
     fmtDate, fmtDateShort, fmtDuration, fmtScore, computePlayerStats, playerStatsSection,
