@@ -513,7 +513,13 @@ const stmts = {
 
   // 試合
   getMatchesByTournament: sqlite.prepare(`
-    SELECT * FROM matches WHERE tournament_id = ? ORDER BY round_order ASC, match_no ASC, created_at ASC
+    SELECT m.*,
+           pe1.partner_player_id AS player1_partner_id, pe1.partner_name AS player1_partner_name, pe1.name AS player1_main_name,
+           pe2.partner_player_id AS player2_partner_id, pe2.partner_name AS player2_partner_name, pe2.name AS player2_main_name
+    FROM matches m
+      LEFT JOIN entrants pe1 ON pe1.id = m.player1_entrant_id
+      LEFT JOIN entrants pe2 ON pe2.id = m.player2_entrant_id
+    WHERE m.tournament_id = ? ORDER BY m.round_order ASC, m.match_no ASC, m.created_at ASC
   `),
   getMatch: sqlite.prepare(`SELECT * FROM matches WHERE id = ?`),
   getMatchesByPlayer: sqlite.prepare(`

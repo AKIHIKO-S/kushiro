@@ -228,7 +228,7 @@
     const scoreW = {}, scoreL = {}, byRound = {}, byOppTeam = {};   // 分布/ラウンド別/相手所属 (野球的指標 #250/#251)
     let shutoutW = 0, shutoutL = 0;                  // 完封勝ち(相手0セット) / 被完封
     let killW = 0, killN = 0, upsetL = 0, upsetN = 0;   // 対格上勝/対格上数, 格下取りこぼし/対格下数 (#250)
-    let ptsFor = 0, ptsAgainst = 0, gamesScored = 0;    // ゲーム別点数(入力時のみ) → 得点率
+    let ptsFor = 0, ptsAgainst = 0, gamesScored = 0, deuceW = 0, deuceN = 0;  // ゲーム別点数 → 得点率/デュース勝率
     const time = { am: { w: 0, l: 0 }, pm: { w: 0, l: 0 }, eve: { w: 0, l: 0 } };
     // 到達ラウンドの深さ: ベスト16=1, 準々決勝=2, 準決勝=3, 決勝=4 (準々/準 を先に判定)
     const roundRank = (r) => { r = String(r || ""); if (r.indexOf("準々決勝") >= 0) return 2; if (r.indexOf("準決勝") >= 0) return 3; if (r.indexOf("決勝") >= 0) return 4; if (r.indexOf("ベスト16") >= 0 || r.indexOf("ﾍﾞｽﾄ" + "16") >= 0) return 1; return 0; };
@@ -279,7 +279,8 @@
           if (Array.isArray(s) && s.length === 2) {
             const mine = iAmP1 ? (parseInt(s[0]) || 0) : (parseInt(s[1]) || 0);
             const op = iAmP1 ? (parseInt(s[1]) || 0) : (parseInt(s[0]) || 0);
-            if (mine || op) { ptsFor += mine; ptsAgainst += op; gamesScored++; }
+            if (mine || op) { ptsFor += mine; ptsAgainst += op; gamesScored++;
+              if (Math.min(mine, op) >= 10) { deuceN++; if (mine > op) deuceW++; } }  // デュース(10-10〜)
           }
         });
       }
@@ -349,6 +350,10 @@
         avgFor: gamesScored ? (ptsFor / gamesScored).toFixed(1) : "0",
         avgAgainst: gamesScored ? (ptsAgainst / gamesScored).toFixed(1) : "0",
       },
+      pointDiff: ptsFor - ptsAgainst,                                  // 得点デフ(総得点-総失点) #野球的
+      deuce: { w: deuceW, n: deuceN, rate: pctOf(deuceW, deuceN) },    // デュース(10-10〜)勝率
+      recent10: (() => { const w = recent.filter(r => r === "W").length; return { w, n: recent.length, rate: pctOf(w, recent.length) }; })(),
+      finalGame: { w: fullW, n: fullW + fullL, rate: pctOf(fullW, fullW + fullL) },  // ファイナルゲーム(接戦)勝率
     };
   }
 
@@ -451,6 +456,15 @@
         extra.push(tile(st.seedBattle.killRate + "%", "対格上 勝率", "格上撃破 " + st.seedBattle.killW + " / " + st.seedBattle.killN + " 戦"));
       if (st.seedBattle && st.seedBattle.upsetN > 0)
         extra.push(tile(String(st.seedBattle.upsetL), "格下取りこぼし", "対格下 " + st.seedBattle.upsetN + " 戦"));
+      // ファイナルゲーム勝率 / 直近10戦 / 得点デフ / デュース勝率 (仮実装)
+      if (st.finalGame && st.finalGame.n > 0)
+        extra.push(tile(st.finalGame.rate + "%", "ファイナルゲーム勝率", st.finalGame.w + " / " + st.finalGame.n + " 接戦"));
+      if (st.recent10 && st.recent10.n > 0)
+        extra.push(tile(st.recent10.rate + "%", "直近" + st.recent10.n + "戦勝率", st.recent10.w + "勝 " + (st.recent10.n - st.recent10.w) + "敗"));
+      if (st.points && st.points.games > 0)
+        extra.push(tile((st.pointDiff > 0 ? "+" : "") + st.pointDiff, "得点デフ", "総得点−総失点"));
+      if (st.deuce && st.deuce.n > 0)
+        extra.push(tile(st.deuce.rate + "%", "デュース勝率", st.deuce.w + " / " + st.deuce.n + " (10-10〜)"));
       if (extra.length) {
         wrap.appendChild(h("div", { className: "section-sub" }, "さらに細かい指標"));
         wrap.appendChild(h("div", { className: "pstat-tiles" }, ...extra));

@@ -910,7 +910,7 @@ const V = {
  const isBye = !m.loser_name || m.loser_name === "BYE";
  const nameEl = (id, name) => id
    ? h("a", { href: "#player/" + id,
-       onClick: (e) => { e.preventDefault(); V.openPlayer(id); } }, name || "?")
+       onClick: (e) => { e.preventDefault(); e.stopPropagation(); V.openPlayer(id); } }, name || "?")
    : h("span", {}, name || "?");
  if (isBye) {
    return h("div", { className: "mr-row" },
@@ -920,7 +920,8 @@ const V = {
      h("div", { className: "mr-vs", style: { fontSize: "11px" } }, "不戦勝"),
      h("div", { className: "mr-lose" }, h("div", { className: "mr-pname", style: { color: "var(--sub-l)" } }, "—")));
  }
- return h("div", { className: "mr-row" },
+ return h("div", { className: "mr-row", style: { cursor: "pointer" },
+     title: "タップで試合詳細", onClick: () => V.showBracketMatchDetail(m) },
    h("div", { className: "mr-win" },
      h("div", { className: "mr-pname" }, nameEl(m.winner_id, m.winner_name)),
      m.winner_team ? h("div", { className: "mr-pteam" }, m.winner_team) : null),
@@ -933,6 +934,27 @@ const V = {
      h("div", { className: "mr-pname" }, nameEl(m.loser_id, m.loser_name)),
      m.loser_team ? h("div", { className: "mr-pteam" }, m.loser_team) : null),
  );
+ },
+
+ // トーナメント表の対戦をタップ → 詳細 + 選手個人DBリンク (シングルス/ダブルス両対応 #255)
+ showBracketMatchDetail(m) {
+ let sets = [];
+ try { sets = m.sets || JSON.parse(m.sets_json || "[]"); } catch (e) {}
+ const setsStr = (sets || []).map(s => (Array.isArray(s) && s.length === 2) ? (s[0] + "-" + s[1]) : "").filter(Boolean).join(" / ");
+ const body = h("div", {},
+   h("div", { className: "badge mb-2", style: { display: "inline-block" } }, [m.event, m.round].filter(Boolean).join(" ")),
+   h("div", { style: { background: "#fffbeb", padding: "10px", borderRadius: "8px", borderLeft: "4px solid var(--warn)" } },
+     h("div", { className: "font-bold" }, "" + (m.winner_name || "?"),
+       m.winner_team ? h("span", { className: "text-sub text-sm" }, " (" + m.winner_team + ")") : null),
+     h("div", { className: "text-lg font-bold mt-1", style: { fontFamily: "monospace" } }, TT.fmtScore(m.winner_sets, m.loser_sets)),
+     setsStr ? h("div", { className: "text-sm text-sub mt-1" }, setsStr) : null),
+   m.loser_name ? h("div", { style: { padding: "10px", marginTop: "8px", background: "#f8fafc", borderRadius: "8px" } },
+     h("div", { className: "text-sub" }, "" + m.loser_name,
+       m.loser_team ? h("span", { className: "text-sm" }, " (" + m.loser_team + ")") : null)) : null);
+ const foot = h("div", { className: "flex gap-2", style: { flexWrap: "wrap" } },
+   V.profileButtons(V.resultSideMembers(m, "winner")),
+   V.profileButtons(V.resultSideMembers(m, "loser")));
+ TT.openModal("試合詳細", body, foot);
  },
 
  // ─── 試合カード（試合検索/直近結果で使用・互換維持） ──────
