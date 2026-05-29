@@ -656,6 +656,7 @@ const { h, esc, api, toast, ratingBadge, fmtDate, fmtDateShort, createPoller, cl
 // ─── ビューアーアプリ ────────────────────────────────
 const V = {
  activeTab: "tournaments",
+ _navStack: [], _lastHash: undefined, _navBack: false,   // 戻る用の履歴スタック
  state: { tournaments: [], players: [], stats: null, currentTournament: null, currentPlayer: null },
 
  async init() {
@@ -696,6 +697,13 @@ const V = {
 
  handleHash() {
  const h = location.hash.slice(1);
+ // 直前のページをスタックに記録 (戻る操作で確実に直近ページへ戻すため)
+ if (V._lastHash !== undefined && V._lastHash !== h && !V._navBack) {
+   V._navStack.push(V._lastHash);
+   if (V._navStack.length > 50) V._navStack.shift();
+ }
+ V._lastHash = h;
+ V._navBack = false;
  if (!h) return V.showTab("tournaments", true);
  const [type, id] = h.split("/");
  if (type === "tournament" && id) V.openTournament(id, false);
@@ -726,6 +734,14 @@ const V = {
 
  // 直前のページに戻る (履歴がなければ大会一覧へ)
  goBack() {
+ // アプリ内履歴スタックで直近のページへ確実に戻る
+ if (V._navStack && V._navStack.length) {
+   V._navBack = true;                  // 戻り操作はスタックに積まない
+   const prev = V._navStack.pop();
+   location.hash = prev || "";         // hashchange → 直前のページを復元
+   if (!prev) V.showTab("tournaments", true);
+   return;
+ }
  if (history.length > 1) history.back();
  else V.showTab("tournaments");
  },
