@@ -2015,10 +2015,14 @@ app.post("/api/diagnostics/clear", requireAdmin, (req, res) => {
 
 // ═══ 静的ファイル ═══════════════════════════════════════
 const publicDir = path.join(__dirname, "public");
-app.use("/shared", express.static(path.join(publicDir, "shared")));
-app.use("/admin", express.static(path.join(publicDir, "admin")));
-app.use("/viewer", express.static(path.join(publicDir, "viewer")));
-app.use("/widget", express.static(path.join(publicDir, "widget"))); // Jimdo/STUDIO 埋込ウィジェット
+// 更新したJS/CSS/HTMLが必ず反映されるよう「都度再検証」(no-cache=ETagで304判定・キャッシュ自体は許可)。
+// これを付けないとブラウザのヒューリスティックキャッシュで古い common.js 等が使われ、
+// 進行管理の確定ボタンが無反応になる等の事故が起きるため。
+const staticOpts = { setHeaders: (res) => res.setHeader("Cache-Control", "no-cache") };
+app.use("/shared", express.static(path.join(publicDir, "shared"), staticOpts));
+app.use("/admin", express.static(path.join(publicDir, "admin"), staticOpts));
+app.use("/viewer", express.static(path.join(publicDir, "viewer"), staticOpts));
+app.use("/widget", express.static(path.join(publicDir, "widget"), staticOpts)); // Jimdo/STUDIO 埋込ウィジェット
 
 // 運用マニュアル (Markdown)
 for (const docName of ["OPERATIONS.md", "RENDER_DEPLOY.md", "UPDATE_WORKFLOW.md", "HOSTING.md",

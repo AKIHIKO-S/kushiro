@@ -1177,6 +1177,33 @@
 const { h, esc, api, toast, ratingBadge, fmtDate, fmtDateShort, clear,
  parsePaste, downloadCSV, downloadJSON, openModal, EV_TYPES, ROUNDS, CATS } = TT;
 
+// ─── 互換シム: 古い common.js がキャッシュされていても呼出/結果入力が動くように ───
+// (opSend 未定義だと進行管理の確定ボタンが無反応になる事故を防止)
+if (typeof api.opSend !== "function") {
+  api.opSend = async function (method, url, data) {
+    const m = String(method || "POST").toUpperCase();
+    if (m === "PUT") return api.put(url, data);
+    if (m === "DELETE") return api.del(url);
+    return api.post(url, data);
+  };
+}
+if (typeof api.pendingCount !== "function") api.pendingCount = () => 0;
+if (typeof api.hasPending !== "function") api.hasPending = () => false;
+if (typeof api.onPending !== "function") api.onPending = () => {};
+
+// ─── 全エラーを画面に出す (無言の失敗を防ぐ・現場での切り分け用) ───
+// 実JSエラーのみ (画像等のリソース読込失敗は e.error 無し → 無視)
+window.addEventListener("error", (e) => {
+  if (!e || !e.error) return;
+  try { toast("エラー: " + (e.message || e.error.message || "不明"), "err"); } catch (_) {}
+});
+window.addEventListener("unhandledrejection", (e) => {
+  try {
+    const r = e && e.reason;
+    toast("処理エラー: " + ((r && r.message) || r || "不明"), "err");
+  } catch (_) {}
+});
+
 // ─── 管理アプリ ─────────────────────────────────────
 const A = {
  activeTab: "tournaments",
