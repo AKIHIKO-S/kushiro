@@ -460,6 +460,10 @@ app.put("/api/players/:id", requireAdmin, (req, res) => {
 app.post("/api/players/cleanup-invalid", requireAdmin, (req, res) => {
   res.json(db.cleanupInvalidPlayers());
 });
+// 所属(校名)から小/中/高/大カテゴリを一括自動振り分け (#247)
+app.post("/api/players/normalize-categories", requireAdmin, (req, res) => {
+  res.json(db.normalizePlayerCategories());
+});
 
 app.delete("/api/players/:id", requireAdmin, (req, res) => {
   db.deletePlayer(req.params.id); res.json({ ok: true });

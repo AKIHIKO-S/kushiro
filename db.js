@@ -519,7 +519,8 @@ const stmts = {
   getMatchesByPlayer: sqlite.prepare(`
     SELECT m.*, t.name AS tournament_name, t.date AS tournament_date,
            pe1.partner_player_id AS player1_partner_id, pe1.partner_name AS player1_partner_name, pe1.name AS player1_main_name,
-           pe2.partner_player_id AS player2_partner_id, pe2.partner_name AS player2_partner_name, pe2.name AS player2_main_name
+           pe2.partner_player_id AS player2_partner_id, pe2.partner_name AS player2_partner_name, pe2.name AS player2_main_name,
+           pe1.seed AS player1_seed, pe2.seed AS player2_seed
     FROM matches m
       LEFT JOIN tournaments t ON m.tournament_id = t.id
       LEFT JOIN entrants pe1 ON pe1.id = m.player1_entrant_id
@@ -683,6 +684,38 @@ function getGlobalMatchAverages() {
   return _gmaCache;
 }
 
+// 所属(または現カテゴリ文字列)から学年カテゴリを推定。該当なし=null。(#247)
+function detectSchoolCategory(team, category) {
+  const s = String(team || "") + " " + String(category || "");
+  if (/高校|高等学校/.test(s)) return "high";
+  if (/中学/.test(s)) return "middle";
+  if (/小学/.test(s)) return "elementary";
+  if (/大学/.test(s)) return "university";
+  return null;
+}
+const _VALID_CATS = ["elementary", "middle", "high", "university", "general", "individual"];
+// カテゴリ自動補完: 明示的に選ばれた正規カテゴリは尊重し、general/不正値のみ所属から推定。
+function _autoCategory(team, cat) {
+  let c = cat || "general";
+  const auto = detectSchoolCategory(team, cat);
+  if (auto && (c === "general" || !_VALID_CATS.includes(c))) c = auto;
+  return c;
+}
+// 既存全選手のカテゴリを所属から一括自動振り分け (#247)
+function normalizePlayerCategories() {
+  const all = stmts.getPlayers.all();
+  const upd = sqlite.prepare("UPDATE players SET category=? WHERE id=?");
+  let updated = 0;
+  const tx = sqlite.transaction(() => {
+    for (const p of all) {
+      const cat = detectSchoolCategory(p.team, p.category);
+      if (cat && cat !== p.category) { upd.run(cat, p.id); updated++; }
+    }
+  });
+  tx();
+  return { updated, total: all.length };
+}
+
 // 個人名らしいかをチェック (チーム名・学校名・地名と区別)
 // チーム名と判定された場合 false を返す
 function looksLikeValidPlayerName(name) {
@@ -727,6 +760,7 @@ function createPlayer(data) {
   }
   const id = uid();
   const furigana = data.furigana || lookupFurigana(data.name);
+  const category = _autoCategory(data.team, data.category);   // 所属から小/中/高を自動補完 (#247)
   stmts.insertPlayer.run({
     id,
     name: data.name || "",
@@ -734,7 +768,7 @@ function createPlayer(data) {
     team: data.team || "",
     branch: data.branch || "",
     gender: data.gender || "male",
-    category: data.category || "general",
+    category,
     note: data.note || "",
     appearances: data.appearances || 0,
     rating: data.rating || 1500,
@@ -1170,7 +1204,7 @@ const importPlayersTxn = sqlite.transaction((players) => {
         team: p.team || "",
         branch: p.branch || "",
         gender: p.gender || "male",
-        category: p.category || "general",
+        category: _autoCategory(p.team, p.category),   // 所属から小/中/高を自動補完 (#247)
         note: p.note || "",
         appearances: p.appearances || 0,
         rating: p.rating || 1500,
@@ -4918,7 +4952,7 @@ module.exports = {
   // ベスト8 (準々決勝進出者)
   getEventBest8, getAllBest8,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
-  getGlobalMatchAverages,
+  getGlobalMatchAverages, detectSchoolCategory, normalizePlayerCategories,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,
   getTournaments, getTournament, createTournament, updateTournament, deleteTournament,

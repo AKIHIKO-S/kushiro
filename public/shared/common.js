@@ -225,8 +225,10 @@
     const ms = ((player && player.matches) || []).filter(m => m && (m.winner_id === pid || m.loser_id === pid));
     let wins = 0, losses = 0, setsWon = 0, setsLost = 0, fullW = 0, fullL = 0;
     const byT = {}, byE = {}, byM = {}, byOpp = {}, byBranch = {}, grp = {};
-    const scoreW = {}, scoreL = {}, byRound = {};   // ゲームカウント分布・ラウンド別 (野球的指標)
+    const scoreW = {}, scoreL = {}, byRound = {}, byOppTeam = {};   // 分布/ラウンド別/相手所属 (野球的指標 #250/#251)
     let shutoutW = 0, shutoutL = 0;                  // 完封勝ち(相手0セット) / 被完封
+    let killW = 0, killN = 0, upsetL = 0, upsetN = 0;   // 対格上勝/対格上数, 格下取りこぼし/対格下数 (#250)
+    let ptsFor = 0, ptsAgainst = 0, gamesScored = 0;    // ゲーム別点数(入力時のみ) → 得点率
     const time = { am: { w: 0, l: 0 }, pm: { w: 0, l: 0 }, eve: { w: 0, l: 0 } };
     // 到達ラウンドの深さ: ベスト16=1, 準々決勝=2, 準決勝=3, 決勝=4 (準々/準 を先に判定)
     const roundRank = (r) => { r = String(r || ""); if (r.indexOf("準々決勝") >= 0) return 2; if (r.indexOf("準決勝") >= 0) return 3; if (r.indexOf("決勝") >= 0) return 4; if (r.indexOf("ベスト16") >= 0 || r.indexOf("ﾍﾞｽﾄ" + "16") >= 0) return 1; return 0; };
@@ -263,6 +265,24 @@
       const oppBranch = normalizeBranch(oppTeam || "") || "";
       const isOfficialBranch = /支部$/.test(oppBranch) && HOKKAIDO_BRANCHES.indexOf(oppBranch.replace(/支部$/, "")) >= 0;
       if (isOfficialBranch) (byBranch[oppBranch] = byBranch[oppBranch] || { name: oppBranch, w: 0, l: 0 })[won ? "w" : "l"]++;
+      // よく対戦する所属チーム分布 (#251)
+      if (oppTeam) (byOppTeam[oppTeam] = byOppTeam[oppTeam] || { name: oppTeam, w: 0, l: 0 })[won ? "w" : "l"]++;
+      // 対シード(格上撃破/格下取りこぼし) + ゲーム別点数→得点率 (#250 / 得点率)
+      const iAmP1 = !!(m.player1_id && pid === m.player1_id);
+      const iAmP2 = !!(m.player2_id && pid === m.player2_id);
+      if (iAmP1 || iAmP2) {
+        const mySeed = iAmP1 ? (m.player1_seed || 0) : (m.player2_seed || 0);
+        const oppSeed = iAmP1 ? (m.player2_seed || 0) : (m.player1_seed || 0);
+        if (oppSeed > 0 && (mySeed === 0 || oppSeed < mySeed)) { killN++; if (won) killW++; }       // 相手が格上
+        if (mySeed > 0 && (oppSeed === 0 || oppSeed > mySeed)) { upsetN++; if (!won) upsetL++; }     // 相手が格下
+        if (Array.isArray(m.sets)) m.sets.forEach(s => {
+          if (Array.isArray(s) && s.length === 2) {
+            const mine = iAmP1 ? (parseInt(s[0]) || 0) : (parseInt(s[1]) || 0);
+            const op = iAmP1 ? (parseInt(s[1]) || 0) : (parseInt(s[0]) || 0);
+            if (mine || op) { ptsFor += mine; ptsAgainst += op; gamesScored++; }
+          }
+        });
+      }
       const hr = hourOf(m.finished_at);
       if (hr != null) { const tb = hr < 12 ? "am" : (hr < 16 ? "pm" : "eve"); time[tb][won ? "w" : "l"]++; }
       const gk = (m.tournament_id || "") + "|" + (m.event || "");
@@ -320,6 +340,15 @@
       shutout: { w: shutoutW, l: shutoutL, winRate: pctOf(shutoutW, wins), loseRate: pctOf(shutoutL, losses) },
       rounds_wl: Object.values(byRound).sort((a, b) => a.order - b.order)
         .map(r => ({ name: r.name, w: r.w, l: r.l, total: r.w + r.l, rate: pctOf(r.w, r.w + r.l) })),
+      oppTeams: Object.values(byOppTeam).sort((a, b) => (b.w + b.l) - (a.w + a.l))
+        .map(o => ({ name: o.name, w: o.w, l: o.l, total: o.w + o.l, rate: pctOf(o.w, o.w + o.l) })),
+      seedBattle: { killW, killN, killRate: pctOf(killW, killN), upsetL, upsetN },
+      points: {
+        games: gamesScored,
+        rate: (ptsFor + ptsAgainst) ? Math.round(ptsFor / (ptsFor + ptsAgainst) * 100) : 0,
+        avgFor: gamesScored ? (ptsFor / gamesScored).toFixed(1) : "0",
+        avgAgainst: gamesScored ? (ptsAgainst / gamesScored).toFixed(1) : "0",
+      },
     };
   }
 
@@ -409,6 +438,20 @@
       wrap.appendChild(h("div", { className: "section-sub" }, "ラウンド別 勝率（勝負強さ）"));
       wrap.appendChild(table(st.rounds_wl.map(r => rateRow(r.name, r))));
     }
+    // さらに細かい指標: 得点率(ゲーム別点数入力時) / 対格上・格下(シード設定時) #得点率 #250
+    {
+      const extra = [];
+      if (st.points && st.points.games > 0)
+        extra.push(tile(st.points.rate + "%", "得点率", "1G平均 " + st.points.avgFor + "-" + st.points.avgAgainst + "（" + st.points.games + "G）"));
+      if (st.seedBattle && st.seedBattle.killN > 0)
+        extra.push(tile(st.seedBattle.killRate + "%", "対格上 勝率", "格上撃破 " + st.seedBattle.killW + " / " + st.seedBattle.killN + " 戦"));
+      if (st.seedBattle && st.seedBattle.upsetN > 0)
+        extra.push(tile(String(st.seedBattle.upsetL), "格下取りこぼし", "対格下 " + st.seedBattle.upsetN + " 戦"));
+      if (extra.length) {
+        wrap.appendChild(h("div", { className: "section-sub" }, "さらに細かい指標"));
+        wrap.appendChild(h("div", { className: "pstat-tiles" }, ...extra));
+      }
+    }
     if (st.events.length) {
       wrap.appendChild(h("div", { className: "section-sub" }, "種目別 勝率"));
       wrap.appendChild(table(st.events.map(e => rateRow(e.event, e))));
@@ -420,6 +463,18 @@
     if (st.months.length >= 2) {
       wrap.appendChild(h("div", { className: "section-sub" }, "月別成績"));
       wrap.appendChild(table(st.months.slice(0, 12).map(m => rateRow(m.ym, m))));
+    }
+    // よく対戦する相手 (支部・所属チームの最多) #251
+    {
+      const topB = (st.branches && st.branches[0]) || null;
+      const topT = (st.oppTeams && st.oppTeams[0]) || null;
+      if (topB || topT) {
+        wrap.appendChild(h("div", { className: "section-sub" }, "よく対戦する相手"));
+        const rows = [];
+        if (topB) rows.push(rateRow("支部: " + topB.name, topB));
+        if (topT) rows.push(rateRow("所属: " + topT.name, topT));
+        wrap.appendChild(table(rows));
+      }
     }
     if (st.branches && st.branches.length) {
       wrap.appendChild(h("div", { className: "section-sub" }, "対 支部別 勝率"));

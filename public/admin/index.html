@@ -1131,6 +1131,7 @@
  <div class="card-title">選手データベース</div>
  <div class="flex gap-2">
  <button class="btn btn-sm btn-ghost" onclick="A.cleanupInvalidPlayers()">チーム名混入を削除</button>
+ <button class="btn btn-sm btn-ghost" onclick="A.normalizeCategories()" title="所属に「小学校/中学校/高校/大学」が含まれる選手のカテゴリを自動設定">所属からカテゴリ自動振分</button>
  <button class="btn btn-sm" onclick="A.newPlayer()">+ 新規選手</button>
  </div>
  </div>
@@ -5715,6 +5716,14 @@ const A = {
    await A.reload();
  },
 
+ // 所属(校名)からカテゴリ(小/中/高/大)を一括自動振り分け (#247)
+ async normalizeCategories() {
+   if (!confirm("所属に「小学校/中学校/高校/大学」が含まれる選手のカテゴリを自動設定します。よろしいですか?")) return;
+   const r = await api.post("/api/players/normalize-categories", {});
+   toast(`${(r && r.updated) || 0}件のカテゴリを自動設定しました`, "ok");
+   await A.reload();
+ },
+
  newPlayer() { A.editPlayer(null); },
 
  async editPlayer(p) {
@@ -5746,7 +5755,11 @@ const A = {
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "所属チーム"),
  h("input", { className: "input", id: "plTeam", value: p.team || "",
-   placeholder: "例: ○○高校 / □□クラブ" })),
+   placeholder: "例: ○○高校 / □□クラブ", list: "plTeamList" }),
+ h("datalist", { id: "plTeamList" },
+   ...Array.from(new Set((A.state.players || []).map(pp => (pp.team || "").trim()).filter(Boolean)))
+     .sort((a, b) => a.localeCompare(b, "ja")).map(t => h("option", { value: t }))),
+ ),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "支部 (任意)"),
  h("input", { className: "input", id: "plBranch", value: p.branch || "",
@@ -7728,7 +7741,7 @@ const O = {
  h("div", { className: "score-side" + (winnerSlot === 1 ? " is-winner" : ""), id: "side1" },
  h("div", { className: "score-name" }, m.player1_name),
  h("input", { type: "number", className: "score-num", id: "p1Num",
- min: 0, max: 9, value: String(p1Sets),
+ min: 0, max: 5, value: String(p1Sets),
  inputmode: "numeric", pattern: "[0-9]*",
  onInput: (e) => {
    p1Sets = parseInt(e.target.value) || 0;
@@ -7742,7 +7755,7 @@ const O = {
  h("div", { className: "score-side" + (winnerSlot === 2 ? " is-winner" : ""), id: "side2" },
  h("div", { className: "score-name" }, m.player2_name),
  h("input", { type: "number", className: "score-num", id: "p2Num",
- min: 0, max: 9, value: String(p2Sets),
+ min: 0, max: 5, value: String(p2Sets),
  inputmode: "numeric", pattern: "[0-9]*",
  onInput: (e) => {
    p2Sets = parseInt(e.target.value) || 0;
@@ -7756,13 +7769,19 @@ const O = {
  `${bestOfGames}セット制 (${winsToTake}本先取)。獲得セット数を直接入力してください。多い方が勝者です。`),
  );
  } else {
- // 各セット点数入力 (任意)
+ // 各セット点数入力 (任意) — 0〜11 のドロップダウンで選択 (#249)
  const setInputs = h("div", { className: "result-input-grid" });
+ const ptSel = (id) => {
+ const s = h("select", { id, className: "score-num" });
+ s.appendChild(h("option", { value: "" }, "-"));
+ for (let v = 0; v <= 11; v++) s.appendChild(h("option", { value: String(v) }, String(v)));
+ return s;
+ };
  for (let i = 1; i <= bestOfGames; i++) {
  setInputs.appendChild(h("span", { className: "text-xs text-sub" }, `S${i}`));
- setInputs.appendChild(h("input", { type: "number", id: `rs${i}P1`, min: 0, max: 30, inputmode: "numeric" }));
+ setInputs.appendChild(ptSel(`rs${i}P1`));
  setInputs.appendChild(h("span", { className: "text-center" }, "-"));
- setInputs.appendChild(h("input", { type: "number", id: `rs${i}P2`, min: 0, max: 30, inputmode: "numeric" }));
+ setInputs.appendChild(ptSel(`rs${i}P2`));
  }
  inputs = h("div", { className: "field" },
  h("div", { className: "flex gap-2 mb-2", style: { fontSize: "13px", fontWeight: 700,

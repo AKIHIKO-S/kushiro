@@ -161,7 +161,7 @@
   // セット数ドロップダウンの選択肢 (0〜9)。空欄=未入力(勝者のみ) (#239)
   function setSelOpts() {
     var o = '<option value="">-</option>';
-    for (var i = 0; i <= 9; i++) o += '<option value="' + i + '">' + i + '</option>';
+    for (var i = 0; i <= 5; i++) o += '<option value="' + i + '">' + i + '</option>';
     return o;
   }
   var toastTimer;
