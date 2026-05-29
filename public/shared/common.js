@@ -660,9 +660,10 @@
   }
 
   // ── モーダル ──
-  function openModal(title, bodyEl, footEl) {
+  function openModal(title, bodyEl, footEl, opts) {
+    opts = opts || {};
     const bg = h("div", { className: "modal-bg" });
-    const box = h("div", { className: "modal-box fi" });
+    const box = h("div", { className: "modal-box fi" + (opts.size === "lg" ? " modal-lg" : "") });
     const head = h("div", { className: "modal-head" },
       h("div", { className: "modal-title" }, title),
       h("button", { className: "modal-close", onClick: () => bg.remove(), innerHTML: "×" })

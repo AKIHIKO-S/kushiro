@@ -417,15 +417,22 @@
  .op-stat.s-waiting { border-top-color: #2563eb; background: linear-gradient(180deg,#eff6ff,#fff); }
  .op-stat.s-done { border-top-color: #a1a1aa; }
  .op-stat.s-total { border-top-color: var(--ink-700); }
- /* ツール折りたたみ */
- .op-tools { display: inline-block; }
+ /* ツール折りたたみ (右寄せ・縦並びドロップダウン) #278 */
+ .op-tools { display: inline-block; margin-left: auto; position: relative; }
  .op-tools > summary { list-style: none; cursor: pointer; }
  .op-tools > summary::-webkit-details-marker { display: none; }
  .op-tools-body {
-   display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;
-   padding: 10px; background: var(--ink-50);
-   border: 1px solid var(--border); border-radius: 8px;
+   display: flex; flex-direction: column; gap: 5px; margin-top: 6px;
+   padding: 10px; background: #fff;
+   border: 1px solid var(--border); border-radius: 10px;
+   position: absolute; right: 0; z-index: 60; min-width: 244px;
+   box-shadow: 0 12px 32px rgba(0,0,0,.18);
  }
+ .op-tools-body .btn, .op-tools-body a.btn {
+   width: 100%; justify-content: flex-start; text-align: left; white-space: nowrap;
+ }
+ .op-tools-adv { margin-top: 4px; padding-top: 7px; border-top: 1px dashed var(--border);
+   font-size: 10px; font-weight: 700; color: var(--sub-l); letter-spacing: .04em; }
  /* 種目別進捗 (全体直下・複数列で省スペース) */
  .ev-progress-list { display: grid; gap: 8px;
    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
@@ -6155,7 +6162,7 @@ const A = {
  document.querySelector(".modal-bg")?.remove();
  await A.reload();
  } }, "保存");
- openModal(isNew ? "+ 新規選手" : "選手編集", body, foot);
+ openModal(isNew ? "+ 新規選手" : "選手編集", body, foot, { size: "lg" });
  },
 
  async deletePlayer(id) {
@@ -6780,16 +6787,20 @@ const O = {
  h("details", { className: "op-tools" },
  h("summary", { className: "btn btn-sm btn-ghost", style: { display: "inline-block" } }, "ツール・設定 ▾"),
  h("div", { className: "op-tools-body" },
- h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openOpLog() }, "操作ログ"),
  h("button", { className: "btn btn-sm", style: { background: "#7c3aed" },
    onClick: () => O.openVisualBracket() }, "トーナメント表"),
  h("button", { className: "btn btn-sm", onClick: () => O.openBracketGen() }, "トーナメント生成"),
- h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openImportBracket() }, "JSON 読込"),
- h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.exportBracket() }, "JSON 書出"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openLayoutSettings() },
  `コートレイアウト (${O.state.tournament.court_rows}×${O.state.tournament.court_cols}=${O.state.tournament.court_rows * O.state.tournament.court_cols}コート)`),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openOpLog() }, "操作ログ"),
  h("a", { href: `/viewer/#tournament/${O.tournamentId}`, target: "_blank",
  className: "btn btn-sm btn-ghost" }, "公開ページ"),
+ // 高度な操作: JSON入出力は目立たないように最下部へ #279
+ h("div", { className: "op-tools-adv" }, "高度な操作"),
+ h("button", { className: "btn btn-sm btn-ghost", style: { opacity: ".7", fontSize: "12px" },
+   onClick: () => O.openImportBracket() }, "JSON 読込"),
+ h("button", { className: "btn btn-sm btn-ghost", style: { opacity: ".7", fontSize: "12px" },
+   onClick: () => O.exportBracket() }, "JSON 書出"),
  )),
  ));
 
