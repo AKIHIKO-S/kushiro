@@ -1526,20 +1526,47 @@ app.delete("/api/tournaments/:id/bracket", requireAdmin, (req, res) => {
 // キーは軽量フィンガープリント(呼出/結果/再コールで変化)なので、
 // 変化が無い間は重い計算を一切行わず、変化直後は1回だけ再計算して全員で共有する。
 // (TTLではなくフィンガープリント方式なので、運営の操作結果は即時反映され古い表示が出ない)
-const _liveCache = new Map(); // tid -> { key, state }
-function getCachedOperationState(tid) {
+// 公開ビュー用にペイロードを軽量化 (#233 負荷対策)。
+// callable は試合行(全列)が重いので閲覧に必要な項目だけに絞る(件数は維持)。
+// recent は12件に、referee_queue(閲覧未使用)は省略。
+function slimPublicState(st) {
+  const slimCall = (st.callable || []).map(m => ({
+    id: m.id, event: m.event, round: m.round, round_order: m.round_order,
+    player1_name: m.player1_name, player2_name: m.player2_name,
+    player1_team: m.player1_team, player2_team: m.player2_team,
+    player1_furigana: m.player1_furigana, player2_furigana: m.player2_furigana,
+    player1_bracket_number: m.player1_bracket_number, player2_bracket_number: m.player2_bracket_number,
+    entrant1_bracket_number: m.entrant1_bracket_number, entrant2_bracket_number: m.entrant2_bracket_number,
+    blocks: m.blocks, is_blocked: m.is_blocked,
+  }));
+  return {
+    tournament: st.tournament, tables: st.tables, on_table: st.on_table,
+    callable: slimCall, waiting: st.waiting,
+    recent_finished: (st.recent_finished || []).slice(0, 12),
+    event_stats: st.event_stats, total_matches: st.total_matches, progress: st.progress,
+  };
+}
+// /live は直列化済みJSON文字列をフィンガープリント単位でキャッシュ。
+// 多数同時アクセスでも再シリアライズせず文字列を send → CPU/帯域を大幅節約。
+const _liveCache = new Map(); // tid -> { key, json }
+function getCachedLiveJSON(tid) {
   const fp = db.getOpsFingerprint(tid);
-  if (!fp || fp.error) return db.getOperationState(tid); // 大会なし等は通常処理(404)
+  if (!fp || fp.error) {
+    const st = db.getOperationState(tid);
+    return st ? { json: JSON.stringify(slimPublicState(st)) } : null; // 大会なし→null(404)
+  }
   const key = fp.v + "|" + (fp.status || "");
   const c = _liveCache.get(tid);
-  if (c && c.key === key) return c.state;
-  const state = db.getOperationState(tid);
-  _liveCache.set(tid, { key, state });
-  if (_liveCache.size > 300) { // 古いエントリを軽く掃除
+  if (c && c.key === key) return c;
+  const st = db.getOperationState(tid);
+  if (!st) return null;
+  const entry = { key, json: JSON.stringify(slimPublicState(st)) };
+  _liveCache.set(tid, entry);
+  if (_liveCache.size > 300) {
     const it = _liveCache.keys();
     while (_liveCache.size > 200) { const k = it.next().value; if (k === undefined) break; _liveCache.delete(k); }
   }
-  return state;
+  return entry;
 }
 
 app.get("/api/tournaments/:id/operations", (req, res) => {
@@ -1594,9 +1621,11 @@ app.post("/api/admin/snapshots/restore", requireAdmin, (req, res) => {
 });
 
 app.get("/api/public/tournaments/:id/live", (req, res) => {
-  const state = getCachedOperationState(req.params.id);
-  if (!state) return res.status(404).json({ error: "大会が見つかりません" });
-  res.json(state);
+  const entry = getCachedLiveJSON(req.params.id);
+  if (!entry) return res.status(404).json({ error: "大会が見つかりません" });
+  // 直列化済み文字列をそのまま返す (再シリアライズなし)。短期ブラウザキャッシュも許可。
+  res.set("Cache-Control", "public, max-age=2");
+  return res.type("application/json").send(entry.json);
 });
 
 // 進行の変化検知用 軽量エンドポイント (クライアントは変化時のみ重い /live を取得)
