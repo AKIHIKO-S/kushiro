@@ -381,6 +381,11 @@
     text-shadow: 0 1px 2px rgba(0,0,0,.15);
   }
   .lv-court.empty .lv-court-p { text-shadow: none; color: var(--lv-ok); }
+  /* 選手名→個人DBリンク (#266) */
+  .lv-name-link { color: inherit; text-decoration: underline; text-decoration-style: dotted;
+    text-underline-offset: 2px; cursor: pointer; }
+  .lv-name-link:hover { opacity: .82; }
+  .lv-name-sep { opacity: .6; margin: 0 3px; font-weight: 700; }
 
   .lv-court-team {
     font-size: 10px; opacity: .9;
@@ -1235,9 +1240,9 @@ const LV = {
       if (t.match) {
         const cc1 = parseInt(t.match.call_count_p1) || 0;
         const cc2 = parseInt(t.match.call_count_p2) || 0;
-        // 選手1 + 番号 + 所属 + 再コールバッジ
-        cell.appendChild(LV.renderCourtPlayer(t.match.player1_name,
-          t.match.player1_bracket_number));
+        // 選手1 + 番号 + 所属 + 再コールバッジ (#266: 氏名を個人DBへリンク・ダブルスは両名)
+        cell.appendChild(h("div", { className: "lv-court-p" },
+          ...LV.playerNameNodes(t.match, 1, t.match.player1_bracket_number)));
         if (t.match.player1_team) {
           cell.appendChild(h("div", { className: "lv-court-team" }, t.match.player1_team));
         }
@@ -1246,8 +1251,8 @@ const LV = {
         }
         cell.appendChild(h("div", { className: "lv-court-vs" },
           t.is_extra ? "団体追加" : "VS"));
-        cell.appendChild(LV.renderCourtPlayer(t.match.player2_name,
-          t.match.player2_bracket_number));
+        cell.appendChild(h("div", { className: "lv-court-p" },
+          ...LV.playerNameNodes(t.match, 2, t.match.player2_bracket_number)));
         if (t.match.player2_team) {
           cell.appendChild(h("div", { className: "lv-court-team" }, t.match.player2_team));
         }
@@ -1355,6 +1360,39 @@ const LV = {
     return el;
   },
 
+  // ── 選手DB(閲覧)へのリンク (#266) ──
+  // 観戦ビューは /viewer/live/ なので、選手個人ページ(/viewer/ 側)へ遷移する。
+  playerHref(id) { return "/viewer/#player/" + encodeURIComponent(id); },
+  // 1サイドのメンバー (ダブルスは主+ペアの2名)。{id,name} の配列。
+  sideMembers(m, side) {
+    const pid = side === 1 ? m.player1_id : m.player2_id;
+    const combined = side === 1 ? m.player1_name : m.player2_name;
+    const main = side === 1 ? m.player1_main_name : m.player2_main_name;
+    const ppid = side === 1 ? m.player1_partner_id : m.player2_partner_id;
+    const pname = side === 1 ? m.player1_partner_name : m.player2_partner_name;
+    const first = (main && String(main).trim())
+      || String(combined || "").split(" / ")[0].trim() || combined || "選手";
+    const list = [{ id: pid || null, name: first }];
+    if (ppid || (pname && String(pname).trim())) {
+      list.push({ id: ppid || null, name: (pname && String(pname).trim()) || "ペア" });
+    }
+    return list;
+  },
+  // 選手名ノード配列 (個人DBリンク付き・ダブルスは両名)。num は先頭にのみ付与。
+  // 親要素クリック(詳細モーダル)と競合しないよう stopPropagation する。
+  playerNameNodes(m, side, num) {
+    const out = [];
+    if (num && num > 0) out.push(h("span", { className: "lv-pnum" }, "#" + num));
+    LV.sideMembers(m, side).forEach((mem, i) => {
+      if (i > 0) out.push(h("span", { className: "lv-name-sep" }, "・"));
+      out.push(mem.id
+        ? h("a", { className: "lv-name-link", href: LV.playerHref(mem.id),
+            title: "選手データベースを見る", onClick: (e) => e.stopPropagation() }, mem.name || "?")
+        : document.createTextNode(mem.name || "?"));
+    });
+    return out;
+  },
+
   // 再コール バッジ (選手別 cc)
   //   cc=1: 再コール1 (黄/注意), cc=2: 再コール2 (オレンジ/警告),
   //   cc=3+: 再コール3+ (赤/重大)
@@ -1383,13 +1421,13 @@ const LV = {
         "T" + m.table_no + (m.extra_tables ? "+" + m.extra_tables : "")),
       h("div", { className: "lv-match-players" },
         h("div", { className: "lv-match-side" },
-          LV.renderMatchPlayerName(m.player1_name, m.player1_bracket_number),
+          h("div", { className: "lv-match-name" }, ...LV.playerNameNodes(m, 1, m.player1_bracket_number)),
           h("div", { className: "lv-match-team" }, m.player1_team || ""),
           cc1 >= 1 ? LV.callBadgeEl(cc1) : null,
         ),
         h("div", { className: "lv-match-vs" }, "VS"),
         h("div", { className: "lv-match-side right" },
-          LV.renderMatchPlayerName(m.player2_name, m.player2_bracket_number),
+          h("div", { className: "lv-match-name" }, ...LV.playerNameNodes(m, 2, m.player2_bracket_number)),
           h("div", { className: "lv-match-team" }, m.player2_team || ""),
           cc2 >= 1 ? LV.callBadgeEl(cc2) : null,
         ),
@@ -1461,18 +1499,18 @@ const LV = {
 
     const p1Num = m.player1_bracket_number;
     const p2Num = m.player2_bracket_number;
-    const playerVal = (name, num, team) => {
-      const el = h("div", { className: "lv-detail-val player" });
-      if (num && num > 0) el.appendChild(h("span", { className: "lv-pnum" }, "#" + num));
-      el.appendChild(document.createTextNode(name || "?"));
+    // 氏名を個人DB(/viewer/)へリンク。ダブルスは両名 (#266)。
+    const playerVal = (side, num, team) => {
+      const el = h("div", { className: "lv-detail-val player" },
+        ...LV.playerNameNodes(m, side, num));
       el.appendChild(h("div", { className: "team" }, team || ""));
       return el;
     };
     const cc1 = parseInt(m.call_count_p1) || 0;
     const cc2 = parseInt(m.call_count_p2) || 0;
     // 選手の playerVal にバッジを追加するため、内部で結合
-    const playerValWithBadge = (name, num, team, ccPlayer) => {
-      const el = playerVal(name, num, team);
+    const playerValWithBadge = (side, num, team, ccPlayer) => {
+      const el = playerVal(side, num, team);
       if (ccPlayer >= 1) {
         const bd = LV.callBadgeEl(ccPlayer);
         if (bd) el.appendChild(bd);
@@ -1489,11 +1527,11 @@ const LV = {
       ),
       h("div", { className: "lv-detail-row" },
         h("div", { className: "lv-detail-label" }, "選手1"),
-        playerValWithBadge(m.player1_name, p1Num, m.player1_team, cc1),
+        playerValWithBadge(1, p1Num, m.player1_team, cc1),
       ),
       h("div", { className: "lv-detail-row" },
         h("div", { className: "lv-detail-label" }, "選手2"),
-        playerValWithBadge(m.player2_name, p2Num, m.player2_team, cc2),
+        playerValWithBadge(2, p2Num, m.player2_team, cc2),
       ),
       m.referee_name ? h("div", { className: "lv-detail-row" },
         h("div", { className: "lv-detail-label" }, "審判"),

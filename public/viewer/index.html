@@ -1014,11 +1014,52 @@ const V = {
  }).join(" ");
  },
 
+ // 対戦相手サイドのメンバー配列 (#265: ダブルスは相手ペア2名を別々にリンク)。各 {id, name}。
+ _oppMembers(m, playerId) {
+ const won = m.winner_id === playerId;
+ const oppMainId = won ? m.loser_id : m.winner_id;
+ const oppMainName = won ? (m.loser_name || "?") : (m.winner_name || "?");
+ // 相手サイドが player1 / player2 のどちらかを判定 (partner情報の対応付け)
+ let side = null;
+ if (m.player1_id && oppMainId && oppMainId === m.player1_id) side = 1;
+ else if (m.player2_id && oppMainId && oppMainId === m.player2_id) side = 2;
+ else if (m.player1_id && m.player1_id === playerId) side = 2;
+ else if (m.player2_id && m.player2_id === playerId) side = 1;
+ const first = (s) => String(s == null ? "" : s).split(" / ")[0].trim();
+ if (side === 1 || side === 2) {
+   const mainId = side === 1 ? m.player1_id : m.player2_id;
+   const mainNm = (side === 1 ? m.player1_main_name : m.player2_main_name)
+     || first(side === 1 ? m.player1_name : m.player2_name) || oppMainName;
+   const pId = side === 1 ? m.player1_partner_id : m.player2_partner_id;
+   const pNm = side === 1 ? m.player1_partner_name : m.player2_partner_name;
+   const list = [{ id: mainId || null, name: mainNm }];
+   if (pId || (pNm && String(pNm).trim())) list.push({ id: pId || null, name: (pNm && String(pNm).trim()) || "ペア" });
+   return list;
+ }
+ return [{ id: oppMainId || null, name: oppMainName }];   // 判定不可(旧データ等)→単独
+ },
+
+ // 進行中カード等で片サイドの選手名を個人DBリンクにして返す (#266: ダブルスは両名とも)。
+ // 親要素のクリック(詳細モーダル)と競合しないよう stopPropagation する。
+ liveNameLinks(m, side) {
+ const members = V.sideMembers(m, side);
+ const team = side === 1 ? m.player1_team : m.player2_team;
+ const out = [];
+ members.forEach((mem, i) => {
+   if (i > 0) out.push(h("span", { style: { color: "var(--sub)", margin: "0 3px" } }, "・"));
+   out.push(mem.id
+     ? h("a", { href: "#player/" + mem.id, style: { color: "inherit",
+         textDecorationLine: "underline", textDecorationStyle: "dotted", textUnderlineOffset: "2px" },
+         onClick: (e) => { e.preventDefault(); e.stopPropagation(); V.openPlayer(mem.id); } }, mem.name || "?")
+     : h("span", {}, mem.name || "?"));
+ });
+ if (team) out.push(h("span", { style: { color: "var(--sub)", fontWeight: 400, fontSize: "0.9em" } }, " (" + team + ")"));
+ return out;
+ },
+
  // 選手視点の試合行 (○勝ち / ×負け を色とラベルで明快に)
  renderPlayerMatchRow(m, playerId) {
  const won = m.winner_id === playerId;
- const oppId = won ? m.loser_id : m.winner_id;
- const oppName = won ? (m.loser_name || "?") : (m.winner_name || "?");
  const oppTeam = won ? m.loser_team : m.winner_team;
  const myScore = won ? (m.winner_sets || 0) : (m.loser_sets || 0);
  const oppScore = won ? (m.loser_sets || 0) : (m.winner_sets || 0);
@@ -1027,10 +1068,15 @@ const V = {
    ? m.sets.map(s => Array.isArray(s) && s.length === 2
        ? (won ? s[0] + "-" + s[1] : s[1] + "-" + s[0]) : "").filter(Boolean).join("  ")
    : "";
- const oppNameEl = oppId
-   ? h("a", { href: "#player/" + oppId,
-       onClick: (e) => { e.preventDefault(); V.openPlayer(oppId); } }, oppName)
-   : h("span", {}, oppName);
+ // 対戦相手の各メンバーを別々にリンク (#265: ダブルスは2名とも個人ページへ)
+ const oppList = V._oppMembers(m, playerId);
+ const oppNameEl = h("span", {}, ...oppList.map((mem, i) => {
+   const linkEl = mem.id
+     ? h("a", { href: "#player/" + mem.id,
+         onClick: (e) => { e.preventDefault(); V.openPlayer(mem.id); } }, mem.name || "?")
+     : h("span", {}, mem.name || "?");
+   return i === 0 ? linkEl : [h("span", { style: { color: "var(--sub)", margin: "0 3px" } }, "/"), linkEl];
+ }));
  return h("div", { className: "pm-row " + (won ? "win" : "loss") },
  h("div", { className: "pm-result" }, won ? "○\n勝ち" : "×\n負け"),
  h("div", { className: "pm-opp" },
@@ -1964,9 +2010,9 @@ const L = {
  h("div", {},
  h("div", { className: "text-xs text-sub mb-1 lmc-ev" }, `${m.event} ${m.round}`),
  h("div", { className: "lmc-names", style: { fontSize: "14px", fontWeight: 700 } },
- `${m.player1_name}${m.player1_team ? " (" + m.player1_team + ")" : ""}`,
+ ...V.liveNameLinks(m, 1),
  h("span", { style: { color: "var(--sub)", margin: "0 8px" } }, "VS"),
- `${m.player2_name}${m.player2_team ? " (" + m.player2_team + ")" : ""}`),
+ ...V.liveNameLinks(m, 2)),
  h("div", { className: "text-xs mt-1", style: { display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" } },
  h("span", { className: "text-sub", style: { fontWeight: 700, color: "var(--accent)" },
    "data-elapsed-since": m.called_at || m.started_at || "" },
