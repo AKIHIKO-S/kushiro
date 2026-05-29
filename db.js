@@ -2270,7 +2270,7 @@ function correctResult(matchId, data) {
     if (nm && nm.status === "on_table") {
       return {
         error: "次の試合 (" + (nm.match_label || nm.match_no) + ") が進行中です。" +
-          "進行中の試合は先に台から戻してから修正してください。",
+          "進行中の試合は先にコートから戻してから修正してください。",
         next_match_id: nm.id,
         next_match_label: nm.match_label || nm.match_no,
       };
@@ -2655,7 +2655,7 @@ function callMatch(matchId, tableNo, refereeId, opts) {
     const conflict = sqlite.prepare(
       `SELECT id FROM matches WHERE tournament_id=? AND status='on_table' AND table_no=? AND id != ?`
     ).get(m.tournament_id, tableNo, matchId);
-    if (conflict) return { error: `台${tableNo}は既に使用中です` };
+    if (conflict) return { error: `コート${tableNo}は既に使用中です` };
   }
 
   // 選手の拘束チェック (同種目内の試合・審判 拘束 + 種目優先順位)
@@ -2669,7 +2669,7 @@ function callMatch(matchId, tableNo, refereeId, opts) {
         blocks.push({
           slot, player_name: pname, type: "referee",
           locked_by_match: refLock.id, locked_by_table: refLock.table_no,
-          locked_by_label: `台${refLock.table_no} ${refLock.event} ${refLock.round} (審判担当中)`,
+          locked_by_label: `コート${refLock.table_no} ${refLock.event} ${refLock.round} (審判担当中)`,
         });
       }
       const playLock = getPlayerPlayingLock(pid, m.tournament_id, matchId);
@@ -2677,7 +2677,7 @@ function callMatch(matchId, tableNo, refereeId, opts) {
         blocks.push({
           slot, player_name: pname, type: "playing",
           locked_by_match: playLock.id, locked_by_table: playLock.table_no,
-          locked_by_label: `台${playLock.table_no} ${playLock.event} ${playLock.round} (試合中)`,
+          locked_by_label: `コート${playLock.table_no} ${playLock.event} ${playLock.round} (試合中)`,
         });
       }
     });
@@ -2727,7 +2727,7 @@ function callMatch(matchId, tableNo, refereeId, opts) {
           (table_no=? OR ','||extra_tables||',' LIKE '%,'||?||',%')
          AND id != ?`
       ).get(m.tournament_id, etNo, String(etNo), matchId);
-      if (conflict) return { error: `追加台${etNo}は既に使用中です` }; // まだ何も変更していない
+      if (conflict) return { error: `追加コート${etNo}は既に使用中です` }; // まだ何も変更していない
     }
     extrasStr = opts.extra_tables
       .map(n => parseInt(n)).filter(n => n > 0 && n !== tableNo).join(",");
@@ -3036,13 +3036,13 @@ function getOperationState(tournamentId) {
         const refLock = refereeLockByPlayer.get(pid);
         if (refLock && refLock.id !== m.id) blocks.push({
           slot, player_name: pname, type: "referee",
-          label: `台${refLock.table_no} で審判担当中`,
+          label: `コート${refLock.table_no} で審判担当中`,
           locked_by_match: refLock.id,
         });
         const playLock = playingLockByPlayer.get(pid);
         if (playLock && playLock.id !== m.id) blocks.push({
           slot, player_name: pname, type: "playing",
-          label: `台${playLock.table_no} で試合中`,
+          label: `コート${playLock.table_no} で試合中`,
           locked_by_match: playLock.id,
         });
       });

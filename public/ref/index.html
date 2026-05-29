@@ -156,10 +156,10 @@
     var matches = state.on_table || [];
     lastMatches = matches;
     if (!matches.length) {
-      root.innerHTML = '<div class="ref-note">担当の試合が台に入ると、ここに表示されます。'
+      root.innerHTML = '<div class="ref-note">担当の試合がコートに入ると、ここに表示されます。'
         + '結果が出たら<b>勝った選手を選んで報告</b>してください（セット数の入力は任意です）。</div>'
         + '<div class="reload-bar"><button id="rl">↻ 最新に更新</button></div>'
-        + '<div class="empty"><div class="big">🏓</div>いま台に入っている試合はありません。<br>試合が始まったら自動で表示されます。</div>';
+        + '<div class="empty"><div class="big">🏓</div>いまコートに入っている試合はありません。<br>試合が始まったら自動で表示されます。</div>';
       bindReload();
       return;
     }
@@ -182,7 +182,7 @@
     return ''
       + '<div class="mcard" id="card-' + esc(m.id) + '">'
       +   '<div class="mcard-top">'
-      +     (m.table_no ? '<span class="mtable">' + esc(m.table_no) + '番台</span>' : '')
+      +     (m.table_no ? '<span class="mtable">' + esc(m.table_no) + '番コート</span>' : '')
       +     '<span class="mtag">' + esc(m.event || "") + ' ' + esc(m.round || "") + '</span>'
       +     (elapsed ? '<span class="mtime">' + esc(elapsed) + '</span>' : '')
       +   '</div>'
@@ -280,7 +280,7 @@
       if (!res.ok) {
         if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = "この結果で報告"; }
         toast((res.j && res.j.error) || "送信に失敗しました（" + res.status + "）", "err");
-        // 409 (台から外れた) 等は最新化
+        // 409 (コートから外れた) 等は最新化
         if (res.status === 409 || res.status === 404) load();
         return;
       }
@@ -330,7 +330,7 @@
   window.addEventListener("offline", function () { setNet(false); });
   setNet(navigator.onLine);
   load();
-  setInterval(load, 12000);  // 自動更新 (台の入れ替わりを反映)
+  setInterval(load, 12000);  // 自動更新 (コートの入れ替わりを反映)
 })();
 </script>
 </body>

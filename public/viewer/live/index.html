@@ -21,7 +21,7 @@
     --lv-warn: #d97706;       /* オレンジ (呼出可能) */
     --lv-ok: #15803d;         /* 緑 (使用可能・終了) */
     --lv-blue: #2563eb;       /* 青 (待機) */
-    --lv-purple: #7c3aed;     /* 紫 (団体追加台) */
+    --lv-purple: #7c3aed;     /* 紫 (団体追加コート) */
     --lv-header: #1e2a4a;     /* ヘッダー濃紺 */
   }
   html { background: var(--lv-bg); }
@@ -255,7 +255,7 @@
     margin: 0 auto 8px; width: max-content;
   }
 
-  /* ─── 台 (コート) - 上部にヘッダーストリップ / 下部に審判 ─── */
+  /* ─── コート (コート) - 上部にヘッダーストリップ / 下部に審判 ─── */
   .lv-court {
     background: #fff;
     border: 2px solid var(--lv-line);
@@ -270,7 +270,7 @@
     overflow: hidden;
     gap: 1px;
   }
-  /* 上部ストリップ (台N | 種目) */
+  /* 上部ストリップ (コートN | 種目) */
   .lv-court-header {
     position: absolute; top: 0; left: 0; right: 0;
     height: 14px;
@@ -318,7 +318,7 @@
     background: rgba(0,0,0,.25); color: rgba(255,255,255,.85);
   }
 
-  /* 空き台: 緑背景 */
+  /* 空きコート: 緑背景 */
   .lv-court.empty {
     background: #f0fdf4;
     border-color: #86efac;
@@ -341,7 +341,7 @@
     box-shadow: 0 2px 8px rgba(220,38,38,.3);
   }
 
-  /* 団体追加台: 紫背景 */
+  /* 団体追加コート: 紫背景 */
   .lv-court.extra {
     background: linear-gradient(180deg, #a78bfa 0%, #7c3aed 100%);
     border-color: #5b21b6;
@@ -645,7 +645,7 @@
   }
 
   /* ─── 再コール 注意/警告マーク (観戦者向け・選手別 inline) ─── */
-  /* 台 (コート) セル内の選手名直下に表示 */
+  /* コート (コート) セル内の選手名直下に表示 */
   .lv-call-badge {
     display: inline-block;
     background: #fef3c7;
@@ -758,7 +758,7 @@
   }
   .lv-exit-big:hover { background: #dc2626; border-color: #dc2626; }
 
-  /* ─── モーダル (台クリック詳細) ─── */
+  /* ─── モーダル (コートクリック詳細) ─── */
   .lv-overlay {
     position: fixed; inset: 0;
     background: rgba(0,0,0,.82);
@@ -965,7 +965,7 @@
 <button class="lv-exit-big" id="lvExitBig" onclick="LV.exitBigscreen()"
   title="大画面/全画面を終了">✕ 表示を戻す</button>
 
-<!-- 動的オーバーレイ (台詳細・QR) -->
+<!-- 動的オーバーレイ (コート詳細・QR) -->
 <div id="lvOverlay"></div>
 
 <script src="/shared/common.js"></script>
@@ -1161,7 +1161,7 @@ const LV = {
   renderCourtBoard(s) {
     const { court_rows, court_cols, hq_position } = s.tournament;
     const wrap = h("div", { className: "lv-board" });
-    wrap.appendChild(h("div", { className: "lv-section-title" }, "台配置 (LIVE)"));
+    wrap.appendChild(h("div", { className: "lv-section-title" }, "コート配置 (LIVE)"));
 
     // 色分け凡例
     const activeCount = s.tables.filter(t => t.match && !t.is_extra).length;
@@ -1170,16 +1170,16 @@ const LV = {
     wrap.appendChild(h("div", { className: "lv-legend" },
       h("div", { className: "lv-legend-item" },
         h("span", { className: "lv-legend-swatch empty" }),
-        h("span", {}, "使用可 (" + emptyCount + "台)")),
+        h("span", {}, "使用可 (" + emptyCount + "コート)")),
       h("div", { className: "lv-legend-item" },
         h("span", { className: "lv-legend-swatch active" }),
-        h("span", {}, "進行中 (" + activeCount + "台)")),
+        h("span", {}, "進行中 (" + activeCount + "コート)")),
       extraCount > 0 ? h("div", { className: "lv-legend-item" },
         h("span", { className: "lv-legend-swatch extra" }),
-        h("span", {}, "団体追加台 (" + extraCount + "台)")) : null,
+        h("span", {}, "団体追加コート (" + extraCount + "コート)")) : null,
     ));
 
-    // 種目ごとの色 凡例 (進行中の台に出ている種目のみ) #182
+    // 種目ごとの色 凡例 (進行中のコートに出ている種目のみ) #182
     const activeEvents = [...new Set(s.tables.filter(t => t.match && t.match.event)
       .map(t => t.match.event))];
     if (activeEvents.length) {
@@ -1194,7 +1194,7 @@ const LV = {
     }
 
     // 横スクロール案内 (スマホでオーバーフロー時のみ JS で表示)
-    const scrollHint = h("div", { className: "lv-scroll-hint" }, "← 横にスワイプで全ての台を表示 →");
+    const scrollHint = h("div", { className: "lv-scroll-hint" }, "← 横にスワイプで全てのコートを表示 →");
     wrap.appendChild(scrollHint);
 
     const grid = h("div", { className: "lv-board-inner" });
@@ -1206,21 +1206,21 @@ const LV = {
         className: "lv-court " + (t.match ? "active" : "empty")
           + (t.is_extra ? " extra" : ""),
         onClick: () => t.match && LV.showCourtDetail(t),
-        title: t.match ? "クリックで詳細" : "空き台",
+        title: t.match ? "クリックで詳細" : "空きコート",
       });
-      // 進行中の台は種目ごとに色分け (#182)
+      // 進行中のコートは種目ごとに色分け (#182)
       if (t.match) {
         const ec = TT.eventColor(t.match.event);
         cell.style.background = ec.bg;
         cell.style.borderColor = ec.border;
         cell.style.color = ec.fg;
       }
-      // 上部ストリップ: 台番号 + 種目 (重なり解消)
+      // 上部ストリップ: コート番号 + 種目 (重なり解消)
       const eventLabel = t.match
         ? ((t.match.event || "") + (t.match.round ? " " + t.match.round : ""))
-        : "空き台";
+        : "空きコート";
       cell.appendChild(h("div", { className: "lv-court-header" },
-        h("span", { className: "tno" }, "台" + t.table_no),
+        h("span", { className: "tno" }, "コート" + t.table_no),
         h("span", { className: "ev" }, eventLabel),
       ));
       if (t.match) {
@@ -1259,7 +1259,7 @@ const LV = {
         style: { maxWidth: `${court_cols * 130}px`, margin: "14px auto 0" } },
         "本部"));
     }
-    // 描画後にオーバーフロー判定して案内を表示 (スマホで台が画面に収まらない時)
+    // 描画後にオーバーフロー判定して案内を表示 (スマホでコートが画面に収まらない時)
     requestAnimationFrame(() => {
       if (wrap.scrollWidth > wrap.clientWidth + 4) scrollHint.style.display = "flex";
     });
@@ -1437,10 +1437,10 @@ const LV = {
     );
   },
 
-  // 台クリック / 試合クリックで詳細モーダル
+  // コートクリック / 試合クリックで詳細モーダル
   showCourtDetail(table) {
     if (!table.match) return;
-    LV.showMatchDetail(table.match, "台 " + table.table_no);
+    LV.showMatchDetail(table.match, "コート " + table.table_no);
   },
 
   showMatchDetail(m, headerExtra) {
@@ -1490,8 +1490,8 @@ const LV = {
         h("div", { className: "lv-detail-label" }, "審判"),
         h("div", { className: "lv-detail-val ref" }, m.referee_name)) : null,
       m.table_no ? h("div", { className: "lv-detail-row" },
-        h("div", { className: "lv-detail-label" }, "台"),
-        h("div", { className: "lv-detail-val" }, "台 " + m.table_no
+        h("div", { className: "lv-detail-label" }, "コート"),
+        h("div", { className: "lv-detail-val" }, "コート " + m.table_no
           + (m.extra_tables ? " + " + m.extra_tables : ""))) : null,
       h("div", { className: "lv-detail-row" },
         h("div", { className: "lv-detail-label" }, "ステータス"),
@@ -1531,7 +1531,7 @@ const LV = {
       if (match(m.player1_name) || match(m.player2_name)
           || match(m.player1_team) || match(m.player2_team)) {
         hits.push({
-          where: "進行中 (台" + m.table_no + ")",
+          where: "進行中 (コート" + m.table_no + ")",
           summary: `${m.event || ""} ${m.round || ""} ${m.player1_name} vs ${m.player2_name}`,
         });
       }

@@ -285,7 +285,7 @@
  margin-bottom: 14px; overflow-x: auto;
  -webkit-overflow-scrolling: touch;
  }
- /* 横スクロール案内 (台が画面幅に収まらない時のみ表示) */
+ /* 横スクロール案内 (コートが画面幅に収まらない時のみ表示) */
  .live-court-hint {
  display: none; align-items: center; justify-content: center; gap: 6px;
  font-size: 11px; font-weight: 700; color: var(--accent);
@@ -336,7 +336,7 @@
  /* 種目名・氏名は単語の途中で改行しない (スペースのみで改行・無ければ1行) */
  .live-match-card .lmc-ev, .live-match-card .lmc-names,
  .un-ev, .un-players, .un-p { word-break: keep-all; overflow-wrap: normal; }
- /* スマホ: 台グリッドを横スクロールさせず画面幅に折り返す (#217) */
+ /* スマホ: コートグリッドを横スクロールさせず画面幅に折り返す (#217) */
  @media (max-width: 640px) {
  .live-court-wrap { overflow-x: visible; padding: 12px 8px; }
  .live-court-hint { display: none !important; }
@@ -1847,7 +1847,7 @@ const L = {
  h("div", { className: "stat-label" }, "総試合")),
  ));
 
- // 台レイアウト
+ // コートレイアウト
  main.appendChild(L.renderCourtGrid(s));
 
  // 進行中
@@ -1855,7 +1855,7 @@ const L = {
  main.appendChild(h("div", { className: "section-title mt-3" }, "進行中"));
  s.on_table.forEach(m => {
  main.appendChild(h("div", { className: "live-match-card" },
- h("div", { className: "live-tno" }, "台" + m.table_no),
+ h("div", { className: "live-tno" }, "コート" + m.table_no),
  h("div", {},
  h("div", { className: "text-xs text-sub mb-1 lmc-ev" }, `${m.event} ${m.round}`),
  h("div", { className: "lmc-names", style: { fontSize: "14px", fontWeight: 700 } },
@@ -1920,7 +1920,7 @@ const L = {
  const gridW = court_cols * CELL_W + (court_cols - 1) * GAP;
  const wrap = h("div", { className: "live-court-wrap" });
  // 横スクロール案内 (オーバーフロー時のみ JS で表示)
- const hint = h("div", { className: "live-court-hint" }, "← 横にスワイプで全ての台を表示 →");
+ const hint = h("div", { className: "live-court-hint" }, "← 横にスワイプで全てのコートを表示 →");
  wrap.appendChild(hint);
  const grid = h("div", { className: "live-court-grid" });
  grid.style.gridTemplateColumns = `repeat(${court_cols}, ${CELL_W}px)`;
@@ -1930,7 +1930,7 @@ const L = {
    style: t.match ? { cursor: "pointer" } : {},
    title: t.match ? "タップで試合詳細" : "",
    onClick: () => { if (t.match) L.showCourtDetail(t); } });
- // 進行中の台は種目ごとに色分け (#182)
+ // 進行中のコートは種目ごとに色分け (#182)
  let ec = null;
  if (t.match) {
    ec = TT.eventColor(t.match.event);
@@ -1938,7 +1938,7 @@ const L = {
    cell.style.background = ec.soft;
  }
  cell.appendChild(h("div", { className: "live-court-no",
-   style: t.match ? { background: ec.bg, color: ec.fg } : {} }, "台" + t.table_no));
+   style: t.match ? { background: ec.bg, color: ec.fg } : {} }, "コート" + t.table_no));
  if (t.match) {
  cell.appendChild(h("div", { className: "live-court-match",
    style: { color: ec.border } },
@@ -1970,7 +1970,7 @@ const L = {
  return wrap;
  },
 
- // 台タップ → 進行中の試合詳細 (閲覧・読み取り専用)
+ // コートタップ → 進行中の試合詳細 (閲覧・読み取り専用)
  showCourtDetail(t) {
  const m = t.match;
  if (!m) return;
@@ -1987,7 +1987,7 @@ const L = {
  );
  const body = h("div", {},
    h("div", { className: "flex gap-2 mb-2", style: { alignItems: "center", flexWrap: "wrap" } },
-     h("span", { className: "badge", style: { background: "#dc2626", color: "#fff" } }, "台 " + t.table_no),
+     h("span", { className: "badge", style: { background: "#dc2626", color: "#fff" } }, "コート " + t.table_no),
      h("span", { className: "badge" }, [m.event, m.round].filter(Boolean).join(" ")),
      h("span", { style: { fontSize: "12px", color: "#15803d", fontWeight: "700" } }, "● 試合中")),
    playerLine(m.player1_name, num1, m.player1_team, m.player1_furigana),
@@ -2005,7 +2005,7 @@ const L = {
      onClick: () => { document.querySelector(".modal-bg")?.remove(); V.openPlayer(m.player2_id); } },
      (m.player2_name || "選手2") + " のプロフィール") : null,
  );
- TT.openModal("試合中 — 台 " + t.table_no, body, foot);
+ TT.openModal("試合中 — コート " + t.table_no, body, foot);
  },
 };
 
@@ -2148,7 +2148,7 @@ const MP = {
  const oppName = m.player1_id === MP.playerId ? m.player2_name : m.player1_name;
  const title = isCallable ? "あなたの試合です!" : isPlaying ? "試合開始" : "ステータス変化";
  const body = `${m.event} ${m.round}\nvs ${oppName}` +
- (m.table_no ? `\n台${m.table_no}` : "");
+ (m.table_no ? `\nコート${m.table_no}` : "");
 
  // ブラウザ通知
  if ("Notification" in window && Notification.permission === "granted") {
@@ -2294,7 +2294,7 @@ const MP = {
  h("div", { className: "font-bold", style: { color: "#92400e" } },
  "あなたは審判担当中です"),
  h("div", { className: "text-sm mt-1" },
- `台${s.refereeing.table_no} の試合が終了するまで他の試合に出られません`),
+ `コート${s.refereeing.table_no} の試合が終了するまで他の試合に出られません`),
  h("div", { className: "text-sm mt-1" },
  `${s.refereeing.player1_name} vs ${s.refereeing.player2_name}`),
  ));
@@ -2370,7 +2370,7 @@ const MP = {
  oppTeam ? h("div", { className: "text-sm text-sub" }, oppTeam) : null,
  (s.my_state === "callable" || s.my_state === "playing") && m.table_no
  ? h("div", { style: { fontSize: "32px", fontWeight: 700, color: ss.color,
- marginTop: "8px" } }, "台 " + m.table_no)
+ marginTop: "8px" } }, "コート " + m.table_no)
  : null,
  ) : null,
  );
