@@ -6215,6 +6215,7 @@ const O = {
  O._lastOpsVer = undefined;
  O.reload();
  O.initPullToRefresh();   // スワイプ更新を有効化 (#238)
+ O._initNet();            // オフライン/送信待ち監視を有効化 (#線断対策)
  // 自動更新 (2秒): 軽量な ops-version を見て、変化した時だけ全再描画。
  // 審判報告→本部の「承認待ち」表示が最大2秒で届く (管理は常にフレッシュ取得)。
  O.poller = setInterval(() => O.tick(), 2000);
@@ -6292,6 +6293,38 @@ const O = {
    main.addEventListener("touchcancel", end);
  },
 
+ // 通信状態バー (#線断対策): オフライン/送信待ちを画面上部に常時表示
+ _updateNetBar() {
+   const pend = (typeof api !== "undefined" && api.pendingCount) ? api.pendingCount() : 0;
+   const down = (typeof api !== "undefined" && api.online === false) || O._netDown === true;
+   let bar = document.getElementById("opNetBar");
+   if (!down && pend === 0) { if (bar) bar.style.display = "none"; return; }
+   if (!bar) {
+     bar = h("div", { id: "opNetBar", style: { position: "fixed", top: "0", left: "0", right: "0",
+       zIndex: "99998", textAlign: "center", fontWeight: "800", fontSize: "13px",
+       padding: "7px 12px", color: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,.25)" } });
+     document.body.appendChild(bar);
+   }
+   bar.style.display = "block";
+   if (down) {
+     bar.style.background = "#b91c1c";
+     bar.textContent = "⚠ オフライン — 操作は端末に保存中。回線が戻ると自動送信します"
+       + (pend > 0 ? "（送信待ち " + pend + "件）" : "");
+   } else {
+     bar.style.background = "#0ea5e9";
+     bar.textContent = "↑ 送信待ち " + pend + "件 を送信中…";
+   }
+ },
+ // 送信待ちキュー/オンライン状態の監視を一度だけ仕込む
+ _initNet() {
+   if (O._netInit) return; O._netInit = true;
+   if (typeof api !== "undefined" && api.onPending) api.onPending(() => O._updateNetBar());
+   if (typeof api !== "undefined") api.onQueueFlushed = (n) => {
+     try { TT.toast((n || "") + "件の保存操作を送信しました", "ok"); } catch (e) {}
+     O._netDown = false; O.reload();
+   };
+ },
+
  async reload(silent) {
  if (!O.tournamentId) return;
  const main = document.getElementById("opMain");
@@ -6307,6 +6340,7 @@ const O = {
    return;
  }
  O.state = state;
+ O._netDown = false; O._updateNetBar();   // 取得成功 → オンライン表示 (#線断対策)
  // 団体戦の名簿(所属選手)を取得。静的データなので大会ごとに1回 + 手動/操作後の再読込時のみ
  // (4秒ポーリング silent=true 時は再取得しない → 負荷軽減)
  if (O.teamRosterTid !== O.tournamentId || !silent) {
@@ -6353,11 +6387,15 @@ const O = {
  }
  } catch (e) {
    if (!silent) console.error("[Operations fetch error]", e);
-   if (main) {
+   // オフライン/回線断: すでに表示済みなら画面を消さず維持 (#線断対策で運用継続)。
+   // 呼出/結果入力/修正は opSend が端末に保存し、回線復旧で自動送信される。
+   O._netDown = true; O._updateNetBar();
+   if (main && !O.state) {
      clear(main);
-     main.appendChild(h("div", { className: "empty-state",
-       style: { color: "var(--accent)", padding: "20px" } },
-       "通信エラー: " + (e.message || e)));
+     main.appendChild(h("div", { className: "empty-state", style: { color: "var(--sub)", padding: "20px" } },
+       h("div", { className: "font-bold mb-2" }, "接続を確認しています…"),
+       h("div", { className: "text-sm" }, "オフラインの可能性があります。操作は端末に保存され、復旧時に自動送信されます。"),
+       h("button", { className: "btn btn-sm mt-2", onClick: () => O.reload() }, "再試行")));
    }
  }
  },
