@@ -123,6 +123,94 @@ function extractSheet(ws) {
   return out;
 }
 
+// ダブルス用抽出: seed番号アンカーから「ペア(2名)」を組み立てる。
+//  男子=横並び [seed, 氏名1, 氏名2, (所属), 地区] / 女子=縦並び [seed, 氏名1, 所属1] + 次行 [氏名2, 所属2]
+function extractDoubles(ws) {
+  if (!ws || !ws['!ref']) return [];
+  const R = XLSX.utils.decode_range(ws['!ref']);
+  const cand = [];
+  const seenName = new Set();
+  const mkTeam = (t1, t2) => {
+    t1 = cleanTeam(t1); t2 = cleanTeam(t2);
+    if (t1 && t2 && t1 !== t2) return t1 + ' / ' + t2;
+    return t1 || t2 || '';
+  };
+  for (let r = R.s.r; r <= R.e.r; r++) {
+    for (let c = R.s.c; c <= R.e.c; c++) {
+      const s = cellStr(ws, r, c);
+      if (!isIntStr(s)) continue;
+      const seed = parseInt(s, 10);
+      if (seed < 1 || seed > 600) continue;
+      // 左ブロック(seedが左): 氏名1 = c+1
+      let dir = 0, n1c = -1;
+      if (looksLikeName(cellStr(ws, r, c + 1))) { dir = 1; n1c = c + 1; }
+      else if (looksLikeName(cellStr(ws, r, c - 2))) { dir = -1; n1c = c - 2; }
+      else continue;
+      const name1 = cellStr(ws, r, n1c);
+      let name2 = '', team = '', region = '';
+      // 判定順が重要: 所属名(スマイルクラブ等)も looksLikeName を通るため、
+      //  ① 横ペア(男子): 氏名2の直後が「(所属)」カッコ → これを最優先で確定
+      //  ② 縦ペア(女子): 相方が直下の行
+      //  ③ カッコ無しの横ペア(保険) / ④ 単独
+      const regAmong = (...vals) => { for (const v of vals) if (isRegionToken(v)) return v; return ''; };
+      if (dir === 1) {                         // 左ブロック(seedが左)
+        const next = cellStr(ws, r, c + 2);    // 氏名2(横) or 所属(縦)
+        const next2 = cellStr(ws, r, c + 3);   // (所属)(横) or 空(縦)
+        const below = cellStr(ws, r + 1, n1c); // 相方(縦)
+        if (looksLikeName(next) && isParenTeam(next2)) {        // ① 横ペア
+          name2 = next;
+          team = mkTeam(next2, cellStr(ws, r, c + 4));
+          region = regAmong(cellStr(ws, r, c + 4), cellStr(ws, r, c + 5));
+        } else if (looksLikeName(below)) {                      // ② 縦ペア
+          name2 = below;
+          team = mkTeam(cellStr(ws, r, c + 2), cellStr(ws, r + 1, c + 2));
+          region = regAmong(cellStr(ws, r, c + 3), cellStr(ws, r + 1, c + 3));
+        } else if (looksLikeName(next)) {                       // ③ 横ペア(カッコ無し)
+          name2 = next; team = cleanTeam(next2);
+        } else {                                                // ④ 単独(保険)
+          team = cleanTeam(next);
+        }
+      } else {                                 // 右ブロック(seedが右・鏡像)
+        const prev = cellStr(ws, r, c - 3);    // 氏名2(横)
+        const prevTeam = cellStr(ws, r, c - 1);// (所属)(横)
+        const below = cellStr(ws, r + 1, n1c); // 相方(縦)
+        if (looksLikeName(prev) && isParenTeam(prevTeam)) {     // ① 横ペア(鏡像)
+          name2 = prev;
+          team = mkTeam(prevTeam, cellStr(ws, r, c - 4));
+          region = regAmong(cellStr(ws, r, c - 4), cellStr(ws, r, c - 5));
+        } else if (looksLikeName(below)) {                      // ② 縦ペア(鏡像)
+          name2 = below;
+          team = mkTeam(cellStr(ws, r, c - 1), cellStr(ws, r + 1, c - 1));
+        } else if (looksLikeName(prev)) {                       // ③ 横ペア(カッコ無し)
+          name2 = prev; team = cleanTeam(prevTeam);
+        } else {
+          team = cleanTeam(prevTeam);
+        }
+      }
+      const key = r + ':' + n1c;
+      if (seenName.has(key)) continue;
+      seenName.add(key);
+      const name = name2 ? (name1 + ' / ' + name2) : name1;
+      cand.push({ seed, name, team, region, _r: r, _c: n1c, _seedCol: c });
+    }
+  }
+  // リーフseed列のみ採用(孤立整数=勝ち上がり位置を除外)
+  const byCol = {};
+  cand.forEach(p => { (byCol[p._seedCol] = byCol[p._seedCol] || []).push(p); });
+  let out = [];
+  Object.keys(byCol).forEach(col => { if (byCol[col].length >= 3) out.push(...byCol[col]); });
+  // ペアで重複除去: 左右ブロックで A/B と B/A の順違い、勝ち上がりの再掲を、
+  // 2名を並べ替えた順序非依存キーで畳み込み、最小seedの1件を残す。
+  const pairKey = (nm) => String(nm || '').split('/')
+    .map(x => x.replace(/[\s　]/g, '')).filter(Boolean).sort().join('|');
+  const byPair = {};
+  out.forEach(p => {
+    const k = pairKey(p.name);
+    if (!byPair[k] || p.seed < byPair[k].seed) byPair[k] = p;
+  });
+  return Object.values(byPair).sort((a, b) => a.seed - b.seed);
+}
+
 // 種目名・形式の推定
 function guessFormat(sheetName, players, fmtHint) {
   if (fmtHint) return fmtHint;
@@ -154,7 +242,9 @@ function parseSeedList(filePath, opts = {}) {
   for (const sn of sheetNames) {
     if (!opts.sheet && isNoiseSheet(sn)) continue;
     const ws = wb.Sheets[sn];
-    let players = extractSheet(ws);
+    // 種目形式をシート名から先に判定し、ダブルスは専用抽出(ペア結合)を使う
+    const fmt = guessFormat(sn, [], opts.formatHint);
+    let players = (fmt === 'doubles') ? extractDoubles(ws) : extractSheet(ws);
     if (players.length < 2) continue; // ブラケットでない
     // seed が取れた選手は seed 順、取れない選手は出現順(行→列)で後ろに
     const withSeed = players.filter(p => p.seed != null).sort((x, y) => x.seed - y.seed);
@@ -162,7 +252,6 @@ function parseSeedList(filePath, opts = {}) {
       .sort((x, y) => (x._r - y._r) || (x._c - y._c));
     // seed の重複/欠落をならし、最終的に 1..N の連番を振り直す(取込形式に合わせる)
     const ordered = withSeed.concat(noSeed);
-    const fmt = guessFormat(sn, ordered, opts.formatHint);
     const gender = guessGender(sn);
     const playersOut = ordered.map((p, i) => {
       const rec = { name: p.name, team: p.team || '', seed: i + 1 };
