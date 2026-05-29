@@ -1132,6 +1132,7 @@
  <div class="flex gap-2">
  <button class="btn btn-sm btn-ghost" onclick="A.cleanupInvalidPlayers()">チーム名混入を削除</button>
  <button class="btn btn-sm btn-ghost" onclick="A.normalizeCategories()" title="所属に「小学校/中学校/高校/大学」が含まれる選手のカテゴリを自動設定">所属からカテゴリ自動振分</button>
+ <button class="btn btn-sm btn-ghost" style="background:#fef3c7;color:#78350f;border-color:#fcd34d" onclick="A.openMergeDialog()" title="氏名・ふりがなが近い重複選手を検出して1人に結合(戦績も統合)">重複の結合</button>
  <button class="btn btn-sm" onclick="A.newPlayer()">+ 新規選手</button>
  </div>
  </div>
@@ -5619,6 +5620,66 @@ const A = {
  await A.openTournament(t.id);
  } }, "追加");
  openModal("試合を手動追加", body, foot);
+ },
+
+ // ─── 選手の重複結合 (マージ) #275 ──────────
+ async openMergeDialog() {
+ let data;
+ try { data = await api.get("/api/player-merge/candidates"); }
+ catch (e) { return toast("重複候補の取得に失敗: " + e.message, "err"); }
+ const groups = (data && data.groups) || [];
+ const body = h("div", {});
+ body.appendChild(h("div", { className: "text-sm text-sub mb-3", style: { lineHeight: "1.6" } },
+ groups.length
+ ? `重複の可能性がある ${groups.length} 組を検出しました。各組で「残す選手」を選んで結合してください。戦績・入賞・出場記録は残す選手に統合され、もう片方は削除されます（元に戻せません）。`
+ : "重複の可能性がある選手は見つかりませんでした。氏名のスペース・表記ゆれ・ふりがな一致・漢字1文字違いを自動チェックしています。"));
+ groups.forEach((g, gi) => body.appendChild(A._renderMergeGroup(g, gi)));
+ openModal("重複選手の結合", body,
+ h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
+ },
+ _renderMergeGroup(g, gi) {
+ const card = h("div", { className: "card", style: { padding: "12px", marginBottom: "10px", border: "1px solid var(--border)" } });
+ card.appendChild(h("div", { style: { marginBottom: "8px" } },
+ h("span", { style: { fontSize: "11px", fontWeight: "700", background: "#fef3c7", color: "#78350f", borderRadius: "999px", padding: "2px 10px" } }, g.reason)));
+ const score = p => (p.wins || 0) + (p.losses || 0) + (p.achievements || 0) * 2 + (p.appearances || 0);
+ let bestIdx = 0; g.players.forEach((p, i) => { if (score(p) > score(g.players[bestIdx])) bestIdx = i; });
+ g.players.forEach((p, i) => {
+ const rid = `mg_${gi}_${i}`;
+ const radio = h("input", { type: "radio", name: `mgsurv_${gi}`, value: p.id, id: rid, style: { marginRight: "8px" } });
+ if (i === bestIdx) radio.checked = true;
+ const row = h("label", { htmlFor: rid, className: "flex",
+ style: { alignItems: "center", gap: "6px", padding: "7px 8px", cursor: "pointer", borderRadius: "6px", background: "var(--bg)", marginBottom: "4px" } },
+ radio,
+ h("div", { style: { flex: "1", minWidth: "0" } },
+ h("div", {}, h("b", {}, p.name), p.furigana ? h("span", { className: "text-xs text-sub" }, ` ${p.furigana}`) : ""),
+ h("div", { className: "text-xs text-sub" },
+ `${p.team || "所属未設定"} ・ ${p.wins}勝${p.losses}敗 ・ 入賞${p.achievements} ・ 出場${p.appearances}回`)));
+ card.appendChild(row);
+ });
+ card.appendChild(h("div", { className: "text-xs text-sub", style: { margin: "4px 0 8px" } }, "↑ 残す選手 (戦績の多い方を既定選択)"));
+ card.appendChild(h("button", { className: "btn btn-sm", onClick: () => A.doMergeGroup(gi, g) }, `この${g.players.length}名を1人に結合`));
+ return card;
+ },
+ async doMergeGroup(gi, g) {
+ const sel = document.querySelector(`input[name=mgsurv_${gi}]:checked`);
+ if (!sel) return toast("残す選手を選んでください", "err");
+ const survivorId = sel.value;
+ const survName = (g.players.find(p => p.id === survivorId) || {}).name || "";
+ const others = g.players.filter(p => p.id !== survivorId);
+ if (!others.length) return toast("結合する相手がいません", "err");
+ if (!confirm(`「${others.map(p => p.name).join("」「")}」を「${survName}」に統合します。\n戦績・入賞・出場記録は「${survName}」に引き継がれ、統合元は削除されます。\n元に戻せません。よろしいですか?`)) return;
+ let ok = 0;
+ for (const o of others) {
+ const r = await api.post(`/api/players/${survivorId}/merge`, { duplicate_id: o.id });
+ if (r && r.error) toast(`結合失敗 (${o.name}): ${r.error}`, "err");
+ else ok++;
+ }
+ A._playerSuggestCache = null;
+ toast(`${ok}名を「${survName}」に結合しました`, "ok");
+ try { A.state.players = await api.get("/api/players"); } catch {}
+ A.renderPlayers();
+ document.querySelector(".modal-bg")?.remove();
+ A.openMergeDialog();
  },
 
  // ─── 選手データベース (アコーディオン+カード) ──────────

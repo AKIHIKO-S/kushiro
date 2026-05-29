@@ -821,6 +821,101 @@ function updatePlayer(id, data) {
 function deletePlayer(id) { stmts.deletePlayer.run(id); }
 function deleteAllPlayers() { stmts.deleteAllPlayers.run(); }
 
+// ── 選手の重複結合 (マージ) #275 ──
+// dupId を survivorId に統合し、戦績(matches)・入賞(achievements)・申込(entrants)・
+// 出場(tournament_players)・通知(push)の参照をすべて付け替えてから dup を削除する。
+// 戦績の勝敗数は winner_id/loser_id から算出されるため、ID付け替えで自動的に正しくなる。
+function mergePlayers(survivorId, dupId) {
+  if (!survivorId || !dupId) return { error: "結合する2名を指定してください" };
+  if (survivorId === dupId) return { error: "同一の選手は結合できません" };
+  const survivor = stmts.getPlayer.get(survivorId);
+  const dup = stmts.getPlayer.get(dupId);
+  if (!survivor || !dup) return { error: "選手が見つかりません" };
+  const tx = sqlite.transaction(() => {
+    const repoint = [
+      ["matches", "winner_id"], ["matches", "loser_id"], ["matches", "referee_id"],
+      ["matches", "player1_id"], ["matches", "player2_id"],
+      ["achievements", "player_id"],
+      ["entrants", "player_id"], ["entrants", "partner_player_id"],
+      ["push_subscriptions", "player_id"],
+    ];
+    for (const [tbl, col] of repoint) {
+      sqlite.prepare(`UPDATE ${tbl} SET ${col} = ? WHERE ${col} = ?`).run(survivorId, dupId);
+    }
+    // tournament_players は (tournament_id, player_id, event) が主キー。
+    // 両者が同一大会・同一種目に居ると衝突するため OR IGNORE。残りは下の dup 削除で CASCADE 消去。
+    sqlite.prepare(`UPDATE OR IGNORE tournament_players SET player_id = ? WHERE player_id = ?`).run(survivorId, dupId);
+    // survivor の空欄を dup の値で補完 + 出場回数を合算
+    sqlite.prepare(`UPDATE players SET
+      furigana = CASE WHEN COALESCE(furigana,'')='' THEN ? ELSE furigana END,
+      team     = CASE WHEN COALESCE(team,'')=''     THEN ? ELSE team END,
+      branch   = CASE WHEN COALESCE(branch,'')=''   THEN ? ELSE branch END,
+      note     = CASE WHEN COALESCE(note,'')=''     THEN ? ELSE note END,
+      appearances = COALESCE(appearances,0) + ?,
+      updated_at  = datetime('now','localtime')
+      WHERE id = ?`).run(dup.furigana || "", dup.team || "", dup.branch || "", dup.note || "", dup.appearances || 0, survivorId);
+    stmts.deletePlayer.run(dupId);   // 残参照は ON DELETE CASCADE / SET NULL
+  });
+  tx();
+  return { ok: true, survivor: getPlayer(survivorId), merged_name: dup.name };
+}
+
+function _normName(s) { return String(s == null ? "" : s).replace(/[\s　]+/g, ""); }
+// 編集距離 (長さ差>1は早期に2を返して打ち切り)
+function _editDistance(a, b) {
+  a = a || ""; b = b || "";
+  if (Math.abs(a.length - b.length) > 1) return 2;
+  const m = a.length, n = b.length;
+  const prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    let diag = prev[0]; prev[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = prev[j];
+      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diag = tmp;
+    }
+  }
+  return prev[n];
+}
+
+// 重複候補を検出 (氏名スペース/表記ゆれ・ふりがな一致・漢字1文字違い) #275
+function findDuplicatePlayerCandidates() {
+  const players = getPlayers();   // match_wins/match_losses/total_achievements を含む
+  const slim = p => ({ id: p.id, name: p.name, team: p.team || "", furigana: p.furigana || "",
+    gender: p.gender, appearances: p.appearances || 0, wins: p.match_wins || 0,
+    losses: p.match_losses || 0, achievements: p.total_achievements || 0 });
+  const groups = [];
+  const seen = new Set();
+  const add = (reason, arr) => {
+    if (arr.length < 2) return;
+    const key = arr.map(p => p.id).sort().join(",");
+    if (seen.has(key)) return;
+    seen.add(key);
+    groups.push({ reason, players: arr.map(slim) });
+  };
+  // 1. 正規化名(スペース/全半角除去)が一致するが元表記が異なる
+  const byNorm = new Map();
+  players.forEach(p => { const k = _normName(p.name); if (!k) return; if (!byNorm.has(k)) byNorm.set(k, []); byNorm.get(k).push(p); });
+  byNorm.forEach(arr => { if (arr.length > 1 && new Set(arr.map(p => p.name)).size > 1) add("氏名一致(スペース/表記ゆれ)", arr); });
+  // 2. ふりがな一致 (漢字表記が違う)
+  const byFuri = new Map();
+  players.forEach(p => { const k = _normName(p.furigana); if (!k || k.length < 2) return; if (!byFuri.has(k)) byFuri.set(k, []); byFuri.get(k).push(p); });
+  byFuri.forEach(arr => { if (arr.length > 1 && new Set(arr.map(p => _normName(p.name))).size > 1) add("ふりがな一致", arr); });
+  // 3. 漢字1文字違い (編集距離1)。件数が多すぎる場合は負荷回避でスキップ。
+  if (players.length <= 1500) {
+    for (let i = 0; i < players.length; i++) {
+      const a = _normName(players[i].name);
+      if (a.length < 2) continue;
+      for (let j = i + 1; j < players.length; j++) {
+        const b = _normName(players[j].name);
+        if (b.length < 2 || a === b) continue;
+        if (_editDistance(a, b) === 1) add("漢字1文字違いの可能性", [players[i], players[j]]);
+      }
+    }
+  }
+  return { count: groups.length, groups };
+}
+
 function addAchievement(playerId, data) {
   const id = uid();
   stmts.insertAchievement.run({
@@ -5044,6 +5139,7 @@ module.exports = {
   // ベスト8 (準々決勝進出者)
   getEventBest8, getAllBest8,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
+  mergePlayers, findDuplicatePlayerCandidates,
   getGlobalMatchAverages, detectSchoolCategory, normalizePlayerCategories,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,

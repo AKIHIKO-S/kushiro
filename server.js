@@ -489,6 +489,15 @@ app.delete("/api/players/:id", requireAdmin, (req, res) => {
 app.delete("/api/players", requireAdmin, (req, res) => {
   db.deleteAllPlayers(); res.json({ ok: true });
 });
+// 選手の重複候補 + 結合 (マージ) #275
+app.get("/api/player-merge/candidates", requireAdmin, (req, res) => {
+  res.json(db.findDuplicatePlayerCandidates());
+});
+app.post("/api/players/:id/merge", requireAdmin, (req, res) => {
+  const r = db.mergePlayers(req.params.id, (req.body || {}).duplicate_id);
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
 
 // ── 戦績 ──
 app.post("/api/players/:id/achievements", requireAdmin, (req, res) => {
