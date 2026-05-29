@@ -248,10 +248,12 @@
       if (ym) (byM[ym] = byM[ym] || { ym: ym, w: 0, l: 0 })[won ? "w" : "l"]++;
       const oppName = won ? (m.loser_name || "") : (m.winner_name || "");
       if (oppName) (byOpp[oppName] = byOpp[oppName] || { name: oppName, w: 0, l: 0 })[won ? "w" : "l"]++;
-      // 対 支部別 (相手の所属チームを支部に正規化)
+      // 対 支部別: 相手の所属を「公式支部」に正規化できた時のみ支部単位で集計。
+      // (正規化できない=所属チーム名そのままは支部別ではないので除外。所属チーム別に化けるのを防止)
       const oppTeam = won ? (m.loser_team || "") : (m.winner_team || "");
       const oppBranch = normalizeBranch(oppTeam || "") || "";
-      if (oppBranch) (byBranch[oppBranch] = byBranch[oppBranch] || { name: oppBranch, w: 0, l: 0 })[won ? "w" : "l"]++;
+      const isOfficialBranch = /支部$/.test(oppBranch) && HOKKAIDO_BRANCHES.indexOf(oppBranch.replace(/支部$/, "")) >= 0;
+      if (isOfficialBranch) (byBranch[oppBranch] = byBranch[oppBranch] || { name: oppBranch, w: 0, l: 0 })[won ? "w" : "l"]++;
       const hr = hourOf(m.finished_at);
       if (hr != null) { const tb = hr < 12 ? "am" : (hr < 16 ? "pm" : "eve"); time[tb][won ? "w" : "l"]++; }
       const gk = (m.tournament_id || "") + "|" + (m.event || "");
@@ -306,7 +308,9 @@
   }
 
   // ── 選手スタッツ セクション (閲覧/admin 共通描画) ──
-  function playerStatsSection(player) {
+  function playerStatsSection(player, opts) {
+    opts = opts || {};
+    const avg = opts.averages || null;
     const st = computePlayerStats(player);
     const wrap = h("div", {});
     if (!st.total) {
@@ -314,9 +318,27 @@
       wrap.appendChild(h("div", { className: "pstat-empty" }, "記録された試合がまだありません。"));
       return wrap;
     }
-    const tile = (v, l, s) => h("div", { className: "pstat-tile" },
+    const tile = (v, l, s, cmp) => h("div", { className: "pstat-tile" },
       h("div", { className: "pstat-v" }, v), h("div", { className: "pstat-l" }, l),
-      s ? h("div", { className: "pstat-s" }, s) : null);
+      s ? h("div", { className: "pstat-s" }, s) : null, cmp || null);
+    // 全試合平均との相対 (比較できる指標のみ)。勝率/セット率/フルセット勝率は
+    // 全対戦が勝敗1:1のため平均50%が基準。平均対戦時間は全試合の集計平均と比較。
+    const deltaTxt = (d, unit) => d > 0 ? "▲ +" + d + unit : (d < 0 ? "▼ −" + Math.abs(d) + unit : "＝ 同等");
+    const cmpPct = (val, base, higherGood) => {
+      if (val == null) return null;
+      const d = Math.round((val - base) * 10) / 10;
+      const tone = d === 0 ? "even" : ((d > 0) === !!higherGood ? "up" : "down");
+      return h("div", { className: "pstat-cmp " + tone },
+        h("span", { className: "pstat-cmp-a" }, "全体平均 " + base + "%"),
+        h("span", { className: "pstat-cmp-d" }, deltaTxt(d, "pt")));
+    };
+    const cmpDur = (sec, avgSec) => {
+      if (!sec || !avgSec) return null;
+      const d = Math.round((sec - avgSec) / 60);
+      return h("div", { className: "pstat-cmp even" },
+        h("span", { className: "pstat-cmp-a" }, "全体平均 " + fmtDuration(avgSec)),
+        h("span", { className: "pstat-cmp-d" }, deltaTxt(d, "分")));
+    };
     const rateRow = (label, o) => h("div", { className: "pstat-row" },
       h("span", { className: "pstat-rk" }, label),
       h("span", { className: "pstat-rv" }, o.w + "勝 " + o.l + "敗"),
@@ -325,13 +347,13 @@
 
     wrap.appendChild(h("div", { className: "section-title" }, "数値で見る成績"));
     wrap.appendChild(h("div", { className: "pstat-tiles" },
-      tile(st.rate + "%", "通算勝率", st.wins + "勝 " + st.losses + "敗"),
-      tile(st.setRate + "%", "セット取得率", st.setsWon + "-" + st.setsLost),
+      tile(st.rate + "%", "通算勝率", st.wins + "勝 " + st.losses + "敗", cmpPct(st.rate, 50, true)),
+      tile(st.setRate + "%", "セット取得率", st.setsWon + "-" + st.setsLost, cmpPct(st.setRate, 50, true)),
       tile(st.avgWon + " / " + st.avgLost, "平均 取/失セット", "1試合あたり"),
-      tile(st.fullSet.total ? st.fullSet.rate + "%" : "—", "フルセット勝率", st.fullSet.w + "-" + st.fullSet.l + " 接戦"),
+      tile(st.fullSet.total ? st.fullSet.rate + "%" : "—", "フルセット勝率", st.fullSet.w + "-" + st.fullSet.l + " 接戦", st.fullSet.total ? cmpPct(st.fullSet.rate, 50, true) : null),
       tile(String(st.streakLongest), "最多連勝", "現在 " + st.streakCurrent + " 連勝中"),
       tile(String(st.tournaments.length), "出場大会数", st.total + " 試合"),
-      tile(st.avgDur ? fmtDuration(st.avgDur) : "—", "平均対戦時間", st.durCount ? (st.durCount + " 試合で計測") : "記録なし"),
+      tile(st.avgDur ? fmtDuration(st.avgDur) : "—", "平均対戦時間", st.durCount ? (st.durCount + " 試合で計測") : "記録なし", (avg && st.avgDur) ? cmpDur(st.avgDur, avg.avgDurationSec) : null),
       tile(st.maxDur ? fmtDuration(st.maxDur) : "—", "最長の対戦", "呼出→結果入力")));
 
     if (st.recent.length) {
@@ -634,6 +656,25 @@
     return h("span", { className: "branch-tag",
       style: Object.assign({ background: c.bg, color: c.fg }, extraStyle || {}) }, label);
   }
+  // 支部に応じたヒーロー用グラデ(濃色)。対象外/未設定はトンマナの緑系。
+  function branchGradient(raw) {
+    const base = _branchBase(raw);
+    if (base == null) return { from: "#0f766e", to: "#134e4a", accent: "#5eead4", hue: 172, official: false };
+    const idx = HOKKAIDO_BRANCHES.indexOf(base);
+    const hue = Math.round(idx * 137.508) % 360;
+    return {
+      from: "hsl(" + hue + ", 58%, 40%)",
+      to: "hsl(" + ((hue + 26) % 360) + ", 64%, 23%)",
+      accent: "hsl(" + hue + ", 85%, 68%)",
+      hue, official: true,
+    };
+  }
+  // ヒーロー背景の CSS 文字列 (放射ハイライト + 斜めグラデの2層)。要素に inline 適用。
+  function branchHeroBg(raw) {
+    const g = branchGradient(raw);
+    return "radial-gradient(125% 145% at 86% -12%, rgba(255,255,255,.24), rgba(255,255,255,0) 55%), "
+      + "linear-gradient(135deg, " + g.from + " 0%, " + g.to + " 100%)";
+  }
 
   // 種目 → 色。性別×形式のキーワードで直感的な基本色を割り当て、
   // 同カテゴリ内の細分(年齢別など)は名前ハッシュで少しずらして識別性を確保。
@@ -687,6 +728,7 @@
     createPoller, downloadCSV, downloadJSON, openModal,
     logoHTML, statusBadge,
     HOKKAIDO_BRANCHES, normalizeBranch, branchColor, branchColorMap, branchBadge,
+    branchGradient, branchHeroBg,
     eventColor, eventBadge, catLabel,
   };
 })(window);

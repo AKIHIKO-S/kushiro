@@ -317,6 +317,11 @@ app.get("/api/public/tournaments/:id/matches", (req, res) => {
   res.json(db.getMatchesByTournament(req.params.id));
 });
 app.get("/api/public/stats", (req, res) => { res.json(db.getStats()); });
+// 全試合の平均値 (選手プロフィールの相対比較用 #243)。60秒キャッシュ。
+app.get("/api/public/stats/match-averages", (req, res) => {
+  try { res.set("Cache-Control", "public, max-age=60").json(db.getGlobalMatchAverages()); }
+  catch (e) { res.status(500).json({ error: "averages failed" }); }
+});
 app.get("/api/public/last-updated", (req, res) => { res.json({ t: db.getLastUpdated() }); });
 
 // ── 試合検索 () ───────────────────────────────

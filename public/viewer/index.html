@@ -1193,11 +1193,15 @@ const V = {
  async openPlayer(id, updateHash = true) {
  if (updateHash) location.hash = "player/" + id;
  try {
- const [p, opponents, eventStats] = await Promise.all([
+ const reqs = [
  api.get("/api/public/players/" + id),
  api.get("/api/public/players/" + id + "/opponents"),
  api.get("/api/public/players/" + id + "/event-stats"),
- ]);
+ ];
+ // 全試合平均 (相対比較用 #243) は一度だけ取得してキャッシュ
+ if (!V._matchAvg) reqs.push(api.get("/api/public/stats/match-averages").catch(() => null));
+ const [p, opponents, eventStats, avg] = await Promise.all(reqs);
+ if (avg) V._matchAvg = avg;
  if (p.error) { toast("選手が見つかりません", "err"); return; }
  p.opponents = opponents || [];
  p.event_stats = eventStats || [];
@@ -1217,10 +1221,16 @@ const V = {
  const total = wins + losses;
  const winRate = total ? Math.round(wins / total * 100) : 0;
 
- // 選手名鑑風カード (ヒーロー強化)
+ // 選手名鑑風カード (ヒーロー強化 + 支部カラーグラデ #242)
  const card = h("div", { className: "player-guide-card fi" });
  const gCls = p.gender === "female" ? "female" : "";
- card.appendChild(h("div", { className: "player-guide-head pg-head-rich " + gCls },
+ const hst = TT.computePlayerStats(p);
+ const topReach = hst.rounds.champion ? { t: "優勝", c: "gold" }
+   : hst.rounds.runnerup ? { t: "準優勝", c: "silver" }
+   : hst.rounds.best4 ? { t: "ベスト4", c: "bronze" }
+   : hst.rounds.best8 ? { t: "ベスト8", c: "" }
+   : hst.rounds.best16 ? { t: "ベスト16", c: "" } : null;
+ const head = h("div", { className: "player-guide-head pg-head-rich " + gCls },
  h("div", { className: "player-guide-portrait " + gCls }, initial),
  h("div", { className: "pg-id" },
  h("div", { className: "player-guide-name" }, p.name),
@@ -1230,10 +1240,20 @@ const V = {
    h("span", { className: "pg-cat-badge" }, TT.catLabel(p.category)),
    p.gender === "female" ? h("span", { className: "pg-cat-badge alt" }, "女子") : h("span", { className: "pg-cat-badge alt2" }, "男子"),
    p.branch ? TT.branchBadge(p.branch, { fontSize: "11px", padding: "2px 10px", borderRadius: "12px", fontWeight: 700 }) : null),
+ // ヒーロー内の要素を増やす: 最高成績 / 通算 / 最多連勝 / 直近フォーム (#242)
+ h("div", { className: "pg-hero-chips" },
+   topReach ? h("span", { className: "pg-hero-chip best " + topReach.c }, "最高 " + topReach.t) : null,
+   hst.total ? h("span", { className: "pg-hero-chip" }, "通算 " + hst.wins + "–" + hst.losses) : null,
+   hst.streakLongest > 1 ? h("span", { className: "pg-hero-chip" }, "最多 " + hst.streakLongest + "連勝") : null,
+   (hst.recent && hst.recent.length) ? h("span", { className: "pg-hero-form" },
+     ...hst.recent.slice(0, 5).map(r => h("span", { className: "d " + (r === "W" ? "win" : "lose") }, r === "W" ? "勝" : "敗"))) : null),
  ),
  // 勝率リング (アニメーション)
  V._winRateRing(winRate, total, gCls),
- ));
+ );
+ head.style.background = TT.branchHeroBg(p.branch || p.team);
+ head.style.borderBottomColor = TT.branchGradient(p.branch || p.team).accent;
+ card.appendChild(head);
 
  // 主要スタッツ (試合勝敗中心、レーティング・タイトルなし)
  card.appendChild(h("div", { className: "player-guide-stats" },
@@ -1270,8 +1290,8 @@ const V = {
 
  const body = h("div", { className: "profile-body" });
 
- // ── 数値で見る成績 (拡充版・閲覧/admin共通描画 #210) ──
- body.appendChild(TT.playerStatsSection(p));
+ // ── 数値で見る成績 (拡充版・閲覧/admin共通描画 #210 / 全体平均比較 #243) ──
+ body.appendChild(TT.playerStatsSection(p, { averages: V._matchAvg }));
 
  // 種目別統計 (旧・computePlayerStatsの種目別勝率に統合済のため非表示)
  if (false && p.event_stats && p.event_stats.length) {

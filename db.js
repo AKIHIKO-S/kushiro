@@ -654,6 +654,35 @@ function getPlayerLevelStats(playerId) {
   return out;
 }
 
+// 全試合の平均値 (選手プロフィールの「全体平均との相対」比較用 #243)。
+// 地区大会のみ集計 (選手DBの対象範囲に合わせ hokkaido/national は除外)。60秒キャッシュ。
+let _gmaCache = null, _gmaAt = 0;
+function getGlobalMatchAverages() {
+  const now = Date.now();
+  if (_gmaCache && now - _gmaAt < 60000) return _gmaCache;
+  const row = sqlite.prepare(`
+    SELECT COUNT(*) AS n,
+      SUM(CASE WHEN winner_sets>0 AND loser_sets=winner_sets-1 THEN 1 ELSE 0 END) AS fullset,
+      AVG(CASE WHEN duration_sec>0 AND duration_sec<86400 THEN duration_sec END) AS avgdur,
+      SUM(CASE WHEN duration_sec>0 AND duration_sec<86400 THEN 1 ELSE 0 END) AS durn
+    FROM matches m JOIN tournaments t ON t.id = m.tournament_id
+    WHERE m.status='completed' AND COALESCE(m.is_walkover,0)=0
+      AND m.winner_name!='BYE' AND m.loser_name!='BYE'
+      AND COALESCE(t.level,'district') NOT IN ('hokkaido','national')
+  `).get();
+  const n = (row && row.n) || 0;
+  _gmaCache = {
+    matches: n,
+    // 全対戦は勝敗・セットが 1:1 のため、勝率/セット率/フルセット勝率の全体平均は定義上50%。
+    winRatePct: 50, setRatePct: 50, fullSetWinPct: 50,
+    fullSetFreqPct: n ? Math.round(((row.fullset || 0) / n) * 100) : 0,
+    avgDurationSec: row && row.avgdur ? Math.round(row.avgdur) : 0,
+    durationSamples: (row && row.durn) || 0,
+  };
+  _gmaAt = now;
+  return _gmaCache;
+}
+
 // 個人名らしいかをチェック (チーム名・学校名・地名と区別)
 // チーム名と判定された場合 false を返す
 function looksLikeValidPlayerName(name) {
@@ -4889,6 +4918,7 @@ module.exports = {
   // ベスト8 (準々決勝進出者)
   getEventBest8, getAllBest8,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
+  getGlobalMatchAverages,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,
   getTournaments, getTournament, createTournament, updateTournament, deleteTournament,

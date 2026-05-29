@@ -553,14 +553,29 @@ input:focus, select:focus, textarea:focus {
   margin-bottom: 8px;
 }
 .player-guide-team {
-  font-size: 14px;
-  opacity: .85;
+  font-size: 18px;            /* 所属を大きく (#242) */
+  font-weight: 800;
+  opacity: .96;
   display: inline-block;
-  padding: 4px 12px;
-  background: rgba(255,255,255,.12);
-  border-radius: 4px;
-  border-left: 2px solid var(--accent);
+  padding: 6px 14px;
+  background: rgba(255,255,255,.18);
+  border-radius: 7px;
+  border-left: 3px solid rgba(255,255,255,.7);
+  letter-spacing: .01em;
 }
+/* ヒーロー内チップ (最高成績/通算/連勝/直近フォーム) #242 */
+.pg-hero-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+.pg-hero-chip { font-size: 12px; font-weight: 800; padding: 3px 11px; border-radius: 12px;
+  background: rgba(255,255,255,.16); color: #fff; border: 1px solid rgba(255,255,255,.3); white-space: nowrap; }
+.pg-hero-chip.best { background: rgba(255,255,255,.22); color: #fff; border-color: rgba(255,255,255,.4); }
+.pg-hero-chip.best.gold { background: rgba(252,211,77,.95); color: #7c2d12; border-color: rgba(253,230,138,.95); }
+.pg-hero-chip.best.silver { background: rgba(226,232,240,.95); color: #334155; border-color: #cbd5e1; }
+.pg-hero-chip.best.bronze { background: rgba(253,186,116,.95); color: #7c2d12; border-color: #fdba74; }
+.pg-hero-form { display: inline-flex; gap: 3px; align-items: center; }
+.pg-hero-form .d { width: 17px; height: 17px; border-radius: 4px; font-size: 9px; font-weight: 800;
+  display: inline-flex; align-items: center; justify-content: center; color: #fff; }
+.pg-hero-form .d.win { background: #16a34a; }
+.pg-hero-form .d.lose { background: rgba(255,255,255,.32); }
 .player-guide-rating {
   font-family: 'JetBrains Mono', monospace;
   font-size: 44px; font-weight: 700;
@@ -663,6 +678,13 @@ input:focus, select:focus, textarea:focus {
 .pstat-v { font-size: 24px; font-weight: 800; line-height: 1; color: var(--ink-900); }
 .pstat-l { font-size: 11px; color: var(--sub); margin-top: 5px; font-weight: 700; }
 .pstat-s { font-size: 10px; color: var(--sub-l); margin-top: 2px; }
+/* 全体平均との相対 (#243) */
+.pstat-cmp { margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--border); }
+.pstat-cmp-a { display: block; font-size: 9.5px; color: var(--sub-l); font-weight: 700; letter-spacing: .01em; }
+.pstat-cmp-d { display: block; font-size: 11px; font-weight: 800; margin-top: 1px; color: var(--sub); }
+.pstat-cmp.up .pstat-cmp-d { color: #16a34a; }
+.pstat-cmp.down .pstat-cmp-d { color: #dc2626; }
+.pstat-cmp.even .pstat-cmp-d { color: var(--sub); }
 .pform { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
 .pform-label { font-size: 11px; color: var(--sub); font-weight: 700; margin-right: 4px; }
 .pform-dot { display: inline-flex; align-items: center; justify-content: center;
