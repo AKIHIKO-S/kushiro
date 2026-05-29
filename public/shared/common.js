@@ -183,7 +183,7 @@
     const pid = player && player.id;
     const ms = ((player && player.matches) || []).filter(m => m && (m.winner_id === pid || m.loser_id === pid));
     let wins = 0, losses = 0, setsWon = 0, setsLost = 0, fullW = 0, fullL = 0;
-    const byT = {}, byE = {}, byM = {}, byOpp = {}, grp = {};
+    const byT = {}, byE = {}, byM = {}, byOpp = {}, byBranch = {}, grp = {};
     const time = { am: { w: 0, l: 0 }, pm: { w: 0, l: 0 }, eve: { w: 0, l: 0 } };
     const roundRank = (r) => { r = String(r || ""); if (r.indexOf("準々決勝") >= 0) return 1; if (r.indexOf("準決勝") >= 0) return 2; if (r.indexOf("決勝") >= 0) return 3; return 0; };
     const hourOf = (s) => { const mm = /\s(\d{2}):/.exec(String(s || "")); return mm ? parseInt(mm[1]) : null; };
@@ -206,6 +206,10 @@
       if (ym) (byM[ym] = byM[ym] || { ym: ym, w: 0, l: 0 })[won ? "w" : "l"]++;
       const oppName = won ? (m.loser_name || "") : (m.winner_name || "");
       if (oppName) (byOpp[oppName] = byOpp[oppName] || { name: oppName, w: 0, l: 0 })[won ? "w" : "l"]++;
+      // 対 支部別 (相手の所属チームを支部に正規化)
+      const oppTeam = won ? (m.loser_team || "") : (m.winner_team || "");
+      const oppBranch = normalizeBranch(oppTeam || "") || "";
+      if (oppBranch) (byBranch[oppBranch] = byBranch[oppBranch] || { name: oppBranch, w: 0, l: 0 })[won ? "w" : "l"]++;
       const hr = hourOf(m.finished_at);
       if (hr != null) { const tb = hr < 12 ? "am" : (hr < 16 ? "pm" : "eve"); time[tb][won ? "w" : "l"]++; }
       const gk = (m.tournament_id || "") + "|" + (m.event || "");
@@ -228,6 +232,8 @@
       .map(x => ({ ym: x.ym, w: x.w, l: x.l, total: x.w + x.l, rate: pctOf(x.w, x.w + x.l) }));
     const h2h = Object.values(byOpp).sort((a, b) => (b.w + b.l) - (a.w + a.l))
       .map(o => ({ name: o.name, w: o.w, l: o.l, total: o.w + o.l, rate: pctOf(o.w, o.w + o.l) }));
+    const branches = Object.values(byBranch).sort((a, b) => (b.w + b.l) - (a.w + a.l))
+      .map(b => ({ name: b.name, w: b.w, l: b.l, total: b.w + b.l, rate: pctOf(b.w, b.w + b.l) }));
     const byTime = [["am", "午前"], ["pm", "午後"], ["eve", "夕方〜"]]
       .map(kv => ({ label: kv[1], w: time[kv[0]].w, l: time[kv[0]].l, total: time[kv[0]].w + time[kv[0]].l, rate: pctOf(time[kv[0]].w, time[kv[0]].w + time[kv[0]].l) }))
       .filter(x => x.total > 0);
@@ -246,7 +252,7 @@
       avgWon: total ? (setsWon / total).toFixed(1) : "0", avgLost: total ? (setsLost / total).toFixed(1) : "0",
       fullSet: { w: fullW, l: fullL, total: fullTotal, rate: pctOf(fullW, fullTotal) },
       recent, streakCurrent: cur, streakLongest: longest,
-      tournaments, events, months, h2h, byTime, rounds,
+      tournaments, events, months, h2h, byTime, rounds, branches,
     };
   }
 
@@ -307,6 +313,10 @@
     if (st.months.length >= 2) {
       wrap.appendChild(h("div", { className: "section-sub" }, "月別成績"));
       wrap.appendChild(table(st.months.slice(0, 12).map(m => rateRow(m.ym, m))));
+    }
+    if (st.branches && st.branches.length) {
+      wrap.appendChild(h("div", { className: "section-sub" }, "対 支部別 勝率"));
+      wrap.appendChild(table(st.branches.slice(0, 16).map(b => rateRow(b.name, b))));
     }
     if (st.h2h.length) {
       wrap.appendChild(h("div", { className: "section-sub" }, "対戦成績 (相手別・対戦数順)"));
