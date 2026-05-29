@@ -1916,6 +1916,16 @@ app.put("/api/admin/tournaments/:id/referee-input", requireAdmin, (req, res) => 
   if (r && r.error) return res.status(404).json(r);
   res.json(r);
 });
+// 会場パスコード (#261): 要求ON/OFF・再生成・任意指定。会場で審判に伝える暗証番号。
+// body: { required?:bool, code?:string, regenerate?:bool }
+app.put("/api/admin/tournaments/:id/referee-passcode", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const r = db.setRefereePasscode(req.params.id, {
+    required: b.required, code: b.code, regenerate: b.regenerate,
+  });
+  if (r && r.error) return res.status(404).json(r);
+  res.json(r);
+});
 // コート別リンク (試験運用 #229): 全コート分のキーを返す。マスタトークンから自動導出。
 app.get("/api/admin/tournaments/:id/referee-court-links", requireAdmin, (req, res) => {
   const r = db.getRefereeCourtLinks(req.params.id);
@@ -1932,11 +1942,26 @@ app.get("/api/ref/state",
   if (!v) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(v);
 });
+// 会場パスコード照合 (#261): 審判ページが入力前に正誤を確認するための軽量エンドポイント。
+// 要求OFFなら常に ok:true。最終的な担保は finish 側でも再検証する。
+app.post("/api/ref/verify-passcode",
+  rateLimit({ windowMs: 60000, max: 60, message: "リクエストが多すぎます。少し待って再試行してください。" }),
+  requireReferee, (req, res) => {
+  const ok = db.verifyRefereePasscode(req.refTournament.id, req.body && req.body.passcode);
+  res.json({ ok: !!ok });
+});
 // 審判による結果送信。winner-only 可 (sets 空でOK / セット数も任意で送れる)。
 // セキュリティ: そのトークンの大会の「台に入っている」試合だけ確定可能。
 app.post("/api/ref/matches/:id/finish",
   rateLimit({ windowMs: 60000, max: 120, message: "送信が多すぎます。少し待って再試行してください。" }),
   requireReferee, (req, res) => {
+  // 会場パスコード (#261): 要求ONの大会は、正しいパスコードが無いと報告不可。
+  if (!db.verifyRefereePasscode(req.refTournament.id, req.body && req.body.passcode)) {
+    return res.status(403).json({
+      error: "会場パスコードが正しくありません。本部にご確認ください。",
+      passcode_error: true,
+    });
+  }
   const m = db.getMatch(req.params.id);
   if (!m) return res.status(404).json({ error: "試合が見つかりません" });
   if (m.tournament_id !== req.refTournament.id)

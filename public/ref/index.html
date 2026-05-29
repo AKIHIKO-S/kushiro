@@ -88,6 +88,19 @@
   .err-screen { text-align:center; padding: 60px 24px; }
   .err-screen h1 { font-size: 20px; color:#b91c1c; }
   .err-screen p { color:#57534e; font-size: 14px; line-height:1.8; }
+  /* 会場パスコード入力ゲート (#261) */
+  .pass-gate { text-align:center; padding: 40px 20px 24px; max-width: 360px; margin: 0 auto; }
+  .pass-gate .pass-lock { font-size: 44px; line-height:1; margin-bottom: 10px; }
+  .pass-gate h2 { font-size: 20px; font-weight: 800; margin: 0 0 8px; }
+  .pass-gate p { color:#57534e; font-size: 13.5px; line-height: 1.8; margin: 0 0 18px; }
+  .pass-input {
+    width: 100%; text-align:center; font-size: 30px; font-weight: 800; letter-spacing: .25em;
+    padding: 14px 10px; border: 2px solid #d6d3d1; border-radius: 12px; margin-bottom: 14px;
+    background:#fff; color:#1c1917;
+  }
+  .pass-input:focus { outline:none; border-color: var(--ref-accent); box-shadow: 0 0 0 3px rgba(21,128,61,.12); }
+  .pass-gate .b { width: 100%; }
+  .pass-hint { color:#78716c; font-size: 12px; margin-top: 14px; line-height:1.7; }
   .toast {
     position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
     background:#1c1917; color:#fff; padding: 12px 18px; border-radius: 10px; font-size: 14px;
@@ -146,6 +159,10 @@
   var lastMatches = [];
   var editingMid = 0;     // 入力中(確認パネルを開いている)試合id。自動更新の再描画から保護 (#240)
   var latestState = null; // 直近に取得した状態 (編集終了後の追いつき描画に使用)
+  // 会場パスコード (#261): 要求ONの大会で、報告前に一度だけ入力。端末に記憶し以後省略。
+  var PASSKEY = "ktta_ref_pass_" + (TOKEN || (TID + "_" + COURT));
+  var passcode = "";
+  try { passcode = localStorage.getItem(PASSKEY) || ""; } catch (e) {}
   // オフライン送信キュー (#231): 回線断でも報告を貯め、復旧時に自動送信 (op_idで冪等)
   var QKEY = "ktta_ref_queue_v1";
   function loadQ() { try { return JSON.parse(localStorage.getItem(QKEY) || "[]"); } catch (e) { return []; } }
@@ -210,7 +227,56 @@
       + '<p style="margin-top:18px;font-size:13px">本部席にお問い合わせください。</p></div>';
   }
 
+  // 会場パスコード入力ゲート (#261): 要求ONで未入力なら、報告前にパスコードを要求。
+  function renderPasscodeGate(state) {
+    var t = (state && state.tournament) || {};
+    var nameEl = document.getElementById("tname");
+    if (nameEl) nameEl.textContent = (t.name || "大会") + (PERCOURT ? "　【コート" + COURT + " 専用】" : "");
+    root.innerHTML = '<div class="pass-gate">'
+      + '<div class="pass-lock">🔒</div>'
+      + '<h2>会場パスコードを入力</h2>'
+      + '<p>本部から会場で伝えられた数字を入力してください。<br>'
+      + '同じ端末では、次回から自動で省略されます。</p>'
+      + '<input id="passInput" class="pass-input" inputmode="numeric" autocomplete="off" '
+      +   'maxlength="12" placeholder="● ● ● ●">'
+      + '<button id="passBtn" class="b b-ok">入力する</button>'
+      + '<div class="pass-hint">分からないときは本部席にお問い合わせください。</div>'
+      + '</div>';
+    var inp = document.getElementById("passInput");
+    var btn = document.getElementById("passBtn");
+    function tryUnlock() {
+      var code = (inp.value || "").trim();
+      if (!code) { toast("パスコードを入力してください。", "err"); return; }
+      btn.disabled = true; btn.textContent = "確認中…";
+      fetch("/api/ref/verify-passcode", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(authBody({ passcode: code }))
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          btn.disabled = false; btn.textContent = "入力する";
+          if (res.ok && res.j && res.j.ok) {
+            passcode = code;
+            try { localStorage.setItem(PASSKEY, code); } catch (e) {}
+            toast("確認しました。", "ok");
+            load();
+          } else {
+            toast("パスコードが正しくありません。本部にご確認ください。", "err");
+            inp.select();
+          }
+        }).catch(function () {
+          btn.disabled = false; btn.textContent = "入力する";
+          toast("通信に失敗しました。少し待って再試行してください。", "err");
+        });
+    }
+    btn.onclick = tryUnlock;
+    inp.onkeydown = function (e) { if (e.key === "Enter") tryUnlock(); };
+    inp.focus();
+  }
+
   function render(state) {
+    latestState = state;
+    // 会場パスコード (#261): 要求ONで未入力なら、試合一覧の前にパスコード入力を要求
+    if (state.passcode_required && !passcode) { renderPasscodeGate(state); return; }
     var t = state.tournament || {};
     document.getElementById("tname").textContent = (t.name || "大会") + (PERCOURT ? "　【コート" + COURT + " 専用】" : "");
     var upd = document.getElementById("updated");
@@ -381,11 +447,13 @@
     document.getElementById("send-" + m.id).onclick = function () { submit(m, slot); };
   }
 
-  // 結果送信 (認証は body に含める: 共有=t / コート別=tid+court+ct)
+  // 結果送信 (認証は body に含める: 共有=t / コート別=tid+court+ct, 会場パスコード=passcode #261)
   function sendFinish(mid, body) {
+    var payload = authBody(Object.assign({}, body));
+    if (passcode) payload.passcode = passcode;   // #261 会場パスコードを同送
     return fetch("/api/ref/matches/" + encodeURIComponent(mid) + "/finish", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(authBody(Object.assign({}, body))),
+      body: JSON.stringify(payload),
     }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); });
   }
   // 貯めた報告を順次送信 (回線復旧時/ポーリング毎)。op_id 冪等なので二重適用なし。
@@ -395,7 +463,14 @@
     var q = loadQ(); if (!q.length) return;
     flushing = true;
     var item = q[0];
-    sendFinish(item.mid, item.body).then(function () {
+    sendFinish(item.mid, item.body).then(function (res) {
+      // 会場パスコード未確定で弾かれた場合 (#261): 破棄せず保持し、再入力後に再送
+      if (res && res.status === 403 && res.j && res.j.passcode_error) {
+        flushing = false;
+        passcode = ""; try { localStorage.removeItem(PASSKEY); } catch (e) {}
+        load();   // → パスコード入力ゲートを表示
+        return;
+      }
       var qq = loadQ(); qq.shift(); saveQ(qq);   // 応答が返れば除去 (成否問わず=冪等)
       flushing = false;
       if (loadQ().length) flushQueue();
@@ -448,6 +523,13 @@
     sendFinish(m.id, body).then(function (res) {
       if (!res.ok) {
         if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = "この結果で報告"; }
+        // 会場パスコードが違う/変更された (#261): 記憶を消して再入力ゲートへ
+        if (res.status === 403 && res.j && res.j.passcode_error) {
+          passcode = ""; try { localStorage.removeItem(PASSKEY); } catch (e) {}
+          toast("会場パスコードが正しくありません。再入力してください。", "err");
+          load();
+          return;
+        }
         toast((res.j && res.j.error) || "送信に失敗しました（" + res.status + "）", "err");
         if (res.status === 409 || res.status === 404) load();
         return;

@@ -228,6 +228,11 @@ try {
   // 既定OFF。テスト大会で先に有効化して裏側検証 → 問題なければ本番大会で解禁する運用。
   addTCol("referee_token", "TEXT DEFAULT ''");
   addTCol("referee_input_enabled", "INTEGER DEFAULT 0");
+  // 会場パスコード (#261): 会場にいる審判だけが報告できるよう、報告前に要求する暗証番号。
+  // referee_passcode_required=1 のときのみ要求。code は大会ごとに1つ(全コート共通)。
+  // 本部は会場の掲示/口頭で審判に伝える → 会場にいる人だけが知り得る運用。
+  addTCol("referee_passcode", "TEXT DEFAULT ''");
+  addTCol("referee_passcode_required", "INTEGER DEFAULT 0");
 
   // tournament_players 申込ステータス
   const tpcols = sqlite.prepare("PRAGMA table_info(tournament_players)").all();
@@ -4827,7 +4832,42 @@ function getRefereeConfig(tournamentId) {
     token: t.referee_token || "",
     enabled: !!t.referee_input_enabled,
     tournament_name: t.name || "",
+    passcode: t.referee_passcode || "",
+    passcode_required: !!t.referee_passcode_required,
   };
+}
+// 会場パスコード (#261): 4桁の暗証番号を生成 (口頭で伝えやすい数字)。
+function genRefereePasscode() {
+  const crypto = require("crypto");
+  let s = "";
+  for (let i = 0; i < 4; i++) s += String(crypto.randomInt(0, 10));
+  return s;
+}
+// パスコードの設定: 要求ON/OFF・任意指定・再生成。
+//   opts = { required?:bool, code?:string, regenerate?:bool }
+//   要求ONなのにコード未設定なら自動生成（空欄で締め出さない）。
+function setRefereePasscode(tournamentId, opts) {
+  const t = getTournament(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  opts = opts || {};
+  let code = t.referee_passcode || "";
+  let required = t.referee_passcode_required ? 1 : 0;
+  if (opts.required !== undefined) required = opts.required ? 1 : 0;
+  if (typeof opts.code === "string" && opts.code.trim()) code = opts.code.trim().slice(0, 12);
+  if (opts.regenerate) code = genRefereePasscode();
+  if (required && !code) code = genRefereePasscode();
+  sqlite.prepare("UPDATE tournaments SET referee_passcode=?, referee_passcode_required=? WHERE id=?")
+    .run(code, required, tournamentId);
+  return { passcode: code, passcode_required: !!required };
+}
+// パスコード照合。要求OFFなら常にtrue。要求ONだが未設定(異常系)も締め出さないようtrue。
+function verifyRefereePasscode(tournamentId, code) {
+  const t = getTournament(tournamentId);
+  if (!t) return false;
+  if (!t.referee_passcode_required) return true;
+  const want = String(t.referee_passcode || "").trim();
+  if (!want) return true;
+  return String(code == null ? "" : code).trim() === want;
 }
 // 有効なトークン→大会を解決 (referee_input_enabled=1 のみ)
 function getTournamentByRefereeToken(token) {
@@ -4873,6 +4913,7 @@ function getRefereeView(tournamentId, courtNo) {
     tournament: { id: t.id, name: t.name, date: t.date, venue: t.venue, status: t.status },
     on_table: onTableOut,
     court: courtNo ? Number(courtNo) : null,
+    passcode_required: !!t.referee_passcode_required,   // #261 会場パスコード要求中か
     server_time: new Date().toISOString(),
   };
 }
@@ -4954,6 +4995,7 @@ module.exports = {
   getTournamentByRefereeToken, getRefereeView, markResultSource,
   setPendingResult, clearPendingResult, getPendingResult,
   getRefereeCourtLinks, resolveRefereeCourt,
+  setRefereePasscode, verifyRefereePasscode,   // #261 会場パスコード
   kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription,
   // DB スナップショット (バックアップ/復元)
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, hasOngoingTournament,
