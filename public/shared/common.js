@@ -389,114 +389,117 @@
         h("span", { className: "pstat-cmp-a" }, "全体平均 " + fmtDuration(avgSec)),
         h("span", { className: "pstat-cmp-d" }, deltaTxt(d, "分")));
     };
+    const bar = (rate) => h("span", { className: "pstat-bar" },
+      h("i", { className: (rate >= 50 ? "hi" : ""), style: { width: Math.max(3, Math.min(100, rate || 0)) + "%" } }));
     const rateRow = (label, o) => h("div", { className: "pstat-row" },
       h("span", { className: "pstat-rk" }, label),
       h("span", { className: "pstat-rv" }, o.w + "勝 " + o.l + "敗"),
+      bar(o.rate),
       h("span", { className: "pstat-rp" + (o.rate >= 50 ? " hi" : "") }, o.rate + "%"));
     const table = (rows) => { const t = h("div", { className: "pstat-table" }); rows.forEach(r => t.appendChild(r)); return t; };
+    const details = (title, node, open) => {
+      const d = h("details", { className: "pmore" });
+      if (open) d.open = true;
+      d.appendChild(h("summary", { className: "pmore-sum" }, title));
+      const b = h("div", { className: "pmore-body" }); b.appendChild(node); d.appendChild(b);
+      return d;
+    };
 
-    wrap.appendChild(h("div", { className: "section-title" }, "数値で見る成績"));
-    const tiles = [
-      tile(st.rate + "%", "通算勝率", st.wins + "勝 " + st.losses + "敗", cmpPct(st.rate, 50, true)),
-      tile(String(st.total), "通算試合数", st.tournaments.length + " 大会"),
+    // ── ① サマリー帯 (一目で分かる主要成績) ──
+    const medals = [
+      ["優勝", st.rounds.champion, "gold"], ["準優勝", st.rounds.runnerup, "silver"],
+      ["3位", st.rounds.best4, "bronze"], ["ベスト8", st.rounds.best8, ""],
+    ].filter(m => m[1] > 0);
+    const band = h("div", { className: "psum" });
+    band.appendChild(h("div", { className: "psum-main" },
+      h("div", { className: "psum-rate" },
+        h("span", { className: "psum-rate-v" }, st.rate + "%"),
+        h("span", { className: "psum-rate-k" }, "通算勝率")),
+      h("div", { className: "psum-rec" }, st.wins + "勝 " + st.losses + "敗"),
+      h("div", { className: "psum-wl", title: st.wins + "勝 / " + st.losses + "敗" },
+        h("i", { className: "w", style: { flexGrow: String(st.wins || 0) } }),
+        h("i", { className: "l", style: { flexGrow: String(st.losses || 0) } }))));
+    const kvItem = (v, l) => h("div", { className: "psum-kv-i" }, h("b", {}, String(v)), h("span", {}, l));
+    const kv = h("div", { className: "psum-kv" },
+      kvItem(st.total, "試合"), kvItem(st.tournaments.length, "出場大会"), kvItem(st.setRate + "%", "セット率"));
+    if (st.recent && st.recent.length) kv.appendChild(kvItem(st.recent.filter(r => r === "W").length + "/" + st.recent.length, "直近"));
+    band.appendChild(kv);
+    if (medals.length) band.appendChild(h("div", { className: "psum-medals" },
+      ...medals.map(m => h("span", { className: "preach-chip " + (m[2] || "") }, m[0] + " " + m[1] + "回"))));
+    wrap.appendChild(band);
+
+    // ── ② 主要指標 (厳選タイル) ──
+    const keyTiles = [
       tile(st.setRate + "%", "セット取得率", st.setsWon + "-" + st.setsLost, cmpPct(st.setRate, 50, true)),
-      tile(st.avgWon, "平均取得セット", "1試合あたり"),
-      tile(st.avgLost, "平均失セット", "1試合あたり"),
-      tile(st.fullSet.total ? st.fullSet.rate + "%" : "—", "フルセット勝率", st.fullSet.w + "-" + st.fullSet.l, st.fullSet.total ? cmpPct(st.fullSet.rate, 50, true) : null),
       tile(st.total ? Math.round(st.fullSet.total / st.total * 100) + "%" : "—", "接戦率", "フルセット " + st.fullSet.total + " 試合"),
-      tile(st.wins ? st.shutout.winRate + "%" : "—", "ストレート勝率", st.shutout.w + " / " + st.wins + " 勝（完封）"),
-      tile(st.losses ? st.shutout.loseRate + "%" : "—", "被ストレート率", st.shutout.l + " / " + st.losses + " 敗"),
-      tile(String(st.streakLongest), "最多連勝", "現在 " + st.streakCurrent + " 連勝中"),
-      tile(String(st.tournaments.length), "出場大会数", st.total + " 試合"),
-      tile(st.avgDur ? fmtDuration(st.avgDur) : "—", "平均対戦時間", st.durCount ? (st.durCount + " 試合") : "記録なし", (avg && st.avgDur) ? cmpDur(st.avgDur, avg.avgDurationSec) : null),
-      tile(st.maxDur ? fmtDuration(st.maxDur) : "—", "最長の対戦", "呼出→結果入力"),
-      tile(st.totalDur ? fmtDuration(st.totalDur) : "—", "総試合時間", st.durCount + " 試合の合計"),
+      tile(st.wins ? st.shutout.winRate + "%" : "—", "ストレート勝率", st.shutout.w + " / " + st.wins + " 勝"),
     ];
-    // 細かい指標も「数値で見る成績」に内包 (データがある時のみタイル追加)
-    if (st.finalGame && st.finalGame.n > 0)
-      tiles.push(tile(st.finalGame.rate + "%", "ファイナルゲーム勝率", st.finalGame.w + " / " + st.finalGame.n + " 接戦"));
     if (st.recent10 && st.recent10.n > 0)
-      tiles.push(tile(st.recent10.rate + "%", "直近" + st.recent10.n + "戦勝率", st.recent10.w + "勝 " + (st.recent10.n - st.recent10.w) + "敗"));
-    if (st.points && st.points.games > 0) {
-      tiles.push(tile(st.points.rate + "%", "得点率", "1G平均 " + st.points.avgFor + "-" + st.points.avgAgainst + "（" + st.points.games + "G）"));
-      tiles.push(tile((st.pointDiff > 0 ? "+" : "") + st.pointDiff, "得点デフ", "総得点−総失点"));
-    }
-    if (st.deuce && st.deuce.n > 0)
-      tiles.push(tile(st.deuce.rate + "%", "デュース勝率", st.deuce.w + " / " + st.deuce.n + " (10-10〜)"));
-    if (st.seedBattle && st.seedBattle.killN > 0)
-      tiles.push(tile(st.seedBattle.killRate + "%", "対格上 勝率", "格上撃破 " + st.seedBattle.killW + " / " + st.seedBattle.killN + " 戦"));
-    if (st.seedBattle && st.seedBattle.upsetN > 0)
-      tiles.push(tile(String(st.seedBattle.upsetL), "格下取りこぼし", "対格下 " + st.seedBattle.upsetN + " 戦"));
-    wrap.appendChild(h("div", { className: "pstat-tiles" }, ...tiles));
+      keyTiles.push(tile(st.recent10.rate + "%", "直近" + st.recent10.n + "戦勝率", st.recent10.w + "勝 " + (st.recent10.n - st.recent10.w) + "敗"));
+    if (st.fullSet.total)
+      keyTiles.push(tile(st.fullSet.rate + "%", "フルセット勝率", st.fullSet.w + "-" + st.fullSet.l, cmpPct(st.fullSet.rate, 50, true)));
+    if (st.points && st.points.games > 0)
+      keyTiles.push(tile(st.points.rate + "%", "得点率", "1G平均 " + st.points.avgFor + "-" + st.points.avgAgainst));
+    wrap.appendChild(h("div", { className: "pkey-tiles" }, ...keyTiles));
 
+    // ── ③ 直近フォーム ──
     if (st.recent.length) {
       wrap.appendChild(h("div", { className: "pform" },
         h("span", { className: "pform-label" }, "直近 (新しい順)"),
         ...st.recent.map(r => h("span", { className: "pform-dot " + (r === "W" ? "win" : "lose") }, r === "W" ? "勝" : "敗"))));
     }
-    {
-      const chip = (label, n, cls) => h("span", { className: "preach-chip " + (cls || "") }, label + " " + n + "回");
-      const reaches = [
-        ["優勝", st.rounds.champion, "gold"],
-        ["準優勝", st.rounds.runnerup, "silver"],
-        ["3位", st.rounds.best4, "bronze"],
-        ["入賞(ベスト8)", st.rounds.best8, ""],
-      ].filter(r => r[1] > 0);
-      if (reaches.length) {
-        wrap.appendChild(h("div", { className: "section-sub" }, "トーナメント成績"));
-        wrap.appendChild(h("div", { className: "preach" }, ...reaches.map(r => chip(r[0], r[1], r[2]))));
-      }
-    }
-    // ゲームカウント分布 (勝ち方・負け方の質) — 野球の「○-○で勝った/負けた」内訳
+
+    // ── ④ 詳細スタッツ (折りたたみ) ──
+    const moreTiles = [
+      tile(st.avgWon, "平均取得セット", "1試合あたり"),
+      tile(st.avgLost, "平均失セット", "1試合あたり"),
+      tile(st.losses ? st.shutout.loseRate + "%" : "—", "被ストレート率", st.shutout.l + " / " + st.losses + " 敗"),
+      tile(String(st.streakLongest), "最多連勝", "現在 " + st.streakCurrent + " 連勝中"),
+      tile(st.avgDur ? fmtDuration(st.avgDur) : "—", "平均対戦時間", st.durCount ? (st.durCount + " 試合") : "記録なし", (avg && st.avgDur) ? cmpDur(st.avgDur, avg.avgDurationSec) : null),
+      tile(st.maxDur ? fmtDuration(st.maxDur) : "—", "最長の対戦", "呼出→結果入力"),
+      tile(st.totalDur ? fmtDuration(st.totalDur) : "—", "総試合時間", st.durCount + " 試合の合計"),
+    ];
+    if (st.points && st.points.games > 0)
+      moreTiles.push(tile((st.pointDiff > 0 ? "+" : "") + st.pointDiff, "得点デフ", "総得点−総失点"));
+    if (st.deuce && st.deuce.n > 0)
+      moreTiles.push(tile(st.deuce.rate + "%", "デュース勝率", st.deuce.w + " / " + st.deuce.n + " (10-10〜)"));
+    if (st.finalGame && st.finalGame.n > 0)
+      moreTiles.push(tile(st.finalGame.rate + "%", "ファイナルゲーム勝率", st.finalGame.w + " / " + st.finalGame.n + " 接戦"));
+    if (st.seedBattle && st.seedBattle.killN > 0)
+      moreTiles.push(tile(st.seedBattle.killRate + "%", "対格上 勝率", "格上撃破 " + st.seedBattle.killW + " / " + st.seedBattle.killN));
+    if (st.seedBattle && st.seedBattle.upsetN > 0)
+      moreTiles.push(tile(String(st.seedBattle.upsetL), "格下取りこぼし", "対格下 " + st.seedBattle.upsetN + " 戦"));
+    wrap.appendChild(details("詳細スタッツ (" + moreTiles.length + "項目)", h("div", { className: "pstat-tiles" }, ...moreTiles)));
+
+    // ── ⑤ 詳しい内訳 (折りたたみ: 種目別・大会別・対戦相手など) ──
+    const more = h("div", {});
+    const addSub = (title, node) => { more.appendChild(h("div", { className: "section-sub" }, title)); more.appendChild(node); };
     if (st.scoreDist && (st.scoreDist.win.length || st.scoreDist.lose.length)) {
-      wrap.appendChild(h("div", { className: "section-sub" }, "ゲームカウント分布"));
       const distRow = (label, arr, cls) => h("div", { className: "pdist-row" },
         h("span", { className: "pdist-label " + cls }, label),
         h("span", { className: "pdist-chips" },
           arr.length ? arr.map(d => h("span", { className: "pdist-chip " + cls }, d.k + " ×" + d.n))
                      : h("span", { className: "pdist-none" }, "—")));
-      wrap.appendChild(h("div", { className: "pdist" },
-        distRow("勝ち", st.scoreDist.win, "w"),
-        distRow("負け", st.scoreDist.lose, "l")));
+      addSub("ゲームカウント分布", h("div", { className: "pdist" },
+        distRow("勝ち", st.scoreDist.win, "w"), distRow("負け", st.scoreDist.lose, "l")));
     }
-    // ラウンド別 勝率 (勝負強さ: 序盤〜決勝)
-    if (st.rounds_wl && st.rounds_wl.length >= 2) {
-      wrap.appendChild(h("div", { className: "section-sub" }, "ラウンド別 勝率（勝負強さ）"));
-      wrap.appendChild(table(st.rounds_wl.map(r => rateRow(r.name, r))));
-    }
-    // (得点率/対格上・格下/ファイナルゲーム/直近10/得点デフ/デュースは上の「数値で見る成績」に内包済み)
-    if (st.events.length) {
-      wrap.appendChild(h("div", { className: "section-sub" }, "種目別 勝率"));
-      wrap.appendChild(table(st.events.map(e => rateRow(e.event, e))));
-    }
-    if (st.tournaments.length) {
-      wrap.appendChild(h("div", { className: "section-sub" }, "大会別成績"));
-      wrap.appendChild(table(st.tournaments.slice(0, 12).map(t => rateRow(t.name + (t.date ? " (" + t.date + ")" : ""), t))));
-    }
-    if (st.months.length >= 2) {
-      wrap.appendChild(h("div", { className: "section-sub" }, "月別成績"));
-      wrap.appendChild(table(st.months.slice(0, 12).map(m => rateRow(m.ym, m))));
-    }
-    // よく対戦する相手 (支部・所属チームの最多) #251
+    if (st.rounds_wl && st.rounds_wl.length >= 2) addSub("ラウンド別 勝率（勝負強さ）", table(st.rounds_wl.map(r => rateRow(r.name, r))));
+    if (st.events.length) addSub("種目別 勝率", table(st.events.map(e => rateRow(e.event, e))));
+    if (st.tournaments.length) addSub("大会別成績", table(st.tournaments.slice(0, 12).map(t => rateRow(t.name + (t.date ? " (" + t.date + ")" : ""), t))));
+    if (st.months.length >= 2) addSub("月別成績", table(st.months.slice(0, 12).map(m => rateRow(m.ym, m))));
     {
       const topB = (st.branches && st.branches[0]) || null;
       const topT = (st.oppTeams && st.oppTeams[0]) || null;
       if (topB || topT) {
-        wrap.appendChild(h("div", { className: "section-sub" }, "よく対戦する相手"));
         const rows = [];
         if (topB) rows.push(rateRow("支部: " + topB.name, topB));
         if (topT) rows.push(rateRow("所属: " + topT.name, topT));
-        wrap.appendChild(table(rows));
+        addSub("よく対戦する相手", table(rows));
       }
     }
-    if (st.branches && st.branches.length) {
-      wrap.appendChild(h("div", { className: "section-sub" }, "対 支部別 勝率"));
-      wrap.appendChild(table(st.branches.slice(0, 16).map(b => rateRow(b.name, b))));
-    }
-    if (st.h2h.length) {
-      wrap.appendChild(h("div", { className: "section-sub" }, "対戦成績 (相手別・対戦数順)"));
-      wrap.appendChild(table(st.h2h.slice(0, 10).map(o => rateRow(o.name, o))));
-    }
+    if (st.branches && st.branches.length) addSub("対 支部別 勝率", table(st.branches.slice(0, 16).map(b => rateRow(b.name, b))));
+    if (st.h2h.length) addSub("対戦成績 (相手別・対戦数順)", table(st.h2h.slice(0, 10).map(o => rateRow(o.name, o))));
+    if (more.children.length) wrap.appendChild(details("詳しい内訳（種目別・大会別・対戦相手など）", more));
     return wrap;
   }
 

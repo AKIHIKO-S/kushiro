@@ -745,6 +745,45 @@ input:focus, select:focus, textarea:focus {
 .preach-chip.bronze { background: #fff7ed; color: #9a3412; border-color: #fdba74; }
 .preach-chip.muted { background: transparent; color: var(--sub); }
 
+/* 選手プロフィール: サマリー帯 + 折りたたみ (#276 戦績リデザイン) */
+.psum { display: grid; grid-template-columns: 1fr; gap: 12px;
+  background: linear-gradient(135deg, #0f766e 0%, #134e4a 100%); color: #fff;
+  border-radius: 14px; padding: 16px 18px; margin-bottom: 14px; box-shadow: 0 2px 12px rgba(15,118,110,.20); }
+@media (min-width: 560px) { .psum { grid-template-columns: 1fr auto; align-items: center; } }
+.psum-main { min-width: 0; }
+.psum-rate { display: flex; align-items: baseline; gap: 8px; }
+.psum-rate-v { font-size: 44px; font-weight: 800; line-height: 1; letter-spacing: -.01em; }
+.psum-rate-k { font-size: 12px; font-weight: 700; opacity: .85; }
+.psum-rec { font-size: 14px; font-weight: 700; margin: 5px 0 8px; opacity: .96; }
+.psum-wl { display: flex; height: 9px; border-radius: 999px; overflow: hidden; background: rgba(255,255,255,.22); }
+.psum-wl .w { background: #4ade80; } .psum-wl .l { background: rgba(255,255,255,.30); }
+.psum-kv { display: flex; gap: 16px; flex-wrap: wrap; }
+@media (min-width: 560px) { .psum-kv { flex-direction: column; gap: 6px; text-align: right; border-left: 1px solid rgba(255,255,255,.22); padding-left: 18px; } .psum-kv-i { justify-content: flex-end; } }
+.psum-kv-i { display: flex; align-items: baseline; gap: 5px; }
+.psum-kv-i b { font-size: 18px; font-weight: 800; }
+.psum-kv-i span { font-size: 11px; opacity: .82; font-weight: 700; }
+.psum-medals { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.psum-medals .preach-chip { font-size: 12px; }
+/* 主要指標タイル (大きめ・厳選) */
+.pkey-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.pkey-tiles .pstat-tile { padding: 14px 12px; }
+.pkey-tiles .pstat-v { font-size: 28px; }
+/* テーブル行の勝率バー */
+.pstat-bar { flex: 0 0 60px; height: 6px; border-radius: 999px; background: var(--ink-100); overflow: hidden; }
+.pstat-bar i { display: block; height: 100%; background: var(--sub-l); border-radius: 999px; }
+.pstat-bar i.hi { background: #16a34a; }
+/* 折りたたみ (詳細スタッツ / 詳しい内訳) */
+.pmore { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; overflow: hidden; background: var(--card); }
+.pmore-sum { cursor: pointer; list-style: none; padding: 11px 14px; font-size: 13px; font-weight: 800;
+  color: var(--ink-700); display: flex; align-items: center; justify-content: space-between; user-select: none; }
+.pmore-sum::-webkit-details-marker { display: none; }
+.pmore-sum::after { content: "開く ▾"; font-size: 11px; font-weight: 700; color: var(--sub); }
+.pmore[open] .pmore-sum::after { content: "閉じる ▴"; }
+.pmore[open] .pmore-sum { border-bottom: 1px solid var(--border); }
+.pmore-body { padding: 12px 14px; }
+.pmore-body .section-sub:first-child { margin-top: 0; }
+.pmore-body > .pstat-tiles:last-child, .pmore-body > .pstat-table:last-child { margin-bottom: 0; }
+
 /* Badges */
 .badge {
   display: inline-block;
