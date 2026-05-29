@@ -4753,7 +4753,7 @@ function getTournamentByRefereeToken(token) {
   ).get(token) || null;
 }
 // 審判画面に返す最小情報 (現在台に入っている試合のみ・連絡先などPIIは含めない)
-function getRefereeView(tournamentId) {
+function getRefereeView(tournamentId, courtNo) {
   const t = getTournament(tournamentId);
   if (!t) return null;
   const rows = sqlite.prepare(`
@@ -4773,9 +4773,12 @@ function getRefereeView(tournamentId) {
   });
   // コート番号順に整列 (コート未割当は末尾)
   rows.sort((a, b) => (a.table_no || 9999) - (b.table_no || 9999));
+  // コート別トークンの場合は自分のコートの試合だけに限定 (#229)
+  const onTableOut = courtNo ? rows.filter(r => Number(r.table_no) === Number(courtNo)) : rows;
   return {
     tournament: { id: t.id, name: t.name, date: t.date, venue: t.venue, status: t.status },
-    on_table: rows,
+    on_table: onTableOut,
+    court: courtNo ? Number(courtNo) : null,
     server_time: new Date().toISOString(),
   };
 }
@@ -4802,6 +4805,16 @@ function setPendingResult(matchId, data) {
     by: data.by || "referee",
     at: new Date().toISOString(),
   };
+  // 二重報告の検知 (#230): 既に承認待ちで勝者が異なる別報告が来たら conflict フラグ
+  if (m.pending_result) {
+    try {
+      const old = JSON.parse(m.pending_result);
+      if (old && old.winner_slot !== payload.winner_slot) {
+        payload.conflict = true;
+        payload.prev = { winner_name: old.winner_name, by: old.by, at: old.at };
+      }
+    } catch (e) { /* 旧データ不正は無視 */ }
+  }
   sqlite.prepare("UPDATE matches SET pending_result=? WHERE id=?")
     .run(JSON.stringify(payload), matchId);
   return { ok: true, pending: payload };
@@ -4815,11 +4828,38 @@ function getPendingResult(matchId) {
   try { return JSON.parse(m.pending_result); } catch (e) { return null; }
 }
 
+// ── コート別トークン (試験運用 #229) ──
+// 1つのマスタ referee_token から各コートのキーを HMAC で自動導出。個別発行が不要。
+// referee_token はサーバ内秘密として保持し、クライアントには各コートの key のみ渡る。
+function refereeCourtKey(refereeToken, courtNo) {
+  return require("crypto").createHmac("sha256", String(refereeToken || ""))
+    .update("court:" + courtNo).digest("base64url").slice(0, 14);
+}
+// 全コート分のキー一覧 (管理画面でURL生成に使用)。referee_input_enabled の大会のみ。
+function getRefereeCourtLinks(tournamentId) {
+  const t = getTournament(tournamentId);
+  if (!t || !t.referee_input_enabled || !t.referee_token) return null;
+  const n = (t.court_rows || 4) * (t.court_cols || 11);
+  const links = [];
+  for (let c = 1; c <= n; c++) links.push({ court: c, key: refereeCourtKey(t.referee_token, c) });
+  return { tournament_id: t.id, tournament_name: t.name, count: n, links };
+}
+// コート別トークンを検証 → 一致すれば {tournament, court}。別コートのキーでは通らない。
+function resolveRefereeCourt(tournamentId, courtNo, key) {
+  const t = getTournament(tournamentId);
+  if (!t || !t.referee_input_enabled || !t.referee_token) return null;
+  courtNo = parseInt(courtNo) || 0;
+  if (courtNo < 1 || !key) return null;
+  if (refereeCourtKey(t.referee_token, courtNo) !== key) return null;
+  return { tournament: t, court: courtNo };
+}
+
 module.exports = {
   // 審判結果入力 (テスト環境付き)
   setRefereeToken, setRefereeInputEnabled, getRefereeConfig,
   getTournamentByRefereeToken, getRefereeView, markResultSource,
   setPendingResult, clearPendingResult, getPendingResult,
+  getRefereeCourtLinks, resolveRefereeCourt,
   kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription,
   // DB スナップショット (バックアップ/復元)
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, hasOngoingTournament,

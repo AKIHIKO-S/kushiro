@@ -111,13 +111,32 @@
 (function () {
   "use strict";
   var params = new URLSearchParams(location.search);
+  // 認証モード: 共有トークン(t) / コート別(tid+court+ct, 試験運用 #229)
   var TOKEN = params.get("t") || "";
+  var TID = params.get("tid") || "", COURT = params.get("court") || "", CT = params.get("ct") || "";
+  var PERCOURT = !!(TID && COURT && CT);
+  var HAS_AUTH = !!(TOKEN || PERCOURT);
+  function authQS() {
+    return PERCOURT
+      ? ("tid=" + encodeURIComponent(TID) + "&court=" + encodeURIComponent(COURT) + "&ct=" + encodeURIComponent(CT))
+      : ("t=" + encodeURIComponent(TOKEN));
+  }
+  function authBody(b) {
+    b = b || {};
+    if (PERCOURT) { b.tid = TID; b.court = COURT; b.ct = CT; } else { b.t = TOKEN; }
+    return b;
+  }
   var root = document.getElementById("root");
   var toastEl = document.getElementById("toast");
   var pendingOpId = {};   // matchId -> op_id (リトライ時に同一IDで冪等送信)
   var selWinner = {};     // matchId -> 1|2 (確認中の選択)
   var redo = {};          // matchId -> true (承認待ちでも再報告するため入力に戻す)
   var lastMatches = [];
+  // オフライン送信キュー (#231): 回線断でも報告を貯め、復旧時に自動送信 (op_idで冪等)
+  var QKEY = "ktta_ref_queue_v1";
+  function loadQ() { try { return JSON.parse(localStorage.getItem(QKEY) || "[]"); } catch (e) { return []; } }
+  function saveQ(q) { try { localStorage.setItem(QKEY, JSON.stringify(q.slice(-50))); } catch (e) {} }
+  function enqueue(mid, body) { var q = loadQ(); q.push({ mid: mid, body: body, ts: Date.now() }); saveQ(q); }
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
     return { "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]; }); }
@@ -153,7 +172,7 @@
 
   function render(state) {
     var t = state.tournament || {};
-    document.getElementById("tname").textContent = t.name || "大会";
+    document.getElementById("tname").textContent = (t.name || "大会") + (PERCOURT ? "　【コート" + COURT + " 専用】" : "");
     var upd = document.getElementById("updated");
     var now = new Date();
     upd.textContent = "更新 " + ("0" + now.getHours()).slice(-2) + ":" + ("0" + now.getMinutes()).slice(-2);
@@ -274,8 +293,29 @@
     document.getElementById("send-" + m.id).onclick = function () { submit(m, slot); };
   }
 
+  // 結果送信 (認証は body に含める: 共有=t / コート別=tid+court+ct)
+  function sendFinish(mid, body) {
+    return fetch("/api/ref/matches/" + encodeURIComponent(mid) + "/finish", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(authBody(Object.assign({}, body))),
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); });
+  }
+  // 貯めた報告を順次送信 (回線復旧時/ポーリング毎)。op_id 冪等なので二重適用なし。
+  var flushing = false;
+  function flushQueue() {
+    if (flushing || !navigator.onLine) return;
+    var q = loadQ(); if (!q.length) return;
+    flushing = true;
+    var item = q[0];
+    sendFinish(item.mid, item.body).then(function () {
+      var qq = loadQ(); qq.shift(); saveQ(qq);   // 応答が返れば除去 (成否問わず=冪等)
+      flushing = false;
+      if (loadQ().length) flushQueue();
+      else { toast("保存していた報告を送信しました。", "ok"); load(); }
+    }).catch(function () { flushing = false; /* まだ回線断: 次の機会に */ });
+  }
+
   function submit(m, slot) {
-    if (!navigator.onLine) { toast("オフラインです。電波の良い場所で再試行してください。", "err"); return; }
     var wsEl = document.getElementById("ws-" + m.id);
     var lsEl = document.getElementById("ls-" + m.id);
     var ws = wsEl && wsEl.value !== "" ? parseInt(wsEl.value) : null;
@@ -283,7 +323,6 @@
     var body = { winner_slot: slot, sets: [] };
     if (ws != null && ls != null) {
       if (ws === ls) { toast("セット数が同じです。勝者が多くなるように入力してください。", "err"); return; }
-      // 入力した数字が勝者側に多くなっているか確認 (取り違え防止)
       if (ws < ls) { toast("勝者のセット数が少なくなっています。確認してください。", "err"); return; }
       body.winner_sets = ws; body.loser_sets = ls;
     } else {
@@ -295,36 +334,38 @@
     var sendBtn = document.getElementById("send-" + m.id);
     if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = "送信中…"; }
 
-    fetch("/api/ref/matches/" + encodeURIComponent(m.id) + "/finish", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Referee-Token": TOKEN },
-      body: JSON.stringify(body),
-    }).then(function (r) {
-      return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; });
-    }).then(function (res) {
+    // オフラインなら即キュー (回線復旧で自動送信)
+    if (!navigator.onLine) {
+      enqueue(m.id, body); delete pendingOpId[m.id]; redo[m.id] = false;
+      toast("オフライン: 報告を保存しました。回線復旧後に自動送信します。", "warn");
+      load(); return;
+    }
+    sendFinish(m.id, body).then(function (res) {
       if (!res.ok) {
         if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = "この結果で報告"; }
         toast((res.j && res.j.error) || "送信に失敗しました（" + res.status + "）", "err");
-        // 409 (コートから外れた) 等は最新化
         if (res.status === 409 || res.status === 404) load();
         return;
       }
       delete pendingOpId[m.id];
       redo[m.id] = false;
       toast("報告しました（本部の承認待ち）: " + (res.j.winner_name || "") + " の勝ち", "ok");
-      load();  // 承認待ち状態で再描画 (試合はコートに残る)
+      load();
     }).catch(function () {
-      if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = "この結果で報告"; }
-      toast("通信に失敗しました。電波を確認して再試行してください。", "err");
+      // 通信失敗 → キューに積んで後で自動送信
+      enqueue(m.id, body); delete pendingOpId[m.id]; redo[m.id] = false;
+      toast("通信に失敗。報告を保存し、回線復旧後に自動送信します。", "warn");
+      load();
     });
   }
 
   var loading = false;
   function load() {
-    if (!TOKEN) { showError("リンクにトークンがありません。本部から配布されたリンクを使ってください。"); return; }
+    if (!HAS_AUTH) { showError("リンクにトークンがありません。本部から配布されたリンクを使ってください。"); return; }
+    flushQueue();  // 取得のついでに貯めた報告を送信
     if (loading) return;
     loading = true;
-    fetch("/api/ref/state?t=" + encodeURIComponent(TOKEN)).then(function (r) {
+    fetch("/api/ref/state?" + authQS()).then(function (r) {
       setNet(true);
       if (r.status === 403) { return r.json().then(function (j) { showError((j && j.error) || "リンクが無効です。"); throw "stop"; }); }
       if (!r.ok) throw new Error("HTTP " + r.status);

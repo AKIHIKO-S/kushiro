@@ -510,6 +510,8 @@
  /* 承認待ちバッジ */
  .cc-await { font-size: 13px; font-weight: 800; color: #1d4ed8;
    background: #dbeafe; border-radius: 6px; padding: 2px 8px; margin-top: 6px; line-height: 1.3; }
+ .cc-await.conflict { color: #b91c1c; background: #fee2e2; }
+ .court-cell.approval:has(.cc-await.conflict) { border-color: #dc2626; box-shadow: 0 0 0 3px rgba(220,38,38,.2); }
 
  /* PC/iPad前提: LIVE進行は横幅を広く #219 */
  .container { max-width: 1760px; }
@@ -6944,9 +6946,13 @@ const O = {
  m.player2_team ? h("div", { className: "cc-team" }, m.player2_team) : null,
  m.referee_name ? h("div", { className: "cc-ref" }, "審 " + shortName(m.referee_name)) : null,
  ));
- // 審判報告あり(承認待ち)のバッジ #223
- if (awaiting) cell.appendChild(h("div", { className: "cc-await" },
-   "● 承認待ち" + (m.pending && m.pending.winner_name ? "（" + shortName(m.pending.winner_name) + "）" : "")));
+ // 審判報告あり(承認待ち)のバッジ #223 / 二重報告は警告色 #230
+ if (awaiting) {
+   const conflict = !!(m.pending && m.pending.conflict);
+   cell.appendChild(h("div", { className: "cc-await" + (conflict ? " conflict" : "") },
+     (conflict ? "⚠ 報告不一致 " : "● 承認待ち") +
+     (m.pending && m.pending.winner_name ? "（" + shortName(m.pending.winner_name) + "）" : "")));
+ }
  // 経過時間: 氏名・所属から離して見やすく (区切り線つき) #222
  const since = m.called_at || m.started_at || "";
  if (since) cell.appendChild(h("div", { className: "cc-elapsed", "data-elapsed-since": since },
@@ -7843,6 +7849,35 @@ const O = {
        "・報告は本部にも自動反映。操作ログに『審判入力』として残ります。", h("br"),
        "・まずテスト用の大会で有効化して練習 → 本番大会で有効化、の順がおすすめです。"));
      body.appendChild(h("div", { id: "refQrBox", style: { textAlign: "center", marginTop: "10px" } }));
+     // コート別リンク (試験運用 #229): 1つのマスタから全コート分を自動導出
+     const cdet = h("details", { style: { marginTop: "12px", borderTop: "1px dashed var(--border)", paddingTop: "10px" } },
+       h("summary", { style: { cursor: "pointer", fontWeight: 700, fontSize: "13px", color: "#0369a1" } }, "コート別リンク（試験運用）"),
+       h("div", { className: "text-xs text-sub", style: { lineHeight: 1.7, margin: "6px 0" } },
+         "審判ごとに「自分のコートだけ」報告できるリンク（別コートは見えません）。", h("br"),
+         "上の『リンクを再発行』で全コート分が一括更新されます（コート単位の個別発行は不要）。"),
+       h("button", { className: "btn btn-sm", id: "loadCourtLinks" }, "コート別リンクを一覧表示"),
+       h("div", { id: "courtLinksBox", style: { marginTop: "8px", maxHeight: "320px", overflowY: "auto" } }));
+     body.appendChild(cdet);
+     cdet.querySelector("#loadCourtLinks").onclick = async () => {
+       const boxc = document.getElementById("courtLinksBox");
+       boxc.textContent = "読み込み中…";
+       let data; try {
+         const rr = await fetch("/api/admin/tournaments/" + O.tournamentId + "/referee-court-links", { headers: api._headers() });
+         data = await rr.json();
+       } catch (e) { boxc.textContent = "取得に失敗しました"; return; }
+       if (data && data.error) { boxc.textContent = data.error; return; }
+       boxc.innerHTML = "";
+       (data.links || []).forEach(l => {
+         const u = origin + "/ref/?tid=" + encodeURIComponent(O.tournamentId) + "&court=" + l.court + "&ct=" + encodeURIComponent(l.key);
+         boxc.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", marginBottom: "4px" } },
+           h("span", { style: { minWidth: "64px", fontWeight: 700, fontSize: "12px" } }, "コート" + l.court),
+           h("input", { className: "input", readOnly: true, value: u, style: { flex: 1, fontSize: "11px" }, onFocus: (e) => e.target.select() }),
+           h("button", { className: "btn btn-sm btn-ghost", onClick: async () => {
+             try { await navigator.clipboard.writeText(u); toast("コート" + l.court + "のリンクをコピー", "ok"); }
+             catch (e) { toast("コピー失敗", "err"); }
+           } }, "コピー")));
+       });
+     };
    } else {
      body.appendChild(h("div", { className: "text-xs text-sub", style: { lineHeight: 1.7 } },
        "「有効にする」を押すと専用リンクが発行されます。テスト大会で先に試せます。"));
@@ -7871,6 +7906,11 @@ const O = {
  const score = (p.winner_sets || p.loser_sets) ? `${p.winner_sets || 0}-${p.loser_sets || 0}` : "勝者のみ";
  const body = h("div", {},
    h("div", { className: "text-sm text-sub mb-2" }, `${m.event || ""} ${m.round || ""}　コート${m.table_no || "?"}`),
+   p.conflict ? h("div", { style: { background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: "8px",
+       padding: "10px 12px", marginBottom: "10px", color: "#b91c1c", fontWeight: 700, fontSize: "13px", lineHeight: 1.6 } },
+     "⚠ 二重報告の可能性：複数の審判から異なる勝者の報告がありました。" +
+     (p.prev && p.prev.winner_name ? "（前の報告: " + p.prev.winner_name + " の勝ち）" : "") +
+     " 必ず現地で確認してから承認してください。") : null,
    h("div", { style: { background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "10px", padding: "16px", textAlign: "center" } },
      h("div", { style: { fontSize: "12px", color: "#1d4ed8", fontWeight: 700, marginBottom: "6px" } }, "審判からの報告"),
      h("div", { style: { fontSize: "22px", fontWeight: 800, color: "#15803d" } }, (wname || "") + " の勝ち"),

@@ -241,15 +241,24 @@ function requireAdmin(req, res, next) {
 // X-Referee-Token ヘッダ or ?t= or body.t で受け取り、有効な大会に解決できれば通す。
 // 解決できない=トークン無効/審判入力OFF/失効 → 403。req.refTournament に大会を載せる。
 function requireReferee(req, res, next) {
+  // (a) 共有トークン (大会全コート共通)
   const token = req.get("X-Referee-Token")
     || (req.query && req.query.t)
     || (req.body && req.body.t);
-  const t = token ? db.getTournamentByRefereeToken(token) : null;
-  if (!t) return res.status(403).json({
+  if (token) {
+    const t = db.getTournamentByRefereeToken(token);
+    if (t) { req.refTournament = t; req.refCourt = null; return next(); }
+  }
+  // (b) コート別トークン (試験運用 #229): tid + court + ct。自分のコートのみ。
+  const q = req.query || {}, b = req.body || {};
+  const tid = q.tid || b.tid, court = q.court || b.court, ct = q.ct || b.ct;
+  if (tid && court && ct) {
+    const r = db.resolveRefereeCourt(tid, court, ct);
+    if (r) { req.refTournament = r.tournament; req.refCourt = r.court; return next(); }
+  }
+  return res.status(403).json({
     error: "この審判用リンクは無効です（審判入力がOFF、またはリンクが失効しています）。本部にご確認ください。",
   });
-  req.refTournament = t;
-  next();
 }
 
 // ── 軽量レート制限 (公開申込のスパム/DoS 対策, 依存追加なし) ──
@@ -1793,13 +1802,19 @@ app.put("/api/admin/tournaments/:id/referee-input", requireAdmin, (req, res) => 
   if (r && r.error) return res.status(404).json(r);
   res.json(r);
 });
+// コート別リンク (試験運用 #229): 全コート分のキーを返す。マスタトークンから自動導出。
+app.get("/api/admin/tournaments/:id/referee-court-links", requireAdmin, (req, res) => {
+  const r = db.getRefereeCourtLinks(req.params.id);
+  if (!r) return res.status(400).json({ error: "審判入力が有効ではありません（先に「有効にする」を押してください）" });
+  res.json(r);
+});
 
 // 審判ビュー: 現在台に入っている試合 (PII除外・管理キー不要・トークンのみ)
 // トークン漏洩時のスクレイピング/DoS 対策にレート制限 (正規の審判は12秒間隔ポーリング)。
 app.get("/api/ref/state",
   rateLimit({ windowMs: 60000, max: 120, message: "リクエストが多すぎます。少し待って再試行してください。" }),
   requireReferee, (req, res) => {
-  const v = db.getRefereeView(req.refTournament.id);
+  const v = db.getRefereeView(req.refTournament.id, req.refCourt);
   if (!v) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(v);
 });
@@ -1812,6 +1827,9 @@ app.post("/api/ref/matches/:id/finish",
   if (!m) return res.status(404).json({ error: "試合が見つかりません" });
   if (m.tournament_id !== req.refTournament.id)
     return res.status(403).json({ error: "この試合はこのリンクの対象外です" });
+  // コート別トークンは自分のコートの試合のみ報告可 (#229)
+  if (req.refCourt && Number(m.table_no) !== Number(req.refCourt))
+    return res.status(403).json({ error: "このリンクはコート" + req.refCourt + "専用です。担当コートの試合のみ報告できます。" });
   if (m.status !== "on_table")
     return res.status(409).json({ error: "この試合は現在コートに入っていません。本部にご確認ください。" });
   // 確定せず「本部承認待ち」の暫定結果として保存 (承認されるまでコートに残す #223)
