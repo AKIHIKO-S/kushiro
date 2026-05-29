@@ -6288,9 +6288,9 @@ const O = {
  O.reload();
  O.initPullToRefresh();   // スワイプ更新を有効化 (#238)
  O._initNet();            // オフライン/送信待ち監視を有効化 (#線断対策)
- // 自動更新 (2秒): 軽量な ops-version を見て、変化した時だけ全再描画。
- // 審判報告→本部の「承認待ち」表示が最大2秒で届く (管理は常にフレッシュ取得)。
- O.poller = setInterval(() => O.tick(), 2000);
+ // 自動更新 (1.2秒): 軽量な ops-version (フィンガープリント) を見て、変化した時だけ全再描画。
+ // 審判報告→本部の「承認待ち」表示や他端末の操作が最大1.2秒で届く (管理は常にフレッシュ取得)。
+ O.poller = setInterval(() => O.tick(), 1200);
  },
 
  // 変化検知ティック (重い /operations 取得・再描画は変化時のみ)
@@ -6319,7 +6319,8 @@ const O = {
    const b = document.getElementById("opRefreshBtn");
    const orig = b ? b.textContent : "";
    if (b) { b.disabled = true; b.textContent = "更新中…"; }
-   try { O._lastOpsVer = undefined; await O.reload(); }
+   // 手動更新は全データを取り直す (団体名簿も含め最新化)
+   try { O._lastOpsVer = undefined; O.teamRosterTid = null; await O.reload(); }
    finally { if (b) { b.disabled = false; b.textContent = orig; } }
  },
 
@@ -6401,7 +6402,16 @@ const O = {
  if (!O.tournamentId) return;
  const main = document.getElementById("opMain");
  try {
- const state = await api.get("/api/tournaments/" + O.tournamentId + "/operations");
+ // 「操作しているPCをリアルタイムに」近づけるため、必要な取得を並列化 (#263)。
+ //  operations=毎回必須 / team-rosters=静的(団体名簿。大会が変わった時だけ) / best8=非silent or 未取得時。
+ // 旧: 3本を逐次awaitしていたため操作のたびに往復が積み上がっていた → Promise.allで1往復に短縮。
+ const needRosters = (O.teamRosterTid !== O.tournamentId);
+ const needBest8 = (!silent || !O.best8);
+ const [state, tr, b] = await Promise.all([
+   api.get("/api/tournaments/" + O.tournamentId + "/operations"),
+   needRosters ? api.get("/api/tournaments/" + O.tournamentId + "/team-rosters").catch(() => null) : Promise.resolve(null),
+   needBest8 ? api.get("/api/tournaments/" + O.tournamentId + "/best8").catch(() => null) : Promise.resolve(null),
+ ]);
  if (state.error) {
    if (main) {
      clear(main);
@@ -6413,28 +6423,17 @@ const O = {
  }
  O.state = state;
  O._netDown = false; O._updateNetBar();   // 取得成功 → オンライン表示 (#線断対策)
- // 団体戦の名簿(所属選手)を取得。静的データなので大会ごとに1回 + 手動/操作後の再読込時のみ
- // (4秒ポーリング silent=true 時は再取得しない → 負荷軽減)
- if (O.teamRosterTid !== O.tournamentId || !silent) {
+ if (needRosters && tr) {   // 団体名簿は静的: 大会切替/手動更新時のみ反映 (操作のたびの再取得を廃止)
    O.teamRosterTid = O.tournamentId;
-   try {
-     const tr = await api.get("/api/tournaments/" + O.tournamentId + "/team-rosters");
-     const map = {}, byEid = {};
-     (tr.rosters || []).forEach(r => {
-       if (r.entrant_id) byEid[r.entrant_id] = r.members;
-       const k = O._normTeam(r.team_name);
-       if (k && !map[k]) map[k] = r.members;
-     });
-     O.teamRosterMap = map; O.teamRosterByEid = byEid;
-   } catch (e) { /* 名簿取得失敗は非致命 (進行管理は継続) */ }
+   const map = {}, byEid = {};
+   (tr.rosters || []).forEach(r => {
+     if (r.entrant_id) byEid[r.entrant_id] = r.members;
+     const k = O._normTeam(r.team_name);
+     if (k && !map[k]) map[k] = r.members;
+   });
+   O.teamRosterMap = map; O.teamRosterByEid = byEid;
  }
- // 各種目のベスト8。結果入力で変化するが、結果入力は非silent reload を伴うため非silent時に更新。
- if (!silent || !O.best8) {
-   try {
-     const b = await api.get("/api/tournaments/" + O.tournamentId + "/best8");
-     O.best8 = (b && b.events) || [];
-   } catch (e) { /* 非致命 */ }
- }
+ if (needBest8 && b) { O.best8 = (b.events) || []; }
  try {
    // 再描画でスクロール位置が先頭に戻らないよう保持 (4秒ポーリング/対戦操作後も維持)
    const sc = O._opScrollEl();
