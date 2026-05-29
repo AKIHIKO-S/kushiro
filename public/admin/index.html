@@ -498,6 +498,8 @@
  .court-cell-match .cc-name { font-size: 11px; font-weight: 700; }
  .court-cell-match .cc-furi { font-size: 8px; color: var(--sub); font-weight: 500; letter-spacing: .02em; }
  .court-cell-match .cc-ref { font-size: 8px; color: #6d28d9; margin-top: 2px; font-weight: 600; }
+ .court-cell-match .cc-team { font-size: 9px; color: var(--ink-600); font-weight: 600;
+   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
  .court-cell-vs { font-size: 9px; color: var(--sub); font-weight: 400; margin: 1px 0; }
 
  /* PC/iPad前提: 全体を横長に + 台一覧を大きく #206 */
@@ -6273,10 +6275,10 @@ const O = {
  const events = Object.keys(O.state.event_stats);
  const totalCompleted = Object.values(O.state.event_stats).reduce((a, e) => a + (e.completed || 0), 0);
 
- // ── 全体進捗バー (最上部) ──
+ // ── 全体進捗バー + 種目別進捗 (同一カード) ──
  const totalM = O.state.total_matches || 0;
  const pct = totalM > 0 ? Math.round((totalCompleted / totalM) * 100) : 0;
- main.appendChild(h("div", { className: "op-progress-top" },
+ const progTop = h("div", { className: "op-progress-top" },
    h("div", { className: "op-progress-head" },
      h("span", { className: "op-progress-title" }, "大会全体の進捗"),
      h("span", { className: "op-progress-figure" },
@@ -6285,55 +6287,45 @@ const O = {
    ),
    (O.state.progress && O.state.progress.eta_text)
      ? h("div", { className: "op-eta", title: "終了済み試合の平均時間からの推定 (目安)" },
-         "⏱ 推定終了 " + O.state.progress.eta_text + " ごろ（目安・平均 "
+         "推定終了 " + O.state.progress.eta_text + " ごろ（目安・平均 "
          + O.state.progress.avg_match_min + "分/試合・残り " + O.state.progress.remaining + "試合）")
      : null,
    h("div", { className: "op-progress-bar" },
      h("div", { className: "op-progress-fill" + (pct >= 100 ? " done" : ""),
        style: { width: pct + "%" } },
        pct >= 12 ? h("span", { className: "op-progress-pct" }, pct + "%") : null)),
- ));
+ );
+ // 種目別進捗を同じカード内・バーの直下に
+ if (events.length) {
+   const progList = h("div", { className: "ev-progress-list", style: { marginTop: "12px" } });
+   events.forEach(ev => {
+     const st = O.state.event_stats[ev] || {};
+     const total = st.total || 0, done = st.completed || 0;
+     const epct = total > 0 ? Math.round((done / total) * 100) : 0;
+     const isDone = total > 0 && done >= total;
+     progList.appendChild(h("div", { className: "ev-progress" + (isDone ? " done" : "") },
+       h("span", { className: "ev-name" },
+         h("span", { className: "ev-priority", style: { background: O._eventPriorityColor(ev) } }), ev),
+       h("span", { className: "ev-count" },
+         isDone ? h("span", { className: "ev-done-tag" }, "完了") : `${done} / ${total}`),
+       h("span", { className: "ev-bar" }, h("span", { style: { width: epct + "%" } }))));
+   });
+   progTop.appendChild(progList);
+ }
+ main.appendChild(progTop);
 
- const statCard = (cls, ic, num, numCls, label) => h("div", { className: "op-stat " + cls },
-   h("div", { className: "op-stat-ic" }, ic),
+ const statCard = (cls, num, numCls, label) => h("div", { className: "op-stat " + cls },
    h("div", { className: "op-stat-num " + numCls }, String(num)),
    h("div", { className: "op-stat-label" }, label));
  main.appendChild(h("div", { className: "op-summary" },
- statCard("s-ongoing", "🟢", O.state.on_table.length, "red", "進行中"),
- statCard("s-callable", "📢", O.state.callable.length, "orange", "呼べる"),
- statCard("s-waiting", "⏳", O.state.waiting, "blue", "待機"),
- statCard("s-done", "✓", totalCompleted, "green", "終了"),
- statCard("s-total", "🏓", O.state.total_matches, "", "総試合"),
+ statCard("s-ongoing", O.state.on_table.length, "red", "進行中"),
+ statCard("s-callable", O.state.callable.length, "orange", "呼べる"),
+ statCard("s-waiting", O.state.waiting, "blue", "待機"),
+ statCard("s-done", totalCompleted, "green", "終了"),
+ statCard("s-total", O.state.total_matches, "", "総試合"),
  ));
 
- // ── 種目別 進捗 (全体進捗の直下に配置) ──
- if (events.length) {
- const overall = O.state.total_matches > 0
-   ? Math.round((totalCompleted / O.state.total_matches) * 100) : 0;
- const progCard = h("div", { className: "card" },
- h("div", { className: "card-head" },
- h("div", { className: "card-title" }, "種目別 進捗"),
- h("div", { className: "card-title-sub" }, `全体 ${totalCompleted}/${O.state.total_matches} (${overall}%)`),
- ),
- );
- const progList = h("div", { className: "ev-progress-list" });
- events.forEach(ev => {
-   const st = O.state.event_stats[ev] || {};
-   const total = st.total || 0;
-   const done = st.completed || 0;
-   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-   const isDone = total > 0 && done >= total;
-   progList.appendChild(h("div", { className: "ev-progress" + (isDone ? " done" : "") },
-     h("span", { className: "ev-name" },
-       h("span", { className: "ev-priority", style: { background: O._eventPriorityColor(ev) } }), ev),
-     h("span", { className: "ev-count" },
-       isDone ? h("span", { className: "ev-done-tag" }, "完了 ✓") : `${done} / ${total}`),
-     h("span", { className: "ev-bar" }, h("span", { style: { width: pct + "%" } })),
-   ));
- });
- progCard.appendChild(progList);
- main.appendChild(progCard);
- }
+ // (種目別進捗は上の「大会全体の進捗」カードに統合済み #移動)
 
  // ── 運用バー (常時表示: 種目フィルタ + 敗者審判ルール) ──
  main.appendChild(h("div", { className: "flex gap-2 mb-2 flex-wrap",
@@ -6358,6 +6350,17 @@ const O = {
    style: { background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" },
    title: "結果入力・呼出・修正などの直前の操作を1つ取り消します",
    onClick: () => O.undoLast() }, "↶ 取り消し"),
+ // 大会終了 / 再開 (#6 全試合終了で閲覧側からクローズ・結果編集はいつでも可)
+ (O.state.tournament.status === "completed")
+   ? h("button", { className: "btn btn-sm btn-ghost",
+       title: "閲覧側で『終了』表示中。クリックで再開(進行中に戻す)",
+       onClick: () => O.reopenTournament() }, "● 終了済（再開）")
+   : ((O.state.total_matches > 0 && totalCompleted >= O.state.total_matches)
+       ? h("button", { className: "btn btn-sm",
+           style: { background: "#15803d", color: "#fff", borderColor: "#15803d", fontWeight: 700 },
+           title: "全試合終了。閲覧側で『終了した大会』として表示します(結果編集は引き続き可能)",
+           onClick: () => O.closeTournament() }, "大会を終了する")
+       : null),
  // ツール (折りたたみ)
  h("details", { className: "op-tools" },
  h("summary", { className: "btn btn-sm btn-ghost", style: { display: "inline-block" } }, "ツール・設定 ▾"),
@@ -6869,9 +6872,11 @@ const O = {
  cell.appendChild(h("div", { className: "court-cell-match" },
  h("div", { className: "cc-name" }, shortName(m.player1_name)),
  m.player1_furigana ? h("div", { className: "cc-furi" }, m.player1_furigana) : null,
+ m.player1_team ? h("div", { className: "cc-team" }, m.player1_team) : null,
  h("div", { className: "court-cell-vs" }, t.is_extra ? "(団体追加)" : "VS"),
  h("div", { className: "cc-name" }, shortName(m.player2_name)),
  m.player2_furigana ? h("div", { className: "cc-furi" }, m.player2_furigana) : null,
+ m.player2_team ? h("div", { className: "cc-team" }, m.player2_team) : null,
  m.referee_name ? h("div", { className: "cc-ref" }, "審 " + shortName(m.referee_name)) : null,
  ));
  } else {
@@ -7633,6 +7638,30 @@ const O = {
  O.reload();
  },
 
+ // ── 大会終了 / 再開 (#6) ──
+ async closeTournament() {
+ if (!O.tournamentId) return;
+ if (!confirm("全試合が終了しました。大会を『終了』にしますか？\n・閲覧者側で『終了した大会』として表示されます\n・結果の編集は引き続き可能です（必要なら再開できます）")) return;
+ try {
+   const r = await api.put("/api/tournaments/" + O.tournamentId, { status: "completed" });
+   if (r && r.error) return toast(r.error, "err");
+   toast("大会を終了しました", "ok");
+   if (O.state && O.state.tournament) O.state.tournament.status = "completed";
+   O.reload();
+ } catch (e) { toast("通信エラー: " + (e.message || e), "err"); }
+ },
+ async reopenTournament() {
+ if (!O.tournamentId) return;
+ if (!confirm("大会を『進行中』に戻しますか？（閲覧側でも進行中に戻ります）")) return;
+ try {
+   const r = await api.put("/api/tournaments/" + O.tournamentId, { status: "ongoing" });
+   if (r && r.error) return toast(r.error, "err");
+   toast("大会を再開しました", "ok");
+   if (O.state && O.state.tournament) O.state.tournament.status = "ongoing";
+   O.reload();
+ } catch (e) { toast("通信エラー: " + (e.message || e), "err"); }
+ },
+
  // ── 操作ログ + Undo (誤操作/抗議対応 #203) ──
  async undoLast() {
  if (!O.tournamentId) return;
@@ -7820,11 +7849,17 @@ const O = {
  const makeCard = (m, side) => {
    const callable = m.status === "pending";
    const card = h("div", { className: "vb-match" + (callable ? " vb-callable" : ""),
+     // 呼出可能(pending)の対戦はカードクリックで呼出フローを開く #トーナメント表から呼出
+     onClick: callable ? ((e) => {
+       if (e && e.target && e.target.closest && e.target.closest("[draggable]")) {/* drag handle */}
+       try { if (typeof O.openCallFlow === "function") O.openCallFlow({ match: m }); } catch (err) {}
+     }) : undefined,
      style: {
        border: "2px solid " + stateBorder(m), background: stateBg(m),
        borderRadius: "6px", padding: "6px 9px", margin: "3px 0",
        fontSize: "13px", position: "relative",
        textAlign: side === "right" ? "right" : "left",
+       cursor: callable ? "pointer" : "default",
      } });
    const lbl = m.match_no ? (m.bracket_round + "-" + m.match_no)
      : (m.bracket_round + "-" + ((m.bracket_pos || 0) + 1));
@@ -7835,7 +7870,7 @@ const O = {
        style: { marginLeft: "6px", color: "#dc2626", fontWeight: 800 } }, "● LIVE") : null,
      m.status === "completed" ? h("span", {
        style: { marginLeft: "6px", color: "#16a34a", fontWeight: 800 } }, "✓") : null,
-     callable ? h("span", { className: "vb-call-chip" }, "▶ 呼出可能") : null,
+     callable ? h("span", { className: "vb-call-chip" }, "▶ クリックで呼出") : null,
    ));
    const dndOn = m.bracket_round === 1; // 1回戦のみ入替可能
    const pos = m.bracket_pos || 0;
