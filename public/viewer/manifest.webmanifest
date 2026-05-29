@@ -1,0 +1,17 @@
+{
+  "name": "KTTA マイ番号 — 釧路卓球協会",
+  "short_name": "マイ番号",
+  "description": "自分の試合の呼び出しをスマホで受け取る (釧路卓球協会 大会)",
+  "lang": "ja",
+  "start_url": "/viewer/#mynumber",
+  "scope": "/viewer/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#15803d",
+  "icons": [
+    { "src": "/shared/assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/shared/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/shared/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

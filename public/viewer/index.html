@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>KTTA Platform - 試合結果・選手検索</title>
+<!-- PWA / iOS ホーム画面追加 (マイ番号のプッシュ通知に必要) #268-push -->
+<meta name="theme-color" content="#15803d">
+<link rel="manifest" href="/viewer/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/shared/assets/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="マイ番号">
 <link rel="stylesheet" href="/shared/common.css">
 <style>
  /* viewer 専用の追加スタイル */
@@ -2221,6 +2229,7 @@ const MP = {
  poller: null,
  lastNotified: null, // 直前に通知した状態(連続通知防止)
  notifEnabled: false,
+ _pushReady: false,   // 購読登録済みフラグ (通知ON表示に使用) #268-push
 
  async init() {
  MP.playerId = localStorage.getItem("tt_player_id") || null;
@@ -2373,13 +2382,14 @@ const MP = {
  // ── Web Push 購読 (アプリを閉じていてもバックグラウンド通知) #188 ──
  // 失敗しても致命的ではない (ページ表示中は notify() のブラウザ通知で補完される)。
  // ※ iOS は「ホーム画面に追加」したPWAでのみプッシュが届く。
+ // 購読登録。成功時 true を返し MP._pushReady を立てる(UI表示に使用)。
  async setupPush() {
  try {
- if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
- if (!("Notification" in window) || Notification.permission !== "granted") return;
- if (!MP.playerId) return;
+ if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+ if (!("Notification" in window) || Notification.permission !== "granted") return false;
+ if (!MP.playerId) return false;
  const cfg = await api.get("/api/push/vapid-public-key");
- if (!cfg || !cfg.enabled || !cfg.key) return;
+ if (!cfg || !cfg.enabled || !cfg.key) return false;
  const reg = await navigator.serviceWorker.register("/viewer/sw.js");
  await navigator.serviceWorker.ready;
  let sub = await reg.pushManager.getSubscription();
@@ -2391,7 +2401,75 @@ const MP = {
  }
  await api.post("/api/push/subscribe",
  { player_id: MP.playerId, subscription: sub.toJSON ? sub.toJSON() : sub });
- } catch (e) { console.warn("push setup failed", e); }
+ MP._pushReady = true;
+ return true;
+ } catch (e) { console.warn("push setup failed", e); return false; }
+ },
+ // 環境判定 (iOS Safari は「ホーム画面に追加」しないと Web Push 不可)
+ _pushEnv() {
+ const ua = navigator.userAgent || "";
+ const isIOS = /iphone|ipad|ipod/i.test(ua) ||
+   (/Macintosh/.test(ua) && typeof document !== "undefined" && "ontouchend" in document); // iPadOS
+ const standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
+   || navigator.standalone === true;
+ const supported = ("serviceWorker" in navigator) && ("PushManager" in window) && ("Notification" in window);
+ const perm = ("Notification" in window) ? Notification.permission : "unsupported";
+ return { isIOS, standalone, supported, perm };
+ },
+ // 「通知をオンにする」: 許可要求 → 購読登録 → 明確なフィードバック (#268-push)
+ async enablePush() {
+ const btn = document.getElementById("mpEnablePush");
+ if (btn) { btn.disabled = true; btn.textContent = "設定中…"; }
+ try {
+ if (("Notification" in window) && Notification.permission === "default") {
+ try { await Notification.requestPermission(); } catch (e) {}
+ }
+ if (!("Notification" in window) || Notification.permission !== "granted") {
+ toast("通知が許可されませんでした。ブラウザ設定で許可してください。", "err");
+ return MP.render();
+ }
+ const ok = await MP.setupPush();
+ MP.notifEnabled = true;
+ toast(ok ? "この端末で通知をオンにしました。" : "許可しましたが登録に失敗しました。少し待って再度お試しください。",
+   ok ? "ok" : "warn");
+ } catch (e) {
+ toast("通知の設定に失敗しました。", "err");
+ }
+ MP.render();
+ },
+ // 通知有効化カード(状態に応じて案内/ボタン/完了を出し分け)
+ _notifCard() {
+ const e = MP._pushEnv();
+ if (e.isIOS && !e.standalone) {
+ // iPhone/iPad: ホーム画面追加が必須
+ return h("div", { className: "card", style: { background: "#eff6ff", borderColor: "#3b82f6", padding: "12px 14px" } },
+   h("div", { className: "font-bold", style: { marginBottom: "6px", color: "#1e40af" } }, "iPhone・iPad で通知を受け取る手順"),
+   h("ol", { style: { margin: "0 0 0 18px", padding: 0, fontSize: "13px", lineHeight: "1.9" } },
+     h("li", {}, "画面下の「共有」ボタンをタップ"),
+     h("li", {}, "「ホーム画面に追加」を選ぶ"),
+     h("li", {}, "追加されたアイコンから開き直す"),
+     h("li", {}, "もう一度この画面で「通知をオンにする」")),
+   h("div", { className: "text-xs text-sub", style: { marginTop: "6px" } },
+     "※ iPhoneはホーム画面に追加したアプリからのみ通知を受け取れます (Apple仕様)。"));
+ }
+ if (!e.supported) {
+ return h("div", { className: "card", style: { background: "#f5f5f4", padding: "10px 14px" } },
+   h("div", { className: "text-sm text-sub" }, "このブラウザは通知に対応していません。Chrome などでお試しください。"));
+ }
+ if (e.perm === "granted" && MP._pushReady) {
+ return h("div", { className: "card", style: { background: "#f0fdf4", borderColor: "#16a34a", padding: "10px 14px" } },
+   h("div", { className: "text-sm", style: { fontWeight: 700, color: "#166534" } },
+     "通知ON — 呼び出し時にこの端末へ届きます"));
+ }
+ if (e.perm === "denied") {
+ return h("div", { className: "card", style: { background: "#fef2f2", borderColor: "#dc2626", padding: "10px 14px" } },
+   h("div", { className: "text-sm" }, "通知がブロックされています。ブラウザ設定でこのサイトの通知を「許可」に変更してください。"));
+ }
+ // default、または granted だが未購読 → 有効化ボタン
+ return h("div", { className: "card", style: { background: "#fef3c7", borderColor: "#d97706", padding: "12px 14px" } },
+   h("div", { className: "flex gap-2", style: { alignItems: "center" } },
+     h("div", { className: "flex-1 text-sm" }, "呼び出しをこのスマホで受け取れます"),
+     h("button", { className: "btn btn-sm", id: "mpEnablePush", onClick: () => MP.enablePush() }, "通知をオンにする")));
  },
  _urlB64ToUint8(base64) {
  const padding = "=".repeat((4 - base64.length % 4) % 4);
@@ -2451,22 +2529,8 @@ const MP = {
  onClick: () => MP.logout() }, "登録解除"),
  ));
 
- // ── 通知許可未取得時の促し ──
- if ("Notification" in window && Notification.permission === "default") {
- main.appendChild(h("div", { className: "card",
- style: { background: "#fef3c7", borderColor: "#d97706", padding: "10px 14px" } },
- h("div", { className: "flex gap-2", style: { alignItems: "center" } },
- h("span", { style: { fontSize: "20px" } }, ""),
- h("div", { className: "flex-1 text-sm" },
- "呼び出しの通知を受け取るには許可が必要です"),
- h("button", { className: "btn btn-sm",
- onClick: async () => {
- const p = await Notification.requestPermission();
- MP.notifEnabled = p === "granted";
- MP.render();
- } }, "通知を許可"),
- )));
- }
+ // ── 通知の有効化 (状態に応じて iOS案内 / 「通知をオンにする」ボタン / 完了表示) ──
+ main.appendChild(MP._notifCard());
 
  // ── 大会情報 ──
  if (!s.tournament) {
