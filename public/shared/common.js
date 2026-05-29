@@ -185,6 +185,39 @@
     return ws + "-" + ls;
   }
 
+  // ── 経過時間 (呼出→現在) を1分ごとにカウントアップ ──
+  // 日時文字列(localtime "YYYY-MM-DD HH:MM:SS" or ISO)からの経過分を返す。
+  function elapsedMinSince(sinceStr) {
+    if (!sinceStr) return null;
+    const t0 = Date.parse(String(sinceStr).replace(" ", "T"));
+    if (isNaN(t0)) return null;
+    const min = Math.floor((Date.now() - t0) / 60000);
+    return min >= 0 ? min : null;
+  }
+  function fmtElapsedClock(sinceStr) {
+    const m = elapsedMinSince(sinceStr);
+    if (m == null) return "";
+    return m < 60 ? (m + "分") : (Math.floor(m / 60) + "時間" + (m % 60) + "分");
+  }
+  // ページ内の全 [data-elapsed-since] を「経過 N分」に更新し、30秒ごとに自動更新。
+  // (LIVE/進行管理は変化検知でしか再描画しないため、独立タイマーで時計を進める)
+  function startElapsedTicker() {
+    const upd = () => {
+      const els = (typeof document !== "undefined")
+        ? document.querySelectorAll("[data-elapsed-since]") : [];
+      els.forEach(el => {
+        const txt = fmtElapsedClock(el.getAttribute("data-elapsed-since"));
+        const prefix = el.getAttribute("data-elapsed-prefix");
+        const next = txt ? ((prefix != null ? prefix : "経過 ") + txt) : "";
+        if (el.textContent !== next) el.textContent = next;
+      });
+    };
+    upd();
+    if (!startElapsedTicker._t && typeof setInterval !== "undefined") {
+      startElapsedTicker._t = setInterval(upd, 30000);
+    }
+  }
+
   // ── 選手の数値化スタッツ (卓球向け) ──
   // player.matches (getMatchesByPlayer: BYE/不戦勝除外済・tournament_name/date付) から算出。
   function computePlayerStats(player) {
@@ -193,7 +226,8 @@
     let wins = 0, losses = 0, setsWon = 0, setsLost = 0, fullW = 0, fullL = 0;
     const byT = {}, byE = {}, byM = {}, byOpp = {}, byBranch = {}, grp = {};
     const time = { am: { w: 0, l: 0 }, pm: { w: 0, l: 0 }, eve: { w: 0, l: 0 } };
-    const roundRank = (r) => { r = String(r || ""); if (r.indexOf("準々決勝") >= 0) return 1; if (r.indexOf("準決勝") >= 0) return 2; if (r.indexOf("決勝") >= 0) return 3; return 0; };
+    // 到達ラウンドの深さ: ベスト16=1, 準々決勝=2, 準決勝=3, 決勝=4 (準々/準 を先に判定)
+    const roundRank = (r) => { r = String(r || ""); if (r.indexOf("準々決勝") >= 0) return 2; if (r.indexOf("準決勝") >= 0) return 3; if (r.indexOf("決勝") >= 0) return 4; if (r.indexOf("ベスト16") >= 0 || r.indexOf("ﾍﾞｽﾄ" + "16") >= 0) return 1; return 0; };
     const hourOf = (s) => { const mm = /\s(\d{2}):/.exec(String(s || "")); return mm ? parseInt(mm[1]) : null; };
     // 古い順 (連勝計算用)
     const chrono = ms.slice().sort((a, b) =>
@@ -224,7 +258,7 @@
       const g = grp[gk] = grp[gk] || { deepest: 0, champ: false };
       const rk = roundRank(m.round);
       if (rk > g.deepest) g.deepest = rk;
-      if (rk === 3 && won) g.champ = true;
+      if (rk === 4 && won) g.champ = true;
     });
     const recent = ms.slice(0, 10).map(m => (m.winner_id === pid ? "W" : "L")); // 新しい順 (queryがdate DESC)
     const total = wins + losses;
@@ -246,12 +280,14 @@
       .map(kv => ({ label: kv[1], w: time[kv[0]].w, l: time[kv[0]].l, total: time[kv[0]].w + time[kv[0]].l, rate: pctOf(time[kv[0]].w, time[kv[0]].w + time[kv[0]].l) }))
       .filter(x => x.total > 0);
     const grps = Object.values(grp);
+    // 最終成績 (各 大会×種目 で「実際に到達した位置」を1つだけ計上)
     const rounds = {
       entries: grps.length,
       champion: grps.filter(g => g.champ).length,
-      final: grps.filter(g => g.champ || g.deepest >= 3).length,
-      best4: grps.filter(g => g.champ || g.deepest >= 2).length,
-      best8: grps.filter(g => g.champ || g.deepest >= 1).length,
+      runnerup: grps.filter(g => !g.champ && g.deepest >= 4).length, // 決勝で敗退
+      best4: grps.filter(g => g.deepest === 3).length,
+      best8: grps.filter(g => g.deepest === 2).length,
+      best16: grps.filter(g => g.deepest === 1).length,
     };
     const fullTotal = fullW + fullL;
     return {
@@ -296,19 +332,19 @@
         h("span", { className: "pform-label" }, "直近 (新しい順)"),
         ...st.recent.map(r => h("span", { className: "pform-dot " + (r === "W" ? "win" : "lose") }, r === "W" ? "勝" : "敗"))));
     }
-    if (st.rounds.entries) {
+    {
       const chip = (label, n, cls) => h("span", { className: "preach-chip " + (cls || "") }, label + " " + n);
-      wrap.appendChild(h("div", { className: "section-sub" }, "トーナメント到達"));
-      wrap.appendChild(h("div", { className: "preach" },
-        chip("優勝", st.rounds.champion, "gold"),
-        chip("決勝", st.rounds.final, "silver"),
-        chip("ベスト4", st.rounds.best4, "bronze"),
-        chip("ベスト8", st.rounds.best8, ""),
-        chip("出場", st.rounds.entries, "muted")));
-    }
-    if (st.byTime.length) {
-      wrap.appendChild(h("div", { className: "section-sub" }, "時間帯別 勝率"));
-      wrap.appendChild(table(st.byTime.map(b => rateRow(b.label, b))));
+      const reaches = [
+        ["優勝", st.rounds.champion, "gold"],
+        ["準優勝", st.rounds.runnerup, "silver"],
+        ["ベスト4", st.rounds.best4, "bronze"],
+        ["ベスト8", st.rounds.best8, ""],
+        ["ベスト16", st.rounds.best16, ""],
+      ].filter(r => r[1] > 0);
+      if (reaches.length) {
+        wrap.appendChild(h("div", { className: "section-sub" }, "トーナメント成績"));
+        wrap.appendChild(h("div", { className: "preach" }, ...reaches.map(r => chip(r[0], r[1], r[2]))));
+      }
     }
     if (st.events.length) {
       wrap.appendChild(h("div", { className: "section-sub" }, "種目別 勝率"));
@@ -640,6 +676,7 @@
     ratingLabel, ratingBadge,
     lookupFurigana, parsePaste,
     fmtDate, fmtDateShort, fmtDuration, fmtScore, computePlayerStats, playerStatsSection,
+    elapsedMinSince, fmtElapsedClock, startElapsedTicker,
     createPoller, downloadCSV, downloadJSON, openModal,
     logoHTML, statusBadge,
     HOKKAIDO_BRANCHES, normalizeBranch, branchColor, branchColorMap, branchBadge,

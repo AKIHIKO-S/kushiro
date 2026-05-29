@@ -538,10 +538,9 @@
     overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* 負けた選手は取り消し線なし・グレーアウトのみ (#217) */
   .lv-result-side.loser { opacity: 0.55; color: var(--lv-sub); }
   .lv-result-side.loser .name {
-    text-decoration: line-through;
-    text-decoration-thickness: 1.5px;
     color: var(--lv-sub);
   }
   .lv-result-side.winner .name {

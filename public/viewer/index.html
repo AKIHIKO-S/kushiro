@@ -326,11 +326,24 @@
  .live-court-match {
  text-align: center; font-weight: 700; font-size: 11px;
  color: var(--accent); line-height: 1.25; margin-top: 2px;
- width: 100%; word-break: break-word;
+ width: 100%; word-break: keep-all; overflow-wrap: normal;
  }
+ .live-court-elapsed { font-size: 9px; color: var(--sub); font-weight: 700; margin-top: 2px; }
  .live-court-hq {
  margin-top: 10px; padding: 10px; background: var(--pri); color: #fff;
  border-radius: 6px; text-align: center; font-weight: 700; font-size: 13px;
+ }
+ /* 種目名・氏名は単語の途中で改行しない (スペースのみで改行・無ければ1行) */
+ .live-match-card .lmc-ev, .live-match-card .lmc-names,
+ .un-ev, .un-players, .un-p { word-break: keep-all; overflow-wrap: normal; }
+ /* スマホ: 台グリッドを横スクロールさせず画面幅に折り返す (#217) */
+ @media (max-width: 640px) {
+ .live-court-wrap { overflow-x: visible; padding: 12px 8px; }
+ .live-court-hint { display: none !important; }
+ .live-court-grid { width: 100% !important;
+   grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)) !important; }
+ .live-court-cell { width: auto; min-height: 64px; }
+ .live-court-hq { width: 100% !important; }
  }
 
  /* 進行中試合カード */
@@ -877,6 +890,8 @@ const V = {
      h("div", { className: "mr-pname" }, nameEl(m.winner_id, m.winner_name)),
      m.winner_team ? h("div", { className: "mr-pteam" }, m.winner_team) : null),
    h("div", { className: "mr-vs" }, TT.fmtScore(m.winner_sets, m.loser_sets),
+     m.result_source === "referee" ? h("div", { style: { fontSize: "8px", color: "#b45309",
+       fontWeight: 700, marginTop: "1px" }, title: "審判による速報値（本部確認待ち）" }, "速報") : null,
      m.duration_sec ? h("div", { style: { fontSize: "9px", color: "var(--sub)", fontWeight: "400", marginTop: "2px" } },
        TT.fmtDuration(m.duration_sec)) : null),
    h("div", { className: "mr-lose" },
@@ -1842,13 +1857,16 @@ const L = {
  main.appendChild(h("div", { className: "live-match-card" },
  h("div", { className: "live-tno" }, "台" + m.table_no),
  h("div", {},
- h("div", { className: "text-xs text-sub mb-1" }, `${m.event} ${m.round}`),
- h("div", { style: { fontSize: "14px", fontWeight: 700 } },
+ h("div", { className: "text-xs text-sub mb-1 lmc-ev" }, `${m.event} ${m.round}`),
+ h("div", { className: "lmc-names", style: { fontSize: "14px", fontWeight: 700 } },
  `${m.player1_name}${m.player1_team ? " (" + m.player1_team + ")" : ""}`,
  h("span", { style: { color: "var(--sub)", margin: "0 8px" } }, "VS"),
  `${m.player2_name}${m.player2_team ? " (" + m.player2_team + ")" : ""}`),
- m.referee_name ? h("div", { className: "text-xs text-sub mt-1" },
- "審判: " + m.referee_name) : null,
+ h("div", { className: "text-xs mt-1", style: { display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" } },
+ h("span", { className: "text-sub", style: { fontWeight: 700, color: "var(--accent)" },
+   "data-elapsed-since": m.called_at || m.started_at || "" },
+   TT.fmtElapsedClock(m.called_at || m.started_at) ? ("経過 " + TT.fmtElapsedClock(m.called_at || m.started_at)) : ""),
+ m.referee_name ? h("span", { className: "text-sub" }, "審判: " + m.referee_name) : null),
  ),
  ));
  });
@@ -1928,6 +1946,10 @@ const L = {
  h("div", { style: { fontSize: "9px", color: "var(--sub)" } }, "vs"),
  h("div", {}, t.match.player2_name),
  ));
+ const since = t.match.called_at || t.match.started_at || "";
+ if (since) cell.appendChild(h("div", { className: "live-court-elapsed",
+   "data-elapsed-since": since },
+   TT.fmtElapsedClock(since) ? ("経過 " + TT.fmtElapsedClock(since)) : ""));
  } else {
  cell.appendChild(h("div", { className: "text-xs text-sub" }, "空"));
  }
@@ -1940,9 +1962,10 @@ const L = {
  style: { width: `${gridW}px`, marginLeft: "auto", marginRight: "auto" } },
  h("span", { style: { position: "sticky", left: "12px", display: "inline-block" } }, "本部")));
  }
- // 描画後にオーバーフロー判定して案内を表示
+ // 描画後にオーバーフロー判定して案内を表示 + 経過時間カウントアップ開始
  requestAnimationFrame(() => {
  if (wrap.scrollWidth > wrap.clientWidth + 4) hint.style.display = "flex";
+ if (TT.startElapsedTicker) TT.startElapsedTicker();
  });
  return wrap;
  },

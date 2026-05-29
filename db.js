@@ -1204,10 +1204,12 @@ function getOpsFingerprint(tournamentId) {
             COALESCE(SUM(CASE WHEN status='on_table' THEN 1 ELSE 0 END),0) AS live,
             COALESCE(SUM(table_no),0) AS tsum,
             COALESCE(SUM(call_count_p1 + call_count_p2),0) AS calls,
+            COALESCE(SUM(CASE WHEN result_source='referee' THEN 1 ELSE 0 END),0) AS unconf,
             COALESCE(MAX(finished_at),'') AS f
        FROM matches WHERE tournament_id = ?`
   ).get(tournamentId);
-  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.f}`, status: t.status };
+  // unconf(審判入力・未確認件数) も含め、本部の「確認」操作で表示が即時更新されるように
+  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.f}`, status: t.status };
 }
 
 // ═══════════════════════════════════════════════════════

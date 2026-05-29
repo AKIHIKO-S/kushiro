@@ -1737,10 +1737,25 @@ app.post("/api/matches/:id/correct", requireAdmin, (req, res) => {
   const before = db.snapshotMatchRows(ids);
   const r = db.correctResult(req.params.id, req.body || {});
   if (r?.error) return res.status(400).json(r);
+  try { db.markResultSource(req.params.id, "hq"); } catch (e) { /* 本部が修正=確認済扱い */ }
   if (pre) db.recordOp(pre.tournament_id, "correct",
     `結果修正: ${r.winner_name || ""} ${r.winner_sets || 0}-${r.loser_sets || 0} ${r.loser_name || ""}（${pre.event || ""} ${pre.round || ""}）`,
     ids, before);
   res.json(r);
+});
+
+// 審判入力された結果を本部が「確認」(承認)して確定 (#215)。result_source を 'hq' に。
+app.post("/api/matches/:id/confirm-result", requireAdmin, (req, res) => {
+  const m = db.getMatch(req.params.id);
+  if (!m) return res.status(404).json({ error: "試合が見つかりません" });
+  db.markResultSource(m.id, "hq");
+  try {
+    db.recordOp(m.tournament_id, "confirm",
+      `結果確認: ${m.winner_name || ""} ${m.winner_sets || 0}-${m.loser_sets || 0} ${m.loser_name || ""}` +
+      `（${m.event || ""} ${m.round || ""}）`,
+      [m.id], db.snapshotMatchRows([m.id]));
+  } catch (e) { /* ログ失敗は本処理に影響させない */ }
+  res.json({ ok: true, result_source: "hq" });
 });
 
 // ─── 操作ログ + Undo (誤操作/抗議対応) ──────────────────────────

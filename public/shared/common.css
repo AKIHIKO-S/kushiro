@@ -69,9 +69,10 @@
   --shadow-lg: 0 10px 32px rgba(9,9,11,.12);
   --shadow-xl: 0 24px 64px rgba(9,9,11,.18);
 
-  /* Fonts */
-  --font-display: 'Space Grotesk', 'Manrope', 'Inter', system-ui, sans-serif;
-  --font-body: 'Manrope', 'BIZ UDPGothic', 'Hiragino Sans',
+  /* Fonts — UD(ユニバーサルデザイン)フォントを最優先にして小文字も判読しやすく */
+  --font-display: 'BIZ UDPGothic', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN',
+                  'Yu Gothic UI', 'Meiryo', system-ui, sans-serif;
+  --font-body: 'BIZ UDPGothic', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN',
                'Yu Gothic UI', 'Meiryo', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
 }

@@ -6511,13 +6511,21 @@ const O = {
  m.duration_sec ? h("span", { className: "dur-badge", title: "呼出→結果入力 の所要時間" },
    "所要 " + TT.fmtDuration(m.duration_sec)) : null,
  m.result_source === "referee" ? h("span", {
-   style: { fontSize: "11px", fontWeight: 700, color: "#0369a1",
-     background: "#e0f2fe", border: "1px solid #7dd3fc", borderRadius: "6px", padding: "1px 7px" },
-   title: "審判が結果を報告しました（本部未確認）" }, "審判入力") : null,
+   style: { fontSize: "11px", fontWeight: 700, color: "#b45309",
+     background: "#fef3c7", border: "1px solid #fbbf24", borderRadius: "6px", padding: "1px 7px" },
+   title: "審判が報告した暫定結果です（本部の確認待ち）" }, "審判入力・未確認")
+ : (m.result_source === "hq" ? h("span", {
+   style: { fontSize: "11px", fontWeight: 700, color: "#15803d",
+     background: "#f0fdf4", border: "1px solid #86efac", borderRadius: "6px", padding: "1px 7px" },
+   title: "本部が確認済みです" }, "✓ 確認済") : null),
  ),
  ),
  // 修正ボタン群
  h("div", { className: "flex gap-1", style: { flexShrink: 0 } },
+ m.result_source === "referee" ? h("button", { className: "btn btn-sm",
+   style: { padding: "3px 8px", fontSize: "11px", background: "#0369a1", color: "#fff", fontWeight: 700 },
+   title: "審判が入力した暫定結果を本部として確認・確定します",
+   onClick: () => O.confirmRefereeResult(m) }, "確認") : null,
  h("button", { className: "btn btn-sm btn-ghost",
    style: { padding: "3px 8px", fontSize: "11px" },
    onClick: () => O.openCorrectResult(m) }, "結果修正"),
@@ -6914,6 +6922,11 @@ const O = {
  m.player2_team ? h("div", { className: "cc-team" }, m.player2_team) : null,
  m.referee_name ? h("div", { className: "cc-ref" }, "審 " + shortName(m.referee_name)) : null,
  ));
+ const since = m.called_at || m.started_at || "";
+ if (since) cell.appendChild(h("div", { className: "cc-elapsed",
+   style: { fontSize: "9px", color: "var(--sub)", fontWeight: 700, marginTop: "2px" },
+   "data-elapsed-since": since },
+   TT.fmtElapsedClock(since) ? ("経過 " + TT.fmtElapsedClock(since)) : ""));
  } else {
  cell.appendChild(h("div", { style: { fontSize: "11px", color: "var(--sub-l)", marginTop: "6px" } }, "空き"));
  cell.appendChild(h("div", { style: { color: "#2563eb", marginTop: "3px",
@@ -6926,6 +6939,8 @@ const O = {
  if (hq_position === "bottom") {
  wrap.appendChild(h("div", { className: "court-hq", style: { width: "100%" } }, "本部"));
  }
+ // 経過時間の1分カウントアップ開始 (#218)
+ requestAnimationFrame(() => { if (TT.startElapsedTicker) TT.startElapsedTicker(); });
  // 凡例
  const legend = (color, label) => h("span", { style: { display: "inline-flex",
    alignItems: "center", gap: "4px", fontSize: "11px", color: "var(--ink-600)" } },
@@ -6941,12 +6956,15 @@ const O = {
  return wrap;
  },
 
- // 経過時間バッジ (長時間の台を色で警告) #204
+ // 経過時間バッジ (長時間の台を色で警告 #204 / 1分ごとにカウントアップ #218)
  _elapsedBadge(m) {
  const e = m.elapsed_min;
  if (e == null) return null;
  const cls = e >= 45 ? "elapsed-red" : (e >= 30 ? "elapsed-amber" : "elapsed-ok");
- return h("span", { className: "elapsed-badge " + cls, title: "開始からの経過時間" }, "⏱ " + e + "分");
+ const since = m.called_at || m.started_at || "";
+ // 色は呼出からの経過(サーバ値)で判定、表示テキストはクライアントで1分ごと更新
+ return h("span", { className: "elapsed-badge " + cls, title: "呼出からの経過時間",
+   "data-elapsed-since": since, "data-elapsed-prefix": "⏱ " }, "⏱ " + e + "分");
  },
 
  // ── 進行中の試合行 ──
@@ -7799,6 +7817,16 @@ const O = {
  const bg = openModal("審判 結果入力（テスト→本番）", body, foot);
  render(await fetchCfg());
  },
+ // 審判が入力した暫定結果を本部が確認・確定 (#215)
+ async confirmRefereeResult(m) {
+ if (!confirm(`この結果を本部として確認・確定します。\n${m.winner_name || ""} の勝ち（${m.event || ""} ${m.round || ""}）\nよろしいですか？`)) return;
+ let r;
+ try { r = await api.post(`/api/matches/${m.id}/confirm-result`, {}); }
+ catch (e) { return toast("通信できません（オフライン）", "err"); }
+ if (r && r.error) return toast(r.error, "err");
+ toast("確認しました", "ok");
+ O.reload();
+ },
  _showRefQR(url) {
  const box = document.getElementById("refQrBox");
  if (!box) return;
@@ -8027,7 +8055,7 @@ const O = {
    const pRow = (name, team, won, lost, slot) => {
      const row = h("div", {
        style: { fontWeight: won ? 700 : 500, color: won ? "#15803d" : "#374151",
-         textDecoration: lost ? "line-through" : "none", padding: "2px 4px",
+         padding: "2px 4px",
          opacity: lost ? 0.55 : 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
          borderRadius: "4px" } },
        (name || "—"),
