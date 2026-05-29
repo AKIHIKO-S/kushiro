@@ -114,6 +114,14 @@
   }
   .lv-btn:hover { background: rgba(255,255,255,.2); border-color: rgba(255,255,255,.5); }
   .lv-btn.active { background: #fff; color: var(--lv-header); border-color: #fff; }
+  /* 閲覧モードへ戻るリンク (#247) */
+  a.lv-btn { text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
+  .lv-btn-back {
+    background: rgba(255,255,255,.16);
+    border-color: rgba(255,255,255,.45);
+    font-weight: 700;
+  }
+  .lv-btn-back:hover { background: rgba(255,255,255,.28); border-color: #fff; }
   .lv-select {
     background: rgba(255,255,255,.95);
     color: var(--lv-text);
@@ -942,6 +950,7 @@
       <span class="lv-live-chip">LIVE</span>
     </div>
     <div class="lv-controls">
+      <a class="lv-btn lv-btn-back" href="/viewer/" title="閲覧モード（通常表示）に戻る">← 閲覧モード</a>
       <select id="tournSel" class="lv-select" onchange="LV.selectTournament(this.value)"></select>
       <button class="lv-btn" id="bsBtn" onclick="LV.toggleBigscreen()">大画面</button>
       <button class="lv-btn" onclick="LV.toggleFullscreen()">全画面</button>
