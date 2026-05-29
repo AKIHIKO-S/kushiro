@@ -3391,13 +3391,13 @@ function getOperationState(tournamentId) {
       const avg = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length) : 0;
       const remaining = callableRaw.length + waiting.length + onTable.length;
       const lanes = Math.max(1, onTable.length);
-      let etaText = "";
+      let etaText = "", minsLeft = 0;
       if (avg && remaining) {
-        const minsLeft = Math.ceil(remaining / lanes) * avg;
+        minsLeft = Math.ceil(remaining / lanes) * avg;
         etaText = new Date(Date.now() + minsLeft * 60000)
           .toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
       }
-      return { avg_match_min: avg, remaining, eta_text: etaText };
+      return { avg_match_min: avg, remaining, eta_text: etaText, eta_minutes_left: minsLeft };
     })(),
   };
 }

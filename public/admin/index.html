@@ -6704,8 +6704,12 @@ const O = {
    ),
    (O.state.progress && O.state.progress.eta_text)
      ? h("div", { className: "op-eta", title: "終了済み試合の平均時間からの推定 (目安)" },
-         "推定終了 " + O.state.progress.eta_text + " ごろ（目安・平均 "
-         + O.state.progress.avg_match_min + "分/試合・残り " + O.state.progress.remaining + "試合）")
+         "推定終了 " + O.state.progress.eta_text + " ごろ　",
+         h("strong", { style: { color: "#b45309" } },
+           "あと約 " + (O.state.progress.eta_minutes_left >= 60
+             ? Math.floor(O.state.progress.eta_minutes_left / 60) + "時間" + (O.state.progress.eta_minutes_left % 60) + "分"
+             : (O.state.progress.eta_minutes_left || 0) + "分")),
+         "（目安・平均 " + O.state.progress.avg_match_min + "分/試合・残り " + O.state.progress.remaining + "試合）")
      : null,
    h("div", { className: "op-progress-bar" },
      h("div", { className: "op-progress-fill" + (pct >= 100 ? " done" : ""),

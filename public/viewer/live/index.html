@@ -171,6 +171,7 @@
     transition: width .5s ease;
   }
   .lv-progress-fill.done { background: linear-gradient(90deg, #16a34a, #15803d); }
+  .lv-progress-eta { margin-top: 7px; font-size: 14px; font-weight: 700; color: var(--lv-sub); text-align: right; }
   .lv-progress-pct { color: #fff; font-size: 12px; font-weight: 800; padding-right: 10px; }
 
   .lv-stats {
@@ -1127,6 +1128,10 @@ const LV = {
         h("div", { className: "lv-progress-fill" + (lvPct >= 100 ? " done" : ""),
           style: { width: lvPct + "%" } },
           lvPct >= 12 ? h("span", { className: "lv-progress-pct" }, lvPct + "%") : null)),
+      // 閲覧ビューは大会終了時刻の目安のみ表示 (平均/残試合は出さない) #282
+      (s.progress && s.progress.eta_text && lvPct < 100)
+        ? h("div", { className: "lv-progress-eta" }, "終了予定 " + s.progress.eta_text + " ごろ（目安）")
+        : null,
     ));
     main.appendChild(h("div", { className: "lv-stats" },
       h("div", { className: "lv-stat highlight-red" },
