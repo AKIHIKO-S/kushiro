@@ -635,12 +635,21 @@ input:focus, select:focus, textarea:focus {
 }
 .player-guide-bio dd { font-weight: 500; }
 @media (max-width: 640px) {
+  /* スマホでもヒーローを横並びのまま保ち、円グラフ(勝率リング)を右に置いて縦長を回避 (#縦長対策) */
   .player-guide-head {
-    grid-template-columns: auto 1fr;
-    padding: 18px 16px;
+    grid-template-columns: auto 1fr auto;
+    gap: 11px;
+    padding: 14px 13px;
+    align-items: center;
   }
-  .player-guide-name { font-size: 24px; }
-  .player-guide-portrait { width: 72px; height: 72px; font-size: 28px; }
+  .player-guide-name { font-size: 21px; }
+  .player-guide-portrait { width: 54px; height: 54px; font-size: 22px; border-width: 2px; }
+  .player-guide-team { font-size: 15px; padding: 4px 10px; }
+  .wr-ring svg { width: 56px; height: 56px; }
+  .wr-ring-sub { font-size: 10px; }
+  .pg-hero-chips { gap: 4px; margin-top: 7px; }
+  .pg-hero-chip { font-size: 11px; padding: 2px 9px; }
+  .pg-hero-form .d { width: 15px; height: 15px; font-size: 8px; }
   .player-guide-rating-block {
     grid-column: 1 / -1;
     border-top: 1px solid rgba(255,255,255,.2);
@@ -685,6 +694,17 @@ input:focus, select:focus, textarea:focus {
 .pstat-cmp.up .pstat-cmp-d { color: #16a34a; }
 .pstat-cmp.down .pstat-cmp-d { color: #dc2626; }
 .pstat-cmp.even .pstat-cmp-d { color: var(--sub); }
+/* ゲームカウント分布 (野球的指標) */
+.pdist { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.pdist-row { display: flex; align-items: flex-start; gap: 8px; }
+.pdist-label { font-size: 12px; font-weight: 800; min-width: 34px; padding-top: 2px; }
+.pdist-label.w { color: #16a34a; }
+.pdist-label.l { color: #dc2626; }
+.pdist-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.pdist-chip { font-size: 11px; font-weight: 800; padding: 2px 9px; border-radius: 10px; border: 1px solid var(--border); }
+.pdist-chip.w { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
+.pdist-chip.l { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+.pdist-none { color: var(--sub-l); font-size: 11px; }
 .pform { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
 .pform-label { font-size: 11px; color: var(--sub); font-weight: 700; margin-right: 4px; }
 .pform-dot { display: inline-flex; align-items: center; justify-content: center;

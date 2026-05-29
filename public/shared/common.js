@@ -225,6 +225,8 @@
     const ms = ((player && player.matches) || []).filter(m => m && (m.winner_id === pid || m.loser_id === pid));
     let wins = 0, losses = 0, setsWon = 0, setsLost = 0, fullW = 0, fullL = 0;
     const byT = {}, byE = {}, byM = {}, byOpp = {}, byBranch = {}, grp = {};
+    const scoreW = {}, scoreL = {}, byRound = {};   // ゲームカウント分布・ラウンド別 (野球的指標)
+    let shutoutW = 0, shutoutL = 0;                  // 完封勝ち(相手0セット) / 被完封
     const time = { am: { w: 0, l: 0 }, pm: { w: 0, l: 0 }, eve: { w: 0, l: 0 } };
     // 到達ラウンドの深さ: ベスト16=1, 準々決勝=2, 準決勝=3, 決勝=4 (準々/準 を先に判定)
     const roundRank = (r) => { r = String(r || ""); if (r.indexOf("準々決勝") >= 0) return 2; if (r.indexOf("準決勝") >= 0) return 3; if (r.indexOf("決勝") >= 0) return 4; if (r.indexOf("ベスト16") >= 0 || r.indexOf("ﾍﾞｽﾄ" + "16") >= 0) return 1; return 0; };
@@ -244,6 +246,13 @@
       const ek = m.event || "?";
       (byE[ek] = byE[ek] || { event: ek, w: 0, l: 0 })[won ? "w" : "l"]++;
       if (ws > 0 && ls === ws - 1) { if (won) fullW++; else fullL++; }
+      // ゲームカウント分布(自分視点) / 完封 / ラウンド別 (野球的な細かい指標)
+      const mySets = won ? ws : ls, oppSets = won ? ls : ws;
+      const dk = mySets + "-" + oppSets;
+      if (won) { scoreW[dk] = (scoreW[dk] || 0) + 1; if (oppSets === 0) shutoutW++; }
+      else { scoreL[dk] = (scoreL[dk] || 0) + 1; if (mySets === 0) shutoutL++; }
+      const rkey = (m.round && String(m.round).trim()) || "";
+      if (rkey) (byRound[rkey] = byRound[rkey] || { name: rkey, order: m.round_order || 99, w: 0, l: 0 })[won ? "w" : "l"]++;
       const ym = String(m.tournament_date || "").slice(0, 7);
       if (ym) (byM[ym] = byM[ym] || { ym: ym, w: 0, l: 0 })[won ? "w" : "l"]++;
       const oppName = won ? (m.loser_name || "") : (m.winner_name || "");
@@ -304,6 +313,13 @@
       recent, streakCurrent: cur, streakLongest: longest,
       avgDur, maxDur, durCount: durs.length,
       tournaments, events, months, h2h, byTime, rounds, branches,
+      scoreDist: {
+        win: Object.entries(scoreW).sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ k, n })),
+        lose: Object.entries(scoreL).sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ k, n })),
+      },
+      shutout: { w: shutoutW, l: shutoutL, winRate: pctOf(shutoutW, wins), loseRate: pctOf(shutoutL, losses) },
+      rounds_wl: Object.values(byRound).sort((a, b) => a.order - b.order)
+        .map(r => ({ name: r.name, w: r.w, l: r.l, total: r.w + r.l, rate: pctOf(r.w, r.w + r.l) })),
     };
   }
 
@@ -354,7 +370,8 @@
       tile(String(st.streakLongest), "最多連勝", "現在 " + st.streakCurrent + " 連勝中"),
       tile(String(st.tournaments.length), "出場大会数", st.total + " 試合"),
       tile(st.avgDur ? fmtDuration(st.avgDur) : "—", "平均対戦時間", st.durCount ? (st.durCount + " 試合で計測") : "記録なし", (avg && st.avgDur) ? cmpDur(st.avgDur, avg.avgDurationSec) : null),
-      tile(st.maxDur ? fmtDuration(st.maxDur) : "—", "最長の対戦", "呼出→結果入力")));
+      tile(st.maxDur ? fmtDuration(st.maxDur) : "—", "最長の対戦", "呼出→結果入力"),
+      tile(st.wins ? st.shutout.winRate + "%" : "—", "ストレート勝率", st.shutout.w + " / " + st.wins + " 勝（完封）")));
 
     if (st.recent.length) {
       wrap.appendChild(h("div", { className: "pform" },
@@ -374,6 +391,23 @@
         wrap.appendChild(h("div", { className: "section-sub" }, "トーナメント成績"));
         wrap.appendChild(h("div", { className: "preach" }, ...reaches.map(r => chip(r[0], r[1], r[2]))));
       }
+    }
+    // ゲームカウント分布 (勝ち方・負け方の質) — 野球の「○-○で勝った/負けた」内訳
+    if (st.scoreDist && (st.scoreDist.win.length || st.scoreDist.lose.length)) {
+      wrap.appendChild(h("div", { className: "section-sub" }, "ゲームカウント分布"));
+      const distRow = (label, arr, cls) => h("div", { className: "pdist-row" },
+        h("span", { className: "pdist-label " + cls }, label),
+        h("span", { className: "pdist-chips" },
+          arr.length ? arr.map(d => h("span", { className: "pdist-chip " + cls }, d.k + " ×" + d.n))
+                     : h("span", { className: "pdist-none" }, "—")));
+      wrap.appendChild(h("div", { className: "pdist" },
+        distRow("勝ち", st.scoreDist.win, "w"),
+        distRow("負け", st.scoreDist.lose, "l")));
+    }
+    // ラウンド別 勝率 (勝負強さ: 序盤〜決勝)
+    if (st.rounds_wl && st.rounds_wl.length >= 2) {
+      wrap.appendChild(h("div", { className: "section-sub" }, "ラウンド別 勝率（勝負強さ）"));
+      wrap.appendChild(table(st.rounds_wl.map(r => rateRow(r.name, r))));
     }
     if (st.events.length) {
       wrap.appendChild(h("div", { className: "section-sub" }, "種目別 勝率"));
