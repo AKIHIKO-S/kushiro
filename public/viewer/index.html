@@ -876,7 +876,7 @@ const V = {
    h("div", { className: "mr-win" },
      h("div", { className: "mr-pname" }, nameEl(m.winner_id, m.winner_name)),
      m.winner_team ? h("div", { className: "mr-pteam" }, m.winner_team) : null),
-   h("div", { className: "mr-vs" }, (m.winner_sets || 0) + " - " + (m.loser_sets || 0),
+   h("div", { className: "mr-vs" }, TT.fmtScore(m.winner_sets, m.loser_sets),
      m.duration_sec ? h("div", { style: { fontSize: "9px", color: "var(--sub)", fontWeight: "400", marginTop: "2px" } },
        TT.fmtDuration(m.duration_sec)) : null),
    h("div", { className: "mr-lose" },
@@ -900,7 +900,7 @@ const V = {
  m.winner_team ? h("span", { className: "match-team" }, `(${m.winner_team})`) : null,
  ),
  h("div", { className: "match-sets" }, V.formatSets(m.sets, true)),
- h("div", { className: "match-score" }, String(m.winner_sets || 0)),
+ h("div", { className: "match-score" }, ((m.winner_sets||0)===0 && (m.loser_sets||0)===0) ? "○" : String(m.winner_sets || 0)),
  ));
  // 敗者行
  card.appendChild(h("div", { className: "match-row loser" },
@@ -914,7 +914,7 @@ const V = {
  m.loser_team ? h("span", { className: "match-team" }, `(${m.loser_team})`) : null,
  ),
  h("div", { className: "match-sets" }, V.formatSets(m.sets, false)),
- h("div", { className: "match-score" }, String(m.loser_sets || 0)),
+ h("div", { className: "match-score" }, ((m.winner_sets||0)===0 && (m.loser_sets||0)===0) ? "" : String(m.loser_sets || 0)),
  ));
  return card;
  },
@@ -1559,7 +1559,7 @@ const MS = {
  style: { color: "inherit" }
  }, "" + m.winner_name),
  m.winner_team ? h("div", { className: "text-xs text-sub" }, m.winner_team) : null),
- h("td", { className: "ms-score text-center" }, `${m.winner_sets}-${m.loser_sets}`),
+ h("td", { className: "ms-score text-center" }, TT.fmtScore(m.winner_sets, m.loser_sets)),
  h("td", { className: "ms-loser" },
  h("a", {
  href: m.loser_id ? "#player/" + m.loser_id : "#",
@@ -1604,7 +1604,7 @@ const MS = {
  h("div", { className: "font-bold" }, "" + m.winner_name,
  m.winner_team ? h("span", { className: "text-sub text-sm" }, " (" + m.winner_team + ")") : null),
  h("div", { className: "text-lg font-bold mt-2",
- style: { fontFamily: "monospace" } }, `${m.winner_sets} - ${m.loser_sets}`),
+ style: { fontFamily: "monospace" } }, TT.fmtScore(m.winner_sets, m.loser_sets)),
  h("div", { className: "text-sm text-sub mt-1" },
  (m.sets || []).map(s => Array.isArray(s) ? `${s[0]}-${s[1]}` : "").join(" / ")),
  ),
@@ -2295,7 +2295,7 @@ const MP = {
  h("div", { className: won ? "font-bold" : "" },
  `${won ? "勝" : "負"}: vs ${opp}`)),
  h("div", { style: { fontFamily: "monospace" } },
- `${r.winner_sets}-${r.loser_sets}`)
+ TT.fmtScore(r.winner_sets, r.loser_sets))
  ));
  });
  main.appendChild(recentCard);

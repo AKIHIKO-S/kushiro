@@ -177,6 +177,14 @@
     return Math.floor(m / 60) + "時間" + (m % 60 ? (m % 60) + "分" : "");
   }
 
+  // 結果スコア表示。両方0は「勝者のみ入力」なので "○"(勝ち) を返す。
+  // それ以外は "勝-敗" (例 "3-1")。winSymbol で記号を上書き可能。
+  function fmtScore(ws, ls, opts) {
+    ws = parseInt(ws) || 0; ls = parseInt(ls) || 0;
+    if (ws === 0 && ls === 0) return (opts && opts.winSymbol) || "○";
+    return ws + "-" + ls;
+  }
+
   // ── 選手の数値化スタッツ (卓球向け) ──
   // player.matches (getMatchesByPlayer: BYE/不戦勝除外済・tournament_name/date付) から算出。
   function computePlayerStats(player) {
@@ -631,7 +639,7 @@
     h, esc, clear, api, toast,
     ratingLabel, ratingBadge,
     lookupFurigana, parsePaste,
-    fmtDate, fmtDateShort, fmtDuration, computePlayerStats, playerStatsSection,
+    fmtDate, fmtDateShort, fmtDuration, fmtScore, computePlayerStats, playerStatsSection,
     createPoller, downloadCSV, downloadJSON, openModal,
     logoHTML, statusBadge,
     HOKKAIDO_BRANCHES, normalizeBranch, branchColor, branchColorMap, branchBadge,

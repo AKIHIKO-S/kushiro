@@ -237,6 +237,21 @@ function requireAdmin(req, res, next) {
   res.status(401).json({ error: "管理キーが必要です" });
 }
 
+// 審判結果入力 用ミドルウェア (管理キーとは別の限定トークン)。
+// X-Referee-Token ヘッダ or ?t= or body.t で受け取り、有効な大会に解決できれば通す。
+// 解決できない=トークン無効/審判入力OFF/失効 → 403。req.refTournament に大会を載せる。
+function requireReferee(req, res, next) {
+  const token = req.get("X-Referee-Token")
+    || (req.query && req.query.t)
+    || (req.body && req.body.t);
+  const t = token ? db.getTournamentByRefereeToken(token) : null;
+  if (!t) return res.status(403).json({
+    error: "この審判用リンクは無効です（審判入力がOFF、またはリンクが失効しています）。本部にご確認ください。",
+  });
+  req.refTournament = t;
+  next();
+}
+
 // ── 軽量レート制限 (公開申込のスパム/DoS 対策, 依存追加なし) ──
 // IP ごとに windowMs 内 max 回まで。メモリ上の簡易実装。
 function rateLimit({ windowMs = 60000, max = 20, message = "リクエストが多すぎます。しばらく待って再試行してください。" } = {}) {
@@ -1738,6 +1753,64 @@ app.post("/api/tournaments/:id/undo-last", requireAdmin, (req, res) => {
   res.json(r);
 });
 
+// ─── 審判結果入力 (本部に来ずに審判が結果報告) ──────────────────
+// 管理側: トークン発行/再発行・ON/OFF・現在の設定取得。
+// 審判側 (/api/ref/*): 管理キー不要、限定トークンで「結果報告のみ」。
+//   テスト大会で先に有効化 → 裏側検証 → 本番大会で解禁、という段階運用を想定。
+
+// 現在の設定 (トークン・有効/無効) を取得
+app.get("/api/admin/tournaments/:id/referee-config", requireAdmin, (req, res) => {
+  const cfg = db.getRefereeConfig(req.params.id);
+  if (!cfg) return res.status(404).json({ error: "大会が見つかりません" });
+  res.json(cfg);
+});
+// トークン発行/再発行 (body.enable で有効化も同時指定可)。再発行で旧リンクは失効。
+app.post("/api/admin/tournaments/:id/referee-token", requireAdmin, (req, res) => {
+  const r = db.setRefereeToken(req.params.id, { enable: req.body ? req.body.enable : undefined });
+  if (r && r.error) return res.status(404).json(r);
+  res.json(r);
+});
+// 審判入力の ON/OFF 切替 (有効化時にトークン未発行なら自動発行)
+app.put("/api/admin/tournaments/:id/referee-input", requireAdmin, (req, res) => {
+  const r = db.setRefereeInputEnabled(req.params.id, !!(req.body && req.body.enabled));
+  if (r && r.error) return res.status(404).json(r);
+  res.json(r);
+});
+
+// 審判ビュー: 現在台に入っている試合 (PII除外・管理キー不要・トークンのみ)
+app.get("/api/ref/state", requireReferee, (req, res) => {
+  const v = db.getRefereeView(req.refTournament.id);
+  if (!v) return res.status(404).json({ error: "大会が見つかりません" });
+  res.json(v);
+});
+// 審判による結果送信。winner-only 可 (sets 空でOK / セット数も任意で送れる)。
+// セキュリティ: そのトークンの大会の「台に入っている」試合だけ確定可能。
+app.post("/api/ref/matches/:id/finish",
+  rateLimit({ windowMs: 60000, max: 120, message: "送信が多すぎます。少し待って再試行してください。" }),
+  requireReferee, (req, res) => {
+  const m = db.getMatch(req.params.id);
+  if (!m) return res.status(404).json({ error: "試合が見つかりません" });
+  if (m.tournament_id !== req.refTournament.id)
+    return res.status(403).json({ error: "この試合はこのリンクの対象外です" });
+  if (m.status !== "on_table")
+    return res.status(409).json({ error: "この試合は現在台に入っていません。本部にご確認ください。" });
+  const ids = [m.id, m.next_match_id].filter(Boolean);
+  const before = db.snapshotMatchRows(ids);
+  const r = db.finishMatchOp(req.params.id, req.body || {});
+  if (!r) return res.status(404).json({ error: "試合が見つかりません" });
+  if (r.error) return res.status(400).json(r);
+  try { db.markResultSource(m.id, "referee"); } catch (e) { /* バッジ記録失敗は本処理に影響させない */ }
+  db.recordOp(m.tournament_id, "finish",
+    `審判入力: ${r.winner_name || ""} ${r.winner_sets || 0}-${r.loser_sets || 0} ${r.loser_name || ""}` +
+    `（${m.event || ""} ${m.round || ""} 台${m.table_no || "?"}）`,
+    ids, before);
+  res.json({
+    ok: true,
+    winner_name: r.winner_name, loser_name: r.loser_name,
+    winner_sets: r.winner_sets, loser_sets: r.loser_sets,
+  });
+});
+
 // ── ブラケット JSON エクスポート/インポート ─────────
 app.get("/api/tournaments/:id/bracket/export", (req, res) => {
   const event = req.query.event;
@@ -1946,11 +2019,13 @@ app.get(["/admin", "/admin/", "/admin/index.html"], _serveVersionedHtml(path.joi
 app.get(["/viewer", "/viewer/", "/viewer/index.html"], _serveVersionedHtml(path.join(publicDir, "viewer", "index.html")));
 app.get(["/viewer/live", "/viewer/live/", "/viewer/live/index.html"], _serveVersionedHtml(path.join(publicDir, "viewer", "live", "index.html")));
 app.get(["/widget", "/widget/", "/widget/index.html"], _serveVersionedHtml(path.join(publicDir, "widget", "index.html")));
+app.get(["/ref", "/ref/", "/ref/index.html"], _serveVersionedHtml(path.join(publicDir, "ref", "index.html"))); // 審判結果入力 (限定トークン)
 
 app.use("/shared", express.static(path.join(publicDir, "shared"), staticOpts));
 app.use("/admin", express.static(path.join(publicDir, "admin"), staticOpts));
 app.use("/viewer", express.static(path.join(publicDir, "viewer"), staticOpts));
 app.use("/widget", express.static(path.join(publicDir, "widget"), staticOpts)); // Jimdo/STUDIO 埋込ウィジェット
+app.use("/ref", express.static(path.join(publicDir, "ref"), staticOpts)); // 審判結果入力ページ
 
 // 運用マニュアル (Markdown)
 for (const docName of ["OPERATIONS.md", "RENDER_DEPLOY.md", "UPDATE_WORKFLOW.md", "HOSTING.md",

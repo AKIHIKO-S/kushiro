@@ -866,6 +866,28 @@
    font-family: var(--font-display);
  }
  .score-hint { font-size: 11px; color: var(--sub); text-align: center; margin-top: 4px; }
+ /* 勝者のみモード (セット数不要) */
+ .wo-pick {
+   display: grid; grid-template-columns: 1fr auto 1fr;
+   gap: 10px; align-items: stretch; margin: 6px 0 10px;
+ }
+ .wo-btn {
+   border: 2px solid var(--border-strong); border-radius: 14px;
+   background: #fafaf9; padding: 18px 12px; text-align: center; cursor: pointer;
+   transition: all .12s; min-height: 96px;
+   display: flex; flex-direction: column; justify-content: center; gap: 4px;
+ }
+ .wo-btn:hover { border-color: #16a34a; }
+ .wo-btn.sel {
+   border-color: #16a34a; background: #f0fdf4;
+   box-shadow: 0 0 0 4px rgba(22,163,74,.12);
+ }
+ .wo-btn .wo-name { font-size: 19px; font-weight: 800; color: var(--ink-900); line-height: 1.25; word-break: break-word; }
+ .wo-btn .wo-team { font-size: 12px; color: var(--sub); }
+ .wo-btn .wo-mark { font-size: 13px; font-weight: 800; color: #15803d; visibility: hidden; }
+ .wo-btn.sel .wo-mark { visibility: visible; }
+ .wo-vs { display: flex; align-items: center; font-size: 20px; font-weight: 800;
+   color: var(--sub); font-family: var(--font-display); }
 
  /* 申込種目チップ */
  .entry-events-list { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -4888,7 +4910,7 @@ const A = {
  h("div", { className: "flex gap-2", style: { alignItems: "center" } },
  h("span", { className: "font-bold", style: { color: "var(--warn)" } },
  `${m.winner_name} ${m.winner_team ? "(" + m.winner_team + ")" : ""}`),
- h("span", { className: "font-bold" }, `${m.winner_sets}-${m.loser_sets}`),
+ h("span", { className: "font-bold" }, TT.fmtScore(m.winner_sets, m.loser_sets)),
  h("span", { className: "text-sub" },
  `${m.loser_name} ${m.loser_team ? "(" + m.loser_team + ")" : ""}`),
  ),
@@ -6361,6 +6383,15 @@ const O = {
            title: "全試合終了。閲覧側で『終了した大会』として表示します(結果編集は引き続き可能)",
            onClick: () => O.closeTournament() }, "大会を終了する")
        : null),
+ // 審判結果入力 (本部に来ず審判が報告。テスト→本番の段階運用 #211)
+ h("button", {
+   className: "btn btn-sm",
+   style: { background: O.state.tournament.referee_input_enabled ? "#0ea5e9" : "var(--surface)",
+            color: O.state.tournament.referee_input_enabled ? "#fff" : "var(--sub)",
+            borderColor: "#0ea5e9" },
+   title: "審判が結果報告できる専用リンクを発行/管理（テスト→本番）",
+   onClick: () => O.openRefereeInput() },
+   (O.state.tournament.referee_input_enabled ? "● " : "○ ") + "審判入力"),
  // ツール (折りたたみ)
  h("details", { className: "op-tools" },
  h("summary", { className: "btn btn-sm btn-ghost", style: { display: "inline-block" } }, "ツール・設定 ▾"),
@@ -6475,10 +6506,14 @@ const O = {
  m.match_label ? h("span", { className: "text-xs text-sub mono" }, m.match_label) : null,
  h("span", { className: "font-bold", style: { color: "var(--warn)" } },
  `${m.winner_name}`),
- h("span", { className: "font-bold" }, `${m.winner_sets}-${m.loser_sets}`),
+ h("span", { className: "font-bold" }, TT.fmtScore(m.winner_sets, m.loser_sets)),
  h("span", { className: "text-sub" }, `${m.loser_name || "BYE"}`),
  m.duration_sec ? h("span", { className: "dur-badge", title: "呼出→結果入力 の所要時間" },
    "所要 " + TT.fmtDuration(m.duration_sec)) : null,
+ m.result_source === "referee" ? h("span", {
+   style: { fontSize: "11px", fontWeight: 700, color: "#0369a1",
+     background: "#e0f2fe", border: "1px solid #7dd3fc", borderRadius: "6px", padding: "1px 7px" },
+   title: "審判が結果を報告しました（本部未確認）" }, "審判入力") : null,
  ),
  ),
  // 修正ボタン群
@@ -7473,8 +7508,9 @@ const O = {
  // 基本5セット制 (3-x で勝利)、3セット制も切替可能
  openResultInput(m) {
  let bestOfGames = 5;   // 5セット or 3セット (表示の目安)
- let mode = "simple";   // simple (セット数直接入力) | detail (各セット点数)
+ let mode = "simple";   // winner (勝者のみ) | simple (セット数直接入力) | detail (各セット点数)
  let p1Sets = 0, p2Sets = 0;
+ let winnerOnlySlot = 0; // 勝者のみモードで選ばれた勝者 (1|2)
 
  const renderBody = () => {
  const winsToTake = Math.ceil(bestOfGames / 2);
@@ -7490,6 +7526,8 @@ const O = {
  onClick: () => { bestOfGames = 3; refresh(); } }, "3セット制"),
  ),
  h("div", { className: "flex gap-1", style: { marginLeft: "auto" } },
+ h("button", { className: "btn btn-sm" + (mode === "winner" ? "" : " btn-ghost"),
+ onClick: () => { mode = "winner"; refresh(); } }, "勝者のみ"),
  h("button", { className: "btn btn-sm" + (mode === "simple" ? "" : " btn-ghost"),
  onClick: () => { mode = "simple"; refresh(); } }, "セット数"),
  h("button", { className: "btn btn-sm" + (mode === "detail" ? "" : " btn-ghost"),
@@ -7506,7 +7544,26 @@ const O = {
  );
 
  let inputs;
- if (mode === "simple") {
+ if (mode === "winner") {
+ // 勝者のみ (セット数不要・どちらが勝ったかだけ)。ベスト8までなど早いラウンド向け。
+ const mkWO = (slot, name, team) => h("div", {
+   className: "wo-btn" + (winnerOnlySlot === slot ? " sel" : ""), id: "wo" + slot,
+   onClick: () => {
+     winnerOnlySlot = slot;
+     document.getElementById("wo1")?.classList.toggle("sel", slot === 1);
+     document.getElementById("wo2")?.classList.toggle("sel", slot === 2);
+   } },
+   h("div", { className: "wo-name" }, name || ("選手" + slot)),
+   team ? h("div", { className: "wo-team" }, team) : null,
+   h("div", { className: "wo-mark" }, "✓ 勝ち"));
+ inputs = h("div", {},
+   h("div", { className: "wo-pick" },
+     mkWO(1, m.player1_name, m.player1_team),
+     h("div", { className: "wo-vs" }, "VS"),
+     mkWO(2, m.player2_name, m.player2_team)),
+   h("div", { className: "score-hint" },
+     "セット数が不要な場合に。勝った選手を選んで「結果を確定」してください。"));
+ } else if (mode === "simple") {
  // ★ セットカウント 直接入力 (大きい数字入力ボックス)。勝者は自動判定
  inputs = h("div", {},
  h("div", { className: "score-entry" },
@@ -7569,7 +7626,11 @@ const O = {
  const submitNormal = async () => {
  let sets = [];
  let wsCount, lsCount, winnerSlot;
- if (mode === "detail") {
+ if (mode === "winner") {
+ // 勝者のみ (セット数 0-0 で記録)
+ if (!winnerOnlySlot) return toast("勝った選手を選んでください", "err");
+ winnerSlot = winnerOnlySlot; wsCount = 0; lsCount = 0; sets = [];
+ } else if (mode === "detail") {
  for (let i = 1; i <= bestOfGames; i++) {
  const v1 = document.getElementById(`rs${i}P1`)?.value;
  const v2 = document.getElementById(`rs${i}P2`)?.value;
@@ -7598,7 +7659,9 @@ const O = {
  if (r.queued) { document.querySelector(".modal-bg")?.remove();
    return toast("オフライン: 結果を保存しました。接続復帰後に自動送信します（未送信" + api.pendingCount() + "件）", "warn"); }
  if (r.error) return toast(r.error, "err");
- toast(`結果を記録: ${r.winner_name} ${r.winner_sets}-${r.loser_sets}`, "ok");
+ const _sc = (r.winner_sets || 0) === 0 && (r.loser_sets || 0) === 0
+   ? "の勝ち" : `${r.winner_sets}-${r.loser_sets}`;
+ toast(`結果を記録: ${r.winner_name} ${_sc}`, "ok");
  document.querySelector(".modal-bg")?.remove();
  O.reload();
  };
@@ -7660,6 +7723,93 @@ const O = {
    if (O.state && O.state.tournament) O.state.tournament.status = "ongoing";
    O.reload();
  } catch (e) { toast("通信エラー: " + (e.message || e), "err"); }
+ },
+
+ // ── 審判結果入力 (本部に来ず審判が報告。テスト→本番の段階運用 #211) ──
+ async openRefereeInput() {
+ if (!O.tournamentId) return;
+ const origin = (window.A && A.publicOrigin && A.publicOrigin()) || location.origin;
+ const fetchCfg = async () => {
+   try {
+     const r = await fetch("/api/admin/tournaments/" + O.tournamentId + "/referee-config",
+       { headers: api._headers() });
+     return await r.json();
+   } catch (e) { return { error: "設定の取得に失敗しました" }; }
+ };
+ const body = h("div", {});
+ const render = (cfg) => {
+   body.innerHTML = "";
+   if (cfg && cfg.error) { body.appendChild(h("div", { className: "text-sm",
+     style: { color: "#b91c1c" } }, cfg.error)); return; }
+   const enabled = !!(cfg && cfg.enabled);
+   const token = (cfg && cfg.token) || "";
+   const url = token ? (origin + "/ref/?t=" + encodeURIComponent(token)) : "";
+   body.appendChild(h("div", { className: "text-sm text-sub mb-3", style: { lineHeight: 1.7 } },
+     "審判が自分のスマホで結果を報告できます（本部席に来なくてOK）。", h("br"),
+     "管理キーは渡らず、", h("b", {}, "「台に入っている試合の結果報告」だけ"), "ができる専用リンクです。"));
+   // 状態 + ON/OFF トグル
+   body.appendChild(h("div", { className: "flex gap-2 mb-3", style: { alignItems: "center" } },
+     h("span", { className: "font-bold" }, "現在の状態:"),
+     h("span", { style: { color: enabled ? "#15803d" : "#b91c1c", fontWeight: 700 } },
+       enabled ? "● 有効" : "○ 無効"),
+     h("button", { className: "btn btn-sm " + (enabled ? "btn-ghost" : "btn-ok"),
+       style: { marginLeft: "auto" },
+       onClick: async () => {
+         const r = await api.put("/api/admin/tournaments/" + O.tournamentId + "/referee-input",
+           { enabled: !enabled });
+         if (r && r.error) return toast(r.error, "err");
+         toast(!enabled ? "審判入力を有効にしました" : "審判入力を無効にしました", "ok");
+         render(await fetchCfg());
+         O.reload();
+       } }, enabled ? "無効にする" : "有効にする")));
+   if (enabled && url) {
+     const urlBox = h("input", { className: "input", readOnly: true, value: url,
+       style: { fontSize: "12px", width: "100%" }, onFocus: (e) => e.target.select() });
+     body.appendChild(h("div", { className: "field" },
+       h("label", { className: "field-label" }, "審判用リンク（このURLを審判へ配布）"),
+       urlBox,
+       h("div", { className: "flex gap-2", style: { marginTop: "6px", flexWrap: "wrap" } },
+         h("button", { className: "btn btn-sm", onClick: async () => {
+           try { await navigator.clipboard.writeText(url); toast("リンクをコピーしました", "ok"); }
+           catch (e) { urlBox.select(); try { document.execCommand("copy"); } catch (e2) {} toast("コピーしました", "ok"); }
+         } }, "リンクをコピー"),
+         h("button", { className: "btn btn-sm btn-ghost", onClick: () => O._showRefQR(url) }, "QRを表示"),
+         h("button", { className: "btn btn-sm btn-ghost",
+           style: { marginLeft: "auto", color: "#b91c1c" },
+           title: "新しいリンクを発行します。配布済みの古いリンクは使えなくなります。",
+           onClick: async () => {
+             if (!confirm("リンクを再発行しますか？\n（配布済みの古いリンクは使えなくなります）")) return;
+             const r = await api.post("/api/admin/tournaments/" + O.tournamentId + "/referee-token", { enable: true });
+             if (r && r.error) return toast(r.error, "err");
+             toast("リンクを再発行しました", "ok");
+             render(await fetchCfg());
+           } }, "リンクを再発行"))));
+     body.appendChild(h("div", { className: "text-xs text-sub", style: { lineHeight: 1.7 } },
+       "・審判は「勝った選手」を選んで報告（セット数の入力は任意）。", h("br"),
+       "・報告は本部にも自動反映。操作ログに『審判入力』として残ります。", h("br"),
+       "・まずテスト用の大会で有効化して練習 → 本番大会で有効化、の順がおすすめです。"));
+     body.appendChild(h("div", { id: "refQrBox", style: { textAlign: "center", marginTop: "10px" } }));
+   } else {
+     body.appendChild(h("div", { className: "text-xs text-sub", style: { lineHeight: 1.7 } },
+       "「有効にする」を押すと専用リンクが発行されます。テスト大会で先に試せます。"));
+   }
+ };
+ const foot = h("div", { className: "flex", style: { justifyContent: "flex-end" } },
+   h("button", { className: "btn btn-ghost", onClick: () => bg.remove() }, "閉じる"));
+ const bg = openModal("審判 結果入力（テスト→本番）", body, foot);
+ render(await fetchCfg());
+ },
+ _showRefQR(url) {
+ const box = document.getElementById("refQrBox");
+ if (!box) return;
+ if (box.dataset.shown === "1") { box.innerHTML = ""; box.dataset.shown = ""; return; }
+ const src = "https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=" + encodeURIComponent(url);
+ box.innerHTML = "";
+ box.appendChild(h("img", { src, width: 240, height: 240, alt: "審判用リンクQR",
+   style: { border: "1px solid var(--border)", borderRadius: "8px" } }));
+ box.appendChild(h("div", { className: "text-xs text-sub", style: { marginTop: "4px" } },
+   "このQRを審判に読み取ってもらえます（外部QRサービスを使用）"));
+ box.dataset.shown = "1";
  },
 
  // ── 操作ログ + Undo (誤操作/抗議対応 #203) ──

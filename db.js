@@ -223,6 +223,11 @@ try {
   addTCol("organizer", "TEXT DEFAULT ''");
   // 大会レベル: 'district'(地区) | 'hokkaido'(全道) | 'national'(全国) | 'other'
   addTCol("level", "TEXT DEFAULT 'district'");
+  // 審判結果入力 (本部に来ずに審判が結果報告): トークン + ON/OFFフラグ
+  // referee_token: ランダム文字列 (空=未発行)。referee_input_enabled=1 のときのみ有効。
+  // 既定OFF。テスト大会で先に有効化して裏側検証 → 問題なければ本番大会で解禁する運用。
+  addTCol("referee_token", "TEXT DEFAULT ''");
+  addTCol("referee_input_enabled", "INTEGER DEFAULT 0");
 
   // tournament_players 申込ステータス
   const tpcols = sqlite.prepare("PRAGMA table_info(tournament_players)").all();
@@ -258,6 +263,7 @@ try {
   addMCol("started_at", "TEXT DEFAULT ''");
   addMCol("finished_at", "TEXT DEFAULT ''");
   addMCol("duration_sec", "INTEGER DEFAULT 0"); // 呼出→結果入力 の所要秒数 (自動記録)
+  addMCol("result_source", "TEXT DEFAULT ''"); // ''=本部入力 / 'referee'=審判入力 / 'hq'=本部で確認済
   addMCol("bracket_pos", "INTEGER DEFAULT 0");
   addMCol("bracket_round", "INTEGER DEFAULT 0");
   addMCol("referee_required", "INTEGER DEFAULT 1"); // 0=審判不要としてマーク
@@ -3117,6 +3123,8 @@ function getOperationState(tournamentId) {
       id: tournament.id, name: tournament.name, date: tournament.date,
       venue: tournament.venue, status: tournament.status,
       court_rows: rows, court_cols: cols, hq_position: tournament.hq_position || "bottom",
+      enforce_referee_rule: tournament.enforce_referee_rule,
+      referee_input_enabled: !!tournament.referee_input_enabled,
     },
     tables,
     on_table: onTable,
@@ -4688,7 +4696,82 @@ function getPushSubscriptionsForPlayer(playerId) {
 }
 function deletePushSubscription(endpoint) { if (endpoint) pushStmts.delByEndpoint.run(endpoint); }
 
+// ═══════════════════════════════════════════════════════
+// 審判結果入力 (本部に来ずに審判が結果を報告できる仕組み)
+//  - 管理キー(ADMIN_KEY)は渡さない。大会ごとの「結果報告だけ」可能な限定トークンを使う。
+//  - referee_input_enabled=1 の大会でのみトークンが有効 (テスト→本番の段階解禁)。
+//  - 審判が確定できるのは「現在台に入っている(on_table)その大会の試合」だけ (server.js 側で検証)。
+// ═══════════════════════════════════════════════════════
+function genRefereeToken() {
+  // URLセーフな短いランダムトークン (推測困難・大会ごとに失効可能)
+  return require("crypto").randomBytes(12).toString("base64url");
+}
+// トークン発行/再発行。enable 指定時は有効/無効も同時に設定。
+function setRefereeToken(tournamentId, opts) {
+  const t = getTournament(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  const token = genRefereeToken();
+  const enabled = (opts && opts.enable !== undefined)
+    ? (opts.enable ? 1 : 0)
+    : (t.referee_input_enabled || 0);
+  sqlite.prepare("UPDATE tournaments SET referee_token=?, referee_input_enabled=? WHERE id=?")
+    .run(token, enabled, tournamentId);
+  return { token, enabled: !!enabled };
+}
+function setRefereeInputEnabled(tournamentId, enabled) {
+  const t = getTournament(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  // 有効化するのにトークン未発行なら同時に発行する
+  let token = t.referee_token || "";
+  if (enabled && !token) token = genRefereeToken();
+  sqlite.prepare("UPDATE tournaments SET referee_token=?, referee_input_enabled=? WHERE id=?")
+    .run(token, enabled ? 1 : 0, tournamentId);
+  return { enabled: !!enabled, token };
+}
+function getRefereeConfig(tournamentId) {
+  const t = getTournament(tournamentId);
+  if (!t) return null;
+  return {
+    token: t.referee_token || "",
+    enabled: !!t.referee_input_enabled,
+    tournament_name: t.name || "",
+  };
+}
+// 有効なトークン→大会を解決 (referee_input_enabled=1 のみ)
+function getTournamentByRefereeToken(token) {
+  if (!token) return null;
+  return sqlite.prepare(
+    "SELECT * FROM tournaments WHERE referee_token=? AND referee_input_enabled=1"
+  ).get(token) || null;
+}
+// 審判画面に返す最小情報 (現在台に入っている試合のみ・連絡先などPIIは含めない)
+function getRefereeView(tournamentId) {
+  const t = getTournament(tournamentId);
+  if (!t) return null;
+  const rows = sqlite.prepare(`
+    SELECT id, table_no, event, round, match_label, match_no,
+           player1_name, player2_name, player1_team, player2_team,
+           started_at, called_at, status
+    FROM matches
+    WHERE tournament_id=? AND status='on_table'
+  `).all(tournamentId);
+  // 台番号順に整列 (台未割当は末尾)
+  rows.sort((a, b) => (a.table_no || 9999) - (b.table_no || 9999));
+  return {
+    tournament: { id: t.id, name: t.name, date: t.date, venue: t.venue, status: t.status },
+    on_table: rows,
+    server_time: new Date().toISOString(),
+  };
+}
+// 結果の入力元を記録 (審判入力バッジ/確認運用に使用)
+function markResultSource(matchId, source) {
+  sqlite.prepare("UPDATE matches SET result_source=? WHERE id=?").run(source || "", matchId);
+}
+
 module.exports = {
+  // 審判結果入力 (テスト環境付き)
+  setRefereeToken, setRefereeInputEnabled, getRefereeConfig,
+  getTournamentByRefereeToken, getRefereeView, markResultSource,
   kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription,
   // DB スナップショット (バックアップ/復元)
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, hasOngoingTournament,
