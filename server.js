@@ -1808,22 +1808,52 @@ app.post("/api/ref/matches/:id/finish",
   if (m.tournament_id !== req.refTournament.id)
     return res.status(403).json({ error: "この試合はこのリンクの対象外です" });
   if (m.status !== "on_table")
-    return res.status(409).json({ error: "この試合は現在台に入っていません。本部にご確認ください。" });
+    return res.status(409).json({ error: "この試合は現在コートに入っていません。本部にご確認ください。" });
+  // 確定せず「本部承認待ち」の暫定結果として保存 (承認されるまでコートに残す #223)
+  const r = db.setPendingResult(req.params.id, req.body || {});
+  if (r && r.error) return res.status(400).json(r);
+  db.recordOp(m.tournament_id, "report",
+    `審判報告(承認待ち): ${r.pending.winner_name || ""} の勝ち` +
+    `（${m.event || ""} ${m.round || ""} コート${m.table_no || "?"}）`,
+    [m.id], db.snapshotMatchRows([m.id]));
+  res.json({
+    ok: true, awaiting_approval: true,
+    winner_name: r.pending.winner_name, loser_name: r.pending.loser_name,
+    winner_sets: r.pending.winner_sets, loser_sets: r.pending.loser_sets,
+  });
+});
+
+// 審判の暫定結果を本部が承認 → 確定 (勝者を進出させコートから外す) #223
+app.post("/api/matches/:id/approve-result", requireAdmin, (req, res) => {
+  const m = db.getMatch(req.params.id);
+  if (!m) return res.status(404).json({ error: "試合が見つかりません" });
+  const pend = db.getPendingResult(req.params.id);
+  if (!pend) return res.status(400).json({ error: "承認待ちの結果がありません" });
   const ids = [m.id, m.next_match_id].filter(Boolean);
   const before = db.snapshotMatchRows(ids);
-  const r = db.finishMatchOp(req.params.id, req.body || {});
+  const r = db.finishMatchOp(req.params.id, pend);
   if (!r) return res.status(404).json({ error: "試合が見つかりません" });
   if (r.error) return res.status(400).json(r);
-  try { db.markResultSource(m.id, "referee"); } catch (e) { /* バッジ記録失敗は本処理に影響させない */ }
-  db.recordOp(m.tournament_id, "finish",
-    `審判入力: ${r.winner_name || ""} ${r.winner_sets || 0}-${r.loser_sets || 0} ${r.loser_name || ""}` +
-    `（${m.event || ""} ${m.round || ""} 台${m.table_no || "?"}）`,
+  try { db.markResultSource(m.id, "referee"); } catch (e) { /* 由来バッジ */ }
+  db.clearPendingResult(m.id);
+  db.recordOp(m.tournament_id, "approve",
+    `結果承認: ${r.winner_name || ""} ${r.winner_sets || 0}-${r.loser_sets || 0} ${r.loser_name || ""}` +
+    `（${m.event || ""} ${m.round || ""}）`,
     ids, before);
-  res.json({
-    ok: true,
-    winner_name: r.winner_name, loser_name: r.loser_name,
-    winner_sets: r.winner_sets, loser_sets: r.loser_sets,
-  });
+  res.json({ ok: true, winner_name: r.winner_name, loser_name: r.loser_name,
+    winner_sets: r.winner_sets, loser_sets: r.loser_sets });
+});
+// 審判の暫定結果を却下 (コートに戻す・結果は確定しない) #223
+app.post("/api/matches/:id/reject-result", requireAdmin, (req, res) => {
+  const m = db.getMatch(req.params.id);
+  if (!m) return res.status(404).json({ error: "試合が見つかりません" });
+  db.clearPendingResult(req.params.id);
+  try {
+    db.recordOp(m.tournament_id, "reject",
+      `審判報告を却下（${m.event || ""} ${m.round || ""} コート${m.table_no || "?"}）`,
+      [m.id], db.snapshotMatchRows([m.id]));
+  } catch (e) { /* ログ失敗は無視 */ }
+  res.json({ ok: true });
 });
 
 // ── ブラケット JSON エクスポート/インポート ─────────

@@ -73,6 +73,10 @@
   .b-cancel { background:#f5f5f4; color:#57534e; border:1px solid #d6d3d1; }
   .empty { text-align:center; color:#78716c; padding: 48px 16px; font-size: 14px; line-height:1.8; }
   .empty .big { font-size: 40px; margin-bottom: 8px; }
+  .mcard.pending { border-color: #f59e0b; background: #fffbeb; }
+  .pending-banner { font-size: 15px; font-weight: 800; color: #b45309; margin: 4px 0 8px; }
+  .pending-win { font-size: 16px; margin-bottom: 12px; }
+  .pending-win b { color: var(--ref-accent); }
   .done-badge { display:inline-flex; align-items:center; gap:6px; color: var(--ref-accent);
     font-weight:800; font-size:14px; }
   .err-screen { text-align:center; padding: 60px 24px; }
@@ -112,6 +116,7 @@
   var toastEl = document.getElementById("toast");
   var pendingOpId = {};   // matchId -> op_id (リトライ時に同一IDで冪等送信)
   var selWinner = {};     // matchId -> 1|2 (確認中の選択)
+  var redo = {};          // matchId -> true (承認待ちでも再報告するため入力に戻す)
   var lastMatches = [];
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -179,19 +184,27 @@
 
   function cardHtml(m) {
     var elapsed = fmtElapsed(m.started_at || m.called_at);
-    return ''
-      + '<div class="mcard" id="card-' + esc(m.id) + '">'
-      +   '<div class="mcard-top">'
-      +     (m.table_no ? '<span class="mtable">' + esc(m.table_no) + '番コート</span>' : '')
-      +     '<span class="mtag">' + esc(m.event || "") + ' ' + esc(m.round || "") + '</span>'
-      +     (elapsed ? '<span class="mtime">' + esc(elapsed) + '</span>' : '')
-      +   '</div>'
-      +   '<div class="vs-row">'
-      +     pbtnHtml(m, 1)
-      +     '<div class="vs-mid">VS</div>'
-      +     pbtnHtml(m, 2)
-      +   '</div>'
-      +   '<div class="confirm" id="confirm-' + esc(m.id) + '" style="display:none"></div>'
+    var head = '<div class="mcard-top">'
+      + (m.table_no ? '<span class="mtable">コート' + esc(m.table_no) + '</span>' : '')
+      + '<span class="mtag">' + esc(m.event || "") + ' ' + esc(m.round || "") + '</span>'
+      + (elapsed ? '<span class="mtime">' + esc(elapsed) + '</span>' : '')
+      + '</div>';
+    // 報告済み(本部承認待ち) → 勝敗ボタンを出さず承認待ち表示 (#223)
+    if (m.awaiting_approval && !redo[m.id]) {
+      var rw = (m.reported && m.reported.winner_name) || "";
+      return '<div class="mcard pending" id="card-' + esc(m.id) + '">' + head
+        + '<div class="pending-banner">⏳ 報告済み・本部の承認待ち</div>'
+        + '<div class="pending-win"><b>' + esc(rw) + '</b> の勝ちで報告しました</div>'
+        + '<button class="b b-cancel" data-redo="' + esc(m.id) + '">報告をやり直す</button>'
+        + '</div>';
+    }
+    return '<div class="mcard" id="card-' + esc(m.id) + '">' + head
+      + '<div class="vs-row">'
+      +   pbtnHtml(m, 1)
+      +   '<div class="vs-mid">VS</div>'
+      +   pbtnHtml(m, 2)
+      + '</div>'
+      + '<div class="confirm" id="confirm-' + esc(m.id) + '" style="display:none"></div>'
       + '</div>';
   }
   function pbtnHtml(m, slot) {
@@ -207,6 +220,18 @@
   function bindCard(m) {
     var card = document.getElementById("card-" + m.id);
     if (!card) return;
+    var redoBtn = card.querySelector("[data-redo]");
+    if (redoBtn) {
+      redoBtn.onclick = function () {
+        redo[m.id] = true;          // 承認待ちでも再報告できるよう入力に戻す
+        delete pendingOpId[m.id];   // 新しい op_id で送信 (上書き報告)
+        var nc = document.createElement("div");
+        nc.innerHTML = cardHtml(m);
+        card.replaceWith(nc.firstChild);
+        bindCard(m);
+      };
+      return;
+    }
     card.querySelectorAll(".pbtn").forEach(function (btn) {
       btn.onclick = function () {
         var slot = parseInt(btn.getAttribute("data-slot"));
@@ -285,16 +310,9 @@
         return;
       }
       delete pendingOpId[m.id];
-      var card = document.getElementById("card-" + m.id);
-      if (card) {
-        card.innerHTML = '<div class="mcard-top"><span class="done-badge">✓ 報告しました</span></div>'
-          + '<div style="font-size:15px;font-weight:700;margin-top:4px">'
-          + esc(res.j.winner_name || "") + ' の勝ち'
-          + (res.j.winner_sets || res.j.loser_sets ? '（' + (res.j.winner_sets||0) + '-' + (res.j.loser_sets||0) + '）' : '')
-          + '</div>';
-      }
-      toast("報告しました: " + (res.j.winner_name || "") + " の勝ち", "ok");
-      setTimeout(load, 1200);
+      redo[m.id] = false;
+      toast("報告しました（本部の承認待ち）: " + (res.j.winner_name || "") + " の勝ち", "ok");
+      load();  // 承認待ち状態で再描画 (試合はコートに残る)
     }).catch(function () {
       if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = "この結果で報告"; }
       toast("通信に失敗しました。電波を確認して再試行してください。", "err");

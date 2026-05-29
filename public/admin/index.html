@@ -468,12 +468,18 @@
  }
  .court-cell.empty:hover { background: #eff6ff; border-color: #60a5fa; }
  .court-cell.active {
- background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+ background: #f6fef9;
  border-color: #16a34a;
  }
+ /* 承認待ち (審判が結果報告 → 本部承認待ち) #223 */
+ .court-cell.approval {
+ background: #eff6ff; border-color: #2563eb;
+ box-shadow: 0 0 0 3px rgba(37,99,235,.18);
+ }
+ .court-cell.approval .court-cell-no { background: #2563eb; }
  /* 呼出2回以上=赤点滅 (来ていない可能性) */
  .court-cell.warn {
- background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+ background: #fff5f5;
  border-color: var(--accent);
  animation: courtPulse 1.6s infinite;
  }
@@ -498,11 +504,23 @@
  .court-cell-match .cc-team { font-size: 12px; color: var(--ink-600); font-weight: 600;
    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
  .court-cell-vs { font-size: 11px; color: var(--sub); font-weight: 600; margin: 2px 0; }
- .cc-elapsed { font-size: 11px !important; }
+ /* 経過時間: 氏名・所属から区切り線で分離して見やすく #222 */
+ .cc-elapsed { font-size: 12px !important; font-weight: 800; color: #475569;
+   margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--ink-300); width: 88%; }
+ /* 承認待ちバッジ */
+ .cc-await { font-size: 13px; font-weight: 800; color: #1d4ed8;
+   background: #dbeafe; border-radius: 6px; padding: 2px 8px; margin-top: 6px; line-height: 1.3; }
 
  /* PC/iPad前提: LIVE進行は横幅を広く #219 */
  .container { max-width: 1760px; }
  .admin-hero-in, .tabs-in { max-width: 1760px; }
+ /* 進行管理(LIVE)タブはPCの画面幅に応じて広げる #222 */
+ body.ops-wide .container,
+ body.ops-wide .admin-hero-in, body.ops-wide .tabs-in { max-width: 98vw; }
+ /* 運用バーの主要ボタンを大きく (敗者審判ルール/取り消し/審判入力/ツール設定) #222 */
+ .op-actions .btn { font-size: 15px; padding: 10px 18px; font-weight: 700; }
+ .op-actions .op-tools > summary.btn { font-size: 15px; padding: 10px 18px; }
+ .op-actions .input { font-size: 15px; }
  @media (max-width: 820px){
    .court-cell { min-height: 124px; }
    .court-cell-match .cc-name { font-size: 14px; }
@@ -1374,6 +1392,8 @@ const A = {
  t.classList.toggle("active", t.dataset.tab === name));
  document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
  document.getElementById("tab-" + name)?.classList.remove("hidden");
+ // 進行管理(LIVE)はPC画面いっぱいに広げる (#222 レスポンシブ幅)
+ document.body.classList.toggle("ops-wide", name === "operations");
  // タブ切替もブラウザ履歴に積む
  if (!skipHash && location.hash.slice(1) !== name) location.hash = name;
  if (name === "tournaments") A.renderTournaments();
@@ -6347,7 +6367,7 @@ const O = {
  // (種目別進捗は上の「大会全体の進捗」カードに統合済み #移動)
 
  // ── 運用バー (常時表示: 種目フィルタ + 敗者審判ルール) ──
- main.appendChild(h("div", { className: "flex gap-2 mb-2 flex-wrap",
+ main.appendChild(h("div", { className: "flex gap-2 mb-2 flex-wrap op-actions",
    style: { alignItems: "center" } },
  events.length ? h("select", {
  className: "input input-sm", style: { width: "180px" },
@@ -6502,7 +6522,7 @@ const O = {
  h("div", { className: "card-title-sub" }, `${O.state.recent_finished.length}件`),
  ),
  );
- O.state.recent_finished.slice(0, 8).forEach(m => {
+ O.state.recent_finished.slice(0, 50).forEach(m => {
  recentCard.appendChild(h("div", { className: "match-list-item",
    style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" } },
  h("div", { style: { flex: 1, minWidth: "200px" } },
@@ -6516,21 +6536,13 @@ const O = {
  m.duration_sec ? h("span", { className: "dur-badge", title: "呼出→結果入力 の所要時間" },
    "所要 " + TT.fmtDuration(m.duration_sec)) : null,
  m.result_source === "referee" ? h("span", {
-   style: { fontSize: "11px", fontWeight: 700, color: "#b45309",
-     background: "#fef3c7", border: "1px solid #fbbf24", borderRadius: "6px", padding: "1px 7px" },
-   title: "審判が報告した暫定結果です（本部の確認待ち）" }, "審判入力・未確認")
- : (m.result_source === "hq" ? h("span", {
-   style: { fontSize: "11px", fontWeight: 700, color: "#15803d",
-     background: "#f0fdf4", border: "1px solid #86efac", borderRadius: "6px", padding: "1px 7px" },
-   title: "本部が確認済みです" }, "✓ 確認済") : null),
+   style: { fontSize: "11px", fontWeight: 700, color: "#0369a1",
+     background: "#e0f2fe", border: "1px solid #7dd3fc", borderRadius: "6px", padding: "1px 7px" },
+   title: "審判が報告し本部が承認した結果です" }, "審判報告") : null,
  ),
  ),
  // 修正ボタン群
  h("div", { className: "flex gap-1", style: { flexShrink: 0 } },
- m.result_source === "referee" ? h("button", { className: "btn btn-sm",
-   style: { padding: "3px 8px", fontSize: "11px", background: "#0369a1", color: "#fff", fontWeight: 700 },
-   title: "審判が入力した暫定結果を本部として確認・確定します",
-   onClick: () => O.confirmRefereeResult(m) }, "確認") : null,
  h("button", { className: "btn btn-sm btn-ghost",
    style: { padding: "3px 8px", fontSize: "11px" },
    onClick: () => O.openCorrectResult(m) }, "結果修正"),
@@ -6893,19 +6905,23 @@ const O = {
  const m = t.match;
  // 呼出2回以上で未着の可能性 → warn 表示
  const cc = m ? Math.max(parseInt(m.call_count_p1) || 0, parseInt(m.call_count_p2) || 0) : 0;
- const cls = m ? (cc >= 2 ? "warn" : "active") : "empty";
+ const awaiting = !!(m && m.pending);  // 審判が報告し本部承認待ち #223
+ const cls = m ? (awaiting ? "approval" : (cc >= 2 ? "warn" : "active")) : "empty";
  const cell = h("div", {
  className: "court-cell " + cls + (t.is_extra ? " extra" : ""),
  onClick: () => {
- if (m) O.openMatchActions(m);
+ if (awaiting) O.openApproveResult(m);
+ else if (m) O.openMatchActions(m);
  else O.openCallFlow({ table: t.table_no });
  },
- title: m
+ title: awaiting
+   ? "審判が結果を報告しました — クリックで内容を確認して承認"
+   : (m
    ? (t.is_extra ? "団体戦追加コート - クリックで結果入力"
                  : "クリックで結果入力" + (cc >= 2 ? " (呼出" + cc + "回・未着の可能性)" : ""))
-   : "クリックで呼べる対戦を表示",
+   : "クリックでコールOKの対戦を表示"),
  });
- // 進行中のコートは種目ごとに色分け (#182)。warn(呼出2回+)は赤のまま注意喚起。
+ // 進行中のコートは種目ごとに色分け (#182)。承認待ち/warnは専用色で注意喚起。
  if (m && cls === "active") {
    const ec = TT.eventColor(m.event);
    cell.style.borderColor = ec.border;
@@ -6927,10 +6943,12 @@ const O = {
  m.player2_team ? h("div", { className: "cc-team" }, m.player2_team) : null,
  m.referee_name ? h("div", { className: "cc-ref" }, "審 " + shortName(m.referee_name)) : null,
  ));
+ // 審判報告あり(承認待ち)のバッジ #223
+ if (awaiting) cell.appendChild(h("div", { className: "cc-await" },
+   "● 承認待ち" + (m.pending && m.pending.winner_name ? "（" + shortName(m.pending.winner_name) + "）" : "")));
+ // 経過時間: 氏名・所属から離して見やすく (区切り線つき) #222
  const since = m.called_at || m.started_at || "";
- if (since) cell.appendChild(h("div", { className: "cc-elapsed",
-   style: { fontSize: "9px", color: "var(--sub)", fontWeight: 700, marginTop: "2px" },
-   "data-elapsed-since": since },
+ if (since) cell.appendChild(h("div", { className: "cc-elapsed", "data-elapsed-since": since },
    TT.fmtElapsedClock(since) ? ("経過 " + TT.fmtElapsedClock(since)) : ""));
  } else {
  cell.appendChild(h("div", { style: { fontSize: "11px", color: "var(--sub-l)", marginTop: "6px" } }, "空き"));
@@ -7843,6 +7861,39 @@ const O = {
  if (r && r.error) return toast(r.error, "err");
  toast("確認しました", "ok");
  O.reload();
+ },
+ // 審判が報告した暫定結果を本部が確認して承認/却下 (#223)
+ async openApproveResult(m) {
+ const p = m.pending || {};
+ const wname = p.winner_name || (p.winner_slot === 2 ? m.player2_name : m.player1_name);
+ const lname = p.loser_name || (p.winner_slot === 2 ? m.player1_name : m.player2_name);
+ const score = (p.winner_sets || p.loser_sets) ? `${p.winner_sets || 0}-${p.loser_sets || 0}` : "勝者のみ";
+ const body = h("div", {},
+   h("div", { className: "text-sm text-sub mb-2" }, `${m.event || ""} ${m.round || ""}　コート${m.table_no || "?"}`),
+   h("div", { style: { background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "10px", padding: "16px", textAlign: "center" } },
+     h("div", { style: { fontSize: "12px", color: "#1d4ed8", fontWeight: 700, marginBottom: "6px" } }, "審判からの報告"),
+     h("div", { style: { fontSize: "22px", fontWeight: 800, color: "#15803d" } }, (wname || "") + " の勝ち"),
+     h("div", { style: { fontSize: "14px", color: "var(--sub)", marginTop: "4px" } }, "（" + score + "）　敗者: " + (lname || ""))),
+   h("div", { className: "text-xs text-sub", style: { marginTop: "10px", lineHeight: 1.7 } },
+     "内容を確認し、正しければ「承認して確定」を押してください。確定すると勝者が次の対戦へ進み、直近の結果に表示されます。誤りがあれば「却下」して審判に再報告を依頼できます。"));
+ const foot = h("div", { className: "flex gap-2", style: { width: "100%", alignItems: "center" } },
+   h("button", { className: "btn btn-ghost", style: { color: "#b91c1c" },
+     onClick: async () => {
+       if (!confirm("審判の報告を却下します。\nコートに戻り、結果は確定しません。よろしいですか？")) return;
+       let r; try { r = await api.post(`/api/matches/${m.id}/reject-result`, {}); }
+       catch (e) { return toast("通信できません（オフライン）", "err"); }
+       if (r && r.error) return toast(r.error, "err");
+       toast("却下しました（コートに戻しました）", "ok"); bg.remove(); O.reload();
+     } }, "却下"),
+   h("button", { className: "btn btn-ok",
+     style: { marginLeft: "auto", fontSize: "16px", fontWeight: 800, padding: "10px 22px" },
+     onClick: async () => {
+       let r; try { r = await api.post(`/api/matches/${m.id}/approve-result`, {}); }
+       catch (e) { return toast("通信できません（オフライン）", "err"); }
+       if (r && r.error) return toast(r.error, "err");
+       toast(`承認しました: ${r.winner_name || ""} の勝ち`, "ok"); bg.remove(); O.reload();
+     } }, "✓ 承認して確定"));
+ const bg = openModal("結果の承認（審判報告）", body, foot);
  },
  _showRefQR(url) {
  const box = document.getElementById("refQrBox");

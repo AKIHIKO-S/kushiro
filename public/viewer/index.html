@@ -801,7 +801,7 @@ const V = {
  clear(el);
  // BYE は実試合ではない (シードの繰り上がり) → 結果表示から除外
  matches = (matches || []).filter(m =>
-   m.winner_name !== "BYE" && m.loser_name !== "BYE");
+   m.winner_name !== "BYE" && m.loser_name !== "BYE" && !m.is_walkover);
 
  // ヘッダ
  const statusLabels = { scheduled: "予定", ongoing: "進行中", completed: "終了" };
@@ -1905,7 +1905,7 @@ const L = {
 
  // 直近結果 (横並び ○勝者 — スコア — 敗者× / BYE除外)
  const recentReal = (s.recent_finished || []).filter(m =>
-   m.winner_name !== "BYE" && m.loser_name !== "BYE");
+   m.winner_name !== "BYE" && m.loser_name !== "BYE" && !m.is_walkover);
  if (recentReal.length) {
  main.appendChild(h("div", { className: "section-title mt-3" }, "直近の結果"));
  const box = h("div", { className: "card", style: { padding: "6px 10px" } });

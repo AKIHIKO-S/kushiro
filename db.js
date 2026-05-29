@@ -264,6 +264,7 @@ try {
   addMCol("finished_at", "TEXT DEFAULT ''");
   addMCol("duration_sec", "INTEGER DEFAULT 0"); // 呼出→結果入力 の所要秒数 (自動記録)
   addMCol("result_source", "TEXT DEFAULT ''"); // ''=本部入力 / 'referee'=審判入力 / 'hq'=本部で確認済
+  addMCol("pending_result", "TEXT DEFAULT ''"); // 審判が報告し本部承認待ちの暫定結果(JSON)。空=承認待ちなし
   addMCol("bracket_pos", "INTEGER DEFAULT 0");
   addMCol("bracket_round", "INTEGER DEFAULT 0");
   addMCol("referee_required", "INTEGER DEFAULT 1"); // 0=審判不要としてマーク
@@ -1205,11 +1206,12 @@ function getOpsFingerprint(tournamentId) {
             COALESCE(SUM(table_no),0) AS tsum,
             COALESCE(SUM(call_count_p1 + call_count_p2),0) AS calls,
             COALESCE(SUM(CASE WHEN result_source='referee' THEN 1 ELSE 0 END),0) AS unconf,
+            COALESCE(SUM(CASE WHEN pending_result != '' THEN 1 ELSE 0 END),0) AS pend,
             COALESCE(MAX(finished_at),'') AS f
        FROM matches WHERE tournament_id = ?`
   ).get(tournamentId);
-  // unconf(審判入力・未確認件数) も含め、本部の「確認」操作で表示が即時更新されるように
-  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.f}`, status: t.status };
+  // unconf/pend(承認待ち件数) も含め、審判報告や本部の承認操作で表示が即時更新されるように
+  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.pend}.${r.f}`, status: t.status };
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2995,8 +2997,9 @@ function getOperationState(tournamentId) {
     const d = (tb - ta) / 60000;
     return d > 0 ? d : null;
   };
+  const _parsePend = (s) => { if (!s) return null; try { return JSON.parse(s); } catch (e) { return null; } };
   const onTable = allMatches.filter(m => m.status === "on_table")
-    .map(m => ({ ...m, elapsed_min: _minsSince(m.started_at) }));
+    .map(m => ({ ...m, elapsed_min: _minsSince(m.started_at), pending: _parsePend(m.pending_result) }));
   const callableRaw = allMatches.filter(m => m.status === "pending");
   const waiting = allMatches.filter(m => m.status === "waiting");
   const finished = allMatches.filter(m => m.status === "completed");
@@ -3004,7 +3007,7 @@ function getOperationState(tournamentId) {
   const recent = finished
     .filter(m => m.finished_at && m.winner_name !== "BYE" && m.loser_name !== "BYE")
     .sort((a, b) => (b.finished_at || "").localeCompare(a.finished_at || ""))
-    .slice(0, 10);
+    .slice(0, 50);
 
   // callable に拘束情報を付与 (バッチクエリで高速化)
   const enforce = tournament.enforce_referee_rule !== 0;
@@ -4753,11 +4756,19 @@ function getRefereeView(tournamentId) {
   const rows = sqlite.prepare(`
     SELECT id, table_no, event, round, match_label, match_no,
            player1_name, player2_name, player1_team, player2_team,
-           started_at, called_at, status
+           started_at, called_at, status, pending_result
     FROM matches
     WHERE tournament_id=? AND status='on_table'
-  `).all(tournamentId);
-  // 台番号順に整列 (台未割当は末尾)
+  `).all(tournamentId).map(r => {
+    // 審判が報告済み(本部承認待ち)かどうかをフラグ化。生JSONは返さない。
+    let pending = null;
+    if (r.pending_result) { try { pending = JSON.parse(r.pending_result); } catch (e) {} }
+    delete r.pending_result;
+    r.awaiting_approval = !!pending;
+    if (pending) r.reported = { winner_slot: pending.winner_slot, winner_name: pending.winner_name };
+    return r;
+  });
+  // コート番号順に整列 (コート未割当は末尾)
   rows.sort((a, b) => (a.table_no || 9999) - (b.table_no || 9999));
   return {
     tournament: { id: t.id, name: t.name, date: t.date, venue: t.venue, status: t.status },
@@ -4769,11 +4780,39 @@ function getRefereeView(tournamentId) {
 function markResultSource(matchId, source) {
   sqlite.prepare("UPDATE matches SET result_source=? WHERE id=?").run(source || "", matchId);
 }
+// 審判が報告した暫定結果を保存 (本部承認待ち)。試合は on_table のまま確定しない。
+function setPendingResult(matchId, data) {
+  const m = stmts.getMatch.get(matchId);
+  if (!m) return { error: "試合が見つかりません" };
+  if (m.status !== "on_table") return { error: "この試合は現在コートに入っていません" };
+  const payload = {
+    winner_slot: data.winner_slot === 2 ? 2 : 1,
+    sets: Array.isArray(data.sets) ? data.sets : [],
+    winner_sets: parseInt(data.winner_sets) || 0,
+    loser_sets: parseInt(data.loser_sets) || 0,
+    winner_name: data.winner_slot === 2 ? m.player2_name : m.player1_name,
+    loser_name: data.winner_slot === 2 ? m.player1_name : m.player2_name,
+    by: data.by || "referee",
+    at: new Date().toISOString(),
+  };
+  sqlite.prepare("UPDATE matches SET pending_result=? WHERE id=?")
+    .run(JSON.stringify(payload), matchId);
+  return { ok: true, pending: payload };
+}
+function clearPendingResult(matchId) {
+  sqlite.prepare("UPDATE matches SET pending_result='' WHERE id=?").run(matchId);
+}
+function getPendingResult(matchId) {
+  const m = stmts.getMatch.get(matchId);
+  if (!m || !m.pending_result) return null;
+  try { return JSON.parse(m.pending_result); } catch (e) { return null; }
+}
 
 module.exports = {
   // 審判結果入力 (テスト環境付き)
   setRefereeToken, setRefereeInputEnabled, getRefereeConfig,
   getTournamentByRefereeToken, getRefereeView, markResultSource,
+  setPendingResult, clearPendingResult, getPendingResult,
   kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription,
   // DB スナップショット (バックアップ/復元)
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, hasOngoingTournament,
