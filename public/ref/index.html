@@ -93,10 +93,16 @@
   .reload-bar { text-align:center; margin: 4px 0 14px; }
   .reload-bar button { background:#fff; border:1px solid #d6d3d1; border-radius: 20px;
     padding: 7px 16px; font-size: 13px; font-weight:700; color:#57534e; cursor:pointer; }
+  /* KTTA Platform へ戻るリンク (ヘッダ右上) */
+  .ref-home { position:absolute; top:10px; right:12px; font-size:11px; font-weight:800;
+    color:#0f766e; text-decoration:none; background:#f0fdfa; border:1px solid #99f6e4;
+    border-radius:8px; padding:5px 9px; white-space:nowrap; }
+  .ref-home:active { transform: scale(.97); }
 </style>
 </head>
 <body>
 <div class="ref-head">
+  <a class="ref-home" href="/viewer/" title="KTTA Platform へ戻る">← KTTA Platform</a>
   <div class="ref-title">審判 結果入力</div>
   <div class="ref-tname" id="tname">読み込み中…</div>
   <div class="ref-meta">

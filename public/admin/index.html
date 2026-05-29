@@ -6146,8 +6146,11 @@ const O = {
  clear(sel);
  sel.appendChild(h("option", { value: "" }, "— 大会を選択 —"));
  const order = { ongoing: 0, preparation: 1, scheduled: 2, completed: 3, cancelled: 4 };
- const sorted = [...ts].sort((a, b) =>
-   (order[a.status] ?? 9) - (order[b.status] ?? 9));
+ // 進行管理(LIVE)は「進行中」の大会のみ表示。
+ // ただし管理中(選択中)の大会は、状態が変わっても消えないよう残す。
+ const sorted = [...ts]
+   .filter(t => t.status === "ongoing" || t.id === O.tournamentId)
+   .sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
  const statusLabel = {
    ongoing: "進行中", preparation: "準備中",
    scheduled: "予定", completed: "終了", cancelled: "中止"
