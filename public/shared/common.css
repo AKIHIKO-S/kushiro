@@ -656,6 +656,27 @@ input:focus, select:focus, textarea:focus {
 .toast.err { background: var(--accent); }
 .toast.warn { background: #d97706; }
 
+/* 選手 数値スタッツ #209 */
+.pstat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.pstat-tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 10px; text-align: center; }
+.pstat-v { font-size: 24px; font-weight: 800; line-height: 1; color: var(--ink-900); }
+.pstat-l { font-size: 11px; color: var(--sub); margin-top: 5px; font-weight: 700; }
+.pstat-s { font-size: 10px; color: var(--sub-l); margin-top: 2px; }
+.pform { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
+.pform-label { font-size: 11px; color: var(--sub); font-weight: 700; margin-right: 4px; }
+.pform-dot { display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 50%; font-size: 11px; font-weight: 800; color: #fff; }
+.pform-dot.win { background: #16a34a; }
+.pform-dot.lose { background: var(--sub-l); }
+.section-sub { font-size: 13px; font-weight: 800; color: var(--ink-700); margin: 10px 0 6px; }
+.pstat-table { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 14px; }
+.pstat-row { display: flex; align-items: center; gap: 8px; padding: 7px 11px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.pstat-row:last-child { border-bottom: none; }
+.pstat-rk { flex: 1; min-width: 0; font-weight: 600; color: var(--ink-900); }
+.pstat-rv { color: var(--sub); white-space: nowrap; font-size: 12px; }
+.pstat-rp { font-weight: 800; color: var(--sub); white-space: nowrap; min-width: 40px; text-align: right; }
+.pstat-rp.hi { color: #16a34a; }
+
 /* Badges */
 .badge {
   display: inline-block;

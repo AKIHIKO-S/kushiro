@@ -1224,6 +1224,36 @@ const V = {
 
  const body = h("div", { className: "profile-body" });
 
+ // ── 数値で見る成績 (数値化) #209 ──
+ const st = TT.computePlayerStats(p);
+ if (st.total > 0) {
+ const tile = (v, l, s) => h("div", { className: "pstat-tile" },
+   h("div", { className: "pstat-v" }, v),
+   h("div", { className: "pstat-l" }, l),
+   s ? h("div", { className: "pstat-s" }, s) : null);
+ body.appendChild(h("div", { className: "section-title" }, "数値で見る成績"));
+ body.appendChild(h("div", { className: "pstat-tiles" },
+   tile(st.rate + "%", "通算勝率", st.wins + "勝 " + st.losses + "敗"),
+   tile(st.setRate + "%", "セット取得率", st.setsWon + "-" + st.setsLost + " セット"),
+   tile(String(st.streakLongest), "最多連勝", "現在 " + st.streakCurrent + " 連勝中"),
+   tile(String(st.tournaments.length), "出場大会数", st.total + " 試合")));
+ if (st.recent.length) {
+   body.appendChild(h("div", { className: "pform" },
+     h("span", { className: "pform-label" }, "直近 (新しい順)"),
+     ...st.recent.map(r => h("span", { className: "pform-dot " + (r === "W" ? "win" : "lose") },
+       r === "W" ? "勝" : "敗"))));
+ }
+ if (st.tournaments.length) {
+   body.appendChild(h("div", { className: "section-sub" }, "大会別成績"));
+   const tw = h("div", { className: "pstat-table" });
+   st.tournaments.slice(0, 12).forEach(t => tw.appendChild(h("div", { className: "pstat-row" },
+     h("span", { className: "pstat-rk" }, t.name + (t.date ? " (" + t.date + ")" : "")),
+     h("span", { className: "pstat-rv" }, t.w + "勝 " + t.l + "敗"),
+     h("span", { className: "pstat-rp" + (t.rate >= 50 ? " hi" : "") }, t.rate + "%"))));
+   body.appendChild(tw);
+ }
+ }
+
  // 種目別統計
  if (p.event_stats && p.event_stats.length) {
  body.appendChild(h("div", { className: "section-title" }, "🎯 種目別戦績"));

@@ -177,6 +177,46 @@
     return Math.floor(m / 60) + "時間" + (m % 60 ? (m % 60) + "分" : "");
   }
 
+  // ── 選手の数値化スタッツ (卓球向け) ──
+  // player.matches (getMatchesByPlayer: BYE/不戦勝除外済・tournament_name/date付) から算出。
+  function computePlayerStats(player) {
+    const pid = player && player.id;
+    const ms = ((player && player.matches) || []).filter(m => m && (m.winner_id === pid || m.loser_id === pid));
+    let wins = 0, losses = 0, setsWon = 0, setsLost = 0;
+    const byT = {}, byE = {};
+    // 古い順 (連勝計算用)
+    const chrono = ms.slice().sort((a, b) =>
+      String(a.tournament_date || "").localeCompare(String(b.tournament_date || "")) ||
+      (a.round_order || 0) - (b.round_order || 0) || (a.match_no || 0) - (b.match_no || 0));
+    let cur = 0, longest = 0;
+    chrono.forEach(m => {
+      const won = m.winner_id === pid;
+      if (won) { wins++; cur++; if (cur > longest) longest = cur; } else { losses++; cur = 0; }
+      const ws = m.winner_sets || 0, ls = m.loser_sets || 0;
+      setsWon += won ? ws : ls; setsLost += won ? ls : ws;
+      const tk = (m.tournament_name || "?") + "" + (m.tournament_date || "");
+      (byT[tk] = byT[tk] || { name: m.tournament_name || "?", date: m.tournament_date || "", w: 0, l: 0 })[won ? "w" : "l"]++;
+      const ek = m.event || "?";
+      (byE[ek] = byE[ek] || { event: ek, w: 0, l: 0 })[won ? "w" : "l"]++;
+    });
+    const recent = ms.slice(0, 10).map(m => (m.winner_id === pid ? "W" : "L")); // 新しい順 (queryがdate DESC)
+    const total = wins + losses;
+    const pctOf = (w, n) => (n ? Math.round((w / n) * 100) : 0);
+    const setsTotal = setsWon + setsLost;
+    const tournaments = Object.values(byT)
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .map(t => ({ name: t.name, date: t.date, w: t.w, l: t.l, total: t.w + t.l, rate: pctOf(t.w, t.w + t.l) }));
+    const events = Object.values(byE)
+      .sort((a, b) => (b.w + b.l) - (a.w + a.l))
+      .map(e => ({ event: e.event, w: e.w, l: e.l, total: e.w + e.l, rate: pctOf(e.w, e.w + e.l) }));
+    return {
+      total, wins, losses, rate: pctOf(wins, total),
+      setsWon, setsLost, setRate: pctOf(setsWon, setsTotal),
+      recent, streakCurrent: cur, streakLongest: longest,
+      tournaments, events,
+    };
+  }
+
   // ── Toast ──
   function toast(msg, type) {
     const el = document.createElement("div");
@@ -483,7 +523,7 @@
     h, esc, clear, api, toast,
     ratingLabel, ratingBadge,
     lookupFurigana, parsePaste,
-    fmtDate, fmtDateShort, fmtDuration,
+    fmtDate, fmtDateShort, fmtDuration, computePlayerStats,
     createPoller, downloadCSV, downloadJSON, openModal,
     logoHTML, statusBadge,
     HOKKAIDO_BRANCHES, normalizeBranch, branchColor, branchColorMap, branchBadge,
