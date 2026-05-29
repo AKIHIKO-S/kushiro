@@ -611,6 +611,76 @@ app.get("/api/tournaments/:id/roster.html", (req, res) => {
   res.send(html);
 });
 
+// ── 受付名簿 HTML (紙の当日受付用・所属別 + 参加料/領収印欄・印刷可) ──
+// Platform は「名簿 + 請求予定額(種目設定料金)」を出力するのみ。実際の入金・領収の管理は
+// スプレッドシート(GAS)/紙が正 → 会計と二重管理にならず競合しない。
+app.get("/api/tournaments/:id/reception.html", (req, res) => {
+  const t = db.getTournament(req.params.id);
+  if (!t) return res.status(404).type("html").send("<h1>大会が見つかりません</h1>");
+  const entrants = db.getEntrants(req.params.id) || [];
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(buildReceptionHTML(t, entrants));
+});
+
+function buildReceptionHTML(t, entrants) {
+  const yen = (n) => "¥" + (parseInt(n) || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  let cfg = [];
+  try { cfg = JSON.parse(t.event_config || "[]"); } catch (e) {}
+  const feeMap = {};
+  (Array.isArray(cfg) ? cfg : []).forEach(c => { if (c && c.name) feeMap[String(c.name).trim()] = parseInt(c.fee) || 0; });
+  const feeOf = (ev) => feeMap[String(ev || "").trim()] || 0;
+  const byTeam = {};
+  entrants.forEach(e => {
+    const team = (e.team || "").trim() || "(所属未記入)";
+    (byTeam[team] = byTeam[team] || []).push(e);
+  });
+  const teamNames = Object.keys(byTeam).sort((a, b) => a.localeCompare(b, "ja"));
+  let grand = 0, grandCount = 0;
+  const sections = teamNames.map(team => {
+    const list = byTeam[team];
+    let sub = 0;
+    const rows = list.map(e => {
+      const fee = feeOf(e.event); sub += fee; grand += fee; grandCount++;
+      const nm = (e.is_doubles && e.partner_name)
+        ? (_escHtml(e.name) + " ・ " + _escHtml(e.partner_name)) : _escHtml(e.name);
+      const furi = e.furigana ? `<span class="furi">${_escHtml(e.furigana)}</span>` : "";
+      return `<tr><td class="chk"></td><td class="no">${e.bracket_number || ""}</td>` +
+        `<td class="nm">${nm}${furi}</td><td class="ev">${_escHtml(e.event || "")}</td>` +
+        `<td class="fee">${fee ? yen(fee) : ""}</td><td class="seal"></td></tr>`;
+    }).join("");
+    return `<section class="team-sec"><h3>${_escHtml(team)} <span class="tc">${list.length}件</span></h3>` +
+      `<table class="rcp-table"><thead><tr><th class="chk">受付</th><th class="no">No</th>` +
+      `<th>氏名（ふりがな）</th><th>種目</th><th class="fee">参加料</th><th class="seal">領収印</th></tr></thead>` +
+      `<tbody>${rows}</tbody><tfoot><tr><td colspan="4" class="sub-l">小計（${list.length}件）</td>` +
+      `<td class="fee">${yen(sub)}</td><td></td></tr></tfoot></table></section>`;
+  }).join("");
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="robots" content="noindex">
+<title>${_escHtml(t.name)} 受付名簿</title><style>
+*{box-sizing:border-box} body{font-family:system-ui,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;color:#1c1917;margin:0;padding:18px}
+h1{font-size:20px;margin:0 0 2px} .meta{color:#57534e;font-size:13px;margin-bottom:6px}
+.grand{font-size:15px;font-weight:800;margin:8px 0 10px;padding:8px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;display:inline-block}
+.note{font-size:11px;color:#78716c;margin-bottom:14px;line-height:1.6}
+.team-sec{margin-bottom:16px;page-break-inside:avoid}
+h3{font-size:15px;margin:0 0 4px;border-bottom:2px solid #1c1917;padding-bottom:2px} h3 .tc{font-size:11px;color:#78716c;font-weight:500;margin-left:6px}
+.rcp-table{width:100%;border-collapse:collapse;font-size:13px}
+.rcp-table th,.rcp-table td{border:1px solid #d6d3d1;padding:5px 6px;text-align:left}
+.rcp-table th{background:#f5f5f4;font-size:12px} .rcp-table .chk{width:40px;text-align:center}
+.rcp-table .no{width:40px;text-align:center;color:#78716c} .rcp-table .ev{width:22%}
+.rcp-table .fee{width:86px;text-align:right} .rcp-table .seal{width:64px} .furi{display:block;font-size:10px;color:#78716c}
+.sub-l{text-align:right;font-weight:700} tfoot td{background:#fafaf9}
+.print-btn{position:fixed;top:12px;right:12px;padding:8px 16px;background:#15803d;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer}
+@media print{.print-btn{display:none} body{padding:8px}}
+</style></head><body>
+<button class="print-btn" onclick="window.print()">印刷 / PDF保存</button>
+<h1>${_escHtml(t.name)} 受付名簿</h1>
+<div class="meta">${_escHtml(t.date || "")}　${_escHtml(t.venue || "")}</div>
+<div class="grand">参加料 合計予定額　${yen(grand)}　（全${grandCount}件 / ${teamNames.length}団体）</div>
+<div class="note">※ 当日受付（紙）用。金額は申込種目の設定料金からの「請求予定額」です。実際の入金・領収の管理はスプレッドシート/紙が正です。受付欄・領収印欄に押印してご利用ください。</div>
+${sections || "<p>申込がまだありません。</p>"}
+</body></html>`;
+}
+
 function _escHtml(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;")
