@@ -1144,6 +1144,8 @@
  </select>
  <select class="input" id="pView" style="width:160px" onchange="A.renderPlayers()">
  <option value="accordion">ふりがな順</option>
+ <option value="branch">支部別</option>
+ <option value="gender">男女別</option>
  <option value="team">所属チーム別</option>
  <option value="category">カテゴリ別</option>
  <option value="flat">フラット一覧</option>
@@ -5606,7 +5608,9 @@ const A = {
  const medalCount = p.total_achievements || (p.achievements ? p.achievements.length : 0) || 0;
  if (golds > 0) stats.push(h("span", { className: "pdb-stat medal" }, "優勝" + golds));
  else if (medalCount > 0) stats.push(h("span", { className: "pdb-stat medal" }, "入賞" + medalCount));
+ const _bAccent = TT.branchColor(p.branch || p.team);   // 支部色を左罫線に (#支部色分け)
  return h("div", { className: "pdb-card " + gClass,
+ style: { borderLeft: "5px solid " + _bAccent.fg },
  onClick: () => A.editPlayer(p) },
  h("div", { className: "pdb-avatar" }, A._initials(p.name)),
  h("div", { className: "pdb-info" },
@@ -5686,6 +5690,50 @@ const A = {
      const head = h("div", { className: "pdb-acc-head", onClick: () => acc.classList.toggle("open") },
        h("div", { className: "pdb-row-num", style: { fontSize: "14px" } }, "◆"),
        h("div", { className: "pdb-row-label" }, TT.catLabel(ck)),
+       h("div", { className: "pdb-row-count" }, players.length + "名"));
+     const body = h("div", { className: "pdb-acc-body" });
+     players.forEach(p => body.appendChild(renderPlayerCard(p)));
+     acc.appendChild(head); acc.appendChild(body); el.appendChild(acc);
+   });
+   return;
+ }
+
+ if (view === "branch") {
+   // 支部別 (支部が無ければ所属から推定。色分けつき)
+   const byBr = {};
+   list.forEach(p => { const b = TT.normalizeBranch(p.branch || p.team) || "(支部なし)"; (byBr[b] = byBr[b] || []).push(p); });
+   const bKeys = Object.keys(byBr).sort((a, b) =>
+     a === "(支部なし)" ? 1 : b === "(支部なし)" ? -1 : a.localeCompare(b, "ja"));
+   bKeys.forEach((bn, idx) => {
+     const players = byBr[bn].sort((a, b) => (b.appearances || 0) - (a.appearances || 0)
+       || (a.furigana || "").localeCompare(b.furigana || "", "ja"));
+     const bc = TT.branchColor(bn);
+     const acc = h("div", { className: "pdb-acc" + (idx === 0 ? " open" : "") });
+     const head = h("div", { className: "pdb-acc-head", style: { borderLeft: "6px solid " + bc.fg },
+       onClick: () => acc.classList.toggle("open") },
+       h("div", { className: "pdb-row-num", style: { background: bc.bg, color: bc.fg, fontSize: "12px" } }, "支"),
+       h("div", { className: "pdb-row-label" }, bn),
+       h("div", { className: "pdb-row-count" }, players.length + "名"));
+     const body = h("div", { className: "pdb-acc-body" });
+     players.forEach(p => body.appendChild(renderPlayerCard(p)));
+     acc.appendChild(head); acc.appendChild(body); el.appendChild(acc);
+   });
+   return;
+ }
+
+ if (view === "gender") {
+   // 男女別
+   const byG = { male: [], female: [] };
+   list.forEach(p => { (p.gender === "female" ? byG.female : byG.male).push(p); });
+   [["male", "男子"], ["female", "女子"]].forEach(([k, label], idx) => {
+     const players = byG[k]; if (!players.length) return;
+     players.sort((a, b) => (b.appearances || 0) - (a.appearances || 0)
+       || (a.furigana || "").localeCompare(b.furigana || "", "ja"));
+     const acc = h("div", { className: "pdb-acc" + (idx === 0 ? " open" : "") });
+     const head = h("div", { className: "pdb-acc-head", onClick: () => acc.classList.toggle("open") },
+       h("div", { className: "pdb-row-num", style: { fontSize: "15px",
+         background: k === "female" ? "#fce7f3" : "#dbeafe", color: k === "female" ? "#db2777" : "#2563eb" } }, k === "female" ? "♀" : "♂"),
+       h("div", { className: "pdb-row-label" }, label),
        h("div", { className: "pdb-row-count" }, players.length + "名"));
      const body = h("div", { className: "pdb-acc-body" });
      players.forEach(p => body.appendChild(renderPlayerCard(p)));
