@@ -6214,6 +6214,7 @@ const O = {
  }
  O._lastOpsVer = undefined;
  O.reload();
+ O.initPullToRefresh();   // スワイプ更新を有効化 (#238)
  // 自動更新 (2秒): 軽量な ops-version を見て、変化した時だけ全再描画。
  // 審判報告→本部の「承認待ち」表示が最大2秒で届く (管理は常にフレッシュ取得)。
  O.poller = setInterval(() => O.tick(), 2000);
@@ -6238,6 +6239,57 @@ const O = {
      el = el.parentElement;
    }
    return window;
+ },
+
+ // 手動更新ボタン (#238): 自動更新を待たず即座に最新化
+ async manualRefresh() {
+   const b = document.getElementById("opRefreshBtn");
+   const orig = b ? b.textContent : "";
+   if (b) { b.disabled = true; b.textContent = "更新中…"; }
+   try { O._lastOpsVer = undefined; await O.reload(); }
+   finally { if (b) { b.disabled = false; b.textContent = orig; } }
+ },
+
+ // プル/スワイプ更新 (#238): #opMain の先頭で下方向に引くと更新。touch端末のみ作動。
+ initPullToRefresh() {
+   const main = document.getElementById("opMain");
+   if (!main || main._ptrBound) return;
+   main._ptrBound = true;
+   let ind = document.getElementById("opPtrInd");
+   if (!ind) {
+     ind = h("div", { id: "opPtrInd", style: {
+       position: "fixed", top: "0", left: "0", right: "0", height: "0", lineHeight: "38px",
+       overflow: "hidden", background: "#0ea5e9", color: "#fff", textAlign: "center",
+       fontWeight: "800", fontSize: "14px", opacity: "0", transition: "opacity .15s",
+       zIndex: "99999", pointerEvents: "none" } });
+     document.body.appendChild(ind);
+   }
+   const TH = 70;
+   let startY = 0, pulling = false;
+   main.addEventListener("touchstart", (e) => {
+     const sc = O._opScrollEl();
+     const top = sc === window ? window.scrollY : sc.scrollTop;
+     pulling = (top <= 0 && e.touches.length === 1);
+     startY = pulling ? e.touches[0].clientY : 0;
+   }, { passive: true });
+   main.addEventListener("touchmove", (e) => {
+     if (!pulling) return;
+     const dy = e.touches[0].clientY - startY;
+     if (dy > 0) {
+       ind.style.opacity = "1";
+       ind.style.height = Math.min(dy, TH + 24) + "px";
+       ind.textContent = dy >= TH ? "離して更新" : "↓ 引いて更新";
+     } else { ind.style.opacity = "0"; ind.style.height = "0"; }
+   }, { passive: true });
+   const end = (e) => {
+     if (!pulling) return;
+     pulling = false;
+     const y = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0].clientY : startY;
+     ind.style.opacity = "0"; ind.style.height = "0";
+     if (y - startY >= TH) O.manualRefresh();
+   };
+   main.addEventListener("touchend", end);
+   main.addEventListener("touchcancel", end);
  },
 
  async reload(silent) {
@@ -6375,6 +6427,11 @@ const O = {
  // ── 運用バー (常時表示: 種目フィルタ + 敗者審判ルール) ──
  main.appendChild(h("div", { className: "flex gap-2 mb-2 flex-wrap op-actions",
    style: { alignItems: "center" } },
+ // 手動更新 (#238): 自動更新(2秒)を待たず即座に最新化。スマホは下方向スワイプでも更新可。
+ h("button", { className: "btn btn-sm", id: "opRefreshBtn",
+   style: { background: "#0ea5e9", color: "#fff", borderColor: "#0ea5e9", fontWeight: 700 },
+   title: "最新の進行状況に手動で更新します（スマホは画面を下に引いても更新）",
+   onClick: () => O.manualRefresh() }, "↻ 更新"),
  events.length ? h("select", {
  className: "input input-sm", style: { width: "180px" },
  onChange: (e) => { O.selectedEvent = e.target.value; O.render(); }

@@ -62,7 +62,13 @@
   .score-row { display:flex; align-items:center; gap:8px; margin-top:6px; }
   .score-row input { width: 64px; font-size: 20px; text-align:center; padding: 8px;
     border:1px solid #d6d3d1; border-radius:8px; }
+  .score-row select { min-width: 78px; font-size: 22px; font-weight: 800; text-align: center;
+    text-align-last: center; padding: 11px 8px; border:1px solid #d6d3d1; border-radius:8px;
+    background:#fff; color:#1c1917; -webkit-appearance: menulist; appearance: menulist; }
   .score-row .lbl { font-size: 13px; font-weight:700; }
+  /* 選手番号バッジ (審判が組合せ表と突き合わせて確認できるように #241) */
+  .pbn { display:inline-block; background:#1c1917; color:#fff; font-size:12px; font-weight:800;
+    border-radius:6px; padding:1px 6px; margin-right:5px; vertical-align:middle; }
   .btn-row { display:flex; gap:10px; margin-top: 6px; }
   .b {
     flex:1; border:none; border-radius: 10px; padding: 13px; font-size: 15px; font-weight: 800;
@@ -138,6 +144,8 @@
   var selWinner = {};     // matchId -> 1|2 (確認中の選択)
   var redo = {};          // matchId -> true (承認待ちでも再報告するため入力に戻す)
   var lastMatches = [];
+  var editingMid = 0;     // 入力中(確認パネルを開いている)試合id。自動更新の再描画から保護 (#240)
+  var latestState = null; // 直近に取得した状態 (編集終了後の追いつき描画に使用)
   // オフライン送信キュー (#231): 回線断でも報告を貯め、復旧時に自動送信 (op_idで冪等)
   var QKEY = "ktta_ref_queue_v1";
   function loadQ() { try { return JSON.parse(localStorage.getItem(QKEY) || "[]"); } catch (e) { return []; } }
@@ -149,6 +157,12 @@
   function uuid() {
     try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
     return "op-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+  }
+  // セット数ドロップダウンの選択肢 (0〜9)。空欄=未入力(勝者のみ) (#239)
+  function setSelOpts() {
+    var o = '<option value="">-</option>';
+    for (var i = 0; i <= 9; i++) o += '<option value="' + i + '">' + i + '</option>';
+    return o;
   }
   var toastTimer;
   function toast(msg, kind) {
@@ -185,6 +199,10 @@
 
     var matches = state.on_table || [];
     lastMatches = matches;
+    latestState = state;
+    // 入力中(勝者選択→確認パネルを開いている)はリストを描き替えない。
+    // 自動更新の再描画でスコア入力欄が強制的に閉じてしまう不具合を防止 (#240)。
+    if (editingMid && document.getElementById("card-" + editingMid)) return;
     if (!matches.length) {
       root.innerHTML = '<div class="ref-note">担当の試合がコートに入ると、ここに表示されます。'
         + '結果が出たら<b>勝った選手を選んで報告</b>してください（セット数の入力は任意です）。</div>'
@@ -212,6 +230,7 @@
     var head = '<div class="mcard-top">'
       + (m.table_no ? '<span class="mtable">コート' + esc(m.table_no) + '</span>' : '')
       + '<span class="mtag">' + esc(m.event || "") + ' ' + esc(m.round || "") + '</span>'
+      + (m.match_label ? '<span class="mtag">No.' + esc(m.match_label) + '</span>' : '')
       + (elapsed ? '<span class="mtime">' + esc(elapsed) + '</span>' : '')
       + '</div>';
     // 報告済み(本部承認待ち) → 勝敗ボタンを出さず承認待ち表示 (#223)
@@ -235,8 +254,9 @@
   function pbtnHtml(m, slot) {
     var nm = slot === 1 ? m.player1_name : m.player2_name;
     var tm = slot === 1 ? m.player1_team : m.player2_team;
+    var bn = slot === 1 ? m.player1_bracket_number : m.player2_bracket_number;
     return '<div class="pbtn" data-mid="' + esc(m.id) + '" data-slot="' + slot + '">'
-      + '<div class="pn">' + esc(nm || "（未定）") + '</div>'
+      + '<div class="pn">' + (bn ? '<span class="pbn">#' + esc(bn) + '</span>' : '') + esc(nm || "（未定）") + '</div>'
       + (tm ? '<div class="pt">' + esc(tm) + '</div>' : '')
       + '<div class="pwin">✓ 勝ち</div>'
       + '</div>';
@@ -273,15 +293,16 @@
     var winnerName = slot === 1 ? m.player1_name : m.player2_name;
     var box = document.getElementById("confirm-" + m.id);
     if (!box) return;
+    editingMid = m.id;   // 入力開始: 自動更新の再描画から保護 (#240)
     box.style.display = "block";
     box.innerHTML = ''
       + '<div class="confirm-q"><b>' + esc(winnerName || "選手") + '</b> の勝ちで報告しますか？</div>'
       + '<details class="score-opt"><summary>セットスコアも記録する（任意）</summary>'
       +   '<div class="score-row">'
       +     '<span class="lbl">' + esc(winnerName || "勝者") + '</span>'
-      +     '<input type="number" min="0" max="9" inputmode="numeric" id="ws-' + esc(m.id) + '" placeholder="-">'
+      +     '<select id="ws-' + esc(m.id) + '">' + setSelOpts() + '</select>'
       +     '<span class="lbl">-</span>'
-      +     '<input type="number" min="0" max="9" inputmode="numeric" id="ls-' + esc(m.id) + '" placeholder="-">'
+      +     '<select id="ls-' + esc(m.id) + '">' + setSelOpts() + '</select>'
       +     '<span class="lbl">' + esc((slot === 1 ? m.player2_name : m.player1_name) || "敗者") + '</span>'
       +   '</div>'
       +   '<div style="font-size:12px;color:#78716c;margin-top:6px">空欄なら「勝者のみ」で記録します。</div>'
@@ -295,6 +316,8 @@
       var card = document.getElementById("card-" + m.id);
       if (card) card.querySelectorAll(".pbtn").forEach(function (b) { b.classList.remove("sel"); });
       selWinner[m.id] = 0;
+      editingMid = 0;                       // 入力終了 → 自動更新の保護解除 (#240)
+      if (latestState) render(latestState); // 保留していた最新状態に追いつく
     };
     document.getElementById("send-" + m.id).onclick = function () { submit(m, slot); };
   }
@@ -336,6 +359,7 @@
     }
     if (!pendingOpId[m.id]) pendingOpId[m.id] = uuid();
     body.op_id = pendingOpId[m.id];
+    editingMid = 0;   // 送信開始 → 以降の自動更新/再描画を許可 (#240)
 
     var sendBtn = document.getElementById("send-" + m.id);
     if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = "送信中…"; }

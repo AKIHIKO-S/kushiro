@@ -517,8 +517,13 @@ const stmts = {
   `),
   getMatch: sqlite.prepare(`SELECT * FROM matches WHERE id = ?`),
   getMatchesByPlayer: sqlite.prepare(`
-    SELECT m.*, t.name AS tournament_name, t.date AS tournament_date
-    FROM matches m LEFT JOIN tournaments t ON m.tournament_id = t.id
+    SELECT m.*, t.name AS tournament_name, t.date AS tournament_date,
+           pe1.partner_player_id AS player1_partner_id, pe1.partner_name AS player1_partner_name, pe1.name AS player1_main_name,
+           pe2.partner_player_id AS player2_partner_id, pe2.partner_name AS player2_partner_name, pe2.name AS player2_main_name
+    FROM matches m
+      LEFT JOIN tournaments t ON m.tournament_id = t.id
+      LEFT JOIN entrants pe1 ON pe1.id = m.player1_entrant_id
+      LEFT JOIN entrants pe2 ON pe2.id = m.player2_entrant_id
     WHERE (m.winner_id = ? OR m.loser_id = ?)
       AND m.loser_name != 'BYE' AND m.winner_name != 'BYE' AND COALESCE(m.is_walkover,0) = 0
       AND COALESCE(t.level,'district') NOT IN ('hokkaido','national')
@@ -2976,10 +2981,16 @@ function getOperationState(tournamentId) {
       e1.bracket_side AS player1_bracket_side,
       e1.furigana AS player1_furigana,
       e1.partner_furigana AS player1_partner_furigana,
+      e1.name AS player1_main_name,
+      e1.partner_name AS player1_partner_name,
+      e1.partner_player_id AS player1_partner_id,
       e2.bracket_number AS player2_bracket_number,
       e2.bracket_side AS player2_bracket_side,
       e2.furigana AS player2_furigana,
-      e2.partner_furigana AS player2_partner_furigana
+      e2.partner_furigana AS player2_partner_furigana,
+      e2.name AS player2_main_name,
+      e2.partner_name AS player2_partner_name,
+      e2.partner_player_id AS player2_partner_id
     FROM matches m
     LEFT JOIN entrants e1 ON e1.id = m.player1_entrant_id
     LEFT JOIN entrants e2 ON e2.id = m.player2_entrant_id
@@ -4757,11 +4768,16 @@ function getRefereeView(tournamentId, courtNo) {
   const t = getTournament(tournamentId);
   if (!t) return null;
   const rows = sqlite.prepare(`
-    SELECT id, table_no, event, round, match_label, match_no,
-           player1_name, player2_name, player1_team, player2_team,
-           started_at, called_at, status, pending_result
-    FROM matches
-    WHERE tournament_id=? AND status='on_table'
+    SELECT m.id, m.table_no, m.event, m.round, m.match_label, m.match_no,
+           m.player1_name, m.player2_name, m.player1_team, m.player2_team,
+           m.started_at, m.called_at, m.status, m.pending_result,
+           e1.bracket_number AS player1_bracket_number,
+           e2.bracket_number AS player2_bracket_number
+    FROM matches m
+    LEFT JOIN entrants e1 ON e1.id = m.player1_entrant_id
+    LEFT JOIN entrants e2 ON e2.id = m.player2_entrant_id
+    WHERE m.tournament_id=? AND m.status='on_table'
+    ORDER BY m.table_no ASC, m.match_no ASC, m.id ASC
   `).all(tournamentId).map(r => {
     // 審判が報告済み(本部承認待ち)かどうかをフラグ化。生JSONは返さない。
     let pending = null;
@@ -4771,8 +4787,13 @@ function getRefereeView(tournamentId, courtNo) {
     if (pending) r.reported = { winner_slot: pending.winner_slot, winner_name: pending.winner_name };
     return r;
   });
-  // コート番号順に整列 (コート未割当は末尾)
-  rows.sort((a, b) => (a.table_no || 9999) - (b.table_no || 9999));
+  // コート番号順に整列 (コート未割当は末尾)。
+  // 同コート/未割当が複数あっても順序が毎回一定になるよう match_no・id でタイブレーク。
+  // (#241 ポーリングのたびに並びが入れ替わる/逆になる現象を防止)
+  rows.sort((a, b) =>
+    (a.table_no || 9999) - (b.table_no || 9999) ||
+    (a.match_no || 0) - (b.match_no || 0) ||
+    String(a.id).localeCompare(String(b.id)));
   // コート別トークンの場合は自分のコートの試合だけに限定 (#229)
   const onTableOut = courtNo ? rows.filter(r => Number(r.table_no) === Number(courtNo)) : rows;
   return {
