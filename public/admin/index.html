@@ -493,6 +493,21 @@
  .court-cell-match .cc-furi { font-size: 8px; color: var(--sub); font-weight: 500; letter-spacing: .02em; }
  .court-cell-match .cc-ref { font-size: 8px; color: #6d28d9; margin-top: 2px; font-weight: 600; }
  .court-cell-vs { font-size: 9px; color: var(--sub); font-weight: 400; margin: 1px 0; }
+
+ /* PC/iPad前提: 全体を横長に + 台一覧を大きく #206 */
+ .container { max-width: 1560px; }
+ .admin-hero-in, .tabs-in { max-width: 1560px; }
+ .court-wrap { padding: 18px; }
+ .court-cell { min-height: 94px; min-width: 108px; padding: 18px 6px 8px; font-size: 11px; }
+ .court-cell-no { font-size: 11px; padding: 2px 0; }
+ .court-cell-match { font-size: 12px; }
+ .court-cell-match .cc-name { font-size: 13px; }
+ .court-cell-match .cc-furi { font-size: 9px; }
+ .court-cell-match .cc-ref { font-size: 9px; }
+ @media (max-width: 820px){
+   /* スマホでは従来サイズに戻す (タブレット/PC専用の拡大) */
+   .court-cell { min-height: 72px; min-width: 78px; padding: 14px 4px 6px; }
+ }
  .court-hq {
  margin-top: 10px; padding: 10px; background: var(--pri); color: #fff;
  border-radius: 6px; text-align: center; font-weight: 700; font-size: 13px;
@@ -666,6 +681,8 @@
  .elapsed-red { background: #fee2e2; color: #b91c1c; animation: callPulse 1.6s infinite; }
  .op-eta { margin-top: 6px; font-size: 12px; font-weight: 700; color: #0f766e;
    background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 8px; padding: 5px 10px; display: inline-block; }
+ .dur-badge { font-size: 10px; font-weight: 700; color: #475569; background: #f1f5f9;
+   border: 1px solid var(--border); border-radius: 8px; padding: 1px 7px; white-space: nowrap; }
 
  /* ─── 再コール バッジ ─── */
  .call-badge {
@@ -6419,6 +6436,8 @@ const O = {
  `${m.winner_name}`),
  h("span", { className: "font-bold" }, `${m.winner_sets}-${m.loser_sets}`),
  h("span", { className: "text-sub" }, `${m.loser_name || "BYE"}`),
+ m.duration_sec ? h("span", { className: "dur-badge", title: "呼出→結果入力 の所要時間" },
+   "所要 " + TT.fmtDuration(m.duration_sec)) : null,
  ),
  ),
  // 修正ボタン群

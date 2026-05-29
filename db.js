@@ -257,6 +257,7 @@ try {
   addMCol("called_at", "TEXT DEFAULT ''");
   addMCol("started_at", "TEXT DEFAULT ''");
   addMCol("finished_at", "TEXT DEFAULT ''");
+  addMCol("duration_sec", "INTEGER DEFAULT 0"); // 呼出→結果入力 の所要秒数 (自動記録)
   addMCol("bracket_pos", "INTEGER DEFAULT 0");
   addMCol("bracket_round", "INTEGER DEFAULT 0");
   addMCol("referee_required", "INTEGER DEFAULT 1"); // 0=審判不要としてマーク
@@ -2195,6 +2196,22 @@ function finishMatchInternal(matchId, data) {
   // 不戦勝(W.O.)/BYE は DB戦績・参加記録に算入しないようフラグ
   const isWO = !!data.walkover || winner.name === "BYE" || loser.name === "BYE";
   sqlite.prepare("UPDATE matches SET is_walkover=? WHERE id=?").run(isWO ? 1 : 0, matchId);
+
+  // 所要時間 (呼出→結果入力) を自動記録。called_at が無ければ started_at を起点に。
+  if (!isWO) {
+    try {
+      const row = stmts.getMatch.get(matchId);
+      const startStr = row && (row.called_at || row.started_at);
+      if (startStr && row.finished_at) {
+        const t0 = Date.parse(String(startStr).replace(" ", "T"));
+        const t1 = Date.parse(String(row.finished_at).replace(" ", "T"));
+        const sec = Math.round((t1 - t0) / 1000);
+        if (sec > 0 && sec < 24 * 3600) {
+          sqlite.prepare("UPDATE matches SET duration_sec=? WHERE id=?").run(sec, matchId);
+        }
+      }
+    } catch (e) { /* 所要時間記録は本処理に影響させない */ }
+  }
 
   // Elo 更新 (不戦勝は除外)
   if (!isWO && winner.id && loser.id) {

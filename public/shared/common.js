@@ -167,6 +167,16 @@
     }
   })();
 
+  // ── 所要時間フォーマット (秒 → "12分" / "1時間5分" / "45秒") ──
+  function fmtDuration(sec) {
+    sec = parseInt(sec) || 0;
+    if (sec <= 0) return "";
+    if (sec < 60) return sec + "秒";
+    const m = Math.round(sec / 60);
+    if (m < 60) return m + "分";
+    return Math.floor(m / 60) + "時間" + (m % 60 ? (m % 60) + "分" : "");
+  }
+
   // ── Toast ──
   function toast(msg, type) {
     const el = document.createElement("div");
@@ -473,7 +483,7 @@
     h, esc, clear, api, toast,
     ratingLabel, ratingBadge,
     lookupFurigana, parsePaste,
-    fmtDate, fmtDateShort,
+    fmtDate, fmtDateShort, fmtDuration,
     createPoller, downloadCSV, downloadJSON, openModal,
     logoHTML, statusBadge,
     HOKKAIDO_BRANCHES, normalizeBranch, branchColor, branchColorMap, branchBadge,
