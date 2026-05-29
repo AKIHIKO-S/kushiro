@@ -66,6 +66,14 @@
     text-align-last: center; padding: 11px 8px; border:1px solid #d6d3d1; border-radius:8px;
     background:#fff; color:#1c1917; -webkit-appearance: menulist; appearance: menulist; }
   .score-row .lbl { font-size: 13px; font-weight:700; }
+  .score-row .lbl small { font-size: 10px; color:#78716c; font-weight:700; display:block; }
+  /* 左=勝者(緑)/右=敗者(灰) の色分け (#262: 反対入力を防ぐ) */
+  .score-row select.gw { border-color: var(--ref-accent); box-shadow: inset 4px 0 0 var(--ref-accent); }
+  .score-row select.gl { border-color: #a8a29e; box-shadow: inset 4px 0 0 #a8a29e; }
+  .gcol-legend { display:flex; gap:8px; flex-wrap:wrap; margin: 2px 0 10px; }
+  .gcol-badge { font-size: 12.5px; font-weight: 800; border-radius: 8px; padding: 5px 10px; flex:1; text-align:center; }
+  .gcol-badge.win { background:#f0fdf4; color:#166534; border:1px solid #bbf7d0; }
+  .gcol-badge.lose { background:#f5f5f4; color:#57534e; border:1px solid #d6d3d1; }
   /* 選手番号バッジ (審判が組合せ表と突き合わせて確認できるように #241) */
   .pbn { display:inline-block; background:#1c1917; color:#fff; font-size:12px; font-weight:800;
     border-radius:6px; padding:1px 6px; margin-right:5px; vertical-align:middle; }
@@ -181,10 +189,10 @@
     for (var i = 0; i <= 5; i++) o += '<option value="' + i + '">' + i + '</option>';
     return o;
   }
-  // ゲーム別点数の選択肢 0〜11 (#256)
+  // ゲーム別点数の選択肢 0〜15 (#262: デュース 12-10 等も入力可)
   function ptSelOpts() {
     var o = '<option value="">-</option>';
-    for (var i = 0; i <= 11; i++) o += '<option value="' + i + '">' + i + '</option>';
+    for (var i = 0; i <= 15; i++) o += '<option value="' + i + '">' + i + '</option>';
     return o;
   }
   // 記入途中の下書き保存 (時間経過/再読込でも消えない #256)
@@ -404,24 +412,30 @@
     var gameRows = "";
     for (var gi = 1; gi <= 5; gi++) {
       gameRows += '<div class="score-row"><span class="lbl">G' + gi + '</span>'
-        + '<select id="g' + gi + 'w-' + esc(m.id) + '">' + ptSelOpts() + '</select>'
+        + '<select class="gsel gw" id="g' + gi + 'w-' + esc(m.id) + '">' + ptSelOpts() + '</select>'
         + '<span class="lbl">-</span>'
-        + '<select id="g' + gi + 'l-' + esc(m.id) + '">' + ptSelOpts() + '</select></div>';
+        + '<select class="gsel gl" id="g' + gi + 'l-' + esc(m.id) + '">' + ptSelOpts() + '</select></div>';
     }
+    // 左右どちらが誰の点数か明示する凡例 (#262: 反対入力を防ぐ)
+    var colLegend = '<div class="gcol-legend">'
+      + '<span class="gcol-badge win">左＝' + esc(winnerName || "勝者") + '（勝者）</span>'
+      + '<span class="gcol-badge lose">右＝' + esc(loserName || "敗者") + '（敗者）</span>'
+      + '</div>';
     box.innerHTML = ''
       + '<div class="confirm-q"><b>' + esc(winnerName || "選手") + '</b> の勝ちで報告しますか？</div>'
       + '<details class="score-opt"' + ((d.ws || d.ls) ? ' open' : '') + '><summary>セット数だけ記録（任意）</summary>'
       +   '<div class="score-row">'
-      +     '<span class="lbl">' + esc(winnerName || "勝者") + '</span>'
-      +     '<select id="ws-' + esc(m.id) + '">' + setSelOpts() + '</select>'
+      +     '<span class="lbl">' + esc(winnerName || "勝者") + '<small>（勝）</small></span>'
+      +     '<select class="gsel gw" id="ws-' + esc(m.id) + '">' + setSelOpts() + '</select>'
       +     '<span class="lbl">-</span>'
-      +     '<select id="ls-' + esc(m.id) + '">' + setSelOpts() + '</select>'
-      +     '<span class="lbl">' + esc(loserName || "敗者") + '</span>'
+      +     '<select class="gsel gl" id="ls-' + esc(m.id) + '">' + setSelOpts() + '</select>'
+      +     '<span class="lbl">' + esc(loserName || "敗者") + '<small>（負）</small></span>'
       +   '</div>'
       + '</details>'
-      + '<details class="score-opt"' + (hasGames ? ' open' : '') + '><summary>ゲームごとの点数（任意・左=勝者/右=敗者・0〜11）</summary>'
+      + '<details class="score-opt"' + (hasGames ? ' open' : '') + '><summary>ゲームごとの点数（任意・11点先取/3ゲーム先取で勝ち）</summary>'
+      +   colLegend
       +   gameRows
-      +   '<div style="font-size:12px;color:#78716c;margin-top:6px">点数を入れると自動でセット数を計算します。<b>記入は自動保存</b>され、時間が経っても消えません。</div>'
+      +   '<div style="font-size:12px;color:#78716c;margin-top:6px">点数を入れると自動でセット数を計算します。<b>勝った選手＝左の列</b>です（左右を間違えないよう注意）。記入は自動保存されます。</div>'
       + '</details>'
       + '<div class="btn-row">'
       +   '<button class="b b-cancel" id="cancel-' + esc(m.id) + '">やめる</button>'
@@ -483,26 +497,42 @@
     var lsEl = document.getElementById("ls-" + m.id);
     var ws = wsEl && wsEl.value !== "" ? parseInt(wsEl.value) : null;
     var ls = lsEl && lsEl.value !== "" ? parseInt(lsEl.value) : null;
-    // ゲーム別点数 (入力があれば優先)。sets_json は player1 視点で保存。
+    // ゲーム別点数 (入力があれば優先)。左=勝者(slot)の点数・右=敗者の点数。sets_jsonはplayer1視点で保存。
     var games = [];
     for (var gi = 1; gi <= 5; gi++) {
-      var gw = document.getElementById("g" + gi + "w-" + m.id), gl = document.getElementById("g" + gi + "l-" + m.id);
-      var a = gw && gw.value !== "" ? parseInt(gw.value) : null;
-      var b = gl && gl.value !== "" ? parseInt(gl.value) : null;
-      if (a != null && b != null) games.push([a, b]);
+      var gwEl = document.getElementById("g" + gi + "w-" + m.id), glEl = document.getElementById("g" + gi + "l-" + m.id);
+      var av = gwEl ? gwEl.value : "", bv = glEl ? glEl.value : "";
+      var a = av !== "" ? parseInt(av) : null;
+      var b = bv !== "" ? parseInt(bv) : null;
+      if (a == null && b == null) continue;            // 空行はスキップ
+      if (a == null || b == null) {                    // 片方だけ=記入漏れ (#262)
+        toast("G" + gi + " の点数が片方だけです。両方とも入力してください。", "err"); return;
+      }
+      games.push({ g: gi, a: a, b: b });
     }
+    var winnerName = slot === 1 ? m.player1_name : m.player2_name;
+    var loserName  = slot === 1 ? m.player2_name : m.player1_name;
     var body = { winner_slot: slot, sets: [] };
     if (games.length) {
       var wc = 0, lc = 0, sets = [];
-      games.forEach(function (g) {
-        if (g[0] > g[1]) wc++; else if (g[1] > g[0]) lc++;
-        sets.push(slot === 1 ? [g[0], g[1]] : [g[1], g[0]]);  // 勝者→player1視点に変換
-      });
-      if (wc <= lc) { toast("勝者のゲーム数が多くなるよう点数を入力してください。", "err"); return; }
+      for (var gx = 0; gx < games.length; gx++) {
+        var ga = games[gx].a, gb = games[gx].b, gn = games[gx].g;
+        if (ga === gb) { toast("G" + gn + " が同点（" + ga + "-" + gb + "）です。勝った方が多くなるように入力してください。", "err"); return; }
+        var hi = ga > gb ? ga : gb, lo = ga > gb ? gb : ga;
+        if (hi < 11 || hi - lo < 2) {   // 1ゲーム=11点先取(2点差以上)。デュースは 12-10, 13-11 等
+          toast("G" + gn + "（" + ga + "-" + gb + "）は正しいゲーム点数ではありません。11点先取・2点差以上で入力してください（例 11-9、12-10）。", "err"); return;
+        }
+        if (ga > gb) wc++; else lc++;
+        sets.push(slot === 1 ? [ga, gb] : [gb, ga]);   // 勝者→player1視点に変換
+      }
+      if (wc <= lc) {   // 反対入力チェック (#262): 選んだ勝者より相手のゲーム数が多い/同じ
+        toast("点数では「" + (loserName || "相手") + "」の勝ちになっています。左の列＝「" + (winnerName || "勝者")
+          + "」（勝者）の点数です。『勝った選手が11点を3ゲーム先取』になるよう、左右を間違えず入力してください。", "err"); return;
+      }
       body.winner_sets = wc; body.loser_sets = lc; body.sets = sets;
     } else if (ws != null && ls != null) {
-      if (ws === ls) { toast("セット数が同じです。勝者が多くなるように入力してください。", "err"); return; }
-      if (ws < ls) { toast("勝者のセット数が少なくなっています。確認してください。", "err"); return; }
+      if (ws === ls) { toast("セット数が同じ（" + ws + "-" + ls + "）です。勝った選手が多くなるように入力してください。", "err"); return; }
+      if (ws < ls) { toast("「" + (winnerName || "勝者") + "」（勝者）のセット数が少なくなっています。左＝勝者の数です。左右が逆になっていないか確認してください。", "err"); return; }
       body.winner_sets = ws; body.loser_sets = ls;
     } else {
       body.winner_sets = 0; body.loser_sets = 0;  // 勝者のみ
