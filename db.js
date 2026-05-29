@@ -1536,12 +1536,16 @@ function getEntrantStats(tournamentId) {
   const byEvent = {};
   all.forEach(e => {
     const ev = e.event || "(未分類)";
-    if (!byEvent[ev]) byEvent[ev] = { total: 0, blocks: {}, linked: 0, doubles: 0 };
+    if (!byEvent[ev]) byEvent[ev] = { total: 0, blocks: {}, linked: 0, doubles: 0, male: 0, female: 0 };
     byEvent[ev].total++;
     const b = e.block || "(未割当)";
     byEvent[ev].blocks[b] = (byEvent[ev].blocks[b] || 0) + 1;
     if (e.player_id) byEvent[ev].linked++;
     if (e.is_doubles) byEvent[ev].doubles++;
+    // 男女別 (#257): 種目名に女子/男子があれば優先、無ければ entrant.gender
+    const evg = /女子|レディース|女/.test(ev) ? "female" : (/男子|メンズ|男/.test(ev) ? "male" : null);
+    const g = evg || (e.gender === "female" ? "female" : "male");
+    byEvent[ev][g]++;
   });
   return byEvent;
 }

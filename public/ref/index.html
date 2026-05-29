@@ -164,6 +164,26 @@
     for (var i = 0; i <= 5; i++) o += '<option value="' + i + '">' + i + '</option>';
     return o;
   }
+  // ゲーム別点数の選択肢 0〜11 (#256)
+  function ptSelOpts() {
+    var o = '<option value="">-</option>';
+    for (var i = 0; i <= 11; i++) o += '<option value="' + i + '">' + i + '</option>';
+    return o;
+  }
+  // 記入途中の下書き保存 (時間経過/再読込でも消えない #256)
+  var DKEY = "ktta_ref_draft_v1_";
+  function loadDraft(mid) { try { return JSON.parse(localStorage.getItem(DKEY + mid) || "null"); } catch (e) { return null; } }
+  function saveDraft(mid, d) { try { localStorage.setItem(DKEY + mid, JSON.stringify(d)); } catch (e) {} }
+  function clearDraft(mid) { try { localStorage.removeItem(DKEY + mid); } catch (e) {} }
+  function readConfirm(mid, slot) {
+    var ws = document.getElementById("ws-" + mid), ls = document.getElementById("ls-" + mid);
+    var d = { slot: slot, ws: ws ? ws.value : "", ls: ls ? ls.value : "", games: [] };
+    for (var i = 1; i <= 5; i++) {
+      var gw = document.getElementById("g" + i + "w-" + mid), gl = document.getElementById("g" + i + "l-" + mid);
+      d.games.push([gw ? gw.value : "", gl ? gl.value : ""]);
+    }
+    return d;
+  }
   var toastTimer;
   function toast(msg, kind) {
     toastEl.textContent = msg; toastEl.className = "toast show " + (kind || "");
@@ -218,6 +238,23 @@
     root.innerHTML = html;
     bindReload();
     matches.forEach(function (m) { bindCard(m); });
+    // 下書きが残っている試合は確認パネルを自動で開いて記入を復元 (#256: 時間経過/再読込でも消えない)
+    if (!editingMid) {
+      for (var di = 0; di < matches.length; di++) {
+        var dm = matches[di];
+        if (!dm.awaiting_approval && !redo[dm.id] && loadDraft(dm.id)) {
+          var dd = loadDraft(dm.id);
+          var dslot = dd && dd.slot === 2 ? 2 : 1;
+          selWinner[dm.id] = dslot;
+          var dcard = document.getElementById("card-" + dm.id);
+          if (dcard) dcard.querySelectorAll(".pbtn").forEach(function (b) {
+            b.classList.toggle("sel", parseInt(b.getAttribute("data-slot")) === dslot);
+          });
+          showConfirm(dm, dslot);
+          break;  // 1件だけ自動復元
+        }
+      }
+    }
   }
 
   function bindReload() {
@@ -291,32 +328,54 @@
 
   function showConfirm(m, slot) {
     var winnerName = slot === 1 ? m.player1_name : m.player2_name;
+    var loserName = (slot === 1 ? m.player2_name : m.player1_name);
     var box = document.getElementById("confirm-" + m.id);
     if (!box) return;
     editingMid = m.id;   // 入力開始: 自動更新の再描画から保護 (#240)
     box.style.display = "block";
+    var d = loadDraft(m.id) || {};
+    var hasGames = d.games && d.games.some(function (g) { return g && (g[0] !== "" || g[1] !== ""); });
+    var gameRows = "";
+    for (var gi = 1; gi <= 5; gi++) {
+      gameRows += '<div class="score-row"><span class="lbl">G' + gi + '</span>'
+        + '<select id="g' + gi + 'w-' + esc(m.id) + '">' + ptSelOpts() + '</select>'
+        + '<span class="lbl">-</span>'
+        + '<select id="g' + gi + 'l-' + esc(m.id) + '">' + ptSelOpts() + '</select></div>';
+    }
     box.innerHTML = ''
       + '<div class="confirm-q"><b>' + esc(winnerName || "選手") + '</b> の勝ちで報告しますか？</div>'
-      + '<details class="score-opt"><summary>セットスコアも記録する（任意）</summary>'
+      + '<details class="score-opt"' + ((d.ws || d.ls) ? ' open' : '') + '><summary>セット数だけ記録（任意）</summary>'
       +   '<div class="score-row">'
       +     '<span class="lbl">' + esc(winnerName || "勝者") + '</span>'
       +     '<select id="ws-' + esc(m.id) + '">' + setSelOpts() + '</select>'
       +     '<span class="lbl">-</span>'
       +     '<select id="ls-' + esc(m.id) + '">' + setSelOpts() + '</select>'
-      +     '<span class="lbl">' + esc((slot === 1 ? m.player2_name : m.player1_name) || "敗者") + '</span>'
+      +     '<span class="lbl">' + esc(loserName || "敗者") + '</span>'
       +   '</div>'
-      +   '<div style="font-size:12px;color:#78716c;margin-top:6px">空欄なら「勝者のみ」で記録します。</div>'
+      + '</details>'
+      + '<details class="score-opt"' + (hasGames ? ' open' : '') + '><summary>ゲームごとの点数（任意・左=勝者/右=敗者・0〜11）</summary>'
+      +   gameRows
+      +   '<div style="font-size:12px;color:#78716c;margin-top:6px">点数を入れると自動でセット数を計算します。<b>記入は自動保存</b>され、時間が経っても消えません。</div>'
       + '</details>'
       + '<div class="btn-row">'
       +   '<button class="b b-cancel" id="cancel-' + esc(m.id) + '">やめる</button>'
       +   '<button class="b b-ok" id="send-' + esc(m.id) + '">この結果で報告</button>'
       + '</div>';
+    // 下書きを復元
+    var setv = function (id, v) { var el = document.getElementById(id); if (el && v != null && v !== "") el.value = v; };
+    setv("ws-" + m.id, d.ws); setv("ls-" + m.id, d.ls);
+    if (d.games) for (var k = 0; k < d.games.length && k < 5; k++) {
+      setv("g" + (k + 1) + "w-" + m.id, d.games[k][0]); setv("g" + (k + 1) + "l-" + m.id, d.games[k][1]);
+    }
+    // 入力のたびに下書き保存
+    box.addEventListener("change", function () { saveDraft(m.id, readConfirm(m.id, slot)); });
     document.getElementById("cancel-" + m.id).onclick = function () {
       box.style.display = "none";
       var card = document.getElementById("card-" + m.id);
       if (card) card.querySelectorAll(".pbtn").forEach(function (b) { b.classList.remove("sel"); });
       selWinner[m.id] = 0;
       editingMid = 0;                       // 入力終了 → 自動更新の保護解除 (#240)
+      clearDraft(m.id);
       if (latestState) render(latestState); // 保留していた最新状態に追いつく
     };
     document.getElementById("send-" + m.id).onclick = function () { submit(m, slot); };
@@ -349,8 +408,24 @@
     var lsEl = document.getElementById("ls-" + m.id);
     var ws = wsEl && wsEl.value !== "" ? parseInt(wsEl.value) : null;
     var ls = lsEl && lsEl.value !== "" ? parseInt(lsEl.value) : null;
+    // ゲーム別点数 (入力があれば優先)。sets_json は player1 視点で保存。
+    var games = [];
+    for (var gi = 1; gi <= 5; gi++) {
+      var gw = document.getElementById("g" + gi + "w-" + m.id), gl = document.getElementById("g" + gi + "l-" + m.id);
+      var a = gw && gw.value !== "" ? parseInt(gw.value) : null;
+      var b = gl && gl.value !== "" ? parseInt(gl.value) : null;
+      if (a != null && b != null) games.push([a, b]);
+    }
     var body = { winner_slot: slot, sets: [] };
-    if (ws != null && ls != null) {
+    if (games.length) {
+      var wc = 0, lc = 0, sets = [];
+      games.forEach(function (g) {
+        if (g[0] > g[1]) wc++; else if (g[1] > g[0]) lc++;
+        sets.push(slot === 1 ? [g[0], g[1]] : [g[1], g[0]]);  // 勝者→player1視点に変換
+      });
+      if (wc <= lc) { toast("勝者のゲーム数が多くなるよう点数を入力してください。", "err"); return; }
+      body.winner_sets = wc; body.loser_sets = lc; body.sets = sets;
+    } else if (ws != null && ls != null) {
       if (ws === ls) { toast("セット数が同じです。勝者が多くなるように入力してください。", "err"); return; }
       if (ws < ls) { toast("勝者のセット数が少なくなっています。確認してください。", "err"); return; }
       body.winner_sets = ws; body.loser_sets = ls;
@@ -366,7 +441,7 @@
 
     // オフラインなら即キュー (回線復旧で自動送信)
     if (!navigator.onLine) {
-      enqueue(m.id, body); delete pendingOpId[m.id]; redo[m.id] = false;
+      enqueue(m.id, body); delete pendingOpId[m.id]; redo[m.id] = false; clearDraft(m.id);
       toast("オフライン: 報告を保存しました。回線復旧後に自動送信します。", "warn");
       load(); return;
     }
@@ -378,12 +453,12 @@
         return;
       }
       delete pendingOpId[m.id];
-      redo[m.id] = false;
+      redo[m.id] = false; clearDraft(m.id);
       toast("報告しました（本部の承認待ち）: " + (res.j.winner_name || "") + " の勝ち", "ok");
       load();
     }).catch(function () {
       // 通信失敗 → キューに積んで後で自動送信
-      enqueue(m.id, body); delete pendingOpId[m.id]; redo[m.id] = false;
+      enqueue(m.id, body); delete pendingOpId[m.id]; redo[m.id] = false; clearDraft(m.id);
       toast("通信に失敗。報告を保存し、回線復旧後に自動送信します。", "warn");
       load();
     });

@@ -3820,10 +3820,16 @@ const A = {
  return;
  }
  const totalEntrants = Object.values(stats).reduce((a, st) => a + (st.total || 0), 0);
+ const totalMale = Object.values(stats).reduce((a, st) => a + (st.male || 0), 0);
+ const totalFemale = Object.values(stats).reduce((a, st) => a + (st.female || 0), 0);
  inner.appendChild(h("div", { className: "roster-total" },
  h("span", { className: "roster-total-n" }, String(totalEntrants)),
  h("span", { className: "roster-total-l" }, "名 登録"),
- h("span", { className: "roster-total-sub" }, Object.keys(stats).length + " 種目")));
+ h("span", { className: "roster-total-sub" },
+   Object.keys(stats).length + " 種目　",
+   h("span", { style: { color: "#2563eb", fontWeight: 700 } }, "男子 " + totalMale),
+   " / ",
+   h("span", { style: { color: "#db2777", fontWeight: 700 } }, "女子 " + totalFemale))));
  const grid = h("div", { className: "grid grid-auto" });
  Object.entries(stats).forEach(([ev, st]) => {
  const blocks_str = Object.keys(st.blocks).length > 1
@@ -7793,7 +7799,7 @@ const O = {
  );
  }
 
- return h("div", {}, header, matchInfo, inputs);
+ return h("div", {}, header, matchInfo, O._playerDbLinks(m), inputs);
  };
 
  let bodyContainer = h("div", {});
@@ -7868,6 +7874,22 @@ const O = {
 
  openMatchActions(match) {
  O.openResultInput(match);
+ },
+
+ // 試合の選手を個人DB(編集/戦績)へリンク。シングルス/ダブルス両対応 (#255)
+ _playerDbLinks(m) {
+ const first = (c) => String(c || "").split(" / ")[0].trim();
+ const members = [
+   { id: m.player1_id, name: m.player1_main_name || first(m.player1_name) || m.player1_name },
+   (m.player1_partner_id || m.player1_partner_name) ? { id: m.player1_partner_id, name: m.player1_partner_name } : null,
+   { id: m.player2_id, name: m.player2_main_name || first(m.player2_name) || m.player2_name },
+   (m.player2_partner_id || m.player2_partner_name) ? { id: m.player2_partner_id, name: m.player2_partner_name } : null,
+ ].filter(x => x && x.id);
+ if (!members.length) return null;
+ return h("div", { className: "flex gap-2 mb-2", style: { flexWrap: "wrap", alignItems: "center" } },
+   h("span", { className: "text-xs text-sub" }, "選手DB:"),
+   ...members.map(x => h("button", { className: "btn btn-sm btn-ghost",
+     onClick: () => A.editPlayer({ id: x.id }) }, (x.name || "選手") + " ▸")));
  },
 
  async uncallMatch(id) {
