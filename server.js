@@ -1925,6 +1925,28 @@ const publicDir = path.join(__dirname, "public");
 // これを付けないとブラウザのヒューリスティックキャッシュで古い common.js 等が使われ、
 // 進行管理の確定ボタンが無反応になる等の事故が起きるため。
 const staticOpts = { setHeaders: (res) => res.setHeader("Cache-Control", "no-cache") };
+
+// ── アセットのキャッシュ破棄 ───────────────────────────────────────
+// デプロイ(サーバ再起動)ごとに変わるバージョンを、index HTML 内の /shared/*.js,css
+// 参照に注入する。これにより古い common.js 等がブラウザに残り続ける事故を根絶
+// (例: TT.playerStatsSection is not a function)。
+const ASSET_VER = Date.now().toString(36);
+function _serveVersionedHtml(file) {
+  return (req, res) => {
+    fs.readFile(file, "utf8", (err, html) => {
+      if (err) return res.status(404).type("html").send("<h1>not found</h1>");
+      const out = html.replace(/(\/shared\/[A-Za-z0-9_.\-]+\.(?:js|css))(\?v=[^"']*)?/g, `$1?v=${ASSET_VER}`);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache");
+      res.send(out);
+    });
+  };
+}
+app.get(["/admin", "/admin/", "/admin/index.html"], _serveVersionedHtml(path.join(publicDir, "admin", "index.html")));
+app.get(["/viewer", "/viewer/", "/viewer/index.html"], _serveVersionedHtml(path.join(publicDir, "viewer", "index.html")));
+app.get(["/viewer/live", "/viewer/live/", "/viewer/live/index.html"], _serveVersionedHtml(path.join(publicDir, "viewer", "live", "index.html")));
+app.get(["/widget", "/widget/", "/widget/index.html"], _serveVersionedHtml(path.join(publicDir, "widget", "index.html")));
+
 app.use("/shared", express.static(path.join(publicDir, "shared"), staticOpts));
 app.use("/admin", express.static(path.join(publicDir, "admin"), staticOpts));
 app.use("/viewer", express.static(path.join(publicDir, "viewer"), staticOpts));
@@ -1991,7 +2013,7 @@ app.get(["/viewer", "/viewer/*"], (req, res) => {
   res.sendFile(path.join(publicDir, "viewer", "index.html"));
 });
 app.get("/", (req, res) => { res.redirect("/viewer"); });
-app.get("*", (req, res) => { res.sendFile(path.join(publicDir, "viewer", "index.html")); });
+app.get("*", _serveVersionedHtml(path.join(publicDir, "viewer", "index.html")));
 
 // ═══ グローバル エラーハンドラ ═══
 // 未捕捉のエラーを DIAG に記録 + 500 を返す
