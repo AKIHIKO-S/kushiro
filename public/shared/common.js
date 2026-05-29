@@ -331,7 +331,7 @@
       avgWon: total ? (setsWon / total).toFixed(1) : "0", avgLost: total ? (setsLost / total).toFixed(1) : "0",
       fullSet: { w: fullW, l: fullL, total: fullTotal, rate: pctOf(fullW, fullTotal) },
       recent, streakCurrent: cur, streakLongest: longest,
-      avgDur, maxDur, durCount: durs.length,
+      avgDur, maxDur, durCount: durs.length, totalDur: durs.reduce((a, b) => a + b, 0),
       tournaments, events, months, h2h, byTime, rounds, branches,
       scoreDist: {
         win: Object.entries(scoreW).sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ k, n })),
@@ -393,14 +393,19 @@
     wrap.appendChild(h("div", { className: "section-title" }, "数値で見る成績"));
     wrap.appendChild(h("div", { className: "pstat-tiles" },
       tile(st.rate + "%", "通算勝率", st.wins + "勝 " + st.losses + "敗", cmpPct(st.rate, 50, true)),
+      tile(String(st.total), "通算試合数", st.tournaments.length + " 大会"),
       tile(st.setRate + "%", "セット取得率", st.setsWon + "-" + st.setsLost, cmpPct(st.setRate, 50, true)),
-      tile(st.avgWon + " / " + st.avgLost, "平均 取/失セット", "1試合あたり"),
-      tile(st.fullSet.total ? st.fullSet.rate + "%" : "—", "フルセット勝率", st.fullSet.w + "-" + st.fullSet.l + " 接戦", st.fullSet.total ? cmpPct(st.fullSet.rate, 50, true) : null),
+      tile(st.avgWon, "平均取得セット", "1試合あたり"),
+      tile(st.avgLost, "平均失セット", "1試合あたり"),
+      tile(st.fullSet.total ? st.fullSet.rate + "%" : "—", "フルセット勝率", st.fullSet.w + "-" + st.fullSet.l, st.fullSet.total ? cmpPct(st.fullSet.rate, 50, true) : null),
+      tile(st.total ? Math.round(st.fullSet.total / st.total * 100) + "%" : "—", "接戦率", "フルセット " + st.fullSet.total + " 試合"),
+      tile(st.wins ? st.shutout.winRate + "%" : "—", "ストレート勝率", st.shutout.w + " / " + st.wins + " 勝（完封）"),
+      tile(st.losses ? st.shutout.loseRate + "%" : "—", "被ストレート率", st.shutout.l + " / " + st.losses + " 敗"),
       tile(String(st.streakLongest), "最多連勝", "現在 " + st.streakCurrent + " 連勝中"),
       tile(String(st.tournaments.length), "出場大会数", st.total + " 試合"),
-      tile(st.avgDur ? fmtDuration(st.avgDur) : "—", "平均対戦時間", st.durCount ? (st.durCount + " 試合で計測") : "記録なし", (avg && st.avgDur) ? cmpDur(st.avgDur, avg.avgDurationSec) : null),
+      tile(st.avgDur ? fmtDuration(st.avgDur) : "—", "平均対戦時間", st.durCount ? (st.durCount + " 試合") : "記録なし", (avg && st.avgDur) ? cmpDur(st.avgDur, avg.avgDurationSec) : null),
       tile(st.maxDur ? fmtDuration(st.maxDur) : "—", "最長の対戦", "呼出→結果入力"),
-      tile(st.wins ? st.shutout.winRate + "%" : "—", "ストレート勝率", st.shutout.w + " / " + st.wins + " 勝（完封）")));
+      tile(st.totalDur ? fmtDuration(st.totalDur) : "—", "総試合時間", st.durCount + " 試合の合計")));
 
     if (st.recent.length) {
       wrap.appendChild(h("div", { className: "pform" },
@@ -408,13 +413,12 @@
         ...st.recent.map(r => h("span", { className: "pform-dot " + (r === "W" ? "win" : "lose") }, r === "W" ? "勝" : "敗"))));
     }
     {
-      const chip = (label, n, cls) => h("span", { className: "preach-chip " + (cls || "") }, label + " " + n);
+      const chip = (label, n, cls) => h("span", { className: "preach-chip " + (cls || "") }, label + " " + n + "回");
       const reaches = [
         ["優勝", st.rounds.champion, "gold"],
         ["準優勝", st.rounds.runnerup, "silver"],
-        ["ベスト4", st.rounds.best4, "bronze"],
-        ["ベスト8", st.rounds.best8, ""],
-        ["ベスト16", st.rounds.best16, ""],
+        ["3位", st.rounds.best4, "bronze"],
+        ["入賞(ベスト8)", st.rounds.best8, ""],
       ].filter(r => r[1] > 0);
       if (reaches.length) {
         wrap.appendChild(h("div", { className: "section-sub" }, "トーナメント成績"));
@@ -657,7 +661,7 @@
     const inv = opts.inverse ? " ktta-logo--inverse" : "";
     const link = opts.href !== undefined ? opts.href : null;
     const tag = opts.tag !== false;
-    const tagText = opts.tagText || "KUSHIRO · TABLE TENNIS";
+    const tagText = opts.tagText || "KUSHIRO · TABLE TENNIS · ASSOCIATION";
     const el = (link != null ? "a" : "span");
     const linkAttr = link != null ? ` href="${link}"` : "";
     return `<${el} class="ktta-logo${inv}"${linkAttr}>
@@ -761,7 +765,9 @@
   // ヒーロー背景の CSS 文字列 (放射ハイライト + 斜めグラデの2層)。要素に inline 適用。
   function branchHeroBg(raw) {
     const g = branchGradient(raw);
-    return "radial-gradient(125% 145% at 86% -12%, rgba(255,255,255,.24), rgba(255,255,255,0) 55%), "
+    // 3層: 斜めの薄いライン模様(アーキテクチャ感) + 放射ハイライト + 斜めグラデ。文字可読性のため模様は5%以下。
+    return "repeating-linear-gradient(135deg, rgba(255,255,255,.05) 0 2px, rgba(255,255,255,0) 2px 22px), "
+      + "radial-gradient(125% 145% at 86% -12%, rgba(255,255,255,.22), rgba(255,255,255,0) 55%), "
       + "linear-gradient(135deg, " + g.from + " 0%, " + g.to + " 100%)";
   }
 

@@ -8,12 +8,16 @@
 <style>
  /* viewer 専用の追加スタイル */
  .hero {
- background: var(--ink-950);
+ /* トンマナ(タンチョウ/卓球=ティール〜グリーン)の濃色グラデ + 薄い斜めライン模様。軽量(CSSのみ) */
+ background:
+   repeating-linear-gradient(135deg, rgba(255,255,255,.045) 0 2px, rgba(255,255,255,0) 2px 24px),
+   radial-gradient(120% 180% at 90% -40%, rgba(94,234,212,.18), rgba(94,234,212,0) 60%),
+   linear-gradient(100deg, #0f172a 0%, #134e4a 55%, #0f766e 118%);
  color: var(--ink-0);
  padding: 14px 0;
- border-bottom: 1px solid var(--ink-800);
+ border-bottom: 3px solid #5eead4;
  position: sticky; top: 0; z-index: 50;
- backdrop-filter: blur(8px);
+ box-shadow: 0 2px 14px rgba(0,0,0,.20);
  }
  .hero-inner {
  max-width: 1200px; margin: 0 auto; padding: 0 20px;
@@ -556,7 +560,7 @@
    <span class="ktta-logo-mark" aria-hidden="true"></span>
    <span class="ktta-logo-text">
      <span class="ktta-logo-name">KTTA Platform</span>
-     <span class="ktta-logo-tag">KUSHIRO · TABLE TENNIS</span>
+     <span class="ktta-logo-tag">KUSHIRO · TABLE TENNIS · ASSOCIATION</span>
    </span>
  </a>
  <div class="live-indicator" id="liveIndicator" style="display:none">
@@ -1239,7 +1243,7 @@ const V = {
  h("div", { className: "pg-badges" },
    h("span", { className: "pg-cat-badge" }, TT.catLabel(p.category)),
    p.gender === "female" ? h("span", { className: "pg-cat-badge alt" }, "女子") : h("span", { className: "pg-cat-badge alt2" }, "男子"),
-   p.branch ? TT.branchBadge(p.branch, { fontSize: "11px", padding: "2px 10px", borderRadius: "12px", fontWeight: 700 }) : null),
+   p.branch ? TT.branchBadge(p.branch, { fontSize: "14px", padding: "5px 14px", borderRadius: "13px", fontWeight: 800 }) : null),
  // ヒーロー内の要素を増やす: 最高成績 / 通算 / 最多連勝 / 直近フォーム (#242)
  h("div", { className: "pg-hero-chips" },
    topReach ? h("span", { className: "pg-hero-chip best " + topReach.c }, "最高 " + topReach.t) : null,
@@ -1924,7 +1928,7 @@ const L = {
  if (s.callable.length) {
  main.appendChild(h("div", { className: "un-head" },
  h("span", { className: "un-title" }, "まもなく呼ばれそうな選手"),
- h("span", { className: "un-sub" }, "上から順に呼ばれる予定です（全" + s.callable.length + "試合待ち）")));
+ h("span", { className: "un-sub" }, "順番はあくまで目安です。下記以外が呼ばれることもあるためコールにご注意ください（全" + s.callable.length + "試合待ち）")));
  const pEl = (name, num, team) => h("span", { className: "un-p" },
  num ? h("span", { className: "un-num" }, "#" + num) : null,
  h("span", {}, name || "?"),

@@ -533,8 +533,8 @@ input:focus, select:focus, textarea:focus {
 .pg-head-rich.female { background: linear-gradient(135deg, #1e1b4b 0%, #9d174d 60%, #db2777 120%); }
 .pg-id { min-width: 0; }
 .pg-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
-.pg-cat-badge { background: rgba(255,255,255,.22); color: #fff; font-size: 11px; font-weight: 700;
-  padding: 2px 10px; border-radius: 12px; }
+.pg-cat-badge { background: rgba(255,255,255,.24); color: #fff; font-size: 14px; font-weight: 800;
+  padding: 5px 14px; border-radius: 13px; letter-spacing: .02em; }
 .pg-cat-badge.alt { background: rgba(244,114,182,.5); }
 .pg-cat-badge.alt2 { background: rgba(96,165,250,.5); }
 .wr-ring { display: flex; flex-direction: column; align-items: center; gap: 3px; }
@@ -682,7 +682,9 @@ input:focus, select:focus, textarea:focus {
 .toast.warn { background: #d97706; }
 
 /* 選手 数値スタッツ #209 */
-.pstat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.pstat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; margin-bottom: 12px; }
+/* 広い画面では上下7ブロックずつ(計14)で隙間なく整列 */
+@media (min-width: 760px) { .pstat-tiles { grid-template-columns: repeat(7, 1fr); } }
 .pstat-tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 10px; text-align: center; }
 .pstat-v { font-size: 24px; font-weight: 800; line-height: 1; color: var(--ink-900); }
 .pstat-l { font-size: 11px; color: var(--sub); margin-top: 5px; font-weight: 700; }
