@@ -5421,6 +5421,58 @@ const A = {
    }
  },
 
+ // ── 選手DBサジェスト (手動試合追加で選手を選びやすく) #274 ──
+ async _loadPlayerSuggest() {
+ if (A._playerSuggestCache) return A._playerSuggestCache;
+ try { A._playerSuggestCache = await api.get("/api/players?sort=furigana") || []; }
+ catch { A._playerSuggestCache = []; }
+ return A._playerSuggestCache;
+ },
+ // name入力に選手DBの候補ドロップダウンを付与。候補選択で氏名+所属を補完。
+ // DBに無い名前はそのまま入力可 (保存時にサーバ側でDB自動追加)。
+ attachPlayerSuggest(nameEl, teamEl) {
+ if (!nameEl || nameEl._suggestOn) return;
+ nameEl._suggestOn = true;
+ nameEl.setAttribute("autocomplete", "off");
+ let box = null;
+ const close = () => { if (box) { box.remove(); box = null; } };
+ const pick = (p) => { nameEl.value = p.name; if (teamEl && p.team) teamEl.value = p.team; close(); };
+ const render = (list) => {
+ close();
+ if (!list.length) return;
+ box = document.createElement("div");
+ Object.assign(box.style, { position: "fixed", background: "#fff", border: "1px solid #cbd5e1",
+ borderRadius: "8px", boxShadow: "0 6px 20px rgba(0,0,0,.16)", maxHeight: "240px", overflowY: "auto",
+ zIndex: "100000", fontSize: "13px", minWidth: "200px" });
+ const r = nameEl.getBoundingClientRect();
+ box.style.left = r.left + "px"; box.style.top = (r.bottom + 2) + "px"; box.style.width = r.width + "px";
+ list.forEach(p => {
+ const it = document.createElement("div");
+ Object.assign(it.style, { padding: "7px 11px", cursor: "pointer", display: "flex",
+ justifyContent: "space-between", gap: "10px", borderBottom: "1px solid #f1f5f9" });
+ const nm = document.createElement("span"); nm.textContent = p.name; nm.style.fontWeight = "700";
+ const tm = document.createElement("span"); tm.textContent = p.team || ""; tm.style.color = "#64748b"; tm.style.fontSize = "11px";
+ it.appendChild(nm); it.appendChild(tm);
+ it.addEventListener("mouseenter", () => { it.style.background = "#ecfeff"; });
+ it.addEventListener("mouseleave", () => { it.style.background = "#fff"; });
+ it.addEventListener("mousedown", (e) => { e.preventDefault(); pick(p); });
+ box.appendChild(it);
+ });
+ document.body.appendChild(box);
+ };
+ const onInput = () => {
+ const q = (nameEl.value || "").trim().toLowerCase();
+ if (!q) return close();
+ const all = A._playerSuggestCache || [];
+ const list = all.filter(p => (p.name || "").toLowerCase().includes(q) || (p.furigana || "").includes(q)).slice(0, 8);
+ render(list);
+ };
+ nameEl.addEventListener("input", onInput);
+ nameEl.addEventListener("focus", onInput);
+ nameEl.addEventListener("blur", () => setTimeout(close, 150));
+ A._loadPlayerSuggest();
+ },
+
  // ── 手動で試合を作成 (表示されていない対戦の追加) ──
  openManualMatchCreate(t) {
  const existingEvents = [...new Set((t.matches || []).map(m => m.event).filter(Boolean))];
@@ -5524,6 +5576,11 @@ const A = {
      });
    };
    if (dblCb) { dblCb.addEventListener("change", upd); upd(); }
+   // 選手DBサジェストを4つの氏名欄に付与 (#274)
+   A.attachPlayerSuggest(document.getElementById("mmP1Name"), document.getElementById("mmP1Team"));
+   A.attachPlayerSuggest(document.getElementById("mmP2Name"), document.getElementById("mmP2Team"));
+   A.attachPlayerSuggest(document.getElementById("mmP1Partner"), document.getElementById("mmP1PartnerTeam"));
+   A.attachPlayerSuggest(document.getElementById("mmP2Partner"), document.getElementById("mmP2PartnerTeam"));
  }, 0);
 
  const foot = h("button", { className: "btn", onClick: async () => {
@@ -5551,10 +5608,13 @@ const A = {
  player2_name: p2b ? (p2a + " / " + p2b) : p2a,
  player2_team: isDouble ? teamCombo(t2Main, t2Pair) : t2Main,
  sets: [],
+ add_to_db: true,   // DBに無い選手は自動追加 (#274)
  };
  const r = await api.post(`/api/tournaments/${t.id}/matches`, data);
  if (r.error) return toast(r.error, "err");
- toast("試合を追加しました", "ok");
+ A._playerSuggestCache = null;   // DBが変わったのでキャッシュ破棄
+ const addedN = (r.added_players || []).length;
+ toast(addedN ? `試合を追加しました（選手DBに ${addedN}名 を新規登録）` : "試合を追加しました", "ok");
  document.querySelector(".modal-bg")?.remove();
  await A.openTournament(t.id);
  } }, "追加");
@@ -7016,16 +7076,24 @@ const O = {
      player1_name: pp1 ? (n1 + " / " + pp1) : n1, player1_team: (p1t.value || "").trim(),
      player2_name: pp2 ? (n2 + " / " + pp2) : n2, player2_team: (p2t.value || "").trim(),
      sets: [],
+     add_to_db: true,   // DBに無い選手は自動追加 (#274)
    };
    const r = await api.post(`/api/tournaments/${O.tournamentId}/scheduled-match`, data);
    if (r && r.error) return toast(r.error, "err");
-   toast("対戦を追加しました", "ok");
+   A._playerSuggestCache = null;   // DBが変わったのでキャッシュ破棄
+   const addedN = (r.added_players || []).length;
+   toast(addedN ? `対戦を追加しました（選手DBに ${addedN}名 を新規登録）` : "対戦を追加しました", "ok");
    addModal.remove();
    // 種目が増えた可能性 → パネルを作り直す
    O._opBracketPanelEl = null; O._opBracketEvKey = null;
    O.reload(true);
  } }, "追加する");
  const addModal = openModal("対戦を追加", body, callBtn);
+ // 選手DBサジェスト (#274): 氏名欄に候補。パートナーは氏名のみ補完。
+ A.attachPlayerSuggest(p1, p1t);
+ A.attachPlayerSuggest(p2, p2t);
+ A.attachPlayerSuggest(p1p, null);
+ A.attachPlayerSuggest(p2p, null);
  },
 
  // ── 勝敗反転 (ワンクリック) ──

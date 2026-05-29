@@ -860,6 +860,38 @@ function findPlayerByName(name, team, opts) {
   return null;
 }
 
+// 種目名から性別を推定 (手動追加選手の既定 gender 用)
+function _genderFromEvent(event) {
+  return /女|レディース|ガール/.test(String(event || "")) ? "female" : "male";
+}
+
+// 手動追加の試合データから、master選手DBに未登録の人を自動登録する (#274)。
+// player1_name / player2_name は「氏名 / パートナー」連結のことがあるので分解して個別に登録。
+function autoAddPlayersFromMatchData(data) {
+  const gender = _genderFromEvent(data && data.event);
+  const added = [];
+  const splitNames = s => String(s == null ? "" : s).split(/\s*[\/／・]\s*/).map(x => x.trim()).filter(Boolean);
+  const splitTeams = s => String(s == null ? "" : s).split(/\s*[\/／]\s*/).map(x => x.trim());
+  const pairs = [
+    [data.player1_name, data.player1_team],
+    [data.player2_name, data.player2_team],
+  ];
+  for (const [nm, tm] of pairs) {
+    const names = splitNames(nm);
+    const teams = splitTeams(tm);
+    names.forEach((name, i) => {
+      if (!name || name === "BYE") return;
+      const team = teams[i] || teams[0] || "";
+      if (findPlayerByName(name, team)) return;       // 既存はスキップ
+      try {
+        const p = createPlayer({ name, team, gender });
+        added.push(p.name);
+      } catch (e) { /* INVALID_NAME 等 (チーム名・記号など) はスキップ */ }
+    });
+  }
+  return added;
+}
+
 // ── 大会 ────────────────────────────────────────────────
 // 手動戦績用の隠し大会 (個別の試合記録の受け皿)
 const MANUAL_TID = "__manual_records__";
@@ -1048,7 +1080,9 @@ function createMatch(data) {
       stmts.updateRating.run(newLose, l.id);
     }
   }
-  return { ...rec, sets: JSON.parse(rec.sets_json) };
+  const out = { ...rec, sets: JSON.parse(rec.sets_json) };
+  if (data.add_to_db) out.added_players = autoAddPlayersFromMatchData(data);  // #274
+  return out;
 }
 
 function updateMatch(id, data) {
@@ -1092,7 +1126,9 @@ function createScheduledMatch(tournamentId, data) {
     player1_entrant_id: null, player2_entrant_id: null,
   };
   opStmts.insertFullMatch.run(rec);
-  return { ok: true, id: rec.id };
+  const out = { ok: true, id: rec.id };
+  if (data.add_to_db) out.added_players = autoAddPlayersFromMatchData(data);  // #274
+  return out;
 }
 
 function deleteMatch(id) {
