@@ -2664,6 +2664,9 @@ function generateBracket(tournamentId, event, options) {
   });
   try { numberTxn(); } catch (e) { console.error("bracket_number assignment error:", e); }
 
+  // 残ったシードBYEの取りこぼしを念のため解消 (通常はround1ループで処理済)
+  autoAdvanceByes(tournamentId, event);
+
   return {
     success: true,
     tournament_id: tournamentId,
@@ -2786,6 +2789,32 @@ function finishMatchInternal(matchId, data) {
   }
 
   return stmts.getMatch.get(matchId);
+}
+
+// ─── シード(BYE)の自動繰り上げ ─────────────────────────────
+// 「実選手 vs BYE」の未完了試合を不戦勝処理し、勝者を次の対戦へ自動的に上げる。
+// シードで初戦が BYE の選手を、対戦相手の確定を待たずに次戦へ進めるための共通処理。
+// ・対象は片側が実選手・もう片側が「明示的な BYE」の試合のみ。
+//   空欄("")は前の試合の勝者待ちなので絶対に触らない(誤って繰り上げると実戦を飛ばすため)。
+// ・進出先がさらに BYE になる連鎖にも対応するため、変化が無くなるまで数回繰り返す。
+function autoAdvanceByes(tournamentId, event) {
+  const where = event
+    ? "tournament_id=? AND event=? AND status!='completed'"
+    : "tournament_id=? AND status!='completed'";
+  const sel = sqlite.prepare(`SELECT id, player1_name, player2_name FROM matches WHERE ${where}`);
+  const args = event ? [tournamentId, event] : [tournamentId];
+  let advanced = 0;
+  for (let pass = 0; pass < 12; pass++) {
+    let changed = false;
+    for (const m of sel.all(...args)) {
+      const p1 = (m.player1_name || "").trim();
+      const p2 = (m.player2_name || "").trim();
+      if (p1 && p1 !== "BYE" && p2 === "BYE") { finishMatchInternal(m.id, { winner_slot: 1, sets: [] }); changed = true; advanced++; }
+      else if (p2 && p2 !== "BYE" && p1 === "BYE") { finishMatchInternal(m.id, { winner_slot: 2, sets: [] }); changed = true; advanced++; }
+    }
+    if (!changed) break;
+  }
+  return advanced;
 }
 
 // ─── 試合結果の修正 (完了済み試合を再編集) ────
@@ -4732,7 +4761,9 @@ function importFromMatches(tournamentId, data) {
   }
 
   // bracket_size / total_rounds 推定
-  const round1Matches = data.matches.filter(m => (m.bracket_round || 0) === 1);
+  // ※ insert 側は (m.bracket_round || 1) で round1 扱いするため、ここも同じ既定値に揃える。
+  //   (bracket_round 未指定の取込データで round1 のBYE自動繰り上げ・選手番号付与が漏れるのを防ぐ)
+  const round1Matches = data.matches.filter(m => (m.bracket_round || 1) === 1);
   let bracketSize = data.bracket_size;
   if (!bracketSize && round1Matches.length) bracketSize = round1Matches.length * 2;
   if (!bracketSize) {
@@ -4876,6 +4907,10 @@ function importFromMatches(tournamentId, data) {
     });
   });
   txn();
+
+  // BYE(シード)の取りこぼしを最終的に解消: 残った「実選手 vs BYE」を自動繰り上げ
+  // (round1 ループで拾えない位置のBYEや、bracket_round未指定データでも確実に進める)
+  autoAdvanceByes(tournamentId, data.event);
 
   // 選手番号 (大会固有・左右別) を自動付与
   // round1 の bracket_pos から slot を逆算し、左半分=1..N/2、右半分=1..N/2 で番号付け
@@ -5521,7 +5556,7 @@ module.exports = {
   exportAllData, importPlayers, getStats, getLastUpdated, getOpsFingerprint,
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
-  generateBracket, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
+  generateBracket, autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
   setCallCount, bumpCallCount,
   getPlayerRefereeLock, getPlayerPlayingLock,
