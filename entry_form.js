@@ -1423,7 +1423,7 @@ function buildEntryFormSnippet(tournament, events, opts) {
       Array.prototype.forEach.call(container.children, function(row, ri) {
         var obj = { event: ev.name, type: ev.type || "singles", fee: ev.fee || 0 };
         var isMixed = /混合|ミックス/.test(ev.name || "");
-        if (isMixed) obj.type = "mixed";
+        if (isMixed) obj.type = "doubles"; // 混合ダブルスは構造上ダブルス。type:"mixed" はサーバ(createTeamEntry)未対応で申込が欠落するため doubles で送る。種目名「混合ダブルス」で集計分類は維持 (#269 欠落バグ修正)
         if (ev.type === "team") {
           var nameEl = row.querySelector('input[name^="ev' + idx + '_t' + ri + '_name"]');
           obj.team_name = nameEl ? nameEl.value.trim() : "";
