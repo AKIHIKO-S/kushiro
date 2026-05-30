@@ -5714,6 +5714,17 @@ const A = {
  );
  };
 
+ // アコーディオン1ブロックを生成 (team/category/branch/gender/かな行 で共用)
+ const pdbAcc = (openCls, numEl, label, players, headStyle) => {
+ const acc = h("div", { className: "pdb-acc" + openCls });
+ const head = h("div", { className: "pdb-acc-head", style: headStyle, onClick: () => acc.classList.toggle("open") },
+ numEl, h("div", { className: "pdb-row-label" }, label),
+ h("div", { className: "pdb-row-count" }, players.length + "名"));
+ const body = h("div", { className: "pdb-acc-body" });
+ players.forEach(p => body.appendChild(renderPlayerCard(p)));
+ acc.appendChild(head); acc.appendChild(body); el.appendChild(acc);
+ };
+
  if (view === "flat") {
    // フラット一覧
    const grid = h("div", { style: {
@@ -5738,18 +5749,7 @@ const A = {
      // チーム内は出場回数の多い選手を上に (#194)
      const players = byTeam[tn].sort((a, b) => (b.appearances || 0) - (a.appearances || 0)
        || (a.furigana || "").localeCompare(b.furigana || "", "ja"));
-     const acc = h("div", { className: "pdb-acc" + (idx === 0 ? " open" : "") });
-     const head = h("div", { className: "pdb-acc-head",
-       onClick: () => acc.classList.toggle("open") },
-       h("div", { className: "pdb-row-num", style: { fontSize: "16px" } }, "🏓"),
-       h("div", { className: "pdb-row-label" }, tn),
-       h("div", { className: "pdb-row-count" }, players.length + "名"),
-     );
-     const body = h("div", { className: "pdb-acc-body" });
-     players.forEach(p => body.appendChild(renderPlayerCard(p)));
-     acc.appendChild(head);
-     acc.appendChild(body);
-     el.appendChild(acc);
+     pdbAcc(idx === 0 ? " open" : "", h("div", { className: "pdb-row-num", style: { fontSize: "16px" } }, "🏓"), tn, players);
    });
    return;
  }
@@ -5766,14 +5766,7 @@ const A = {
    cKeys.forEach((ck, idx) => {
      const players = byCat[ck].sort((a, b) => (b.appearances || 0) - (a.appearances || 0)
        || (a.furigana || "").localeCompare(b.furigana || "", "ja"));
-     const acc = h("div", { className: "pdb-acc" + (idx === 0 ? " open" : "") });
-     const head = h("div", { className: "pdb-acc-head", onClick: () => acc.classList.toggle("open") },
-       h("div", { className: "pdb-row-num", style: { fontSize: "14px" } }, "◆"),
-       h("div", { className: "pdb-row-label" }, TT.catLabel(ck)),
-       h("div", { className: "pdb-row-count" }, players.length + "名"));
-     const body = h("div", { className: "pdb-acc-body" });
-     players.forEach(p => body.appendChild(renderPlayerCard(p)));
-     acc.appendChild(head); acc.appendChild(body); el.appendChild(acc);
+     pdbAcc(idx === 0 ? " open" : "", h("div", { className: "pdb-row-num", style: { fontSize: "14px" } }, "◆"), TT.catLabel(ck), players);
    });
    return;
  }
@@ -5788,15 +5781,7 @@ const A = {
      const players = byBr[bn].sort((a, b) => (b.appearances || 0) - (a.appearances || 0)
        || (a.furigana || "").localeCompare(b.furigana || "", "ja"));
      const bc = TT.branchColor(bn);
-     const acc = h("div", { className: "pdb-acc" + (idx === 0 ? " open" : "") });
-     const head = h("div", { className: "pdb-acc-head", style: { borderLeft: "6px solid " + bc.fg },
-       onClick: () => acc.classList.toggle("open") },
-       h("div", { className: "pdb-row-num", style: { background: bc.bg, color: bc.fg, fontSize: "12px" } }, "支"),
-       h("div", { className: "pdb-row-label" }, bn),
-       h("div", { className: "pdb-row-count" }, players.length + "名"));
-     const body = h("div", { className: "pdb-acc-body" });
-     players.forEach(p => body.appendChild(renderPlayerCard(p)));
-     acc.appendChild(head); acc.appendChild(body); el.appendChild(acc);
+     pdbAcc(idx === 0 ? " open" : "", h("div", { className: "pdb-row-num", style: { background: bc.bg, color: bc.fg, fontSize: "12px" } }, "支"), bn, players, { borderLeft: "6px solid " + bc.fg });
    });
    return;
  }
@@ -5809,15 +5794,8 @@ const A = {
      const players = byG[k]; if (!players.length) return;
      players.sort((a, b) => (b.appearances || 0) - (a.appearances || 0)
        || (a.furigana || "").localeCompare(b.furigana || "", "ja"));
-     const acc = h("div", { className: "pdb-acc" + (idx === 0 ? " open" : "") });
-     const head = h("div", { className: "pdb-acc-head", onClick: () => acc.classList.toggle("open") },
-       h("div", { className: "pdb-row-num", style: { fontSize: "15px",
-         background: k === "female" ? "#fce7f3" : "#dbeafe", color: k === "female" ? "#db2777" : "#2563eb" } }, k === "female" ? "♀" : "♂"),
-       h("div", { className: "pdb-row-label" }, label),
-       h("div", { className: "pdb-row-count" }, players.length + "名"));
-     const body = h("div", { className: "pdb-acc-body" });
-     players.forEach(p => body.appendChild(renderPlayerCard(p)));
-     acc.appendChild(head); acc.appendChild(body); el.appendChild(acc);
+     pdbAcc(idx === 0 ? " open" : "", h("div", { className: "pdb-row-num", style: { fontSize: "15px",
+       background: k === "female" ? "#fce7f3" : "#dbeafe", color: k === "female" ? "#db2777" : "#2563eb" } }, k === "female" ? "♀" : "♂"), label, players);
    });
    return;
  }
@@ -5832,18 +5810,7 @@ const A = {
  rows.forEach((r, idx) => {
    const players = grouped[r];
    if (!players || !players.length) return;
-   const acc = h("div", { className: "pdb-acc" + (idx === 0 || q ? " open" : "") });
-   const head = h("div", { className: "pdb-acc-head",
-     onClick: () => acc.classList.toggle("open") },
-     h("div", { className: "pdb-row-num" }, r.charAt(0)),
-     h("div", { className: "pdb-row-label" }, r),
-     h("div", { className: "pdb-row-count" }, players.length + "名"),
-   );
-   const body = h("div", { className: "pdb-acc-body" });
-   players.forEach(p => body.appendChild(renderPlayerCard(p)));
-   acc.appendChild(head);
-   acc.appendChild(body);
-   el.appendChild(acc);
+   pdbAcc(idx === 0 || q ? " open" : "", h("div", { className: "pdb-row-num" }, r.charAt(0)), r, players);
  });
  },
 
