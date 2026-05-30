@@ -558,47 +558,47 @@
    .ms-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
  }
 
- /* ═══ 監督・顧問ビュー: ダークトンマナ (#tab-coach にスコープ) ═══ */
+ /* ═══ 監督・顧問ビュー: 柔らかい明るいトーン (#tab-coach にスコープ) ═══ */
  #tab-coach {
-   --card: #434f66; --card-elev: #4b5872;
-   --border: #56627c; --border-strong: #66738f;
-   --txt: #f0f3f9; --txt-l: #dde3ec; --sub: #b7c1d2; --sub-l: #9aa6ba;
-   --ink-50: #434f66; --ink-100: #56627c; --ink-400: #8693ab;
+   --card: #ffffff; --card-elev: #ffffff;
+   --border: #e0ebe7; --border-strong: #cdded8;
+   --txt: #1c2230; --txt-l: #334155; --sub: #64748b; --sub-l: #8a97a8;
+   --ink-50: #eef6f4; --ink-100: #e6f3ef; --ink-400: #94a3b8;
    background:
-     radial-gradient(1200px 360px at 50% -8%, rgba(120,150,210,.14), transparent 60%),
-     linear-gradient(180deg, #3c4661 0%, #353f56 100%);
+     radial-gradient(1200px 360px at 50% -8%, rgba(15,118,110,.06), transparent 60%),
+     linear-gradient(180deg, #f4fbf9 0%, #ecf6f3 100%);
    color: var(--txt);
    border-radius: 16px;
    padding: 14px 12px 28px;
    margin-top: 4px;
-   box-shadow: inset 0 0 0 1px rgba(190,202,222,.10);
+   box-shadow: inset 0 0 0 1px rgba(15,118,110,.08);
  }
  #tab-coach .card {
    background: var(--card);
-   border: 1px solid #56627c;
-   box-shadow: 0 2px 8px rgba(0,0,0,.22);
+   border: 1px solid #e0ebe7;
+   box-shadow: 0 2px 8px rgba(15,40,35,.06);
  }
- #tab-coach .card-title { color: #f6f8fc; }
- #tab-coach .card-head { border-bottom-color: #56627c; }
+ #tab-coach .card-title { color: #14322c; }
+ #tab-coach .card-head { border-bottom-color: #e3eeea; }
  #tab-coach .input, #tab-coach select, #tab-coach textarea {
-   background: #353f54; color: #f0f3f9; border-color: #66738f;
+   background: #ffffff; color: #1c2230; border-color: #cdded8;
  }
- #tab-coach .input::placeholder, #tab-coach textarea::placeholder { color: #8b97ad; }
- #tab-coach .input:hover, #tab-coach select:hover, #tab-coach textarea:hover { border-color: #7c8aa6; }
+ #tab-coach .input::placeholder, #tab-coach textarea::placeholder { color: #9aa6ba; }
+ #tab-coach .input:hover, #tab-coach select:hover, #tab-coach textarea:hover { border-color: #0f766e; }
  #tab-coach .btn { background: var(--accent); border-color: var(--accent); color: #fff; }
  #tab-coach .btn:hover { background: #b91c1c; border-color: #b91c1c; }
- #tab-coach .btn-ghost { background: transparent; color: #e2e8f2; border-color: #66738f; }
- #tab-coach .btn-ghost:hover { background: #515d77; border-color: #7c8aa6; }
- #tab-coach .empty-state { color: #b7c1d2; }
- #tab-coach .text-sub, #tab-coach .text-xs.text-sub { color: #b7c1d2; }
- #tab-coach .badge-sub { background: #56627c; color: #e2e8f2; }
- #tab-coach a { color: #a8cbff; }
- #tab-coach code { background: #353f54 !important; color: #f0f3f9 !important; border: 1px solid #66738f; }
- /* 共有の通知手順ボックス(_pushHowto)は背景白なのでダーク化 */
- #tab-coach details.card { background: #3c4861 !important; border-color: #56627c !important; color: #f0f3f9; }
- #tab-coach details.card summary { color: #f0f3f9; }
- #tab-coach details.card .font-bold { color: #dde3ec !important; }
- #tab-coach .pdb-push, #tab-coach .badge { color: #f0f3f9; }
+ #tab-coach .btn-ghost { background: #ffffff; color: #44403c; border-color: #cdded8; }
+ #tab-coach .btn-ghost:hover { background: #f0faf7; border-color: #0f766e; }
+ #tab-coach .empty-state { color: #64748b; }
+ #tab-coach .text-sub, #tab-coach .text-xs.text-sub { color: #64748b; }
+ #tab-coach .badge-sub { background: #e6f3ef; color: #14322c; }
+ #tab-coach a { color: #0f766e; }
+ #tab-coach code { background: #f1f5f4 !important; color: #134e4a !important; border: 1px solid #e0ebe7; }
+ /* 共有の通知手順ボックス(_pushHowto)も明るいトーンに */
+ #tab-coach details.card { background: #fbfdfc !important; border-color: #e3eeea !important; color: #1c2230; }
+ #tab-coach details.card summary { color: #14322c; }
+ #tab-coach details.card .font-bold { color: #1c2230 !important; }
+ #tab-coach .pdb-push, #tab-coach .badge { color: #14322c; }
 </style>
 </head>
 <body>
@@ -1917,18 +1917,18 @@ const CO = {
  const ann = await CO._get("/api/coach/announcements");
  const players = (roster && roster.players) || [];
  const cap = (roster && roster.cap) || CO.coach.player_cap || 50;
- wrap.appendChild(h("div", { className: "card", style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", borderLeft: "4px solid #ef4444", background: "linear-gradient(180deg,#4f5c78 0%,#434f66 100%)" } },
+ wrap.appendChild(h("div", { className: "card", style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", borderLeft: "4px solid #ef4444", background: "linear-gradient(180deg,#f0faf7 0%,#e3f1ec 100%)" } },
  h("div", {}, h("div", { className: "card-title", style: { fontSize: "17px" } }, CO.coach.name + "（監督・顧問）"),
- CO.coach.member_name ? h("div", { className: "text-xs", style: { color: "#93c5fd", fontWeight: 700 } }, (CO.coach.member_role || "顧問") + "：" + CO.coach.member_name + " として利用中") : null,
+ CO.coach.member_name ? h("div", { className: "text-xs", style: { color: "#0f766e", fontWeight: 700 } }, (CO.coach.member_role || "顧問") + "：" + CO.coach.member_name + " として利用中") : null,
  h("div", { className: "text-sm text-sub" }, "マイ選手 " + players.length + " / " + cap + " 人")),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => { CO.code = ""; CO.coach = null; localStorage.removeItem("kttaCoachCode"); CO._stopDash(); CO.render(); } }, "ログアウト")));
  // 本部からのお知らせ (#290)
  const anns = (ann && ann.announcements) || [];
  if (anns.length) {
- const ac = h("div", { className: "card", style: { borderLeft: "4px solid #60a5fa", background: "linear-gradient(180deg,#445a82 0%,#3c4d6e 100%)" } });
- ac.appendChild(h("div", { className: "card-title", style: { marginBottom: "6px", color: "#cfe2ff" } }, "本部からのお知らせ"));
- anns.slice(0, 8).forEach(a => ac.appendChild(h("div", { style: { padding: "7px 4px", borderBottom: "1px solid #54688f" } },
- h("div", { style: { whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6", color: "#f0f3f9" } }, a.body),
+ const ac = h("div", { className: "card", style: { borderLeft: "4px solid #60a5fa", background: "linear-gradient(180deg,#eff6ff 0%,#e3eefb 100%)" } });
+ ac.appendChild(h("div", { className: "card-title", style: { marginBottom: "6px", color: "#1e40af" } }, "本部からのお知らせ"));
+ anns.slice(0, 8).forEach(a => ac.appendChild(h("div", { style: { padding: "7px 4px", borderBottom: "1px solid #dbe7f5" } },
+ h("div", { style: { whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6", color: "#1c2230" } }, a.body),
  h("div", { className: "text-xs text-sub", style: { marginTop: "2px" } }, a.created_at || ""))));
  wrap.appendChild(ac);
  }
@@ -1976,14 +1976,14 @@ const CO = {
  h("span", {}, (r.type === "delete" ? "削除" : "修正") + "申請: " + (r.player_name || "")),
  h("span", { className: "flex gap-2", style: { alignItems: "center" } },
  h("span", { style: { fontWeight: 700, color: col } }, stt),
- r.status === "pending" ? h("button", { className: "btn btn-sm btn-ghost", style: { color: "#f87171" }, onClick: async () => {
+ r.status === "pending" ? h("button", { className: "btn btn-sm btn-ghost", style: { color: "#dc2626" }, onClick: async () => {
  if (!confirm("この申請を取り消しますか?")) return;
  const x = await CO._del("/api/coach/requests/" + r.id);
  if (x && x.error) return toast(x.error, "err");
  toast("申請を取り消しました", "ok"); CO.render();
  } }, "取消") : null));
  const box = h("div", { style: { borderBottom: "1px solid var(--border)" } }, top);
- if (r.status === "rejected" && r.resolution_note) box.appendChild(h("div", { className: "text-xs", style: { color: "#fca5a5", padding: "0 4px 6px", whiteSpace: "pre-wrap" } }, "本部コメント: " + r.resolution_note));
+ if (r.status === "rejected" && r.resolution_note) box.appendChild(h("div", { className: "text-xs", style: { color: "#b91c1c", padding: "0 4px 6px", whiteSpace: "pre-wrap" } }, "本部コメント: " + r.resolution_note));
  rc.appendChild(box);
  });
  wrap.appendChild(rc);
