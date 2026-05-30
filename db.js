@@ -539,14 +539,35 @@ const MATCH_WL_SUBQ =
   `(SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE' AND COALESCE(m.is_walkover,0)=0) AS match_wins,
       (SELECT COUNT(*) FROM matches m WHERE m.loser_id=p.id AND m.loser_name!='BYE' AND m.winner_name!='BYE' AND COALESCE(m.is_walkover,0)=0) AS match_losses`;
 const stmts = {
+  // 戦績/入賞は相関サブクエリ(p1件ごとにmatches/achievementsを走査)だと O(選手数×試合数) になり
+  // 選手・試合が増えるほど重化。集約を GROUP BY で1パス化し LEFT JOIN で O(選手数+試合数) へ。出力は不変。
   getPlayers: sqlite.prepare(`
     SELECT p.*,
-      (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id AND a.place=1) AS wins_ach,
-      (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id AND a.place=2) AS seconds,
-      (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id AND a.place=3) AS thirds,
-      (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id) AS total_achievements,
-      ${MATCH_WL_SUBQ}
+      COALESCE(ac.wins_ach,0) AS wins_ach,
+      COALESCE(ac.seconds,0) AS seconds,
+      COALESCE(ac.thirds,0) AS thirds,
+      COALESCE(ac.total_achievements,0) AS total_achievements,
+      COALESCE(mw.match_wins,0) AS match_wins,
+      COALESCE(ml.match_losses,0) AS match_losses
     FROM players p
+    LEFT JOIN (
+      SELECT player_id,
+        SUM(CASE WHEN place=1 THEN 1 ELSE 0 END) AS wins_ach,
+        SUM(CASE WHEN place=2 THEN 1 ELSE 0 END) AS seconds,
+        SUM(CASE WHEN place=3 THEN 1 ELSE 0 END) AS thirds,
+        COUNT(*) AS total_achievements
+      FROM achievements GROUP BY player_id
+    ) ac ON ac.player_id = p.id
+    LEFT JOIN (
+      SELECT winner_id AS pid, COUNT(*) AS match_wins FROM matches
+      WHERE loser_name!='BYE' AND winner_name!='BYE' AND COALESCE(is_walkover,0)=0
+      GROUP BY winner_id
+    ) mw ON mw.pid = p.id
+    LEFT JOIN (
+      SELECT loser_id AS pid, COUNT(*) AS match_losses FROM matches
+      WHERE loser_name!='BYE' AND winner_name!='BYE' AND COALESCE(is_walkover,0)=0
+      GROUP BY loser_id
+    ) ml ON ml.pid = p.id
   `),
   getPlayer: sqlite.prepare(`SELECT * FROM players WHERE id = ?`),
   getAchievements: sqlite.prepare(`SELECT * FROM achievements WHERE player_id = ? ORDER BY year DESC`),
