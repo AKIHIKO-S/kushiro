@@ -2173,23 +2173,26 @@ const L = {
 
  async init() {
  const sel = document.getElementById("liveTournamentSel");
+ // 選べるのは「進行中」の大会のみ (閲覧の大会進行)
+ const ongoing = (V.state.tournaments || []).filter(t => t.status === "ongoing");
  if (!sel.options.length) {
  // 大会セレクタを初期化
  clear(sel);
- sel.appendChild(h("option", { value: "" }, "— 大会を選択 —"));
- (V.state.tournaments || []).forEach(t =>
- sel.appendChild(h("option", { value: t.id }, t.name)));
+ sel.appendChild(h("option", { value: "" }, ongoing.length ? "— 大会を選択 —" : "— 進行中の大会はありません —"));
+ ongoing.forEach(t =>
+ sel.appendChild(h("option", { value: t.id }, t.name + (t.date ? "（" + t.date + "）" : ""))));
  sel.addEventListener("change", () => L.select(sel.value));
- // デフォルト: ongoing大会
- const def = (V.state.tournaments || []).find(t => t.status === "ongoing")
- || (V.state.tournaments || [])[0];
+ // デフォルト: 進行中の先頭大会を自動選択
+ const def = ongoing[0];
  if (def) { sel.value = def.id; L.select(def.id); return; }
  } else {
  // 再開
  if (L.tournamentId) L.fetch();
  }
  if (!sel.value) {
- document.getElementById("liveMain").innerHTML = '<div class="empty-state">大会を選択してください。</div>';
+ document.getElementById("liveMain").innerHTML = '<div class="empty-state">'
+ + (ongoing.length ? "大会を選択してください。"
+   : "進行中の大会がありません。大会が「進行中」になると、ここに表示されます。") + '</div>';
  }
  },
 
