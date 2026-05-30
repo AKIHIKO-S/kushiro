@@ -38,6 +38,42 @@ function categoryLabel(entrant, eventName) {
   return catLabel + gLabel;
 }
 
+// ─── 集計・領収書 共通ヘルパ (DRY: 種別ラベル/日付/ソート/集計/明細) ───
+const KIND_LABEL = {
+  team_male: "団体戦男子", team_female: "団体戦女子",
+  doubles_male: "ダブルス男子", doubles_female: "ダブルス女子",
+  mixed_male: "混合ダブルス男子", mixed_female: "混合ダブルス女子",
+  singles_male: "シングルス男子", singles_female: "シングルス女子",
+};
+const _jaLongDate = d => d
+  ? new Date(d).toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" })
+  : "";
+// 団体 Map を団体名(ja)順に [team, members] で返す
+const sortedTeams = teams => Array.from(teams.entries()).sort((a, b) => a[0].localeCompare(b[0], "ja"));
+// メンバー配列を 種別×性別 で集計 (8キー固定・挿入順保持)
+function countByKindGender(members) {
+  const cnt = { team_male:0, team_female:0, doubles_male:0, doubles_female:0,
+                mixed_male:0, mixed_female:0, singles_male:0, singles_female:0 };
+  members.forEach(m => { const k = `${m.kind}_${m.gender === "female" ? "female" : "male"}`; if (cnt[k] !== undefined) cnt[k]++; });
+  return cnt;
+}
+// 集計(cnt) → 明細 [{label,n,fee,sub}] と合計 sum
+function breakdownOf(cnt, F) {
+  let sum = 0; const breakdown = [];
+  Object.entries(cnt).forEach(([k, n]) => {
+    if (n > 0) { const fee = F[k] || 0, sub = n * fee; sum += sub; breakdown.push({ label: KIND_LABEL[k], n, fee, sub }); }
+  });
+  return { breakdown, sum };
+}
+// 団体ごとの集計済み明細 [{no, team, total, breakdown}] (団体名順)
+function teamItemsOf(teams, F) {
+  let no = 1;
+  return sortedTeams(teams).map(([team, members]) => {
+    const { breakdown, sum } = breakdownOf(countByKindGender(members), F);
+    return { no: no++, team, total: sum, breakdown };
+  });
+}
+
 // 大会の出場選手から集計データを構築
 function buildAggregation(tournament, entrants, fees) {
   // 団体名でグルーピング (チーム名 ≒ 申込団体名 として扱う)
@@ -93,20 +129,9 @@ function buildAggregationXlsx(tournament, entrants, opts) {
   ];
   let idx = 1;
   const teamTotals = []; // for 差し込み用シート
-  Array.from(teams.entries())
-    .sort((a, b) => a[0].localeCompare(b[0], "ja"))
+  sortedTeams(teams)
     .forEach(([teamName, members]) => {
-      const cnt = {
-        team_male: 0, team_female: 0,
-        doubles_male: 0, doubles_female: 0,
-        mixed_male: 0, mixed_female: 0,
-        singles_male: 0, singles_female: 0,
-      };
-      members.forEach(m => {
-        const g = m.gender === "female" ? "female" : "male";
-        const key = `${m.kind}_${g}`;
-        if (cnt[key] !== undefined) cnt[key]++;
-      });
+      const cnt = countByKindGender(members);
       const sum =
         cnt.team_male * F.team_male + cnt.team_female * F.team_female +
         cnt.doubles_male * F.doubles_male + cnt.doubles_female * F.doubles_female +
@@ -136,8 +161,7 @@ function buildAggregationXlsx(tournament, entrants, opts) {
       "区分", "氏名1", "年齢", "氏名2", "年齢", "チーム名1", "チーム名2", null,
       "区分", "氏名", "年齢", "チーム名"],
   ];
-  Array.from(teams.entries())
-    .sort((a, b) => a[0].localeCompare(b[0], "ja"))
+  sortedTeams(teams)
     .forEach(([teamName, members]) => {
       const teamMembers = members.filter(m => m.kind === "team");
       const doublesMembers = members.filter(m => m.kind === "doubles");
@@ -178,7 +202,7 @@ function buildAggregationXlsx(tournament, entrants, opts) {
   // ─── シート 3: 団体 ───
   const teamRows = [["区分", "氏名", "年齢", "チーム名"]];
   let teamM = 0, teamF = 0;
-  Array.from(teams.entries()).sort((a,b) => a[0].localeCompare(b[0], "ja"))
+  sortedTeams(teams)
     .forEach(([teamName, members]) => {
       members.filter(m => m.kind === "team").forEach(m => {
         teamRows.push([categoryLabel(m, m.event_name), m.name, "", teamName]);
@@ -195,7 +219,7 @@ function buildAggregationXlsx(tournament, entrants, opts) {
   // ─── シート 4: ダブルス ───
   const dblRows = [["区分", "氏名1", "年齢", "氏名2", "年齢", "チーム名1", "チーム名2"]];
   let dM = 0, dF = 0;
-  Array.from(teams.entries()).sort((a,b) => a[0].localeCompare(b[0], "ja"))
+  sortedTeams(teams)
     .forEach(([teamName, members]) => {
       members.filter(m => m.kind === "doubles").forEach(m => {
         dblRows.push([
@@ -216,7 +240,7 @@ function buildAggregationXlsx(tournament, entrants, opts) {
   // ─── シート 5: ミックス ───
   const mxRows = [["", "氏名", "年齢", "チーム名"]];
   let mM = 0, mF = 0;
-  Array.from(teams.entries()).sort((a,b) => a[0].localeCompare(b[0], "ja"))
+  sortedTeams(teams)
     .forEach(([teamName, members]) => {
       members.filter(m => m.kind === "mixed").forEach(m => {
         mxRows.push([m.gender === "female" ? "女子" : "男子", m.name, "", teamName]);
@@ -251,40 +275,9 @@ function buildReceiptsHTML(tournament, entrants, opts) {
   const issuer = opts.issuer || "釧路卓球協会";
   const president = opts.president || "会長  山本 満";
   const startNo = parseInt(opts.start_no) > 0 ? parseInt(opts.start_no) : 1;
-  const dateStr = tournament.date
-    ? new Date(tournament.date).toLocaleDateString("ja-JP", { year:"numeric", month:"long", day:"numeric" })
-    : "";
+  const dateStr = _jaLongDate(tournament.date);
 
-  // 各団体の合計を計算
-  const items = [];
-  Array.from(teams.entries())
-    .sort((a, b) => a[0].localeCompare(b[0], "ja"))
-    .forEach(([teamName, members]) => {
-      let sum = 0;
-      const breakdown = [];
-      const cnt = { team_male:0, team_female:0, doubles_male:0, doubles_female:0,
-                    mixed_male:0, mixed_female:0, singles_male:0, singles_female:0 };
-      members.forEach(m => {
-        const g = m.gender === "female" ? "female" : "male";
-        const k = `${m.kind}_${g}`;
-        if (cnt[k] !== undefined) cnt[k]++;
-      });
-      const KIND_LABEL_HTML = {
-        team_male: "団体戦男子", team_female: "団体戦女子",
-        doubles_male: "ダブルス男子", doubles_female: "ダブルス女子",
-        mixed_male: "混合ダブルス男子", mixed_female: "混合ダブルス女子",
-        singles_male: "シングルス男子", singles_female: "シングルス女子",
-      };
-      Object.entries(cnt).forEach(([k, n]) => {
-        if (n > 0) {
-          const fee = F[k] || 0;
-          const sub = n * fee;
-          sum += sub;
-          breakdown.push({ label: KIND_LABEL_HTML[k], n, fee, sub });
-        }
-      });
-      items.push({ team: teamName, total: sum, breakdown });
-    });
+  const items = teamItemsOf(teams, F);
 
   // 個別発行: 指定団体だけに絞る (#272)。未指定なら全団体一括。
   const shown = opts.only_team ? items.filter(it => it.team === opts.only_team) : items;
@@ -487,17 +480,9 @@ function buildReceiptsXlsx(tournament, entrants, opts) {
   const { teams, fees: F } = buildAggregation(tournament, entrants, opts.fees);
   const issuer = opts.issuer || "釧路卓球協会";
   const president = opts.president || "会長  山本 満";
-  const dateStr = tournament.date
-    ? new Date(tournament.date).toLocaleDateString("ja-JP", { year:"numeric", month:"long", day:"numeric" })
-    : "";
+  const dateStr = _jaLongDate(tournament.date);
 
   const wb = XLSX.utils.book_new();
-  const KIND_LABEL = {
-    team_male: "団体戦男子", team_female: "団体戦女子",
-    doubles_male: "ダブルス男子", doubles_female: "ダブルス女子",
-    mixed_male: "混合ダブルス男子", mixed_female: "混合ダブルス女子",
-    singles_male: "シングルス男子", singles_female: "シングルス女子",
-  };
 
   // ── 一覧シート ──
   const summaryRows = [
@@ -505,31 +490,8 @@ function buildReceiptsXlsx(tournament, entrants, opts) {
     [],
     ["No.", "団体名", "合計金額", "発行日"],
   ];
-  const teamItems = [];
-  let no = 1;
-  Array.from(teams.entries())
-    .sort((a, b) => a[0].localeCompare(b[0], "ja"))
-    .forEach(([teamName, members]) => {
-      const cnt = { team_male:0, team_female:0, doubles_male:0, doubles_female:0,
-                    mixed_male:0, mixed_female:0, singles_male:0, singles_female:0 };
-      members.forEach(m => {
-        const g = m.gender === "female" ? "female" : "male";
-        const k = `${m.kind}_${g}`;
-        if (cnt[k] !== undefined) cnt[k]++;
-      });
-      const breakdown = [];
-      let sum = 0;
-      Object.entries(cnt).forEach(([k, n]) => {
-        if (n > 0) {
-          const fee = F[k] || 0;
-          const sub = n * fee;
-          sum += sub;
-          breakdown.push({ label: KIND_LABEL[k], n, fee, sub });
-        }
-      });
-      teamItems.push({ no: no++, team: teamName, total: sum, breakdown });
-      summaryRows.push([no - 1, teamName, sum, dateStr]);
-    });
+  const teamItems = teamItemsOf(teams, F);
+  teamItems.forEach(it => summaryRows.push([it.no, it.team, it.total, dateStr]));
   // 合計行
   const grandTotal = teamItems.reduce((s, t) => s + t.total, 0);
   summaryRows.push([]);
@@ -586,36 +548,7 @@ function buildReceiptsXlsx(tournament, entrants, opts) {
 function buildReceiptsList(tournament, entrants, opts) {
   opts = opts || {};
   const { teams, fees: F } = buildAggregation(tournament, entrants, opts.fees);
-  const KIND_LABEL = {
-    team_male: "団体戦男子", team_female: "団体戦女子",
-    doubles_male: "ダブルス男子", doubles_female: "ダブルス女子",
-    mixed_male: "混合ダブルス男子", mixed_female: "混合ダブルス女子",
-    singles_male: "シングルス男子", singles_female: "シングルス女子",
-  };
-  const items = [];
-  let no = 1;
-  Array.from(teams.entries())
-    .sort((a, b) => a[0].localeCompare(b[0], "ja"))
-    .forEach(([teamName, members]) => {
-      const cnt = { team_male:0, team_female:0, doubles_male:0, doubles_female:0,
-                    mixed_male:0, mixed_female:0, singles_male:0, singles_female:0 };
-      members.forEach(m => {
-        const g = m.gender === "female" ? "female" : "male";
-        const k = `${m.kind}_${g}`;
-        if (cnt[k] !== undefined) cnt[k]++;
-      });
-      const breakdown = [];
-      let sum = 0;
-      Object.entries(cnt).forEach(([k, n]) => {
-        if (n > 0) {
-          const fee = F[k] || 0;
-          const sub = n * fee;
-          sum += sub;
-          breakdown.push({ label: KIND_LABEL[k], n, fee, sub });
-        }
-      });
-      items.push({ no: no++, team: teamName, total: sum, breakdown });
-    });
+  const items = teamItemsOf(teams, F);
   return {
     tournament: { id: tournament.id, name: tournament.name, date: tournament.date },
     issuer: opts.issuer || "釧路卓球協会",
@@ -784,9 +717,7 @@ function buildCoachResultsHTML(coach, tournament, roster, matches, opts) {
   const logoPath = opts.logo_url || "/shared/assets/icon-192.png";
   coach = coach || {}; tournament = tournament || {}; roster = roster || []; matches = matches || [];
   const teamName = coach.team || "";
-  const dateStr = tournament.date
-    ? new Date(tournament.date).toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" })
-    : "";
+  const dateStr = _jaLongDate(tournament.date);
   const nowStr = new Date().toLocaleString("ja-JP", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
   // 実際に行われた試合のみ (BYE/不戦勝は除外)
