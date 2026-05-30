@@ -11,6 +11,8 @@ fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 const sqlite = new Database(DB_PATH);
 sqlite.pragma("journal_mode = WAL");
+sqlite.pragma("synchronous = NORMAL");   // WAL下では安全。fsync頻度を下げ書込/読込の遅延を低減
+sqlite.pragma("busy_timeout = 5000");    // 同時書込時に最大5秒待機しSQLITE_BUSYエラーを回避
 sqlite.pragma("foreign_keys = ON");
 
 const uid = () => crypto.randomUUID();
@@ -148,6 +150,7 @@ sqlite.exec(`
   CREATE INDEX IF NOT EXISTS idx_players_team ON players(team);
   CREATE INDEX IF NOT EXISTS idx_players_furigana ON players(furigana);
   CREATE INDEX IF NOT EXISTS idx_achievements_player ON achievements(player_id);
+  CREATE INDEX IF NOT EXISTS idx_achievements_player_place ON achievements(player_id, place);
   CREATE INDEX IF NOT EXISTS idx_matches_tournament ON matches(tournament_id);
   CREATE INDEX IF NOT EXISTS idx_matches_winner ON matches(winner_id);
   CREATE INDEX IF NOT EXISTS idx_matches_loser ON matches(loser_id);
@@ -1736,20 +1739,22 @@ function getLastUpdated() {
 
 // 進行(matches)の軽量フィンガープリント。呼出/結果/再コールで変化する。
 // クライアントの変化検知用 (重い getOperationState を変化時のみ取得させる)。
+// 進行fingerprint用の集計文は1回だけ用意してキャッシュ (800ms毎のSSEポーリングで再コンパイルしない)
+const _opsFpStmt = sqlite.prepare(
+  `SELECT COUNT(*) AS c,
+          COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) AS done,
+          COALESCE(SUM(CASE WHEN status='on_table' THEN 1 ELSE 0 END),0) AS live,
+          COALESCE(SUM(table_no),0) AS tsum,
+          COALESCE(SUM(call_count_p1 + call_count_p2),0) AS calls,
+          COALESCE(SUM(CASE WHEN result_source='referee' THEN 1 ELSE 0 END),0) AS unconf,
+          COALESCE(SUM(CASE WHEN pending_result != '' THEN 1 ELSE 0 END),0) AS pend,
+          COALESCE(MAX(finished_at),'') AS f
+     FROM matches WHERE tournament_id = ?`
+);
 function getOpsFingerprint(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { v: "0", status: null, error: true };
-  const r = sqlite.prepare(
-    `SELECT COUNT(*) AS c,
-            COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) AS done,
-            COALESCE(SUM(CASE WHEN status='on_table' THEN 1 ELSE 0 END),0) AS live,
-            COALESCE(SUM(table_no),0) AS tsum,
-            COALESCE(SUM(call_count_p1 + call_count_p2),0) AS calls,
-            COALESCE(SUM(CASE WHEN result_source='referee' THEN 1 ELSE 0 END),0) AS unconf,
-            COALESCE(SUM(CASE WHEN pending_result != '' THEN 1 ELSE 0 END),0) AS pend,
-            COALESCE(MAX(finished_at),'') AS f
-       FROM matches WHERE tournament_id = ?`
-  ).get(tournamentId);
+  const r = _opsFpStmt.get(tournamentId);
   // unconf/pend(承認待ち件数) も含め、審判報告や本部の承認操作で表示が即時更新されるように
   return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.pend}.${r.f}`, status: t.status };
 }
@@ -2926,16 +2931,19 @@ function getEventPriority(eventName) {
 
 // 指定選手の、指定大会内の「全体生存状況」を取得
 // 戻り値: { event_name → { state, has_active_match, has_referee_duty, has_future_match } }
-function getPlayerSurvivalByEvent(playerId, tournamentId) {
-  if (!playerId) return {};
-  // この player が player として or 審判として関わる match を取得
-  const matches = sqlite.prepare(`
+const _survivalStmt = sqlite.prepare(`
     SELECT id, event, status, winner_id, loser_id, referee_id,
            player1_id, player2_id, table_no, round
     FROM matches
     WHERE tournament_id = ?
       AND (player1_id = ? OR player2_id = ? OR winner_id = ? OR loser_id = ? OR referee_id = ?)
-  `).all(tournamentId, playerId, playerId, playerId, playerId, playerId);
+`);
+function getPlayerSurvivalByEvent(playerId, tournamentId, ctx) {
+  if (!playerId) return {};
+  // 同一進行集計内では選手ごとの生存状況は不変 → ctx.survival にメモ化 (per-match 再計算/再prepare を回避)
+  if (ctx && ctx.survival && ctx.survival.has(playerId)) return ctx.survival.get(playerId);
+  // この player が player として or 審判として関わる match を取得
+  const matches = _survivalStmt.all(tournamentId, playerId, playerId, playerId, playerId, playerId);
 
   const byEvent = {};
   for (const m of matches) {
@@ -2961,6 +2969,7 @@ function getPlayerSurvivalByEvent(playerId, tournamentId) {
       if (m.referee_id === playerId && m.status === "pending") e.has_referee_duty = true;
     }
   }
+  if (ctx && ctx.survival) ctx.survival.set(playerId, byEvent);
   return byEvent;
 }
 
@@ -2970,10 +2979,10 @@ function getPlayerSurvivalByEvent(playerId, tournamentId) {
 //   - 審判担当中 (has_referee_duty)
 //   - 未敗退かつ将来試合あり (!eliminated && has_future_match)
 // のいずれかなら呼べない (= 上位種目決着まで待つ)
-function getPriorityLockForPlayer(playerId, tournamentId, currentEventName) {
+function getPriorityLockForPlayer(playerId, tournamentId, currentEventName, ctx) {
   if (!playerId) return null;
   const myPriority = getEventPriority(currentEventName);
-  const byEvent = getPlayerSurvivalByEvent(playerId, tournamentId);
+  const byEvent = getPlayerSurvivalByEvent(playerId, tournamentId, ctx);
   for (const [ev, st] of Object.entries(byEvent)) {
     if (ev === currentEventName) continue;
     const otherPriority = getEventPriority(ev);
@@ -3010,7 +3019,8 @@ function buildPlayerKey(name, team) {
 
 // match から「同一性チェック対象の player keys」一覧を取得
 // player1, player2 とそれぞれの partner (ダブルス) を全部
-function getPlayerKeysInMatch(match) {
+function getPlayerKeysInMatch(match, ctx) {
+  if (ctx && ctx.matchKeys && ctx.matchKeys.has(match.id)) return ctx.matchKeys.get(match.id);
   const keys = [];
   const add = (name, team) => {
     const k = buildPlayerKey(name, team);
@@ -3037,12 +3047,52 @@ function getPlayerKeysInMatch(match) {
   } else {
     add(match.player2_name, match.player2_team);
   }
+  if (ctx && ctx.matchKeys) ctx.matchKeys.set(match.id, keys);
   return keys;
 }
 
 // 指定 match について、player1/player2 が上位種目ロックにかかってないかチェック
 // player_id ベース + 苗字+所属ベース 両方で判定 (苗字のみ doubles 対応)
-function getMatchPriorityBlocks(match) {
+// 進行集計用: myPriority(=種目優先度)ごとの「上位種目で生存/審判中の選手キー」を構築。
+// match に依らず myPriority のみで決まるため ctx.lockedByPriority にメモ化し、全matches走査の二乗化を防ぐ。
+const _opsUniverseStmt = sqlite.prepare(
+  `SELECT * FROM matches WHERE tournament_id = ? AND status IN ('on_table','pending','waiting')`
+);
+const _opsRefUniverseStmt = sqlite.prepare(
+  `SELECT * FROM matches WHERE tournament_id = ? AND status IN ('on_table','pending') AND referee_name != ''`
+);
+function _lockedKeysForPriority(myPriority, tournamentId, ctx) {
+  if (ctx && ctx.lockedByPriority && ctx.lockedByPriority.has(myPriority)) return ctx.lockedByPriority.get(myPriority);
+  let universe, refUniverse;
+  if (ctx) {
+    if (!ctx.universe) ctx.universe = _opsUniverseStmt.all(tournamentId);
+    if (!ctx.refUniverse) ctx.refUniverse = _opsRefUniverseStmt.all(tournamentId);
+    universe = ctx.universe; refUniverse = ctx.refUniverse;
+  } else {
+    universe = _opsUniverseStmt.all(tournamentId);
+    refUniverse = _opsRefUniverseStmt.all(tournamentId);
+  }
+  const lockedKeys = new Map();   // key -> {event, reason, label}
+  for (const um of universe) {
+    // 空種目 or 同位/下位種目は対象外 (上位種目=priority小 のみが拘束)。元の event!=? / event!='' 条件は priority 比較で等価。
+    if (!um.event || getEventPriority(um.event) >= myPriority) continue;
+    const reason = um.status === "on_table" ? "active" : "surviving";
+    const label = um.status === "on_table" ? `${um.event} で試合中` : `${um.event} で勝ち上がり中`;
+    for (const k of getPlayerKeysInMatch(um, ctx)) {
+      if (!lockedKeys.has(k)) lockedKeys.set(k, { event: um.event, reason, label });
+    }
+  }
+  for (const rm of refUniverse) {
+    if (!rm.event || getEventPriority(rm.event) >= myPriority) continue;
+    const refK = buildPlayerKey(rm.referee_name, "");   // referee_name 単独 (team不明) → 苗字のみ key
+    if (refK && !lockedKeys.has(refK)) {
+      lockedKeys.set(refK, { event: rm.event, reason: "referee", label: `${rm.event} で審判担当中` });
+    }
+  }
+  if (ctx && ctx.lockedByPriority) ctx.lockedByPriority.set(myPriority, lockedKeys);
+  return lockedKeys;
+}
+function getMatchPriorityBlocks(match, ctx) {
   if (!match) return [];
   const myPriority = getEventPriority(match.event);
   if (myPriority === 1) return []; // 団体戦は最上位なので拘束なし
@@ -3052,7 +3102,7 @@ function getMatchPriorityBlocks(match) {
   // ① player_id ベースのチェック (既存)
   const checkPlayer = (slotLabel, playerId, displayName) => {
     if (!playerId) return;
-    const lock = getPriorityLockForPlayer(playerId, match.tournament_id, match.event);
+    const lock = getPriorityLockForPlayer(playerId, match.tournament_id, match.event, ctx);
     if (lock) {
       const k = slotLabel + "|" + displayName;
       if (seenBlockKeys.has(k)) return;
@@ -3081,44 +3131,8 @@ function getMatchPriorityBlocks(match) {
   }
 
   // ② 苗字+所属 ベースのチェック (DB未連携の苗字のみダブルス対応)
-  // 上位種目で生存中 (active/pending/waiting で未敗退) の matches の player keys を収集
-  const upperMatches = sqlite.prepare(`
-    SELECT * FROM matches WHERE tournament_id = ?
-      AND status IN ('on_table', 'pending', 'waiting')
-      AND event != ? AND event != ''
-  `).all(match.tournament_id, match.event);
-
-  // key → {event, reason, label}
-  const lockedKeys = new Map();
-  for (const um of upperMatches) {
-    if (getEventPriority(um.event) >= myPriority) continue;
-    const umKeys = getPlayerKeysInMatch(um);
-    const reason = um.status === "on_table" ? "active" : "surviving";
-    const label = um.status === "on_table"
-      ? `${um.event} で試合中`
-      : `${um.event} で勝ち上がり中`;
-    umKeys.forEach(k => {
-      if (!lockedKeys.has(k)) lockedKeys.set(k, { event: um.event, reason, label });
-    });
-  }
-
-  // 審判担当 (referee_name) も上位種目で active なら、その苗字+所属を locked に
-  const refMatches = sqlite.prepare(`
-    SELECT * FROM matches WHERE tournament_id = ?
-      AND status IN ('on_table', 'pending')
-      AND referee_name != '' AND event != ?
-  `).all(match.tournament_id, match.event);
-  for (const rm of refMatches) {
-    if (getEventPriority(rm.event) >= myPriority) continue;
-    // referee_name 単独 (team 不明) → 苗字のみ key
-    const refK = buildPlayerKey(rm.referee_name, "");
-    if (refK && !lockedKeys.has(refK)) {
-      lockedKeys.set(refK, {
-        event: rm.event, reason: "referee",
-        label: `${rm.event} で審判担当中`,
-      });
-    }
-  }
+  //    lockedKeys は myPriority のみで決まる → ctx でメモ化 (全matches走査を priority 種別数だけに削減)
+  const lockedKeys = _lockedKeysForPriority(myPriority, match.tournament_id, ctx);
 
   // 自分の player keys が locked に含まれるかチェック
   const checkKey = (slot, displayName, key) => {
@@ -3591,6 +3605,8 @@ function getOperationState(tournamentId) {
       }
     });
   }
+  // per-call メモ化コンテキスト: 種目優先順位の拘束判定で全matches走査を pending件ごとに繰り返さない (二乗化回避)
+  const _opsCtx = { survival: new Map(), lockedByPriority: new Map(), matchKeys: new Map(), universe: null, refUniverse: null };
   const callable = callableRaw.map(m => {
     const blocks = [];
     if (enforce) {
@@ -3611,7 +3627,7 @@ function getOperationState(tournamentId) {
         });
       });
       // 種目優先順位ロック
-      const pBlocks = getMatchPriorityBlocks(m);
+      const pBlocks = getMatchPriorityBlocks(m, _opsCtx);
       pBlocks.forEach(pb => {
         blocks.push({
           slot: pb.slot, player_name: pb.player_name, type: "priority",
