@@ -14,6 +14,13 @@ function escapeJs(s) {
   return JSON.stringify(String(s == null ? "" : s));
 }
 
+// 壊れた event_config 救済: name にイベントオブジェクトが入っている場合(過去の保存不具合)、
+// 内側の name 文字列を取り出す。これをしないとフォームの種目名に「[object Object]」と表示される。
+function _eventName(n) {
+  while (n && typeof n === "object") n = n.name;
+  return n == null ? "" : String(n);
+}
+
 /**
  * 大会の申込フォーム HTML を生成。
  *
@@ -34,6 +41,9 @@ function buildEntryFormHTML(tournament, events, opts) {
   const paymentNote = opts.payment_note ||
     "参加料は、大会当日の開会式前に受付でお支払いください。";
   const notes = opts.notes || "";
+
+  // 壊れた event_config (name がオブジェクト) を正規化してから処理 (フォーム表示「[object Object]」修正)
+  events = (events || []).map(e => ({ ...e, name: _eventName(e.name) }));
 
   // events は [{ name, fee, type, ... }, ...]
   // 種目を「個人戦 / 団体戦」「ダブルス」に分類してフォーム要素を作る
@@ -983,6 +993,9 @@ function buildEntryFormSnippet(tournament, events, opts) {
     ? new Date(tournament.date).toLocaleDateString("ja-JP",
         { year: "numeric", month: "long", day: "numeric", weekday: "short" })
     : "";
+
+  // 壊れた event_config (name がオブジェクト) を正規化 (フォーム表示「[object Object]」修正)
+  events = (events || []).map(e => ({ ...e, name: _eventName(e.name) }));
 
   const eventsJson = JSON.stringify(events.map(e => ({
     name: e.name,
