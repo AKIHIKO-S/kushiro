@@ -21,6 +21,24 @@ function _eventName(n) {
   return n == null ? "" : String(n);
 }
 
+// buildEntryFormHTML と buildEntryFormSnippet で共通の前処理(派生値)を計算する。
+// 両関数の重複を排除するための内部ヘルパ(出力は不変)。
+function _formPreamble(tournament, opts, events) {
+  opts = opts || {};
+  return {
+    deadline: opts.deadline || "",
+    paymentNote: opts.payment_note ||
+      "参加料は、大会当日の開会式前に受付でお支払いください。",
+    notes: opts.notes || "",
+    tournName: escapeHtml(tournament.name || ""),
+    tournDate: tournament.date
+      ? new Date(tournament.date).toLocaleDateString("ja-JP",
+          { year: "numeric", month: "long", day: "numeric", weekday: "short" })
+      : "",
+    events: (events || []).map(e => ({ ...e, name: _eventName(e.name) })),
+  };
+}
+
 /**
  * 大会の申込フォーム HTML を生成。
  *
@@ -37,25 +55,15 @@ function buildEntryFormHTML(tournament, events, opts) {
   opts = opts || {};
   const gasUrl = opts.gas_url || "REPLACE_WITH_GAS_WEB_APP_URL";
   const adminEmail = opts.admin_email || "";
-  const deadline = opts.deadline || "";
-  const paymentNote = opts.payment_note ||
-    "参加料は、大会当日の開会式前に受付でお支払いください。";
-  const notes = opts.notes || "";
-
-  // 壊れた event_config (name がオブジェクト) を正規化してから処理 (フォーム表示「[object Object]」修正)
-  events = (events || []).map(e => ({ ...e, name: _eventName(e.name) }));
+  const _c = _formPreamble(tournament, opts, events);
+  const { deadline, paymentNote, notes, tournName, tournDate } = _c;
+  events = _c.events;   // 壊れた event_config (name=オブジェクト) は _formPreamble で正規化済み
 
   // events は [{ name, fee, type, ... }, ...]
   // 種目を「個人戦 / 団体戦」「ダブルス」に分類してフォーム要素を作る
   const teamEvents = events.filter(e => e.type === "team");
   const singlesEvents = events.filter(e => e.type === "singles");
   const doublesEvents = events.filter(e => e.type === "doubles");
-
-  const tournName = escapeHtml(tournament.name || "");
-  const tournDate = tournament.date
-    ? new Date(tournament.date).toLocaleDateString("ja-JP",
-        { year: "numeric", month: "long", day: "numeric", weekday: "short" })
-    : "";
 
   // 各種目を JS データとして埋込
   const eventsJson = JSON.stringify(events.map(e => ({
@@ -960,17 +968,6 @@ recalcTotal();
 }
 
 /**
- * Jimdo 埋込用の iframe HTML を生成 (固定 URL に埋込む簡易版)
- */
-function buildIframeEmbed(url, height) {
-  height = height || 1200;
-  return `<!-- 卓球大会 申込フォーム埋込 -->
-<iframe src="${url}" width="100%" height="${height}" frameborder="0"
-        style="border:0;max-width:800px;display:block;margin:0 auto"
-        allow="clipboard-write"></iframe>`;
-}
-
-/**
  * Jimdo / STUDIO 直接貼付用 自己完結型 HTML スニペット
  * - <!DOCTYPE> / <html> / <body> タグなし (Jimdoが除去するため)
  * - 全クラス名に `tt-` prefix (Jimdo既存CSSと衝突回避)
@@ -984,18 +981,9 @@ function buildIframeEmbed(url, height) {
 function buildEntryFormSnippet(tournament, events, opts) {
   opts = opts || {};
   const gasUrl = opts.gas_url || "";
-  const deadline = opts.deadline || "";
-  const paymentNote = opts.payment_note ||
-    "参加料は、大会当日の開会式前に受付でお支払いください。";
-  const notes = opts.notes || "";
-  const tournName = escapeHtml(tournament.name || "");
-  const tournDate = tournament.date
-    ? new Date(tournament.date).toLocaleDateString("ja-JP",
-        { year: "numeric", month: "long", day: "numeric", weekday: "short" })
-    : "";
-
-  // 壊れた event_config (name がオブジェクト) を正規化 (フォーム表示「[object Object]」修正)
-  events = (events || []).map(e => ({ ...e, name: _eventName(e.name) }));
+  const _c = _formPreamble(tournament, opts, events);
+  const { deadline, paymentNote, notes, tournName, tournDate } = _c;
+  events = _c.events;   // 壊れた event_config (name=オブジェクト) は _formPreamble で正規化済み
 
   const eventsJson = JSON.stringify(events.map(e => ({
     name: e.name,
@@ -1638,5 +1626,4 @@ function escapeJsId(s) {
 module.exports = {
   buildEntryFormHTML,
   buildEntryFormSnippet,
-  buildIframeEmbed,
 };
