@@ -740,6 +740,7 @@ const V = {
  if (!skipHash && location.hash.slice(1) !== name) {
    location.hash = name;
  }
+ if (name !== "coach" && typeof CO !== "undefined") CO._stopDash();  // ダッシュボード自動更新を停止 (#286)
  if (name === "tournaments") V.renderTournaments();
  else if (name === "search") V.doSearch();
  else if (name === "live") L.init();
@@ -1971,7 +1972,8 @@ const CO = {
  wrap.appendChild(h("div", { className: "card", style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" } },
  h("div", {}, h("div", { className: "card-title" }, CO.coach.name + "（監督・顧問）"),
  h("div", { className: "text-sm text-sub" }, "マイ選手 " + players.length + " / " + cap + " 人")),
- h("button", { className: "btn btn-sm btn-ghost", onClick: () => { CO.code = ""; CO.coach = null; localStorage.removeItem("kttaCoachCode"); CO.render(); } }, "ログアウト")));
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => { CO.code = ""; CO.coach = null; localStorage.removeItem("kttaCoachCode"); CO._stopDash(); CO.render(); } }, "ログアウト")));
+ wrap.appendChild(await CO._dashboardCard());   // マイ選手の進行ダッシュボード (#286)
  const myCard = h("div", { className: "card" });
  myCard.appendChild(h("div", { className: "card-head" }, h("div", { className: "card-title" }, "マイ選手"),
  h("span", { className: "text-sm text-sub" }, players.length + " / " + cap)));
@@ -2045,6 +2047,101 @@ const CO = {
  CO.render();
  } }, "申請する");
  TT.openModal(p.name + " の修正・削除 申請", body, foot);
+ },
+ // ── マイ選手の進行ダッシュボード (#286) ──
+ _stopDash() { if (CO._dashTimer) { clearInterval(CO._dashTimer); CO._dashTimer = null; } },
+ _statusStyle(s) {
+ const m = { playing: ["#dc2626", "#fff"], callable: ["#d97706", "#fff"], waiting: ["#64748b", "#fff"],
+ won: ["#15803d", "#fff"], lost: ["#475569", "#fff"], none: ["#e2e8f0", "#475569"] };
+ const c = m[s] || m.none;
+ return { background: c[0], color: c[1], borderRadius: "999px", padding: "3px 11px", fontSize: "12px", fontWeight: "800", whiteSpace: "nowrap" };
+ },
+ _dashRow(it) {
+ const sub = [];
+ if (it.opponent) sub.push("対 " + it.opponent);
+ if (it.score) sub.push(it.score);
+ if (it.event) sub.push(it.event);
+ return h("div", { className: "flex", style: { justifyContent: "space-between", alignItems: "center", gap: "8px", padding: "8px 6px", borderBottom: "1px solid var(--border)" } },
+ h("div", { style: { minWidth: 0 } },
+ h("a", { href: "#player/" + it.id, style: { fontWeight: 700, color: "inherit" }, onClick: (e) => { e.preventDefault(); V.openPlayer(it.id); } }, it.name),
+ it.team ? h("span", { className: "text-xs text-sub" }, " " + it.team) : "",
+ sub.length ? h("div", { className: "text-xs text-sub" }, sub.join(" ・ ")) : null),
+ h("span", { style: CO._statusStyle(it.status) }, it.label));
+ },
+ async _loadDash(listEl, tid) {
+ if (!listEl || !tid) return;
+ const d = await CO._get("/api/coach/dashboard?tournament_id=" + encodeURIComponent(tid));
+ listEl.innerHTML = "";
+ if (d.error || !d.items) { listEl.appendChild(h("div", { className: "text-sm text-sub", style: { padding: "10px" } }, d.error || "取得できませんでした")); return; }
+ if (!d.items.length) { listEl.appendChild(h("div", { className: "empty-state", style: { padding: "12px" } }, "この大会にマイ選手がいません。")); return; }
+ d.items.forEach(it => listEl.appendChild(CO._dashRow(it)));
+ },
+ async _dashboardCard() {
+ const card = h("div", { className: "card" });
+ card.appendChild(h("div", { className: "card-head" },
+ h("div", { className: "card-title" }, "進行ダッシュボード（マイ選手のいま）"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => CO.render() }, "更新")));
+ let tours = [];
+ try { tours = await fetch("/api/public/tournaments").then(r => r.json()); } catch (e) {}
+ const ongoing = (Array.isArray(tours) ? tours : []).filter(x => x.status === "ongoing" || x.status === "preparation");
+ if (!ongoing.length) {
+ card.appendChild(h("div", { className: "text-sm text-sub", style: { padding: "8px 4px" } }, "現在、開催中の大会はありません。"));
+ CO._stopDash();
+ return card;
+ }
+ if (!(CO._dashTid && ongoing.find(o => o.id === CO._dashTid))) CO._dashTid = ongoing[0].id;
+ if (ongoing.length > 1) {
+ card.appendChild(h("select", { className: "input input-sm", style: { marginBottom: "8px", width: "100%" },
+ onChange: (e) => { CO._dashTid = e.target.value; CO.render(); } },
+ ...ongoing.map(o => h("option", { value: o.id, selected: o.id === CO._dashTid ? "" : null }, o.name))));
+ }
+ const listEl = h("div", { id: "coachDashList" });
+ card.appendChild(listEl);
+ CO._loadDash(listEl, CO._dashTid);
+ CO._stopDash();
+ CO._dashTimer = setInterval(() => {
+ const el = document.getElementById("coachDashList");
+ if (el && CO.coach) CO._loadDash(el, CO._dashTid); else CO._stopDash();
+ }, 6000);
+ // まとめ呼出通知
+ card.appendChild(h("div", { style: { marginTop: "10px", paddingTop: "10px", borderTop: "1px solid var(--border)" } }, CO._pushButton()));
+ return card;
+ },
+ // ── まとめ呼出通知 (#287) ──
+ _pushButton() {
+ if (CO._pushReady) return h("div", { className: "text-sm", style: { color: "#166534", fontWeight: 700 } },
+ "まとめ呼出通知: ON（マイ選手が呼ばれるとこの端末に届きます）");
+ const wrap = h("div", {});
+ wrap.appendChild(h("div", { className: "flex gap-2", style: { alignItems: "center" } },
+ h("div", { className: "flex-1 text-sm" }, "マイ選手の誰かが呼ばれたら、この端末に通知します"),
+ h("button", { className: "btn btn-sm", onClick: () => CO.enablePush() }, "まとめ呼出通知をオンにする")));
+ if (MP && MP._pushHowto) wrap.appendChild(MP._pushHowto());
+ return wrap;
+ },
+ async enablePush() {
+ const env = MP._pushEnv();
+ if (env.isIOS && !env.standalone) return toast("iPhoneは「ホーム画面に追加」したアプリから通知をオンにできます。下の手順をご覧ください。", "warn");
+ if (!("Notification" in window)) return toast("この端末は通知に対応していません", "err");
+ const perm = await Notification.requestPermission();
+ if (perm !== "granted") return toast("通知が許可されませんでした", "warn");
+ const ok = await CO.setupCoachPush();
+ toast(ok ? "まとめ呼出通知をオンにしました" : "登録に失敗しました。少し待って再度お試しください", ok ? "ok" : "err");
+ CO.render();
+ },
+ async setupCoachPush() {
+ try {
+ if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+ if (Notification.permission !== "granted") return false;
+ const cfg = await fetch("/api/push/vapid-public-key").then(r => r.json());
+ if (!cfg || !cfg.enabled || !cfg.key) return false;
+ const reg = await navigator.serviceWorker.register("/viewer/sw.js");
+ await navigator.serviceWorker.ready;
+ let sub = await reg.pushManager.getSubscription();
+ if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: MP._urlB64ToUint8(cfg.key) });
+ const r = await CO._post("/api/coach/push/subscribe", { subscription: sub.toJSON ? sub.toJSON() : sub });
+ CO._pushReady = !!(r && r.ok);
+ return CO._pushReady;
+ } catch (e) { console.warn("coach push setup failed", e); return false; }
  },
 };
 

@@ -214,6 +214,15 @@ sqlite.exec(`
     FOREIGN KEY (coach_id) REFERENCES coach_accounts(id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_preq_status ON player_requests(status, id);
+  -- 監督端末のプッシュ購読 (マイ選手の呼出をまとめて受信) #287
+  CREATE TABLE IF NOT EXISTS coach_subscriptions (
+    endpoint TEXT PRIMARY KEY,
+    coach_id TEXT NOT NULL,
+    subscription_json TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (coach_id) REFERENCES coach_accounts(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_csub_coach ON coach_subscriptions(coach_id);
 `);
 
 // 既存DBにカラムがない場合は追加
@@ -1058,6 +1067,68 @@ function resolvePlayerRequest(id, action) {
   return { ok: true, applied: false };
 }
 function countPendingRequests() { return sqlite.prepare("SELECT COUNT(*) n FROM player_requests WHERE status='pending'").get().n; }
+
+// 監督ダッシュボード: マイ選手のライブ状況 (/live を名簿で絞る) #286
+function getCoachDashboard(coachId, tournamentId) {
+  const roster = getCoachRoster(coachId);
+  const st = getOperationState(tournamentId);
+  if (!st) return { error: "大会が見つかりません" };
+  const norm = s => String(s == null ? "" : s).replace(/[\s　]/g, "");
+  const split = s => String(s == null ? "" : s).split(/\s*[\/／・]\s*/).map(x => norm(x)).filter(Boolean);
+  const inMatch = (m, p) => {
+    if (!m) return false;
+    if (p.id && [m.player1_id, m.player2_id, m.winner_id, m.loser_id].includes(p.id)) return true;
+    const pn = norm(p.name); if (!pn) return false;
+    return [].concat(split(m.player1_name), split(m.player2_name), split(m.winner_name), split(m.loser_name)).includes(pn);
+  };
+  const oppOf = (m, p) => {
+    const pn = norm(p.name);
+    if (p.id && m.player1_id === p.id) return m.player2_name || "";
+    if (p.id && m.player2_id === p.id) return m.player1_name || "";
+    if (split(m.player1_name).includes(pn)) return m.player2_name || "";
+    if (split(m.player2_name).includes(pn)) return m.player1_name || "";
+    return m.player2_name || m.player1_name || "";
+  };
+  const onTable = st.on_table || [], callable = st.callable || [], waiting = st.waiting || [], finished = st.recent_finished || [];
+  const slim = p => ({ id: p.id, name: p.name, furigana: p.furigana || "", team: p.team || "" });
+  const items = roster.map(p => {
+    let m;
+    if ((m = onTable.find(x => inMatch(x, p)))) return { ...slim(p), status: "playing", label: "台" + (m.table_no || "?") + " で試合中", table_no: m.table_no || 0, opponent: oppOf(m, p), event: m.event || "" };
+    if ((m = callable.find(x => inMatch(x, p)))) return { ...slim(p), status: "callable", label: "まもなく呼出", opponent: oppOf(m, p), event: m.event || "" };
+    if ((m = waiting.find(x => inMatch(x, p)))) return { ...slim(p), status: "waiting", label: "待機中", opponent: oppOf(m, p), event: m.event || "" };
+    if ((m = finished.find(x => inMatch(x, p)))) {
+      const won = p.id ? (m.winner_id === p.id) : split(m.winner_name).includes(norm(p.name));
+      return { ...slim(p), status: won ? "won" : "lost", label: won ? "勝ち" : "負け",
+        opponent: won ? (m.loser_name || "") : (m.winner_name || ""),
+        score: (m.winner_sets != null ? (won ? m.winner_sets + "-" + m.loser_sets : m.loser_sets + "-" + m.winner_sets) : ""), event: m.event || "" };
+    }
+    return { ...slim(p), status: "none", label: "—" };
+  });
+  // 状況の重み付け順 (試合中→呼出→待機→結果→なし)
+  const order = { playing: 0, callable: 1, waiting: 2, won: 3, lost: 3, none: 4 };
+  items.sort((a, b) => (order[a.status] - order[b.status]) || String(a.furigana || a.name).localeCompare(String(b.furigana || b.name), "ja"));
+  return { tournament: { id: st.tournament.id, name: st.tournament.name, status: st.tournament.status }, items };
+}
+
+// 監督端末プッシュ購読 #287
+function saveCoachSubscription(coachId, subscription) {
+  if (!coachId || !subscription || !subscription.endpoint) return { error: "subscription が不正です" };
+  sqlite.prepare(`INSERT INTO coach_subscriptions (endpoint, coach_id, subscription_json) VALUES (?,?,?)
+    ON CONFLICT(endpoint) DO UPDATE SET coach_id=excluded.coach_id, subscription_json=excluded.subscription_json`)
+    .run(subscription.endpoint, coachId, JSON.stringify(subscription));
+  return { ok: true };
+}
+function deleteCoachSubscription(endpoint) { sqlite.prepare("DELETE FROM coach_subscriptions WHERE endpoint=?").run(endpoint); }
+// この選手を名簿に持つ監督の購読を返す (呼出時のまとめ通知用)
+function getCoachSubscriptionsForPlayer(playerId) {
+  if (!playerId) return [];
+  return sqlite.prepare(`SELECT cs.endpoint, cs.subscription_json FROM coach_subscriptions cs
+    JOIN coach_players cp ON cp.coach_id = cs.coach_id
+    JOIN coach_accounts ca ON ca.id = cs.coach_id AND ca.active = 1
+    WHERE cp.player_id = ?`).all(playerId)
+    .map(r => { try { return { endpoint: r.endpoint, sub: JSON.parse(r.subscription_json) }; } catch (e) { return null; } })
+    .filter(Boolean);
+}
 
 function addAchievement(playerId, data) {
   const id = uid();
@@ -5304,6 +5375,7 @@ module.exports = {
   regenerateCoachCode, deleteCoachAccount, coachByCode,
   getCoachRoster, addCoachPlayer, removeCoachPlayer,
   createPlayerRequest, getCoachRequests, listPlayerRequests, resolvePlayerRequest, countPendingRequests,
+  getCoachDashboard, saveCoachSubscription, deleteCoachSubscription, getCoachSubscriptionsForPlayer,
   getGlobalMatchAverages, detectSchoolCategory, normalizePlayerCategories,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,

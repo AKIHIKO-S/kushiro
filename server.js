@@ -60,6 +60,20 @@ async function sendPushToPlayer(playerId, payload) {
   }));
 }
 
+// この選手を名簿に持つ監督の端末へまとめて呼出通知 (#287)
+async function sendPushToCoachesForPlayer(playerId, payload) {
+  if (!PUSH_ENABLED || !playerId) return;
+  const subs = db.getCoachSubscriptionsForPlayer(playerId);
+  if (!subs.length) return;
+  const body = JSON.stringify(payload);
+  await Promise.all(subs.map(async ({ endpoint, sub }) => {
+    try { await webpush.sendNotification(sub, body); }
+    catch (err) {
+      if (err && (err.statusCode === 410 || err.statusCode === 404)) db.deleteCoachSubscription(endpoint);
+    }
+  }));
+}
+
 // xlsx 一時アップロード保存先 (拡張子保持)
 const uploadDir = path.join(os.tmpdir(), "tt-uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -541,6 +555,26 @@ app.post("/api/coach/requests", requireCoach, (req, res) => {
 });
 app.get("/api/coach/requests", requireCoach, (req, res) => {
   res.json({ requests: db.getCoachRequests(req.coach.id) });
+});
+// マイ選手の進行ダッシュボード (#286)
+app.get("/api/coach/dashboard", requireCoach, (req, res) => {
+  const r = db.getCoachDashboard(req.coach.id, req.query.tournament_id);
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
+});
+// 監督端末のプッシュ購読 (#287)
+app.post("/api/coach/push/subscribe", requireCoach, (req, res) => {
+  if (!PUSH_ENABLED) return res.status(503).json({ error: "プッシュ通知は無効です" });
+  const sub = (req.body || {}).subscription;
+  if (!sub) return res.status(400).json({ error: "subscription が必要です" });
+  const r = db.saveCoachSubscription(req.coach.id, sub);
+  if (r.error) return res.status(400).json(r);
+  res.json({ ok: true });
+});
+app.post("/api/coach/push/unsubscribe", requireCoach, (req, res) => {
+  const ep = (req.body || {}).endpoint;
+  if (ep) db.deleteCoachSubscription(ep);
+  res.json({ ok: true });
 });
 // ── Admin: 監督アカウント発行・管理 ──
 app.get("/api/admin/coaches", requireAdmin, (req, res) => { res.json({ coaches: db.listCoachAccounts() }); });
@@ -2120,6 +2154,13 @@ app.post("/api/matches/:id/call", requireAdmin, (req, res) => {
       });
       if (m.player1_id) sendPushToPlayer(m.player1_id, mk(m.player1_id, m.player2_name)).catch(() => {});
       if (m.player2_id) sendPushToPlayer(m.player2_id, mk(m.player2_id, m.player1_name)).catch(() => {});
+      // 監督・顧問へまとめて呼出通知 (#287): マイ選手に該当があれば監督端末へ
+      const coachNote = (playerName, oppName) => ({
+        title: "マイ選手の呼出", body: `${playerName || "選手"} → ${tableNo ? "台" + tableNo : "コール"}` + (oppName ? `\n（対 ${oppName}）` : ""),
+        url: "/viewer/#coach", tag: "ktta-coach-call",
+      });
+      if (m.player1_id) sendPushToCoachesForPlayer(m.player1_id, coachNote(m.player1_name, m.player2_name)).catch(() => {});
+      if (m.player2_id) sendPushToCoachesForPlayer(m.player2_id, coachNote(m.player2_name, m.player1_name)).catch(() => {});
     }
   } catch (e) { /* 通知失敗は無視 (呼出本体は成功済み) */ }
 });
