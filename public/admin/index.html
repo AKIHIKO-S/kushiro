@@ -2857,8 +2857,6 @@ const A = {
  // ★新方式: /entry/<id> = 自己完結フォーム (GAS不要、自サーバーへ直接POST)
  const formUrl = origin + `/entry/${t.id}` +
    (qs.toString() ? `?${qs}` : "");
- const snippetUrl = origin + `/api/tournaments/${t.id}/entry-form-snippet` +
-   (qs.toString() ? `?${qs}` : "");
 
  // エラーチェック
  const warnings = [];

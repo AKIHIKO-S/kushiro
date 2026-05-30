@@ -1903,40 +1903,6 @@ app.get("/api/tournaments/:id/entry-form.html", (req, res) => {
   }
 });
 
-// ─── Jimdo/STUDIO 直接貼付用 自己完結型スニペット ──────────
-// DOCTYPE/html/body タグなし、外部依存ゼロの HTML フラグメント
-// GET ?as=text で text/plain (コピペ用)
-app.get("/api/tournaments/:id/entry-form-snippet", (req, res) => {
-  try {
-    const tournament = db.getTournament(req.params.id);
-    if (!tournament) return res.status(404).send("大会が見つかりません");
-    let events = _resolveEvents(tournament);
-    if (req.query.events) {
-      try {
-        const parsed = JSON.parse(req.query.events);
-        if (Array.isArray(parsed)) events = parsed;
-      } catch {}
-    }
-    const snippet = entryForm.buildEntryFormSnippet(tournament, events, {
-      gas_url: req.query.gas_url || "",
-      deadline: req.query.deadline || "",
-      payment_note: req.query.payment_note || "",
-      notes: req.query.notes || "",
-    });
-    const as = req.query.as || "html";
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    if (as === "text") {
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    } else {
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-    }
-    res.send(snippet);
-  } catch (e) {
-    res.status(500).send("スニペット生成失敗: " + e.message);
-  }
-});
-
 // 申込フォームの events 情報を JSON で取得 (admin UI 用)
 app.get("/api/tournaments/:id/entry-form-config", (req, res) => {
   const tournament = db.getTournament(req.params.id);
