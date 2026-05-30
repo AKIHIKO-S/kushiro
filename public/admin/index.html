@@ -5819,15 +5819,14 @@ const A = {
  },
  _coachRow(c) {
  const codeBox = h("code", { style: { background: "#f1f5f9", padding: "3px 8px", borderRadius: "6px", fontWeight: 800, letterSpacing: ".05em" } }, c.login_code);
- return h("div", { className: "card", style: { padding: "10px 12px", marginBottom: "8px", opacity: c.active ? 1 : 0.55 } },
- h("div", { className: "flex", style: { justifyContent: "space-between", gap: "8px", flexWrap: "wrap", alignItems: "center" } },
+ const mainRow = h("div", { className: "flex", style: { justifyContent: "space-between", gap: "8px", flexWrap: "wrap", alignItems: "center" } },
  h("div", {},
  h("span", { style: { fontWeight: 800, fontSize: "15px" } }, c.name),
  c.team ? h("span", { className: "text-xs", style: { marginLeft: "8px", color: "#475569", fontWeight: 600 } }, c.team) : null,
  h("span", { className: "text-xs text-sub", style: { marginLeft: "8px" } }, "マイ選手 " + (c.player_count || 0) + " / " + c.player_cap + " 人"),
  c.active ? null : h("span", { className: "badge badge-sub", style: { marginLeft: "6px" } }, "無効")),
  h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
- h("span", { className: "text-xs text-sub" }, "コード:"), codeBox,
+ h("span", { className: "text-xs text-sub" }, "主監督コード:"), codeBox,
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => { navigator.clipboard && navigator.clipboard.writeText(c.login_code); toast("コードをコピーしました", "ok"); } }, "コピー"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: async () => {
  if (!confirm("新しいコードを再発行します。古いコードは使えなくなります。")) return;
@@ -5848,7 +5847,57 @@ const A = {
  h("button", { className: "btn btn-sm btn-ghost", style: { color: "#b91c1c" }, onClick: async () => {
  if (!confirm("このアカウントを削除します。よろしいですか?")) return;
  await api.del("/api/admin/coaches/" + c.id); A.renderCoaches();
- } }, "削除"))));
+ } }, "削除")));
+ return h("div", { className: "card", style: { padding: "10px 12px", marginBottom: "8px", opacity: c.active ? 1 : 0.55 } },
+ mainRow, A._coachMembersSection(c));
+ },
+ // 共同監督・顧問メンバー (複数で共有 / 年度引き継ぎ) #292
+ _coachMembersSection(c) {
+ const members = c.members || [];
+ const wrap = h("div", { style: { marginTop: "8px", paddingTop: "8px", borderTop: "1px dashed #cbd5e1" } });
+ wrap.appendChild(h("div", { className: "flex", style: { justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "6px", marginBottom: "4px" } },
+ h("span", { className: "text-xs", style: { fontWeight: 700, color: "#475569" } }, "共同監督・顧問メンバー（複数で共有 / 年度引き継ぎ）"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: async () => {
+ const name = prompt("追加する顧問・監督の名前（例: 田中 太郎）", "");
+ if (name == null) return;
+ const role = prompt("役割（例: 顧問 / 監督 / コーチ / 後任監督）", "顧問");
+ if (role == null) return;
+ const r = await api.post("/api/admin/coaches/" + c.id + "/members", { name: name.trim(), role: role.trim() || "顧問" });
+ if (r && r.error) return toast(r.error, "err");
+ toast("メンバーを追加しました。コード: " + r.login_code, "ok"); A.renderCoaches();
+ } }, "+ メンバー追加")));
+ if (!members.length) {
+ wrap.appendChild(h("div", { className: "text-xs text-sub", style: { padding: "2px 0", lineHeight: "1.6" } },
+ "追加メンバーなし（主監督コードのみ）。複数の顧問で1チームを共有する場合や、来年度の担当へ引き継ぐ場合にメンバーを追加してください。"));
+ return wrap;
+ }
+ members.forEach(m => wrap.appendChild(A._coachMemberRow(c, m)));
+ return wrap;
+ },
+ _coachMemberRow(c, m) {
+ const codeBox = h("code", { style: { background: "#eef2ff", padding: "2px 7px", borderRadius: "6px", fontWeight: 700, letterSpacing: ".05em" } }, m.login_code);
+ return h("div", { className: "flex", style: { justifyContent: "space-between", gap: "6px", flexWrap: "wrap", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #f1f5f9", opacity: m.active ? 1 : 0.5 } },
+ h("div", {},
+ h("span", { style: { fontWeight: 700 } }, m.name || "(名称未設定)"),
+ h("span", { className: "badge badge-sub", style: { marginLeft: "6px" } }, m.role || "顧問"),
+ m.active ? null : h("span", { className: "text-xs", style: { marginLeft: "6px", color: "#b91c1c", fontWeight: 700 } }, "無効")),
+ h("div", { className: "flex gap-1", style: { alignItems: "center", flexWrap: "wrap" } },
+ codeBox,
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => { navigator.clipboard && navigator.clipboard.writeText(m.login_code); toast("コピーしました", "ok"); } }, "コピー"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: async () => {
+ const next = prompt("新しいコード (英小文字・数字 4〜12文字)", m.login_code);
+ if (next == null) return; const code = next.trim().toLowerCase(); if (!code) return;
+ const r = await api.post("/api/admin/coach-members/" + m.id + "/set-code", { code });
+ if (r && r.error) return toast(r.error, "err"); toast("変更しました", "ok"); A.renderCoaches();
+ } }, "コード変更"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: async () => {
+ const r = await api.put("/api/admin/coach-members/" + m.id, { active: m.active ? 0 : 1 });
+ if (r && r.error) return toast(r.error, "err"); A.renderCoaches();
+ } }, m.active ? "無効化" : "有効化"),
+ h("button", { className: "btn btn-sm btn-ghost", style: { color: "#b91c1c" }, onClick: async () => {
+ if (!confirm("このメンバーを削除します。コードは使えなくなります。よろしいですか?")) return;
+ await api.del("/api/admin/coach-members/" + m.id); A.renderCoaches();
+ } }, "削除")));
  },
 
  // ─── 選手の重複結合 (マージ) #275 ──────────

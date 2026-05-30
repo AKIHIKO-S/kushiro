@@ -1972,6 +1972,7 @@ const CO = {
  const cap = (roster && roster.cap) || CO.coach.player_cap || 50;
  wrap.appendChild(h("div", { className: "card", style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" } },
  h("div", {}, h("div", { className: "card-title" }, CO.coach.name + "（監督・顧問）"),
+ CO.coach.member_name ? h("div", { className: "text-xs", style: { color: "#2563eb", fontWeight: 700 } }, (CO.coach.member_role || "顧問") + "：" + CO.coach.member_name + " として利用中") : null,
  h("div", { className: "text-sm text-sub" }, "マイ選手 " + players.length + " / " + cap + " 人")),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => { CO.code = ""; CO.coach = null; localStorage.removeItem("kttaCoachCode"); CO._stopDash(); CO.render(); } }, "ログアウト")));
  // 本部からのお知らせ (#290)

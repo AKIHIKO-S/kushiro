@@ -233,6 +233,19 @@ sqlite.exec(`
     created_at TEXT DEFAULT (datetime('now','localtime'))
   );
   CREATE INDEX IF NOT EXISTS idx_cann_active ON coach_announcements(active, id);
+  -- 共同監督・引き継ぎ (#292)。1チーム(coach_account)を複数の顧問コードで共有。
+  -- 主監督コードは coach_accounts.login_code のまま。ここは「追加メンバー」を保持。
+  CREATE TABLE IF NOT EXISTS coach_members (
+    id TEXT PRIMARY KEY,
+    coach_id TEXT NOT NULL,
+    name TEXT DEFAULT '',
+    login_code TEXT NOT NULL UNIQUE,
+    role TEXT DEFAULT '顧問',
+    active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (coach_id) REFERENCES coach_accounts(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_cmember_coach ON coach_members(coach_id);
 `);
 
 // 既存DBにカラムがない場合は追加
@@ -987,10 +1000,18 @@ function _genCoachCode() {
   let s = ""; for (let i = 0; i < 6; i++) s += A[Math.floor(Math.random() * A.length)];
   return s; // 6桁・小文字
 }
+// コードが主監督(coach_accounts) か 追加メンバー(coach_members) で使用中か (#292)。
+// exceptAccountId / exceptMemberId は自分自身を除外するため。
+function _coachCodeInUse(code, exceptAccountId, exceptMemberId) {
+  const accSql = "SELECT 1 FROM coach_accounts WHERE login_code = ? COLLATE NOCASE" + (exceptAccountId ? " AND id <> ?" : "");
+  if ((exceptAccountId ? sqlite.prepare(accSql).get(code, exceptAccountId) : sqlite.prepare(accSql).get(code))) return true;
+  const memSql = "SELECT 1 FROM coach_members WHERE login_code = ? COLLATE NOCASE" + (exceptMemberId ? " AND id <> ?" : "");
+  return !!(exceptMemberId ? sqlite.prepare(memSql).get(code, exceptMemberId) : sqlite.prepare(memSql).get(code));
+}
 function _uniqCoachCode() {
   let code, tries = 0;
   do { code = _genCoachCode(); tries++; }
-  while (sqlite.prepare("SELECT 1 FROM coach_accounts WHERE login_code = ? COLLATE NOCASE").get(code) && tries < 50);
+  while (_coachCodeInUse(code) && tries < 50);
   return code;
 }
 function getCoachAccount(id) { return sqlite.prepare("SELECT * FROM coach_accounts WHERE id=?").get(id) || null; }
@@ -1005,7 +1026,8 @@ function createCoachAccount(data) {
 }
 function listCoachAccounts() {
   return sqlite.prepare("SELECT * FROM coach_accounts ORDER BY created_at DESC").all().map(c => ({
-    ...c, player_count: sqlite.prepare("SELECT COUNT(*) n FROM coach_players WHERE coach_id=?").get(c.id).n }));
+    ...c, player_count: sqlite.prepare("SELECT COUNT(*) n FROM coach_players WHERE coach_id=?").get(c.id).n,
+    members: listCoachMembers(c.id) }));
 }
 function updateCoachAccount(id, data) {
   const c = getCoachAccount(id); if (!c) return null;
@@ -1028,16 +1050,64 @@ function setCoachCode(id, code) {
   const c = getCoachAccount(id); if (!c) return { error: "アカウントが見つかりません" };
   const norm = String(code || "").trim().toLowerCase();
   if (!/^[a-z0-9]{4,12}$/.test(norm)) return { error: "コードは英小文字・数字 4〜12文字で入力してください" };
-  if (sqlite.prepare("SELECT 1 FROM coach_accounts WHERE login_code = ? COLLATE NOCASE AND id <> ?").get(norm, id)) return { error: "そのコードは既に使われています" };
+  if (_coachCodeInUse(norm, id, null)) return { error: "そのコードは既に使われています" };
   sqlite.prepare("UPDATE coach_accounts SET login_code=? WHERE id=?").run(norm, id);
   return { ok: true, coach: getCoachAccount(id) };
 }
 function deleteCoachAccount(id) { sqlite.prepare("DELETE FROM coach_accounts WHERE id=?").run(id); }
 function coachByCode(code) {
   if (!code) return null;
-  return sqlite.prepare("SELECT * FROM coach_accounts WHERE login_code = ? COLLATE NOCASE AND active = 1")
-    .get(String(code).trim()) || null;
+  const key = String(code).trim();
+  // 主監督コード (既存の挙動・後方互換)
+  const c = sqlite.prepare("SELECT * FROM coach_accounts WHERE login_code = ? COLLATE NOCASE AND active = 1").get(key);
+  if (c) return c;
+  // 追加メンバー(共同監督・顧問)コード (#292)。有効なチームに紐づく有効メンバーのみ。
+  const m = sqlite.prepare(`SELECT cm.id AS member_id, cm.coach_id, cm.name AS member_name, cm.role AS member_role
+    FROM coach_members cm JOIN coach_accounts ca ON ca.id = cm.coach_id AND ca.active = 1
+    WHERE cm.login_code = ? COLLATE NOCASE AND cm.active = 1`).get(key);
+  if (m) {
+    const acc = getCoachAccount(m.coach_id);
+    if (acc) { acc.member_id = m.member_id; acc.member_name = m.member_name; acc.member_role = m.member_role; return acc; }
+  }
+  return null;
 }
+// ── 共同監督メンバー (#292) ──
+function listCoachMembers(coachId) {
+  return sqlite.prepare("SELECT id, coach_id, name, login_code, role, active, created_at FROM coach_members WHERE coach_id=? ORDER BY created_at").all(coachId);
+}
+function getCoachMember(memberId) { return sqlite.prepare("SELECT * FROM coach_members WHERE id=?").get(memberId) || null; }
+function addCoachMember(coachId, data) {
+  const acc = getCoachAccount(coachId); if (!acc) return { error: "アカウントが見つかりません" };
+  data = data || {};
+  const id = uid();
+  const code = _uniqCoachCode();
+  sqlite.prepare("INSERT INTO coach_members (id, coach_id, name, login_code, role, active) VALUES (?,?,?,?,?,1)")
+    .run(id, coachId, String(data.name || "").trim(), code, String(data.role || "顧問").trim() || "顧問");
+  return { ok: true, member: getCoachMember(id) };
+}
+function updateCoachMember(memberId, data) {
+  const m = getCoachMember(memberId); if (!m) return { error: "メンバーが見つかりません" };
+  data = data || {};
+  sqlite.prepare("UPDATE coach_members SET name=?, role=?, active=? WHERE id=?")
+    .run(data.name != null ? String(data.name).trim() : m.name,
+         data.role != null ? (String(data.role).trim() || "顧問") : m.role,
+         data.active != null ? (data.active ? 1 : 0) : m.active, memberId);
+  return { ok: true, member: getCoachMember(memberId) };
+}
+function regenerateCoachMemberCode(memberId) {
+  const m = getCoachMember(memberId); if (!m) return { error: "メンバーが見つかりません" };
+  sqlite.prepare("UPDATE coach_members SET login_code=? WHERE id=?").run(_uniqCoachCode(), memberId);
+  return { ok: true, member: getCoachMember(memberId) };
+}
+function setCoachMemberCode(memberId, code) {
+  const m = getCoachMember(memberId); if (!m) return { error: "メンバーが見つかりません" };
+  const norm = String(code || "").trim().toLowerCase();
+  if (!/^[a-z0-9]{4,12}$/.test(norm)) return { error: "コードは英小文字・数字 4〜12文字で入力してください" };
+  if (_coachCodeInUse(norm, null, memberId)) return { error: "そのコードは既に使われています" };
+  sqlite.prepare("UPDATE coach_members SET login_code=? WHERE id=?").run(norm, memberId);
+  return { ok: true, member: getCoachMember(memberId) };
+}
+function deleteCoachMember(memberId) { sqlite.prepare("DELETE FROM coach_members WHERE id=?").run(memberId); return { ok: true }; }
 function getCoachRoster(coachId) {
   return sqlite.prepare(`SELECT p.* FROM coach_players cp JOIN players p ON p.id=cp.player_id
     WHERE cp.coach_id=? ORDER BY p.furigana, p.name`).all(coachId);
@@ -5456,6 +5526,8 @@ module.exports = {
   // 監督・顧問モード (#285)
   createCoachAccount, getCoachAccount, listCoachAccounts, updateCoachAccount,
   regenerateCoachCode, setCoachCode, deleteCoachAccount, coachByCode,
+  listCoachMembers, getCoachMember, addCoachMember, updateCoachMember,
+  regenerateCoachMemberCode, setCoachMemberCode, deleteCoachMember,
   getCoachRoster, addCoachPlayer, removeCoachPlayer,
   createPlayerRequest, getCoachRequests, listPlayerRequests, resolvePlayerRequest, cancelPlayerRequest, countPendingRequests,
   getCoachDashboard, saveCoachSubscription, deleteCoachSubscription, getCoachSubscriptionsForPlayer,

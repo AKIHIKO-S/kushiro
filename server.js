@@ -543,11 +543,13 @@ app.post("/api/coach/login", (req, res) => {
   const coach = db.coachByCode((req.body || {}).code);
   if (!coach) return res.status(401).json({ error: "コードが無効です。本部にご確認ください。" });
   const count = db.getCoachRoster(coach.id).length;
-  res.json({ ok: true, coach: { id: coach.id, name: coach.name, player_cap: coach.player_cap, player_count: count } });
+  res.json({ ok: true, coach: { id: coach.id, name: coach.name, team: coach.team || "", player_cap: coach.player_cap, player_count: count,
+    member_name: coach.member_name || "", member_role: coach.member_role || "" } });
 });
 app.get("/api/coach/me", requireCoach, (req, res) => {
-  res.json({ id: req.coach.id, name: req.coach.name, player_cap: req.coach.player_cap,
-    player_count: db.getCoachRoster(req.coach.id).length });
+  res.json({ id: req.coach.id, name: req.coach.name, team: req.coach.team || "", player_cap: req.coach.player_cap,
+    player_count: db.getCoachRoster(req.coach.id).length,
+    member_name: req.coach.member_name || "", member_role: req.coach.member_role || "" });
 });
 app.get("/api/coach/roster", requireCoach, (req, res) => {
   res.json({ players: db.getCoachRoster(req.coach.id), cap: req.coach.player_cap });
@@ -633,6 +635,33 @@ app.post("/api/admin/coaches/:id/set-code", requireAdmin, (req, res) => {
   res.json(r.coach);
 });
 app.delete("/api/admin/coaches/:id", requireAdmin, (req, res) => { db.deleteCoachAccount(req.params.id); res.json({ ok: true }); });
+// ── 共同監督メンバー (複数顧問で共有 / 年度引き継ぎ) #292 ──
+app.get("/api/admin/coaches/:id/members", requireAdmin, (req, res) => {
+  res.json({ members: db.listCoachMembers(req.params.id) });
+});
+app.post("/api/admin/coaches/:id/members", requireAdmin, (req, res) => {
+  const r = db.addCoachMember(req.params.id, req.body || {});
+  if (r.error) return res.status(400).json(r);
+  res.status(201).json(r.member);
+});
+app.put("/api/admin/coach-members/:mid", requireAdmin, (req, res) => {
+  const r = db.updateCoachMember(req.params.mid, req.body || {});
+  if (r.error) return res.status(400).json(r);
+  res.json(r.member);
+});
+app.post("/api/admin/coach-members/:mid/regenerate", requireAdmin, (req, res) => {
+  const r = db.regenerateCoachMemberCode(req.params.mid);
+  if (r.error) return res.status(400).json(r);
+  res.json(r.member);
+});
+app.post("/api/admin/coach-members/:mid/set-code", requireAdmin, (req, res) => {
+  const r = db.setCoachMemberCode(req.params.mid, (req.body || {}).code);
+  if (r.error) return res.status(400).json(r);
+  res.json(r.member);
+});
+app.delete("/api/admin/coach-members/:mid", requireAdmin, (req, res) => {
+  res.json(db.deleteCoachMember(req.params.mid));
+});
 // マイ番号(プッシュ)登録済みの選手一覧 (#288 Admin可視化)
 app.get("/api/admin/push/players", requireAdmin, (req, res) => {
   const rows = db.getPushPlayerIds();
