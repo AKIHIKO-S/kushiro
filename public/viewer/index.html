@@ -1031,38 +1031,6 @@ const V = {
  },
 
  // ─── 試合カード（試合検索/直近結果で使用・互換維持） ──────
- renderMatchCard(m) {
- const card = h("div", { className: "match-card fi" });
- // 勝者行
- card.appendChild(h("div", { className: "match-row winner" },
- h("div", { className: "match-player-name" },
- h("span", { style: { fontSize: "12px", color: "var(--warn)" } }, ""),
- m.winner_id
- ? h("a", { href: "#player/" + m.winner_id,
- onClick: (e) => { e.preventDefault(); V.openPlayer(m.winner_id); } },
- m.winner_name)
- : h("span", {}, m.winner_name || "?"),
- m.winner_team ? h("span", { className: "match-team" }, `(${m.winner_team})`) : null,
- ),
- h("div", { className: "match-sets" }, V.formatSets(m.sets, true)),
- h("div", { className: "match-score" }, ((m.winner_sets||0)===0 && (m.loser_sets||0)===0) ? "○" : String(m.winner_sets || 0)),
- ));
- // 敗者行
- card.appendChild(h("div", { className: "match-row loser" },
- h("div", { className: "match-player-name" },
- h("span", { style: { fontSize: "12px", color: "var(--sub-l)" } }, ""),
- m.loser_id
- ? h("a", { href: "#player/" + m.loser_id,
- onClick: (e) => { e.preventDefault(); V.openPlayer(m.loser_id); } },
- m.loser_name)
- : h("span", {}, m.loser_name || "?"),
- m.loser_team ? h("span", { className: "match-team" }, `(${m.loser_team})`) : null,
- ),
- h("div", { className: "match-sets" }, V.formatSets(m.sets, false)),
- h("div", { className: "match-score" }, ((m.winner_sets||0)===0 && (m.loser_sets||0)===0) ? "" : String(m.loser_sets || 0)),
- ));
- return card;
- },
 
  formatSets(sets, isWinner) {
  if (!Array.isArray(sets) || !sets.length) return "";
@@ -1570,77 +1538,8 @@ const V = {
  },
 
  // ─── ランキング ────────────────────────────────
- renderRanking() {
- const el = document.getElementById("rankingList");
- clear(el);
- const ranking = V.state.stats?.ratingRanking || [];
- if (!ranking.length) {
- el.appendChild(h("div", { className: "empty-state" }, "ランキングデータがありません。"));
- return;
- }
- ranking.forEach((p, i) => {
- const rankClass = i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "";
- el.appendChild(h("div", {
- className: "rank-card",
- onClick: () => V.openPlayer(p.id),
- style: { cursor: "pointer" }
- },
- h("div", { className: "rank-num " + rankClass }, String(i + 1)),
- h("div", {},
- h("div", { className: "rank-name" }, p.name),
- h("div", { className: "rank-meta" },
- `${p.team || "—"}　${p.gender === "female" ? "女子" : "男子"}`),
- ),
- h("div", { className: "rank-wl" },
- `${p.match_wins || 0}勝${p.match_losses || 0}敗`),
- h("div", { className: "rank-rating" },
- String(p.rating || 1500)),
- ));
- });
- },
 
  // ─── 統計 ────────────────────────────────
- renderStats() {
- const el = document.getElementById("statsPanel");
- clear(el);
- const s = V.state.stats;
- if (!s) return;
- const items = [
- { n: s.playerCount, l: "登録選手", c: "var(--pri)" },
- { n: s.tournamentCount, l: "大会", c: "var(--ok)" },
- { n: s.matchCount, l: "試合", c: "var(--accent)" },
- { n: s.teamCount, l: "所属団体", c: "var(--warn)" },
- { n: s.achievementCount, l: "戦績登録", c: "var(--gold)" },
- ];
- items.forEach(i => {
- el.appendChild(h("div", { className: "stat-box" },
- h("div", { className: "stat-num", style: { color: i.c } }, String(i.n || 0)),
- h("div", { className: "stat-label" }, i.l),
- ));
- });
-
- // タイトル保持者
- const top = document.getElementById("topList");
- clear(top);
- (s.topPlayers || []).slice(0, 15).forEach((p, i) => {
- top.appendChild(h("div", {
- className: "rank-card",
- onClick: () => V.openPlayer(p.id),
- style: { cursor: "pointer" }
- },
- h("div", { className: "rank-num" }, String(i + 1)),
- h("div", {},
- h("div", { className: "rank-name" }, p.name),
- h("div", { className: "rank-meta" },
- `${p.team || "—"}　${p.wins || 0} ${p.seconds || 0} ${p.thirds || 0}`),
- ),
- h("div", { className: "rank-wl" },
- `${p.match_wins || 0}勝${p.match_losses || 0}敗`),
- h("div", { className: "rank-rating" },
- String(p.rating || 1500)),
- ));
- });
- },
 };
 
 V.init();

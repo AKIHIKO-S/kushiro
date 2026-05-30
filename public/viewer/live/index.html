@@ -1350,20 +1350,8 @@ const LV = {
   },
 
   // コートセル用 選手名 (番号付き)
-  renderCourtPlayer(name, num) {
-    const el = h("div", { className: "lv-court-p" });
-    if (num && num > 0) el.appendChild(h("span", { className: "lv-pnum" }, "#" + num));
-    el.appendChild(document.createTextNode(name || ""));
-    return el;
-  },
 
   // 進行中ロー用 選手名 (番号付き) - 左右用
-  renderMatchPlayerName(name, num) {
-    const el = h("div", { className: "lv-match-name" });
-    if (num && num > 0) el.appendChild(h("span", { className: "lv-pnum" }, "#" + num));
-    el.appendChild(document.createTextNode(name || "?"));
-    return el;
-  },
 
   // ── 選手DB(閲覧)へのリンク (#266) ──
   // 観戦ビューは /viewer/live/ なので、選手個人ページ(/viewer/ 側)へ遷移する。
