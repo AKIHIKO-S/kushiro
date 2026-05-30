@@ -166,7 +166,7 @@ input:focus, select:focus, textarea:focus {
 .tt-loading {
   position: fixed; inset: 0; z-index: 9999;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(255,255,255,.55); backdrop-filter: blur(1px);
+  background: rgba(255,255,255,.55); -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px);
   animation: fi .15s ease-out;
 }
 .tt-spin {
@@ -444,7 +444,7 @@ input:focus, select:focus, textarea:focus {
   background: rgba(15, 23, 42, .55);
   display: flex; align-items: center; justify-content: center;
   z-index: 500;
-  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
   padding: 16px;
 }
 .modal-box {

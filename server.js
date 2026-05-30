@@ -1808,6 +1808,13 @@ const DEFAULT_EVENTS_CATALOG = [
   { name: "オープン女子", type: "singles", fee: 1000 },
 ];
 
+// 壊れた event_config 救済: 種目 name にイベントオブジェクトが入っている場合、内側の name 文字列を取り出す
+// (申込フォームの種目名が「[object Object]」になる不具合の多重防御。保存時と読取時の両方で使う)
+function _eventNameStr(n) {
+  while (n && typeof n === "object") n = n.name;
+  return n == null ? "" : String(n);
+}
+
 function _resolveEvents(tournament) {
   // ★ 最優先: tournament.event_config (フォーム生成で保存された full データ)
   try {
@@ -1817,7 +1824,7 @@ function _resolveEvents(tournament) {
         : tournament.event_config;
       if (Array.isArray(cfg) && cfg.length) {
         return cfg.map(e => ({
-          name: e.name,
+          name: _eventNameStr(e.name),
           type: e.type || "singles",
           fee: parseInt(e.fee) || 0,
           per_team: e.per_team || (e.type === "team" ? 6 : null),
@@ -2595,7 +2602,12 @@ app.put("/api/tournaments/:id/entries/:pid/seed", requireAdmin, (req, res) => {
   res.json(db.setEntrySeed(req.params.id, req.params.pid, event, seed));
 });
 app.put("/api/tournaments/:id/entry-settings", requireAdmin, (req, res) => {
-  const r = db.updateEntrySettings(req.params.id, req.body || {});
+  const body = req.body || {};
+  // 源を断つ: 保存時に event_config の種目 name を必ず文字列化する(壊れた name=オブジェクトを弾く)
+  if (Array.isArray(body.event_config)) {
+    body.event_config = body.event_config.map(e => (e && typeof e === "object") ? { ...e, name: _eventNameStr(e.name) } : e);
+  }
+  const r = db.updateEntrySettings(req.params.id, body);
   if (!r) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(r);
 });

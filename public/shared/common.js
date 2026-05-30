@@ -4,6 +4,24 @@
 (function(global){
   'use strict';
 
+  // ストレージ無効 / Safari プライベートモードで localStorage が例外を投げても画面が壊れないよう保護。
+  // 正常時は何もせず本物の localStorage を使う。例外時のみメモリ実装に差し替える。
+  try { var __lsProbe = '__ls_probe__'; global.localStorage.setItem(__lsProbe, '1'); global.localStorage.removeItem(__lsProbe); }
+  catch (e) {
+    try {
+      var __mem = {};
+      var __shim = {
+        getItem: function (k) { return Object.prototype.hasOwnProperty.call(__mem, k) ? __mem[k] : null; },
+        setItem: function (k, v) { __mem[k] = String(v); },
+        removeItem: function (k) { delete __mem[k]; },
+        clear: function () { __mem = {}; },
+        key: function (i) { return Object.keys(__mem)[i] || null; },
+      };
+      Object.defineProperty(__shim, 'length', { get: function () { return Object.keys(__mem).length; } });
+      Object.defineProperty(global, 'localStorage', { configurable: true, get: function () { return __shim; } });
+    } catch (_e) {}
+  }
+
   const GENDERS = [{v:"male",l:"男子"},{v:"female",l:"女子"}];
   const CATS = [
     {v:"elementary",l:"小学生"},{v:"middle",l:"中学生"},{v:"high",l:"高校生"},
