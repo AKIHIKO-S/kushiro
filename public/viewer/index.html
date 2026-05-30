@@ -557,6 +557,48 @@
    .search-bar-in { flex-wrap: wrap; }
    .ms-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
  }
+
+ /* ═══ 監督・顧問ビュー: ダークトンマナ (#tab-coach にスコープ) ═══ */
+ #tab-coach {
+   --card: #1e293b; --card-elev: #232f44;
+   --border: #334155; --border-strong: #46566e;
+   --txt: #e8edf5; --txt-l: #cbd5e1; --sub: #9aa8bd; --sub-l: #7c8aa0;
+   --ink-50: #1e293b; --ink-100: #334155; --ink-400: #64748b;
+   background:
+     radial-gradient(1200px 360px at 50% -8%, rgba(37,99,235,.16), transparent 60%),
+     linear-gradient(180deg, #131c2e 0%, #0f1626 100%);
+   color: var(--txt);
+   border-radius: 16px;
+   padding: 14px 12px 28px;
+   margin-top: 4px;
+   box-shadow: inset 0 0 0 1px rgba(148,163,184,.08);
+ }
+ #tab-coach .card {
+   background: var(--card);
+   border: 1px solid #2f3e55;
+   box-shadow: 0 2px 10px rgba(0,0,0,.35);
+ }
+ #tab-coach .card-title { color: #f1f5f9; }
+ #tab-coach .card-head { border-bottom-color: #2f3e55; }
+ #tab-coach .input, #tab-coach select, #tab-coach textarea {
+   background: #0d1525; color: #e8edf5; border-color: #46566e;
+ }
+ #tab-coach .input::placeholder, #tab-coach textarea::placeholder { color: #6b7a90; }
+ #tab-coach .input:hover, #tab-coach select:hover, #tab-coach textarea:hover { border-color: #5b6e8a; }
+ #tab-coach .btn { background: var(--accent); border-color: var(--accent); color: #fff; }
+ #tab-coach .btn:hover { background: #b91c1c; border-color: #b91c1c; }
+ #tab-coach .btn-ghost { background: transparent; color: #cdd8e6; border-color: #46566e; }
+ #tab-coach .btn-ghost:hover { background: #2a3850; border-color: #5b6e8a; }
+ #tab-coach .empty-state { color: #9aa8bd; }
+ #tab-coach .text-sub, #tab-coach .text-xs.text-sub { color: #9aa8bd; }
+ #tab-coach .badge-sub { background: #334155; color: #cbd5e1; }
+ #tab-coach a { color: #93c5fd; }
+ #tab-coach code { background: #0d1525 !important; color: #e8edf5 !important; border: 1px solid #46566e; }
+ /* 共有の通知手順ボックス(_pushHowto)は背景白なのでダーク化 */
+ #tab-coach details.card { background: #182338 !important; border-color: #2f3e55 !important; color: #e8edf5; }
+ #tab-coach details.card summary { color: #e8edf5; }
+ #tab-coach details.card .font-bold { color: #cbd5e1 !important; }
+ #tab-coach .pdb-push, #tab-coach .badge { color: #e8edf5; }
 </style>
 </head>
 <body>
@@ -1939,13 +1981,19 @@ const CO = {
  async _del(url) { try { return await fetch(url, { method: "DELETE", headers: { "X-Coach-Code": CO.code } }).then(r => r.json()); } catch (e) { return {}; } },
  async render() {
  const main = document.getElementById("coachMain"); if (!main) return;
+ // 同時に複数回呼ばれても最新の描画だけを反映する (タブ切替→hashchangeで二重起動し
+ // パネルが重複するのを防止)。クリアは await の後に行う。
+ const gen = (CO._renderGen = (CO._renderGen || 0) + 1);
  if (!CO.code) CO.code = localStorage.getItem("kttaCoachCode") || "";
  if (CO.code && !CO.coach) {
  const me = await CO._get("/api/coach/me");
+ if (gen !== CO._renderGen) return;
  if (me && me.id) CO.coach = me; else { CO.code = ""; localStorage.removeItem("kttaCoachCode"); }
  }
+ const content = CO.coach ? await CO._panel() : CO._loginCard();
+ if (gen !== CO._renderGen) return;   // 新しい描画が開始されていたら破棄
  main.innerHTML = "";
- main.appendChild(CO.coach ? await CO._panel() : CO._loginCard());
+ main.appendChild(content);
  },
  _loginCard() {
  const inp = h("input", { className: "input", placeholder: "監督コード (例 k7q4mz)", autocapitalize: "off", autocomplete: "off", spellcheck: false, style: { textTransform: "lowercase", letterSpacing: ".05em" } });
@@ -1970,18 +2018,18 @@ const CO = {
  const ann = await CO._get("/api/coach/announcements");
  const players = (roster && roster.players) || [];
  const cap = (roster && roster.cap) || CO.coach.player_cap || 50;
- wrap.appendChild(h("div", { className: "card", style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" } },
- h("div", {}, h("div", { className: "card-title" }, CO.coach.name + "（監督・顧問）"),
- CO.coach.member_name ? h("div", { className: "text-xs", style: { color: "#2563eb", fontWeight: 700 } }, (CO.coach.member_role || "顧問") + "：" + CO.coach.member_name + " として利用中") : null,
+ wrap.appendChild(h("div", { className: "card", style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", borderLeft: "4px solid #dc2626", background: "linear-gradient(180deg,#26344f 0%,#1e293b 100%)" } },
+ h("div", {}, h("div", { className: "card-title", style: { fontSize: "17px" } }, CO.coach.name + "（監督・顧問）"),
+ CO.coach.member_name ? h("div", { className: "text-xs", style: { color: "#93c5fd", fontWeight: 700 } }, (CO.coach.member_role || "顧問") + "：" + CO.coach.member_name + " として利用中") : null,
  h("div", { className: "text-sm text-sub" }, "マイ選手 " + players.length + " / " + cap + " 人")),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => { CO.code = ""; CO.coach = null; localStorage.removeItem("kttaCoachCode"); CO._stopDash(); CO.render(); } }, "ログアウト")));
  // 本部からのお知らせ (#290)
  const anns = (ann && ann.announcements) || [];
  if (anns.length) {
- const ac = h("div", { className: "card", style: { borderLeft: "4px solid #2563eb", background: "#eff6ff" } });
- ac.appendChild(h("div", { className: "card-title", style: { marginBottom: "6px", color: "#1e40af" } }, "本部からのお知らせ"));
- anns.slice(0, 8).forEach(a => ac.appendChild(h("div", { style: { padding: "7px 4px", borderBottom: "1px solid #dbeafe" } },
- h("div", { style: { whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6" } }, a.body),
+ const ac = h("div", { className: "card", style: { borderLeft: "4px solid #3b82f6", background: "linear-gradient(180deg,#1b2c4d 0%,#16233c 100%)" } });
+ ac.appendChild(h("div", { className: "card-title", style: { marginBottom: "6px", color: "#bfdbfe" } }, "本部からのお知らせ"));
+ anns.slice(0, 8).forEach(a => ac.appendChild(h("div", { style: { padding: "7px 4px", borderBottom: "1px solid #284268" } },
+ h("div", { style: { whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6", color: "#e8edf5" } }, a.body),
  h("div", { className: "text-xs text-sub", style: { marginTop: "2px" } }, a.created_at || ""))));
  wrap.appendChild(ac);
  }
@@ -2024,19 +2072,19 @@ const CO = {
  rc.appendChild(h("div", { className: "card-title", style: { marginBottom: "6px" } }, "申請の状況"));
  rs.slice(0, 20).forEach(r => {
  const stt = r.status === "approved" ? "承認済み" : (r.status === "rejected" ? "却下" : (r.status === "cancelled" ? "取消済み" : "承認待ち"));
- const col = r.status === "approved" ? "#15803d" : (r.status === "rejected" ? "#b91c1c" : (r.status === "cancelled" ? "#94a3b8" : "#d97706"));
+ const col = r.status === "approved" ? "#4ade80" : (r.status === "rejected" ? "#f87171" : (r.status === "cancelled" ? "#94a3b8" : "#fbbf24"));
  const top = h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", padding: "6px 4px", fontSize: "13px" } },
  h("span", {}, (r.type === "delete" ? "削除" : "修正") + "申請: " + (r.player_name || "")),
  h("span", { className: "flex gap-2", style: { alignItems: "center" } },
  h("span", { style: { fontWeight: 700, color: col } }, stt),
- r.status === "pending" ? h("button", { className: "btn btn-sm btn-ghost", style: { color: "#b91c1c" }, onClick: async () => {
+ r.status === "pending" ? h("button", { className: "btn btn-sm btn-ghost", style: { color: "#f87171" }, onClick: async () => {
  if (!confirm("この申請を取り消しますか?")) return;
  const x = await CO._del("/api/coach/requests/" + r.id);
  if (x && x.error) return toast(x.error, "err");
  toast("申請を取り消しました", "ok"); CO.render();
  } }, "取消") : null));
  const box = h("div", { style: { borderBottom: "1px solid var(--border)" } }, top);
- if (r.status === "rejected" && r.resolution_note) box.appendChild(h("div", { className: "text-xs", style: { color: "#7f1d1d", padding: "0 4px 6px", whiteSpace: "pre-wrap" } }, "本部コメント: " + r.resolution_note));
+ if (r.status === "rejected" && r.resolution_note) box.appendChild(h("div", { className: "text-xs", style: { color: "#fca5a5", padding: "0 4px 6px", whiteSpace: "pre-wrap" } }, "本部コメント: " + r.resolution_note));
  rc.appendChild(box);
  });
  wrap.appendChild(rc);
@@ -2099,7 +2147,7 @@ const CO = {
  _stopDash() { if (CO._dashTimer) { clearInterval(CO._dashTimer); CO._dashTimer = null; } },
  _statusStyle(s) {
  const m = { playing: ["#dc2626", "#fff"], callable: ["#d97706", "#fff"], waiting: ["#64748b", "#fff"],
- won: ["#15803d", "#fff"], lost: ["#475569", "#fff"], none: ["#e2e8f0", "#475569"] };
+ won: ["#16a34a", "#fff"], lost: ["#475569", "#fff"], none: ["#334155", "#cbd5e1"] };
  const c = m[s] || m.none;
  return { background: c[0], color: c[1], borderRadius: "999px", padding: "3px 11px", fontSize: "12px", fontWeight: "800", whiteSpace: "nowrap" };
  },
@@ -2156,7 +2204,7 @@ const CO = {
  },
  // ── まとめ呼出通知 (#287) ──
  _pushButton() {
- if (CO._pushReady) return h("div", { className: "text-sm", style: { color: "#166534", fontWeight: 700 } },
+ if (CO._pushReady) return h("div", { className: "text-sm", style: { color: "#4ade80", fontWeight: 700 } },
  "まとめ呼出通知: ON（マイ選手が呼ばれるとこの端末に届きます）");
  const wrap = h("div", {});
  wrap.appendChild(h("div", { className: "flex gap-2", style: { alignItems: "center" } },

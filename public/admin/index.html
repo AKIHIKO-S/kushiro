@@ -5912,7 +5912,7 @@ const A = {
  body.appendChild(h("div", { className: "text-sm text-sub mb-3", style: { lineHeight: "1.6" } },
  groups.length
  ? `重複の可能性がある ${groups.length} 組を検出しました。各組で「残す選手」を選んで結合してください。戦績・入賞・出場記録は残す選手に統合され、もう片方は削除されます（元に戻せません）。`
- : "重複の可能性がある選手は見つかりませんでした。氏名のスペース・表記ゆれ・ふりがな一致・漢字1文字違いを自動チェックしています。"));
+ : "重複の可能性がある選手は見つかりませんでした。漢字氏名（スペース/表記ゆれを含む）またはふりがなが一致する選手を自動抽出しています。"));
  groups.forEach((g, gi) => body.appendChild(A._renderMergeGroup(g, gi)));
  openModal("重複選手の結合", body,
  h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));

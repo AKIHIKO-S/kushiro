@@ -939,24 +939,9 @@ function mergePlayers(survivorId, dupId) {
 }
 
 function _normName(s) { return String(s == null ? "" : s).replace(/[\s　]+/g, ""); }
-// 編集距離 (長さ差>1は早期に2を返して打ち切り)
-function _editDistance(a, b) {
-  a = a || ""; b = b || "";
-  if (Math.abs(a.length - b.length) > 1) return 2;
-  const m = a.length, n = b.length;
-  const prev = Array.from({ length: n + 1 }, (_, j) => j);
-  for (let i = 1; i <= m; i++) {
-    let diag = prev[0]; prev[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const tmp = prev[j];
-      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
-      diag = tmp;
-    }
-  }
-  return prev[n];
-}
 
-// 重複候補を検出 (氏名スペース/表記ゆれ・ふりがな一致・漢字1文字違い) #275
+// 重複候補を検出 (漢字氏名一致[スペース/表記ゆれ含む] または ふりがな一致 のみに限定。
+// 「漢字1文字違い」は別人(例: 山田太郎/山田次郎)を誤検出するため除外) #275
 function findDuplicatePlayerCandidates() {
   const players = getPlayers();   // match_wins/match_losses/total_achievements を含む
   const slim = p => ({ id: p.id, name: p.name, team: p.team || "", furigana: p.furigana || "",
@@ -979,18 +964,6 @@ function findDuplicatePlayerCandidates() {
   const byFuri = new Map();
   players.forEach(p => { const k = _normName(p.furigana); if (!k || k.length < 2) return; if (!byFuri.has(k)) byFuri.set(k, []); byFuri.get(k).push(p); });
   byFuri.forEach(arr => { if (arr.length > 1 && new Set(arr.map(p => _normName(p.name))).size > 1) add("ふりがな一致", arr); });
-  // 3. 漢字1文字違い (編集距離1)。件数が多すぎる場合は負荷回避でスキップ。
-  if (players.length <= 1500) {
-    for (let i = 0; i < players.length; i++) {
-      const a = _normName(players[i].name);
-      if (a.length < 2) continue;
-      for (let j = i + 1; j < players.length; j++) {
-        const b = _normName(players[j].name);
-        if (b.length < 2 || a === b) continue;
-        if (_editDistance(a, b) === 1) add("漢字1文字違いの可能性", [players[i], players[j]]);
-      }
-    }
-  }
   return { count: groups.length, groups };
 }
 
