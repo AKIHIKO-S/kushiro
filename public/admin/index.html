@@ -5737,8 +5737,10 @@ const A = {
  toast("発行しました。コード: " + r.login_code, "ok");
  nameI.value = ""; teamI.value = ""; A.renderCoaches();
  } }, "+ 発行")));
+ accCard.appendChild(h("div", { className: "text-sm", style: { fontWeight: 700, margin: "12px 0 6px", paddingTop: "10px", borderTop: "1px solid var(--border)", color: "#334155" } },
+ "発行済みアカウント（" + coaches.length + "件）"));
  const accList = h("div", {});
- if (!coaches.length) accList.appendChild(h("div", { className: "empty-state", style: { padding: "16px" } }, "まだアカウントがありません。"));
+ if (!coaches.length) accList.appendChild(h("div", { className: "empty-state", style: { padding: "16px" } }, "まだアカウントがありません。発行すると、氏名・所属チーム・コードがここに一覧表示されます。"));
  coaches.forEach(c => accList.appendChild(A._coachRow(c)));
  accCard.appendChild(accList);
  panel.appendChild(accCard);

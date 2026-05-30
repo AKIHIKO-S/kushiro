@@ -67,7 +67,9 @@
       return h;
     },
     async get(url) {
-      const r = await fetch(this.baseUrl + url);
+      // 管理キーを付与 (ADMIN_KEY 設定時に /api/admin/* 等の GET が 401 になる不具合を修正)。
+      // 閲覧/審判ページは adminKey 未設定なので X-Admin-Key は付かない (_headers 参照)。
+      const r = await fetch(this.baseUrl + url, { headers: this._headers() });
       return r.json();
     },
     async post(url, data) {
