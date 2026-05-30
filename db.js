@@ -2875,28 +2875,6 @@ function finishMatchOp(matchId, data) {
   return result;
 }
 
-// 指定の台で、直前に終了した試合の敗者情報を取得 (敗者審判 自動アサイン用)
-// finishMatch 時に table_no=0 にしているので、called_at/started_at をたどる
-function getRecentLoserAtTable(tournamentId, tableNo) {
-  // 最近 finish した試合のうち、特定の台で行われていたものを called_at から特定
-  // (現状 finishedTable が消えているので、called_at 順で最も新しい completed をその台に紐付けるのは不正確)
-  // → シンプルに「敗者プール (referee_queue) の先頭」を返す
-  const lock = sqlite.prepare(`
-    SELECT loser_id, loser_name, loser_team
-    FROM matches
-    WHERE tournament_id = ? AND status = 'completed' AND loser_id IS NOT NULL
-      AND finished_at != '' AND loser_name != 'BYE'
-      AND NOT EXISTS (
-        SELECT 1 FROM matches m2
-        WHERE m2.tournament_id = matches.tournament_id
-          AND m2.referee_id = matches.loser_id
-          AND m2.status IN ('pending','on_table')
-      )
-    ORDER BY finished_at DESC LIMIT 1
-  `).get(tournamentId);
-  return lock || null;
-}
-
 // ═══════════════════════════════════════════════════════
 // 種目優先順位ロジック (このシステムの中核)
 // 団体戦 > 混合ダブルス > ダブルス > シングルス
