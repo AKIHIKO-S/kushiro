@@ -867,6 +867,12 @@ input:focus, select:focus, textarea:focus {
 .flex { display: flex; }
 .flex-1 { flex: 1; }
 .gap-1 { gap: 4px; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; }
+/* flex gap 非対応(Safari<14.1 / iOS<14.5)向けフォールバック。common.js が検出時のみ .no-flexgap を付与するので、
+   正常ブラウザには一切影響しない。gap ユーティリティ(横並び .flex.gap-N)を margin-left で代替。 */
+.no-flexgap .gap-1 > * + * { margin-left: 4px; }
+.no-flexgap .gap-2 > * + * { margin-left: 8px; }
+.no-flexgap .gap-3 > * + * { margin-left: 12px; }
+.no-flexgap .gap-4 > * + * { margin-left: 16px; }
 .mt-1 { margin-top: 4px; } .mt-2 { margin-top: 8px; } .mt-3 { margin-top: 12px; } .mt-4 { margin-top: 16px; }
 .mb-1 { margin-bottom: 4px; } .mb-2 { margin-bottom: 8px; } .mb-3 { margin-bottom: 12px; } .mb-4 { margin-bottom: 16px; }
 .text-sub { color: var(--sub); }

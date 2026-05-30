@@ -22,6 +22,20 @@
     } catch (_e) {}
   }
 
+  // flex の gap 非対応(Safari<14.1 / iOS<14.5)を検出して <html>.no-flexgap を付与。
+  // CSS 側で gap ユーティリティに margin フォールバックを当てる。正常ブラウザでは何も付かない(無変更)。
+  try {
+    var __fg = document.createElement('div');
+    __fg.style.cssText = 'display:flex;gap:1px;position:absolute;visibility:hidden;height:0;pointer-events:none';
+    __fg.appendChild(document.createElement('div'));
+    __fg.appendChild(document.createElement('div'));
+    var __host = document.body || document.documentElement;
+    __host.appendChild(__fg);
+    var __gapOK = __fg.scrollWidth === 1;
+    __host.removeChild(__fg);
+    if (!__gapOK) document.documentElement.classList.add('no-flexgap');
+  } catch (_e) {}
+
   const GENDERS = [{v:"male",l:"男子"},{v:"female",l:"女子"}];
   const CATS = [
     {v:"elementary",l:"小学生"},{v:"middle",l:"中学生"},{v:"high",l:"高校生"},
