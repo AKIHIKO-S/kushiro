@@ -43,7 +43,7 @@ function buildAggregation(tournament, entrants, fees) {
   // 団体名でグルーピング (チーム名 ≒ 申込団体名 として扱う)
   const byTeam = new Map();
   entrants.forEach(e => {
-    // is_doubles の場合は player1 と player2 を別々に集計 (チーム名分離)
+    // ダブルスは申込者(player1)の所属に「ペア1組=1件」で計上する(別所属パートナーの団体には課金しない=ペア単位課金。協会確定ポリシー 2026-05-30 QA)
     const records = [];
     records.push({
       team: e.team || "(無所属)",

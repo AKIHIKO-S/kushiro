@@ -3986,18 +3986,29 @@ function createEntry(tournamentId, data) {
   const events = Array.isArray(data.events) ? data.events.filter(Boolean) : (data.events ? [data.events] : []);
   if (!events.length) return { error: "出場種目を1つ以上選択してください" };
 
+  // 入力長を安全に制限 (createTeamEntry と同様の DoS/巨大データ対策。氏名は createPlayer 側で検証されるため除く) #QA-2026-05-30
+  const _clipEntry = (s, n) => String(s == null ? "" : s).slice(0, n);
+  data.team = _clipEntry(data.team, 200);
+  data.furigana = _clipEntry(data.furigana, 200);
+  data.note = _clipEntry(data.note, 500);
+
   // 既存選手検索 → なければ新規作成
   let player = findPlayerByName(data.name, data.team);
   let isNewPlayer = false;
   if (!player) {
-    player = createPlayer({
-      name: data.name.trim(),
-      furigana: data.furigana || "",
-      team: data.team || "",
-      gender: data.gender || "male",
-      category: data.category || "general",
-      note: data.note || "",
-    });
+    try {
+      player = createPlayer({
+        name: data.name.trim(),
+        furigana: data.furigana || "",
+        team: data.team || "",
+        gender: data.gender || "male",
+        category: data.category || "general",
+        note: data.note || "",
+      });
+    } catch (e) {
+      // createPlayer は不正氏名(長すぎ/項目名/数値のみ等)で throw する。公開申込は500ではなく明確な400で返す #QA-2026-05-30
+      return { error: e.message || "氏名が正しくありません" };
+    }
     isNewPlayer = true;
   } else {
     // 不足情報を補完（ふりがな等）
