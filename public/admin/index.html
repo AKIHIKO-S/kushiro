@@ -1114,6 +1114,7 @@
  <div class="flex gap-2">
  <select class="input input-sm" id="enTournamentSel" onchange="EnT.selectTournament(this.value)" style="width:240px"></select>
  <button class="btn btn-sm btn-ghost" onclick="EnT.reload()">更新</button>
+ <button class="btn btn-sm btn-ghost" style="background:#ede9fe;color:#5b21b6;border-color:#c4b5fd" onclick="A.openQualityCheck()" title="申込の重複・氏名表記ゆれ・性別×種目の不一致・男女種目の掛持ちを一画面で点検">申込品質チェック</button>
  </div>
  </div>
  <div id="enMain"></div>
@@ -5800,6 +5801,62 @@ const A = {
  groups.forEach((g, gi) => body.appendChild(A._renderMergeGroup(g, gi)));
  openModal("重複選手の結合", body,
  h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
+ },
+ // ── 申込品質チェック (集約パネル): /entrants/validate + クライアント側 氏名ゆれ/種目整合 ──
+ async openQualityCheck() {
+  const tid = EnT.tournamentId;
+  if (!tid) return toast("先に大会を選択してください", "err");
+  let ents = (EnT.entrants && EnT.entrants.length) ? EnT.entrants : [];
+  if (!ents.length) { try { ents = (await api.get(`/api/tournaments/${tid}/entrants`)) || []; } catch (e) {} }
+  let v = { errors: [], warnings: [], error_count: 0, warning_count: 0, total: ents.length };
+  try { const r = await api.get(`/api/tournaments/${tid}/entrants/validate`); if (r && !r.error) v = r; } catch (e) {}
+  A._renderQualityModal(v, A._qualityClientChecks(ents), ents.length);
+ },
+ _qualityClientChecks(ents) {
+  const norm = s => String(s == null ? "" : s).replace(/[\s　]/g, "");
+  const evGender = ev => { const s = String(ev || ""); if (/女子|女性/.test(s)) return "female"; if (/男子|男性/.test(s)) return "male"; return ""; };
+  // (1) 氏名の表記ゆれ: 正規化名が同じだが 生表記/所属/ふりがな が複数 = 同一人物の入力ゆれの可能性
+  const byNorm = new Map();
+  ents.forEach(e => { const k = norm(e.name); if (!k) return; if (!byNorm.has(k)) byNorm.set(k, []); byNorm.get(k).push(e); });
+  const nameVariants = [];
+  byNorm.forEach(g => {
+   const raws = [...new Set(g.map(e => (e.name || "").trim()))];
+   const teams = [...new Set(g.map(e => (e.team || "").trim()).filter(Boolean))];
+   const furis = [...new Set(g.map(e => (e.furigana || "").trim()).filter(Boolean))];
+   if (raws.length > 1 || teams.length > 1 || furis.length > 1) nameVariants.push({ name: g[0].name, raws, teams, furis });
+  });
+  // (2) 種目整合: 性別×種目の不一致 / 同一人物が男女種目を掛け持ち
+  const genderConflicts = [];
+  const cross = new Map();
+  ents.forEach(e => {
+   const eg = evGender(e.event);
+   const pg = e.gender === "female" ? "female" : (e.gender === "male" ? "male" : "");
+   if (eg && pg && eg !== pg) genderConflicts.push({ name: e.name, team: e.team || "", event: e.event, pg, eg });
+   if (eg) { const k = norm(e.name) + "::" + (e.team || "").trim(); if (!cross.has(k)) cross.set(k, { name: e.name, team: e.team || "", g: new Set(), evs: [] }); const o = cross.get(k); o.g.add(eg); o.evs.push(e.event); }
+  });
+  const crossList = [];
+  cross.forEach(o => { if (o.g.size > 1) crossList.push({ name: o.name, team: o.team, evs: o.evs }); });
+  return { nameVariants, genderConflicts, crossList };
+ },
+ _renderQualityModal(v, ex, total) {
+  const errs = v.errors || [], warns = v.warnings || [];
+  const cnt = errs.length + warns.length + ex.nameVariants.length + ex.genderConflicts.length + ex.crossList.length;
+  const body = h("div", {});
+  body.appendChild(h("div", { className: "text-sm text-sub mb-3", style: { lineHeight: "1.6" } },
+   cnt ? `申込 ${total} 件をチェック。要確認 ${cnt} 件 (エラー${errs.length}/警告${warns.length}/表記ゆれ${ex.nameVariants.length}/種目整合${ex.genderConflicts.length + ex.crossList.length})。各項目は名簿で修正できます。`
+       : `申込 ${total} 件をチェック。問題は見つかりませんでした。`));
+  const sec = (title, items, color) => {
+   if (!items.length) return;
+   body.appendChild(h("div", { style: { fontWeight: "700", fontSize: "13px", margin: "12px 0 6px", color } }, `${title} (${items.length})`));
+   items.forEach(t => body.appendChild(h("div", { className: "card", style: { padding: "8px 10px", marginBottom: "6px", fontSize: "12.5px", borderLeft: `4px solid ${color}` } }, t)));
+  };
+  sec("エラー: 重複・氏名未入力", errs.map(e => e.message), "#dc2626");
+  sec("警告: seed重複・相方未入力・所属相違", warns.map(w => w.message), "#d97706");
+  sec("氏名の表記ゆれ (同一人物の可能性)", ex.nameVariants.map(n => `「${n.name}」: 表記[${n.raws.join(" / ")}]` + (n.teams.length > 1 ? ` 所属[${n.teams.join(" / ")}]` : "") + (n.furis.length > 1 ? ` ふりがな[${n.furis.join(" / ")}]` : "")), "#7c3aed");
+  sec("性別と種目の不一致", ex.genderConflicts.map(g => `${g.name}${g.team ? `(${g.team})` : ""}: 選手は${g.pg === "female" ? "女子" : "男子"}だが種目「${g.event}」は${g.eg === "female" ? "女子" : "男子"}`), "#be185d");
+  sec("男女種目の掛け持ち (要確認)", ex.crossList.map(c => `${c.name}${c.team ? `(${c.team})` : ""}: ${c.evs.join(" / ")}`), "#be185d");
+  if (!cnt) body.appendChild(h("div", { className: "card", style: { padding: "14px", textAlign: "center", color: "#15803d", fontWeight: "700" } }, "問題なし — 申込データは良好です"));
+  openModal("申込品質チェック", body, h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
  },
  _renderMergeGroup(g, gi) {
  const card = h("div", { className: "card", style: { padding: "12px", marginBottom: "10px", border: "1px solid var(--border)" } });
