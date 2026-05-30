@@ -1948,10 +1948,10 @@ const CO = {
  main.appendChild(CO.coach ? await CO._panel() : CO._loginCard());
  },
  _loginCard() {
- const inp = h("input", { className: "input", placeholder: "監督コード (例 K7QF-3M9X)", style: { textTransform: "uppercase", letterSpacing: ".05em" } });
+ const inp = h("input", { className: "input", placeholder: "監督コード (例 k7q4mz)", autocapitalize: "off", autocomplete: "off", spellcheck: false, style: { textTransform: "lowercase", letterSpacing: ".05em" } });
  inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
  const go = async () => {
- const code = inp.value.trim().toUpperCase(); if (!code) return toast("コードを入力してください", "err");
+ const code = inp.value.trim().toLowerCase(); if (!code) return toast("コードを入力してください", "err");
  const r = await fetch("/api/coach/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) }).then(x => x.json()).catch(() => ({}));
  if (!r.ok) return toast(r.error || "コードが無効です", "err");
  CO.code = code; CO.coach = r.coach; localStorage.setItem("kttaCoachCode", code); CO.render();

@@ -185,6 +185,7 @@ sqlite.exec(`
   CREATE TABLE IF NOT EXISTS coach_accounts (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
+    team TEXT DEFAULT '',
     login_code TEXT NOT NULL UNIQUE,
     player_cap INTEGER DEFAULT 50,
     active INTEGER DEFAULT 1,
@@ -276,6 +277,12 @@ try {
   // 本部は会場の掲示/口頭で審判に伝える → 会場にいる人だけが知り得る運用。
   addTCol("referee_passcode", "TEXT DEFAULT ''");
   addTCol("referee_passcode_required", "INTEGER DEFAULT 0");
+
+  // 監督・顧問アカウントに所属チームを追加 (#285 拡張)
+  const ccols = sqlite.prepare("PRAGMA table_info(coach_accounts)").all();
+  if (ccols.length && !ccols.find(c => c.name === "team")) {
+    sqlite.exec("ALTER TABLE coach_accounts ADD COLUMN team TEXT DEFAULT ''");
+  }
 
   // tournament_players 申込ステータス
   const tpcols = sqlite.prepare("PRAGMA table_info(tournament_players)").all();
@@ -961,14 +968,14 @@ function findDuplicatePlayerCandidates() {
 
 // ═══ 監督・顧問アカウント (#285) ════════════════════════
 function _genCoachCode() {
-  const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 紛らわしい文字(0/O/1/I)除外
-  let s = ""; for (let i = 0; i < 8; i++) s += A[Math.floor(Math.random() * A.length)];
-  return s.slice(0, 4) + "-" + s.slice(4);
+  const A = "abcdefghjkmnpqrstuvwxyz23456789"; // 小文字+数字、紛らわしい i/l/o/0/1 除外
+  let s = ""; for (let i = 0; i < 6; i++) s += A[Math.floor(Math.random() * A.length)];
+  return s; // 6桁・小文字
 }
 function _uniqCoachCode() {
   let code, tries = 0;
   do { code = _genCoachCode(); tries++; }
-  while (sqlite.prepare("SELECT 1 FROM coach_accounts WHERE login_code=?").get(code) && tries < 30);
+  while (sqlite.prepare("SELECT 1 FROM coach_accounts WHERE login_code = ? COLLATE NOCASE").get(code) && tries < 50);
   return code;
 }
 function getCoachAccount(id) { return sqlite.prepare("SELECT * FROM coach_accounts WHERE id=?").get(id) || null; }
@@ -977,8 +984,8 @@ function createCoachAccount(data) {
   const id = uid();
   let cap = parseInt(data.player_cap); if (!(cap > 0)) cap = 50; cap = Math.min(50, cap);
   const code = _uniqCoachCode();
-  sqlite.prepare(`INSERT INTO coach_accounts (id,name,login_code,player_cap,active,note) VALUES (?,?,?,?,1,?)`)
-    .run(id, String(data.name || "").trim() || "監督", code, cap, String(data.note || ""));
+  sqlite.prepare(`INSERT INTO coach_accounts (id,name,team,login_code,player_cap,active,note) VALUES (?,?,?,?,?,1,?)`)
+    .run(id, String(data.name || "").trim() || "監督", String(data.team || "").trim(), code, cap, String(data.note || ""));
   return getCoachAccount(id);
 }
 function listCoachAccounts() {
@@ -989,8 +996,9 @@ function updateCoachAccount(id, data) {
   const c = getCoachAccount(id); if (!c) return null;
   data = data || {};
   const cap = data.player_cap != null ? Math.min(50, Math.max(1, parseInt(data.player_cap) || c.player_cap)) : c.player_cap;
-  sqlite.prepare("UPDATE coach_accounts SET name=?, player_cap=?, active=?, note=? WHERE id=?")
-    .run(data.name != null ? String(data.name).trim() : c.name, cap,
+  sqlite.prepare("UPDATE coach_accounts SET name=?, team=?, player_cap=?, active=?, note=? WHERE id=?")
+    .run(data.name != null ? String(data.name).trim() : c.name,
+         data.team != null ? String(data.team).trim() : (c.team || ""), cap,
          data.active != null ? (data.active ? 1 : 0) : c.active,
          data.note != null ? String(data.note) : c.note, id);
   return getCoachAccount(id);
@@ -1000,11 +1008,20 @@ function regenerateCoachCode(id) {
   sqlite.prepare("UPDATE coach_accounts SET login_code=? WHERE id=?").run(_uniqCoachCode(), id);
   return getCoachAccount(id);
 }
+// 管理者が任意のコードに変更 (英小文字・数字 4〜12文字、大文字小文字は区別しない)
+function setCoachCode(id, code) {
+  const c = getCoachAccount(id); if (!c) return { error: "アカウントが見つかりません" };
+  const norm = String(code || "").trim().toLowerCase();
+  if (!/^[a-z0-9]{4,12}$/.test(norm)) return { error: "コードは英小文字・数字 4〜12文字で入力してください" };
+  if (sqlite.prepare("SELECT 1 FROM coach_accounts WHERE login_code = ? COLLATE NOCASE AND id <> ?").get(norm, id)) return { error: "そのコードは既に使われています" };
+  sqlite.prepare("UPDATE coach_accounts SET login_code=? WHERE id=?").run(norm, id);
+  return { ok: true, coach: getCoachAccount(id) };
+}
 function deleteCoachAccount(id) { sqlite.prepare("DELETE FROM coach_accounts WHERE id=?").run(id); }
 function coachByCode(code) {
   if (!code) return null;
-  return sqlite.prepare("SELECT * FROM coach_accounts WHERE login_code=? AND active=1")
-    .get(String(code).trim().toUpperCase()) || null;
+  return sqlite.prepare("SELECT * FROM coach_accounts WHERE login_code = ? COLLATE NOCASE AND active = 1")
+    .get(String(code).trim()) || null;
 }
 function getCoachRoster(coachId) {
   return sqlite.prepare(`SELECT p.* FROM coach_players cp JOIN players p ON p.id=cp.player_id
@@ -5383,7 +5400,7 @@ module.exports = {
   mergePlayers, findDuplicatePlayerCandidates,
   // 監督・顧問モード (#285)
   createCoachAccount, getCoachAccount, listCoachAccounts, updateCoachAccount,
-  regenerateCoachCode, deleteCoachAccount, coachByCode,
+  regenerateCoachCode, setCoachCode, deleteCoachAccount, coachByCode,
   getCoachRoster, addCoachPlayer, removeCoachPlayer,
   createPlayerRequest, getCoachRequests, listPlayerRequests, resolvePlayerRequest, countPendingRequests,
   getCoachDashboard, saveCoachSubscription, deleteCoachSubscription, getCoachSubscriptionsForPlayer,

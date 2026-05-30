@@ -589,6 +589,12 @@ app.post("/api/admin/coaches/:id/regenerate", requireAdmin, (req, res) => {
   if (!c) return res.status(404).json({ error: "アカウントが見つかりません" });
   res.json(c);
 });
+// コードを任意の値に変更
+app.post("/api/admin/coaches/:id/set-code", requireAdmin, (req, res) => {
+  const r = db.setCoachCode(req.params.id, (req.body || {}).code);
+  if (r.error) return res.status(400).json(r);
+  res.json(r.coach);
+});
 app.delete("/api/admin/coaches/:id", requireAdmin, (req, res) => { db.deleteCoachAccount(req.params.id); res.json({ ok: true }); });
 // ── Admin: 選手DB 修正/削除 申請の審査 ──
 app.get("/api/admin/player-requests", requireAdmin, (req, res) => {

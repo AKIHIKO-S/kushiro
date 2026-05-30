@@ -5680,19 +5680,22 @@ const A = {
  accCard.appendChild(h("div", { className: "card-head" },
  h("div", {}, h("div", { className: "card-title" }, "監督・顧問アカウント発行"),
  h("div", { className: "card-title-sub" }, "コードを各監督に伝えると、閲覧ページの「監督・顧問ログイン」から利用できます"))));
- const nameI = h("input", { className: "input", placeholder: "監督・顧問名 (例: 山本 / ◯◯中学校)" });
+ const nameI = h("input", { className: "input", placeholder: "監督・顧問名 (例: 山本 太郎)" });
+ const teamI = h("input", { className: "input", placeholder: "所属チーム (例: ◯◯中学校)" });
  const capI = h("input", { className: "input", type: "number", min: 1, max: 50, value: 50, style: { width: "90px" } });
  accCard.appendChild(h("div", { className: "flex gap-2 mb-3", style: { flexWrap: "wrap", alignItems: "flex-end" } },
- h("div", { className: "field", style: { flex: "1", minWidth: "200px", marginBottom: 0 } },
+ h("div", { className: "field", style: { flex: "1", minWidth: "160px", marginBottom: 0 } },
  h("label", { className: "field-label" }, "監督・顧問名"), nameI),
+ h("div", { className: "field", style: { flex: "1", minWidth: "160px", marginBottom: 0 } },
+ h("label", { className: "field-label" }, "所属チーム"), teamI),
  h("div", { className: "field", style: { marginBottom: 0 } },
  h("label", { className: "field-label" }, "マイ選手 上限(最大50)"), capI),
  h("button", { className: "btn", onClick: async () => {
  const name = nameI.value.trim(); if (!name) return toast("名前を入力してください", "err");
- const r = await api.post("/api/admin/coaches", { name, player_cap: parseInt(capI.value) || 50 });
+ const r = await api.post("/api/admin/coaches", { name, team: teamI.value.trim(), player_cap: parseInt(capI.value) || 50 });
  if (r && r.error) return toast(r.error, "err");
  toast("発行しました。コード: " + r.login_code, "ok");
- nameI.value = ""; A.renderCoaches();
+ nameI.value = ""; teamI.value = ""; A.renderCoaches();
  } }, "+ 発行")));
  const accList = h("div", {});
  if (!coaches.length) accList.appendChild(h("div", { className: "empty-state", style: { padding: "16px" } }, "まだアカウントがありません。"));
@@ -5755,6 +5758,7 @@ const A = {
  h("div", { className: "flex", style: { justifyContent: "space-between", gap: "8px", flexWrap: "wrap", alignItems: "center" } },
  h("div", {},
  h("span", { style: { fontWeight: 800, fontSize: "15px" } }, c.name),
+ c.team ? h("span", { className: "text-xs", style: { marginLeft: "8px", color: "#475569", fontWeight: 600 } }, c.team) : null,
  h("span", { className: "text-xs text-sub", style: { marginLeft: "8px" } }, "マイ選手 " + (c.player_count || 0) + " / " + c.player_cap + " 人"),
  c.active ? null : h("span", { className: "badge badge-sub", style: { marginLeft: "6px" } }, "無効")),
  h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
@@ -5765,6 +5769,14 @@ const A = {
  const r = await api.post("/api/admin/coaches/" + c.id + "/regenerate", {});
  if (r && r.error) return toast(r.error, "err"); toast("再発行: " + r.login_code, "ok"); A.renderCoaches();
  } }, "コード再発行"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: async () => {
+ const next = prompt("新しいコードを入力してください (英小文字・数字 4〜12文字)", c.login_code);
+ if (next == null) return;
+ const code = next.trim().toLowerCase();
+ if (!code) return;
+ const r = await api.post("/api/admin/coaches/" + c.id + "/set-code", { code });
+ if (r && r.error) return toast(r.error, "err"); toast("コードを変更しました: " + r.login_code, "ok"); A.renderCoaches();
+ } }, "コード変更"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: async () => {
  await api.put("/api/admin/coaches/" + c.id, { active: c.active ? 0 : 1 }); A.renderCoaches();
  } }, c.active ? "無効化" : "有効化"),
