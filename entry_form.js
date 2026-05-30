@@ -4,22 +4,9 @@
 // 完全スタンドアロン (CDN不要、外部依存なし)
 // ═══════════════════════════════════════════════════════
 
-function escapeHtml(s) {
-  return String(s == null ? "" : s)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
-
-function escapeJs(s) {
-  return JSON.stringify(String(s == null ? "" : s));
-}
-
-// 壊れた event_config 救済: name にイベントオブジェクトが入っている場合(過去の保存不具合)、
-// 内側の name 文字列を取り出す。これをしないとフォームの種目名に「[object Object]」と表示される。
-function _eventName(n) {
-  while (n && typeof n === "object") n = n.name;
-  return n == null ? "" : String(n);
-}
+// 共通ユーティリティ (lib/) を取り込み。escapeHtml/escapeJs/escapeJsId/eventName は entry_form 既存実装と同一。
+const { escapeHtml, escapeJs, escapeJsId } = require("./lib/text");
+const { eventName: _eventName } = require("./lib/events");
 
 // buildEntryFormHTML と buildEntryFormSnippet で共通の前処理(派生値)を計算する。
 // 両関数の重複を排除するための内部ヘルパ(出力は不変)。
@@ -1616,11 +1603,6 @@ function buildEntryFormSnippet(tournament, events, opts) {
 })();
 </script>
 <!-- ━━━━ KTTA Platform 申込フォーム End ━━━━ -->`;
-}
-
-// JavaScript識別子として使える文字に変換 (id にハイフンが入る場合の対策)
-function escapeJsId(s) {
-  return String(s || "").replace(/[^a-zA-Z0-9]/g, "_");
 }
 
 module.exports = {
