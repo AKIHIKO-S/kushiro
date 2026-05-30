@@ -839,8 +839,57 @@ function buildCoachResultsHTML(coach, tournament, roster, matches, opts) {
 </body></html>`;
 }
 
+// ─── 申込台帳 (フラット一覧) Excel 出力 ───
+// Google フォーム → スプレッドシート の代替。1行 = 1申込(エントリー)。
+// 申込をプラットフォームに集約し、そのまま Excel で配布/保管できるようにする。
+function buildApplicantsXlsx(tournament, entrants, opts) {
+  opts = opts || {};
+  const GENDER = { male: "男子", female: "女子" };
+  const CAT = { general: "一般", high: "高校", middle: "中学", elementary: "小学",
+                university: "大学", senior: "シニア", junior: "ジュニア", youth: "ユース", large: "ラージ" };
+  const STATUS = { confirmed: "確定", pending: "受付中", cancelled: "取消", withdrawn: "棄権", rejected: "却下" };
+  const header = ["No", "申込団体", "氏名", "ふりがな", "種目", "性別", "区分",
+                  "ダブルス相方", "相方所属", "状態", "申込日時", "備考(連絡先等)"];
+  const sorted = [...(entrants || [])].sort((a, b) =>
+    String(a.team || "").localeCompare(String(b.team || ""), "ja") ||
+    String(a.event || "").localeCompare(String(b.event || ""), "ja") ||
+    String(a.furigana || a.name || "").localeCompare(String(b.furigana || b.name || ""), "ja"));
+  const rows = [header];
+  sorted.forEach((e, i) => {
+    rows.push([
+      i + 1,
+      e.team || "",
+      e.display_name || e.name || "",
+      e.furigana || "",
+      e.event || "",
+      GENDER[e.gender] || e.gender || "",
+      CAT[e.category] || e.category || "",
+      e.is_doubles ? (e.partner_name || "") : "",
+      e.is_doubles ? (e.partner_team || "") : "",
+      STATUS[e.status] || e.status || "",
+      String(e.created_at || e.applied_at || "").slice(0, 16),
+      e.note || "",
+    ]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = [{ wch: 5 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 6 },
+                 { wch: 8 }, { wch: 14 }, { wch: 18 }, { wch: 8 }, { wch: 18 }, { wch: 30 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "申込一覧");
+  const meta = [
+    ["大会名", tournament.name || ""],
+    ["開催日", tournament.date || ""],
+    ["会場", tournament.venue || ""],
+    ["申込件数", (entrants || []).length],
+    ["出力日時", new Date().toLocaleString("ja-JP")],
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(meta), "大会情報");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+}
+
 module.exports = {
   buildAggregationXlsx,
+  buildApplicantsXlsx,
   buildReceiptsHTML,
   buildReceiptsXlsx,
   buildReceiptsList,

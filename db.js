@@ -4240,7 +4240,8 @@ function createTeamEntry(tournamentId, formData) {
         ].filter(Boolean).join(" | "),
       });
       createdEntrants.push(e);
-    } else if (type === "doubles") {
+    } else if (type === "doubles" || type === "mixed") {
+      // mixed=混合ダブルス。貼付フォーム(旧)や直APIが type:"mixed" を送るため doubles と同様に処理し欠落を防ぐ (#269)
       const n1 = String(ent.name1 || "").trim();
       const n2 = String(ent.name2 || "").trim();
       const team1 = String(ent.team1 || ent.team || "").trim();
