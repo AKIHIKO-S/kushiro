@@ -2010,11 +2010,21 @@ const CO = {
  const rc = h("div", { className: "card" });
  rc.appendChild(h("div", { className: "card-title", style: { marginBottom: "6px" } }, "申請の状況"));
  rs.slice(0, 20).forEach(r => {
- const stt = r.status === "approved" ? "承認済み" : (r.status === "rejected" ? "却下" : "承認待ち");
- const col = r.status === "approved" ? "#15803d" : (r.status === "rejected" ? "#64748b" : "#d97706");
- rc.appendChild(h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 4px", borderBottom: "1px solid var(--border)", fontSize: "13px" } },
+ const stt = r.status === "approved" ? "承認済み" : (r.status === "rejected" ? "却下" : (r.status === "cancelled" ? "取消済み" : "承認待ち"));
+ const col = r.status === "approved" ? "#15803d" : (r.status === "rejected" ? "#b91c1c" : (r.status === "cancelled" ? "#94a3b8" : "#d97706"));
+ const top = h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", padding: "6px 4px", fontSize: "13px" } },
  h("span", {}, (r.type === "delete" ? "削除" : "修正") + "申請: " + (r.player_name || "")),
- h("span", { style: { fontWeight: 700, color: col } }, stt)));
+ h("span", { className: "flex gap-2", style: { alignItems: "center" } },
+ h("span", { style: { fontWeight: 700, color: col } }, stt),
+ r.status === "pending" ? h("button", { className: "btn btn-sm btn-ghost", style: { color: "#b91c1c" }, onClick: async () => {
+ if (!confirm("この申請を取り消しますか?")) return;
+ const x = await CO._del("/api/coach/requests/" + r.id);
+ if (x && x.error) return toast(x.error, "err");
+ toast("申請を取り消しました", "ok"); CO.render();
+ } }, "取消") : null));
+ const box = h("div", { style: { borderBottom: "1px solid var(--border)" } }, top);
+ if (r.status === "rejected" && r.resolution_note) box.appendChild(h("div", { className: "text-xs", style: { color: "#7f1d1d", padding: "0 4px 6px", whiteSpace: "pre-wrap" } }, "本部コメント: " + r.resolution_note));
+ rc.appendChild(box);
  });
  wrap.appendChild(rc);
  }

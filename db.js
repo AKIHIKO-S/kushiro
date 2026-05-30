@@ -284,6 +284,12 @@ try {
     sqlite.exec("ALTER TABLE coach_accounts ADD COLUMN team TEXT DEFAULT ''");
   }
 
+  // 申請の却下理由コメント (#289)。本部が却下時にコメントを返せる。
+  const prcols = sqlite.prepare("PRAGMA table_info(player_requests)").all();
+  if (prcols.length && !prcols.find(c => c.name === "resolution_note")) {
+    sqlite.exec("ALTER TABLE player_requests ADD COLUMN resolution_note TEXT DEFAULT ''");
+  }
+
   // tournament_players 申込ステータス
   const tpcols = sqlite.prepare("PRAGMA table_info(tournament_players)").all();
   const addTPCol = (col, def) => {
@@ -1065,10 +1071,11 @@ function listPlayerRequests(status) {
   const rows = filtered ? sqlite.prepare(sql).all(status) : sqlite.prepare(sql).all();
   return rows.map(r => ({ ...r, payload: JSON.parse(r.payload_json || "{}") }));
 }
-function resolvePlayerRequest(id, action) {
+function resolvePlayerRequest(id, action, note) {
   const r = sqlite.prepare("SELECT * FROM player_requests WHERE id=?").get(id);
   if (!r) return { error: "申請が見つかりません" };
   if (r.status !== "pending") return { error: "この申請は既に処理済みです" };
+  const rn = String(note || "").slice(0, 500);   // 却下理由コメント (#289)
   if (action === "approve") {
     if (r.type === "delete") { deletePlayer(r.player_id); }
     else {
@@ -1077,11 +1084,19 @@ function resolvePlayerRequest(id, action) {
       ["name", "furigana", "team", "branch", "gender", "category", "note"].forEach(k => { if (payload[k] != null && payload[k] !== "") allowed[k] = payload[k]; });
       if (Object.keys(allowed).length) updatePlayer(r.player_id, allowed);
     }
-    sqlite.prepare("UPDATE player_requests SET status='approved', resolved_at=datetime('now','localtime') WHERE id=?").run(id);
+    sqlite.prepare("UPDATE player_requests SET status='approved', resolution_note=?, resolved_at=datetime('now','localtime') WHERE id=?").run(rn, id);
     return { ok: true, applied: true };
   }
-  sqlite.prepare("UPDATE player_requests SET status='rejected', resolved_at=datetime('now','localtime') WHERE id=?").run(id);
+  sqlite.prepare("UPDATE player_requests SET status='rejected', resolution_note=?, resolved_at=datetime('now','localtime') WHERE id=?").run(rn, id);
   return { ok: true, applied: false };
+}
+// 監督が承認待ちの申請を自分で取り消す (#289)。本人の pending のみ。
+function cancelPlayerRequest(coachId, id) {
+  const r = sqlite.prepare("SELECT * FROM player_requests WHERE id=? AND coach_id=?").get(id, coachId);
+  if (!r) return { error: "申請が見つかりません" };
+  if (r.status !== "pending") return { error: "承認待ちの申請のみ取り消せます" };
+  sqlite.prepare("UPDATE player_requests SET status='cancelled', resolved_at=datetime('now','localtime') WHERE id=?").run(id);
+  return { ok: true };
 }
 function countPendingRequests() { return sqlite.prepare("SELECT COUNT(*) n FROM player_requests WHERE status='pending'").get().n; }
 
@@ -5185,6 +5200,11 @@ function getPushSubscriptionsForPlayer(playerId) {
   }).filter(Boolean);
 }
 function deletePushSubscription(endpoint) { if (endpoint) pushStmts.delByEndpoint.run(endpoint); }
+// マイ番号(プッシュ)を登録済みの選手ID一覧 (#288 Admin可視化用)。端末数も返す。
+function getPushPlayerIds() {
+  return sqlite.prepare("SELECT player_id, COUNT(*) AS n FROM push_subscriptions GROUP BY player_id").all()
+    .map(r => ({ id: r.player_id, devices: r.n }));
+}
 
 // ═══════════════════════════════════════════════════════
 // 審判結果入力 (本部に来ずに審判が結果を報告できる仕組み)
@@ -5389,7 +5409,7 @@ module.exports = {
   setPendingResult, clearPendingResult, getPendingResult,
   getRefereeCourtLinks, resolveRefereeCourt,
   setRefereePasscode, verifyRefereePasscode,   // #261 会場パスコード
-  kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription,
+  kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription, getPushPlayerIds,
   // DB スナップショット (バックアップ/復元)
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, hasOngoingTournament,
   // 操作ログ + Undo
@@ -5402,7 +5422,7 @@ module.exports = {
   createCoachAccount, getCoachAccount, listCoachAccounts, updateCoachAccount,
   regenerateCoachCode, setCoachCode, deleteCoachAccount, coachByCode,
   getCoachRoster, addCoachPlayer, removeCoachPlayer,
-  createPlayerRequest, getCoachRequests, listPlayerRequests, resolvePlayerRequest, countPendingRequests,
+  createPlayerRequest, getCoachRequests, listPlayerRequests, resolvePlayerRequest, cancelPlayerRequest, countPendingRequests,
   getCoachDashboard, saveCoachSubscription, deleteCoachSubscription, getCoachSubscriptionsForPlayer,
   getGlobalMatchAverages, detectSchoolCategory, normalizePlayerCategories,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,

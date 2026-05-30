@@ -214,6 +214,14 @@
    font-size: 9px; font-weight: 700;
    margin-right: 4px;
  }
+ /* マイ番号(プッシュ)登録済みバッジ (#288) */
+ .pdb-card .pdb-meta .pdb-push {
+   display: inline-block;
+   background: #dcfce7; color: #166534;
+   padding: 1px 6px; border-radius: 8px;
+   font-size: 9px; font-weight: 800;
+   margin-left: 4px; vertical-align: middle;
+ }
  .pdb-card .pdb-actions {
    display: flex; flex-direction: column; gap: 2px;
    opacity: 0; transition: opacity .12s;
@@ -1446,9 +1454,20 @@ const A = {
  ]);
  A.state.tournaments = tournaments || [];
  A.state.players = players || [];
+ A.loadPushPlayers();   // マイ番号(プッシュ)登録選手 (#288) — 失敗してもUIは継続
  if (A.activeTab === "tournaments") A.renderTournaments();
  if (A.activeTab === "players") A.renderPlayers();
  } catch (e) { console.error(e); }
+ },
+ // マイ番号(プッシュ)を登録済みの選手ID集合を取得 (#288)。バッジ表示に使用。
+ async loadPushPlayers() {
+ try {
+ const r = await api.get("/api/admin/push/players");
+ const map = new Map();
+ ((r && r.players) || []).forEach(x => map.set(x.id, x.devices || 1));
+ A.state.pushPlayers = map;
+ if (A.activeTab === "players") A.renderPlayers();
+ } catch (e) { A.state.pushPlayers = A.state.pushPlayers || new Map(); }
  },
 
  // ─── 設定モーダル ────────────────────────────────
@@ -5741,14 +5760,21 @@ const A = {
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A._resolveReq(r.id, "reject", r) }, "却下")));
  } else {
  row.appendChild(h("div", { className: "text-xs", style: { fontWeight: 700, color: r.status === "approved" ? "#15803d" : "#64748b" } },
- r.status === "approved" ? "承認済み" : "却下済み"));
+ r.status === "approved" ? "承認済み" : (r.status === "cancelled" ? "監督が取消" : "却下済み")));
+ if (r.resolution_note) row.appendChild(h("div", { className: "text-xs", style: { marginTop: "3px", color: "#7f1d1d", whiteSpace: "pre-wrap" } }, "本部コメント: " + r.resolution_note));
  }
  body.appendChild(row);
  });
  },
  async _resolveReq(id, action, r) {
  if (action === "approve" && r.type === "delete" && !confirm("「" + (r.player_name || "") + "」を選手DBから削除します。元に戻せません。よろしいですか?")) return;
- const res = await api.post("/api/admin/player-requests/" + id + "/resolve", { action });
+ let note = "";
+ if (action === "reject") {
+ const inp = prompt("却下の理由・コメントを入力してください（監督の画面に表示されます。任意・空欄でも却下できます）", "");
+ if (inp === null) return;   // キャンセル
+ note = inp.trim();
+ }
+ const res = await api.post("/api/admin/player-requests/" + id + "/resolve", { action, note });
  if (res && res.error) return toast(res.error, "err");
  toast(action === "approve" ? "承認しました" : "却下しました", "ok");
  A._loadRequests();
@@ -5970,9 +5996,13 @@ const A = {
  const heroNum = h("span", { className: "pdb-total-num" }, "0");
  el.appendChild(h("div", { className: "pdb-total pdb-hero" },
    h("div", { className: "pdb-total-main" }, heroNum, h("span", { className: "pdb-total-unit" }, "名")),
-   h("div", { className: "pdb-total-side" },
-     h("div", { className: "pdb-total-lbl" }, (q || g !== "all") ? "絞込み結果" : "登録選手数"),
-     h("div", { className: "pdb-total-sub" }, `男子 ${males} ・ 女子 ${list.length - males}`))));
+   (function(){
+     const pushN = A.state.pushPlayers ? list.filter(p => A.state.pushPlayers.has(p.id)).length : 0;
+     return h("div", { className: "pdb-total-side" },
+       h("div", { className: "pdb-total-lbl" }, (q || g !== "all") ? "絞込み結果" : "登録選手数"),
+       h("div", { className: "pdb-total-sub" }, `男子 ${males} ・ 女子 ${list.length - males}`),
+       pushN ? h("div", { className: "pdb-total-sub", style: { color: "#166534", fontWeight: 700 } }, `通知ON ${pushN}名（呼出が届く）`) : null);
+   })()));
  (function(){ const dur=600,t0=performance.now(),tgt=list.length;
    const step=(n)=>{const k=Math.min(1,(n-t0)/dur);heroNum.textContent=String(Math.round(tgt*(1-Math.pow(1-k,3))));if(k<1)requestAnimationFrame(step);};
    requestAnimationFrame(step); })();
@@ -6011,6 +6041,8 @@ const A = {
  p.branch ? (function(){ const _bc = TT.branchColor(p.branch);
    return h("span", { className: "pdb-branch", style: { background: _bc.bg, color: _bc.fg } }, TT.normalizeBranch(p.branch)); })() : null,
  p.team || "—",
+ (A.state.pushPlayers && A.state.pushPlayers.has(p.id)) ? h("span", { className: "pdb-push",
+   title: "この選手はマイ番号(プッシュ通知)を登録済み。呼出時に通知が届きます。" }, "通知ON") : null,
  ),
  stats.length ? h("div", { className: "pdb-stats" }, ...stats) : null,
  total > 0 ? h("div", { className: "pdb-winrate-bar", title: "勝率 " + winRate + "%" },
@@ -8373,10 +8405,14 @@ const O = {
    (m.player2_partner_id || m.player2_partner_name) ? { id: m.player2_partner_id, name: m.player2_partner_name } : null,
  ].filter(x => x && x.id);
  if (!members.length) return null;
+ const hasPush = (id) => A.state.pushPlayers && A.state.pushPlayers.has(id);
  return h("div", { className: "flex gap-2 mb-2", style: { flexWrap: "wrap", alignItems: "center" } },
    h("span", { className: "text-xs text-sub" }, "選手DB:"),
    ...members.map(x => h("button", { className: "btn btn-sm btn-ghost",
-     onClick: () => A.editPlayer({ id: x.id }) }, (x.name || "選手") + " ▸")));
+     onClick: () => A.editPlayer({ id: x.id }) },
+     (x.name || "選手") + " ▸",
+     hasPush(x.id) ? h("span", { title: "マイ番号(プッシュ通知)登録済み — 呼出が届きます",
+       style: { marginLeft: "4px", fontSize: "9px", fontWeight: 800, color: "#166534", background: "#dcfce7", borderRadius: "6px", padding: "1px 5px" } }, "通知ON") : null)));
  },
 
  async uncallMatch(id) {

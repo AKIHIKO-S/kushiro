@@ -556,6 +556,12 @@ app.post("/api/coach/requests", requireCoach, (req, res) => {
 app.get("/api/coach/requests", requireCoach, (req, res) => {
   res.json({ requests: db.getCoachRequests(req.coach.id) });
 });
+// 監督が承認待ちの申請を取り消す (#289)
+app.delete("/api/coach/requests/:id", requireCoach, (req, res) => {
+  const r = db.cancelPlayerRequest(req.coach.id, req.params.id);
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
 // マイ選手の進行ダッシュボード (#286)
 app.get("/api/coach/dashboard", requireCoach, (req, res) => {
   const r = db.getCoachDashboard(req.coach.id, req.query.tournament_id);
@@ -596,12 +602,18 @@ app.post("/api/admin/coaches/:id/set-code", requireAdmin, (req, res) => {
   res.json(r.coach);
 });
 app.delete("/api/admin/coaches/:id", requireAdmin, (req, res) => { db.deleteCoachAccount(req.params.id); res.json({ ok: true }); });
+// マイ番号(プッシュ)登録済みの選手一覧 (#288 Admin可視化)
+app.get("/api/admin/push/players", requireAdmin, (req, res) => {
+  const rows = db.getPushPlayerIds();
+  res.json({ players: rows, count: rows.length });
+});
 // ── Admin: 選手DB 修正/削除 申請の審査 ──
 app.get("/api/admin/player-requests", requireAdmin, (req, res) => {
   res.json({ requests: db.listPlayerRequests(req.query.status || "pending"), pending: db.countPendingRequests() });
 });
 app.post("/api/admin/player-requests/:id/resolve", requireAdmin, (req, res) => {
-  const r = db.resolvePlayerRequest(req.params.id, (req.body || {}).action);
+  const b = req.body || {};
+  const r = db.resolvePlayerRequest(req.params.id, b.action, b.note);
   if (r.error) return res.status(400).json(r);
   res.json(r);
 });
