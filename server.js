@@ -74,6 +74,22 @@ async function sendPushToCoachesForPlayer(playerId, payload) {
   }));
 }
 
+// 有効な全監督端末へ一斉配信 (本部お知らせ #290)。送信できた件数を返す。
+async function sendPushToAllCoaches(payload) {
+  if (!PUSH_ENABLED) return 0;
+  const subs = db.getAllCoachSubscriptions();
+  if (!subs.length) return 0;
+  const body = JSON.stringify(payload);
+  let sent = 0;
+  await Promise.all(subs.map(async ({ endpoint, sub }) => {
+    try { await webpush.sendNotification(sub, body); sent++; }
+    catch (err) {
+      if (err && (err.statusCode === 410 || err.statusCode === 404)) db.deleteCoachSubscription(endpoint);
+    }
+  }));
+  return sent;
+}
+
 // xlsx 一時アップロード保存先 (拡張子保持)
 const uploadDir = path.join(os.tmpdir(), "tt-uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -562,6 +578,21 @@ app.delete("/api/coach/requests/:id", requireCoach, (req, res) => {
   if (r.error) return res.status(400).json(r);
   res.json(r);
 });
+// 本部からのお知らせ一覧 (監督向け #290)
+app.get("/api/coach/announcements", requireCoach, (req, res) => {
+  res.json({ announcements: db.listCoachAnnouncements(req.query.limit) });
+});
+// チーム結果まとめ (A4 印刷用 HTML) #291。ヘッダ認証なのでコードはURLに出さない。
+app.get("/api/coach/results", requireCoach, (req, res) => {
+  const tid = req.query.tournament_id;
+  const t = db.getTournament(tid);
+  if (!t) return res.status(404).send("大会が見つかりません");
+  const roster = db.getCoachRoster(req.coach.id);
+  const matches = db.getMatchesByTournament(tid);
+  const html = reports.buildCoachResultsHTML(req.coach, t, roster, matches, {});
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.send(html);
+});
 // マイ選手の進行ダッシュボード (#286)
 app.get("/api/coach/dashboard", requireCoach, (req, res) => {
   const r = db.getCoachDashboard(req.coach.id, req.query.tournament_id);
@@ -606,6 +637,25 @@ app.delete("/api/admin/coaches/:id", requireAdmin, (req, res) => { db.deleteCoac
 app.get("/api/admin/push/players", requireAdmin, (req, res) => {
   const rows = db.getPushPlayerIds();
   res.json({ players: rows, count: rows.length });
+});
+// ── Admin: 本部→監督への一斉お知らせ (#290) ──
+app.get("/api/admin/coach-announcements", requireAdmin, (req, res) => {
+  res.json({ announcements: db.listCoachAnnouncements(req.query.limit) });
+});
+app.post("/api/admin/coach-announcements", requireAdmin, async (req, res) => {
+  const b = req.body || {};
+  const wantPush = !!b.push && PUSH_ENABLED;
+  const r = db.createCoachAnnouncement({ body: b.body, pushed: wantPush });
+  if (r.error) return res.status(400).json(r);
+  let pushed = 0;
+  if (wantPush) {
+    try { pushed = await sendPushToAllCoaches({ title: "本部からのお知らせ", body: String(b.body || "").slice(0, 120), url: "/viewer/#coach", tag: "ktta-coach-announce" }); }
+    catch (e) { pushed = 0; }
+  }
+  res.status(201).json({ announcement: r, pushed });
+});
+app.delete("/api/admin/coach-announcements/:id", requireAdmin, (req, res) => {
+  res.json(db.deleteCoachAnnouncement(req.params.id));
 });
 // ── Admin: 選手DB 修正/削除 申請の審査 ──
 app.get("/api/admin/player-requests", requireAdmin, (req, res) => {

@@ -771,11 +771,149 @@ function buildMatchCardsXlsx(tournament, matches, entrants, opts) {
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
 }
 
+// ═══════════════════════════════════════════════════════
+// チーム結果まとめ (監督向け・A4 印刷用 HTML) #291
+//   roster: 監督のマイ選手 [{id,name,furigana,team,branch}]
+//   matches: getMatchesByTournament の結果行 (winner/loser ベース)
+// ═══════════════════════════════════════════════════════
+function _crNorm(s) { return String(s == null ? "" : s).replace(/[\s　]/g, ""); }
+function _crSplit(s) { return String(s == null ? "" : s).split(/\s*[\/／・]\s*/).map(x => _crNorm(x)).filter(Boolean); }
+
+function buildCoachResultsHTML(coach, tournament, roster, matches, opts) {
+  opts = opts || {};
+  const logoPath = opts.logo_url || "/shared/assets/icon-192.png";
+  coach = coach || {}; tournament = tournament || {}; roster = roster || []; matches = matches || [];
+  const teamName = coach.team || "";
+  const dateStr = tournament.date
+    ? new Date(tournament.date).toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" })
+    : "";
+  const nowStr = new Date().toLocaleString("ja-JP", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+  // 実際に行われた試合のみ (BYE/不戦勝は除外)
+  const played = matches.filter(m => m && m.winner_name && m.loser_name
+    && m.winner_name !== "BYE" && m.loser_name !== "BYE" && !Number(m.is_walkover));
+  const resultOf = (m, p) => {
+    const pid = p.id, pn = _crNorm(p.name);
+    const winHit = (pid && m.winner_id === pid) || (pn && _crSplit(m.winner_name).includes(pn));
+    const lossHit = (pid && m.loser_id === pid) || (pn && _crSplit(m.loser_name).includes(pn));
+    if (winHit) return "win";
+    if (lossHit) return "loss";
+    return null;
+  };
+
+  let teamW = 0, teamL = 0, playedCount = 0;
+  const rows = roster.map(p => {
+    const ms = [];
+    played.forEach(m => {
+      const r = resultOf(m, p);
+      if (!r) return;
+      const opp = r === "win" ? m.loser_name : m.winner_name;
+      const oppTeam = r === "win" ? (m.loser_team || "") : (m.winner_team || "");
+      const score = (m.winner_sets != null && m.loser_sets != null)
+        ? (r === "win" ? m.winner_sets + "-" + m.loser_sets : m.loser_sets + "-" + m.winner_sets) : "";
+      ms.push({ result: r, opponent: opp, oppTeam, score, event: m.event || "", round: m.round || "" });
+    });
+    const w = ms.filter(x => x.result === "win").length;
+    const l = ms.filter(x => x.result === "loss").length;
+    teamW += w; teamL += l; playedCount += ms.length;
+    return { player: p, matches: ms, w, l };
+  });
+  rows.sort((a, b) => String(a.player.furigana || a.player.name).localeCompare(String(b.player.furigana || b.player.name), "ja"));
+
+  const playerBlocks = rows.map(row => {
+    const p = row.player;
+    const head = `<div class="pl-head">
+        <div class="pl-name">${escapeHtml(p.name || "")}${p.furigana ? `<span class="pl-furi">${escapeHtml(p.furigana)}</span>` : ""}</div>
+        <div class="pl-rec">${row.matches.length ? `${row.w}勝 ${row.l}敗` : "出場記録なし"}</div>
+      </div>`;
+    if (!row.matches.length) return `<div class="pl-block">${head}</div>`;
+    const trs = row.matches.map(mm => `<tr>
+        <td class="c-res ${mm.result}">${mm.result === "win" ? "勝" : "敗"}</td>
+        <td class="c-opp">${escapeHtml(mm.opponent || "")}${mm.oppTeam ? `<span class="c-team">${escapeHtml(mm.oppTeam)}</span>` : ""}</td>
+        <td class="c-score">${escapeHtml(mm.score || "")}</td>
+        <td class="c-event">${escapeHtml(mm.event || "")}</td>
+      </tr>`).join("");
+    return `<div class="pl-block">${head}
+      <table class="pl-table"><thead><tr><th>結果</th><th>対戦相手</th><th>スコア</th><th>種目</th></tr></thead><tbody>${trs}</tbody></table>
+    </div>`;
+  }).join("");
+
+  const total = teamW + teamL;
+  const winRate = total > 0 ? Math.round((teamW / total) * 100) : 0;
+
+  return `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>チーム結果まとめ ${escapeHtml(teamName || coach.name || "")}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'BIZ UDPGothic', sans-serif; background: #eef1f6; color: #1a2233; }
+  .toolbar { background: #1e2a4a; color: #fff; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 10; }
+  .toolbar .t { font-size: 15px; font-weight: 700; }
+  .toolbar button { background: #fff; color: #1e2a4a; border: none; padding: 8px 22px; border-radius: 6px; font-weight: 700; cursor: pointer; font-family: inherit; }
+  .page { width: 210mm; min-height: 297mm; margin: 12px auto; background: #fff; padding: 16mm 14mm; box-shadow: 0 2px 10px rgba(0,0,0,.12); }
+  .head-band { display: flex; align-items: center; gap: 12px; border-bottom: 3px solid #1e2a4a; padding-bottom: 10px; margin-bottom: 6px; }
+  .head-band img { width: 46px; height: 46px; object-fit: contain; }
+  .hb-main { flex: 1; }
+  .hb-title { font-size: 22px; font-weight: 700; letter-spacing: .04em; }
+  .hb-sub { font-size: 13px; color: #475569; margin-top: 2px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 13px; color: #334155; margin: 8px 0 4px; }
+  .meta b { color: #1e2a4a; }
+  .summary { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 18px; }
+  .sum-tile { background: #f1f5f9; border-radius: 10px; padding: 10px 18px; text-align: center; min-width: 92px; }
+  .sum-tile .n { font-size: 24px; font-weight: 700; color: #1e2a4a; }
+  .sum-tile .l { font-size: 11px; color: #64748b; margin-top: 2px; }
+  .pl-block { margin-bottom: 14px; break-inside: avoid; }
+  .pl-head { display: flex; justify-content: space-between; align-items: baseline; border-left: 5px solid #1e2a4a; padding: 4px 0 4px 10px; background: #f8fafc; }
+  .pl-name { font-size: 16px; font-weight: 700; }
+  .pl-furi { font-size: 11px; color: #64748b; margin-left: 8px; font-weight: 400; }
+  .pl-rec { font-size: 14px; font-weight: 700; color: #1e2a4a; padding-right: 8px; }
+  .pl-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 13px; }
+  .pl-table th { background: #1e2a4a; color: #fff; font-weight: 700; padding: 4px 8px; text-align: left; font-size: 11px; }
+  .pl-table td { border-bottom: 1px solid #e2e8f0; padding: 4px 8px; }
+  .c-res { width: 40px; text-align: center; font-weight: 700; }
+  .c-res.win { color: #15803d; } .c-res.loss { color: #b91c1c; }
+  .c-team { font-size: 10px; color: #94a3b8; margin-left: 6px; }
+  .c-score { width: 64px; font-variant-numeric: tabular-nums; }
+  .c-event { color: #475569; }
+  .empty { padding: 30px; text-align: center; color: #94a3b8; }
+  .foot { margin-top: 18px; padding-top: 8px; border-top: 1px solid #cbd5e1; font-size: 11px; color: #94a3b8; text-align: right; }
+  @media print { body { background: #fff; } .toolbar { display: none; } .page { box-shadow: none; margin: 0; width: auto; min-height: auto; padding: 10mm; } }
+</style></head><body>
+<div class="toolbar"><span class="t">チーム結果まとめ</span><button onclick="window.print()">印刷 / PDF保存</button></div>
+<div class="page">
+  <div class="head-band">
+    <img src="${logoPath}" alt="">
+    <div class="hb-main">
+      <div class="hb-title">チーム結果まとめ</div>
+      <div class="hb-sub">${escapeHtml(tournament.name || "")}</div>
+    </div>
+  </div>
+  <div class="meta">
+    ${teamName ? `<span><b>チーム</b> ${escapeHtml(teamName)}</span>` : ""}
+    <span><b>監督・顧問</b> ${escapeHtml(coach.name || "")}</span>
+    ${dateStr ? `<span><b>開催日</b> ${escapeHtml(dateStr)}</span>` : ""}
+    <span><b>登録選手</b> ${roster.length}名</span>
+  </div>
+  <div class="summary">
+    <div class="sum-tile"><div class="n">${roster.length}</div><div class="l">マイ選手</div></div>
+    <div class="sum-tile"><div class="n">${teamW}</div><div class="l">勝</div></div>
+    <div class="sum-tile"><div class="n">${teamL}</div><div class="l">敗</div></div>
+    <div class="sum-tile"><div class="n">${winRate}%</div><div class="l">勝率</div></div>
+    <div class="sum-tile"><div class="n">${playedCount}</div><div class="l">総試合数</div></div>
+  </div>
+  ${rows.length ? playerBlocks : '<div class="empty">登録選手がいません。</div>'}
+  <div class="foot">釧路卓球協会 大会運営システム ・ 出力: ${escapeHtml(nowStr)}（不戦勝・不戦敗は集計に含みません）</div>
+</div>
+</body></html>`;
+}
+
 module.exports = {
   buildAggregationXlsx,
   buildReceiptsHTML,
   buildReceiptsXlsx,
   buildReceiptsList,
   buildMatchCardsXlsx,
+  buildCoachResultsHTML,
   classifyEvent, genderOf,
 };

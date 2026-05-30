@@ -224,6 +224,15 @@ sqlite.exec(`
     FOREIGN KEY (coach_id) REFERENCES coach_accounts(id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_csub_coach ON coach_subscriptions(coach_id);
+  -- 本部→監督への一斉お知らせ (#290)。「◯番コート集合」「昼食12時」等。
+  CREATE TABLE IF NOT EXISTS coach_announcements (
+    id TEXT PRIMARY KEY,
+    body TEXT NOT NULL,
+    pushed INTEGER DEFAULT 0,
+    active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_cann_active ON coach_announcements(active, id);
 `);
 
 // 既存DBにカラムがない場合は追加
@@ -1160,6 +1169,32 @@ function getCoachSubscriptionsForPlayer(playerId) {
     WHERE cp.player_id = ?`).all(playerId)
     .map(r => { try { return { endpoint: r.endpoint, sub: JSON.parse(r.subscription_json) }; } catch (e) { return null; } })
     .filter(Boolean);
+}
+// 有効な監督アカウントの全プッシュ購読 (一斉お知らせ配信用 #290)
+function getAllCoachSubscriptions() {
+  return sqlite.prepare(`SELECT cs.endpoint, cs.subscription_json FROM coach_subscriptions cs
+    JOIN coach_accounts ca ON ca.id = cs.coach_id AND ca.active = 1`).all()
+    .map(r => { try { return { endpoint: r.endpoint, sub: JSON.parse(r.subscription_json) }; } catch (e) { return null; } })
+    .filter(Boolean);
+}
+
+// ═══ 本部→監督への一斉お知らせ (#290) ════════════════════
+function createCoachAnnouncement(data) {
+  data = data || {};
+  const body = String(data.body || "").trim().slice(0, 1000);
+  if (!body) return { error: "本文を入力してください" };
+  const id = uid();
+  sqlite.prepare("INSERT INTO coach_announcements (id, body, pushed) VALUES (?,?,?)")
+    .run(id, body, data.pushed ? 1 : 0);
+  return sqlite.prepare("SELECT * FROM coach_announcements WHERE id=?").get(id);
+}
+function listCoachAnnouncements(limit) {
+  const n = Math.min(100, Math.max(1, parseInt(limit) || 30));
+  return sqlite.prepare("SELECT * FROM coach_announcements WHERE active=1 ORDER BY rowid DESC LIMIT ?").all(n);
+}
+function deleteCoachAnnouncement(id) {
+  sqlite.prepare("UPDATE coach_announcements SET active=0 WHERE id=?").run(id);
+  return { ok: true };
 }
 
 function addAchievement(playerId, data) {
@@ -5424,6 +5459,7 @@ module.exports = {
   getCoachRoster, addCoachPlayer, removeCoachPlayer,
   createPlayerRequest, getCoachRequests, listPlayerRequests, resolvePlayerRequest, cancelPlayerRequest, countPendingRequests,
   getCoachDashboard, saveCoachSubscription, deleteCoachSubscription, getCoachSubscriptionsForPlayer,
+  getAllCoachSubscriptions, createCoachAnnouncement, listCoachAnnouncements, deleteCoachAnnouncement,
   getGlobalMatchAverages, detectSchoolCategory, normalizePlayerCategories,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,

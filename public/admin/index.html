@@ -5695,6 +5695,26 @@ const A = {
  reqCard.appendChild(reqBody);
  panel.appendChild(reqCard);
  A._renderRequestList(reqBody, reqData.requests || []);
+ // 本部→監督 お知らせ配信 (#290)
+ const annCard = h("div", { className: "card", style: { borderLeft: "4px solid #2563eb" } });
+ annCard.appendChild(h("div", { className: "card-head" },
+ h("div", {}, h("div", { className: "card-title" }, "監督へのお知らせ配信"),
+ h("div", { className: "card-title-sub" }, "「◯番コートに集合」「昼食は12時」等を全監督アプリに表示します"))));
+ const annInput = h("textarea", { className: "input", rows: 2, placeholder: "お知らせ本文 (例: 開会式を9時30分から第1コートで行います)" });
+ const annPush = h("input", { type: "checkbox" });
+ annCard.appendChild(h("div", { className: "field", style: { marginBottom: "8px" } }, annInput));
+ annCard.appendChild(h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", marginBottom: "10px" } },
+ h("label", { className: "flex gap-1", style: { alignItems: "center", fontSize: "13px", cursor: "pointer" } }, annPush, "プッシュ通知も送る（登録済みの監督端末へ）"),
+ h("button", { className: "btn", onClick: async () => {
+ const body = annInput.value.trim(); if (!body) return toast("本文を入力してください", "err");
+ const r = await api.post("/api/admin/coach-announcements", { body, push: annPush.checked });
+ if (r && r.error) return toast(r.error, "err");
+ toast("お知らせを配信しました" + (r.pushed ? `（プッシュ ${r.pushed}件）` : ""), "ok");
+ annInput.value = ""; annPush.checked = false; A._loadAnnouncements();
+ } }, "配信")));
+ annCard.appendChild(h("div", { id: "annList" }));
+ panel.appendChild(annCard);
+ A._loadAnnouncements();
  // アカウント発行
  const accCard = h("div", { className: "card" });
  accCard.appendChild(h("div", { className: "card-head" },
@@ -5732,6 +5752,24 @@ const A = {
  try { d = await api.get("/api/admin/player-requests?status=" + st); } catch (e) {}
  A._updateCoachBadge(d.pending || 0);
  A._renderRequestList(body, d.requests || []);
+ },
+ // 本部お知らせの一覧描画 (#290)
+ async _loadAnnouncements() {
+ const el = document.getElementById("annList"); if (!el) return;
+ let list = [];
+ try { list = (await api.get("/api/admin/coach-announcements")).announcements || []; } catch (e) {}
+ el.innerHTML = "";
+ if (!list.length) { el.appendChild(h("div", { className: "empty-state", style: { padding: "12px" } }, "まだお知らせはありません。")); return; }
+ list.forEach(a => el.appendChild(h("div", { className: "card", style: { padding: "8px 10px", marginBottom: "6px", background: "#f8fafc" } },
+ h("div", { className: "flex", style: { justifyContent: "space-between", gap: "8px", alignItems: "baseline" } },
+ h("div", { style: { whiteSpace: "pre-wrap", fontSize: "13px", flex: "1" } }, a.body),
+ h("div", { className: "flex gap-2", style: { alignItems: "center", flexShrink: 0 } },
+ a.pushed ? h("span", { className: "text-xs", style: { color: "#2563eb", fontWeight: 700 } }, "プッシュ済") : null,
+ h("button", { className: "btn btn-sm btn-ghost", style: { color: "#b91c1c" }, onClick: async () => {
+ if (!confirm("このお知らせを削除しますか?")) return;
+ await api.del("/api/admin/coach-announcements/" + a.id); A._loadAnnouncements();
+ } }, "削除"))),
+ h("div", { className: "text-xs text-sub", style: { marginTop: "3px" } }, a.created_at || ""))));
  },
  _renderRequestList(body, requests) {
  body.innerHTML = "";

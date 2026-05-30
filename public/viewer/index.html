@@ -1967,12 +1967,23 @@ const CO = {
  const wrap = h("div", {});
  const roster = await CO._get("/api/coach/roster");
  const reqs = await CO._get("/api/coach/requests");
+ const ann = await CO._get("/api/coach/announcements");
  const players = (roster && roster.players) || [];
  const cap = (roster && roster.cap) || CO.coach.player_cap || 50;
  wrap.appendChild(h("div", { className: "card", style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" } },
  h("div", {}, h("div", { className: "card-title" }, CO.coach.name + "（監督・顧問）"),
  h("div", { className: "text-sm text-sub" }, "マイ選手 " + players.length + " / " + cap + " 人")),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => { CO.code = ""; CO.coach = null; localStorage.removeItem("kttaCoachCode"); CO._stopDash(); CO.render(); } }, "ログアウト")));
+ // 本部からのお知らせ (#290)
+ const anns = (ann && ann.announcements) || [];
+ if (anns.length) {
+ const ac = h("div", { className: "card", style: { borderLeft: "4px solid #2563eb", background: "#eff6ff" } });
+ ac.appendChild(h("div", { className: "card-title", style: { marginBottom: "6px", color: "#1e40af" } }, "本部からのお知らせ"));
+ anns.slice(0, 8).forEach(a => ac.appendChild(h("div", { style: { padding: "7px 4px", borderBottom: "1px solid #dbeafe" } },
+ h("div", { style: { whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6" } }, a.body),
+ h("div", { className: "text-xs text-sub", style: { marginTop: "2px" } }, a.created_at || ""))));
+ wrap.appendChild(ac);
+ }
  wrap.appendChild(await CO._dashboardCard());   // マイ選手の進行ダッシュボード (#286)
  const myCard = h("div", { className: "card" });
  myCard.appendChild(h("div", { className: "card-head" }, h("div", { className: "card-title" }, "マイ選手"),
@@ -2005,6 +2016,7 @@ const CO = {
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => CO._openRequest(p) }, "修正/削除を申請"),
  h("button", { className: "btn btn-sm btn-ghost", style: { color: "#b91c1c" }, onClick: async () => { await CO._del("/api/coach/roster/" + p.id); CO.render(); } }, "外す")))));
  wrap.appendChild(myCard);
+ wrap.appendChild(await CO._resultsCard());   // チーム結果まとめ印刷 (#291)
  const rs = (reqs && reqs.requests) || [];
  if (rs.length) {
  const rc = h("div", { className: "card" });
@@ -2029,6 +2041,30 @@ const CO = {
  wrap.appendChild(rc);
  }
  return wrap;
+ },
+ // チーム結果まとめ印刷/保存 (#291)
+ async _resultsCard() {
+ const card = h("div", { className: "card" });
+ card.appendChild(h("div", { className: "card-head" }, h("div", { className: "card-title" }, "チーム結果まとめ"),
+ h("span", { className: "text-xs text-sub" }, "大会後の戦績をA4で印刷・保存")));
+ let tours = [];
+ try { tours = await fetch("/api/public/tournaments").then(r => r.json()); } catch (e) {}
+ tours = Array.isArray(tours) ? tours : [];
+ if (!tours.length) { card.appendChild(h("div", { className: "text-sm text-sub", style: { padding: "4px 2px" } }, "大会がまだありません。")); return card; }
+ const sel = h("select", { className: "input", style: { flex: "1", minWidth: "180px" } },
+ ...tours.map(t => h("option", { value: t.id }, (t.name || "大会") + (t.date ? " (" + t.date + ")" : "") + (t.status === "completed" ? " ・終了" : (t.status === "ongoing" ? " ・進行中" : "")))));
+ card.appendChild(h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", marginTop: "4px" } },
+ sel,
+ h("button", { className: "btn", onClick: async () => {
+ const tid = sel.value; if (!tid) return;
+ const w = window.open("", "_blank");
+ if (w) { try { w.document.write("<!doctype html><meta charset='utf-8'><title>読み込み中</title><body style='font-family:sans-serif;padding:24px;color:#475569'>結果まとめを作成中です...</body>"); } catch (e) {} }
+ try {
+ const html = await fetch("/api/coach/results?tournament_id=" + encodeURIComponent(tid), { headers: { "X-Coach-Code": CO.code } }).then(r => r.text());
+ if (w) { w.document.open(); w.document.write(html); w.document.close(); }
+ } catch (e) { if (w) w.close(); toast("出力に失敗しました", "err"); }
+ } }, "印刷 / 保存 (A4)")));
+ return card;
  },
  _openRequest(p) {
  const fld = (label, el) => h("div", { className: "field" }, h("label", { className: "field-label" }, label), el);
