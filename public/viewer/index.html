@@ -560,45 +560,45 @@
 
  /* ═══ 監督・顧問ビュー: ダークトンマナ (#tab-coach にスコープ) ═══ */
  #tab-coach {
-   --card: #1e293b; --card-elev: #232f44;
-   --border: #334155; --border-strong: #46566e;
-   --txt: #e8edf5; --txt-l: #cbd5e1; --sub: #9aa8bd; --sub-l: #7c8aa0;
-   --ink-50: #1e293b; --ink-100: #334155; --ink-400: #64748b;
+   --card: #434f66; --card-elev: #4b5872;
+   --border: #56627c; --border-strong: #66738f;
+   --txt: #f0f3f9; --txt-l: #dde3ec; --sub: #b7c1d2; --sub-l: #9aa6ba;
+   --ink-50: #434f66; --ink-100: #56627c; --ink-400: #8693ab;
    background:
-     radial-gradient(1200px 360px at 50% -8%, rgba(37,99,235,.16), transparent 60%),
-     linear-gradient(180deg, #131c2e 0%, #0f1626 100%);
+     radial-gradient(1200px 360px at 50% -8%, rgba(120,150,210,.14), transparent 60%),
+     linear-gradient(180deg, #3c4661 0%, #353f56 100%);
    color: var(--txt);
    border-radius: 16px;
    padding: 14px 12px 28px;
    margin-top: 4px;
-   box-shadow: inset 0 0 0 1px rgba(148,163,184,.08);
+   box-shadow: inset 0 0 0 1px rgba(190,202,222,.10);
  }
  #tab-coach .card {
    background: var(--card);
-   border: 1px solid #2f3e55;
-   box-shadow: 0 2px 10px rgba(0,0,0,.35);
+   border: 1px solid #56627c;
+   box-shadow: 0 2px 8px rgba(0,0,0,.22);
  }
- #tab-coach .card-title { color: #f1f5f9; }
- #tab-coach .card-head { border-bottom-color: #2f3e55; }
+ #tab-coach .card-title { color: #f6f8fc; }
+ #tab-coach .card-head { border-bottom-color: #56627c; }
  #tab-coach .input, #tab-coach select, #tab-coach textarea {
-   background: #0d1525; color: #e8edf5; border-color: #46566e;
+   background: #353f54; color: #f0f3f9; border-color: #66738f;
  }
- #tab-coach .input::placeholder, #tab-coach textarea::placeholder { color: #6b7a90; }
- #tab-coach .input:hover, #tab-coach select:hover, #tab-coach textarea:hover { border-color: #5b6e8a; }
+ #tab-coach .input::placeholder, #tab-coach textarea::placeholder { color: #8b97ad; }
+ #tab-coach .input:hover, #tab-coach select:hover, #tab-coach textarea:hover { border-color: #7c8aa6; }
  #tab-coach .btn { background: var(--accent); border-color: var(--accent); color: #fff; }
  #tab-coach .btn:hover { background: #b91c1c; border-color: #b91c1c; }
- #tab-coach .btn-ghost { background: transparent; color: #cdd8e6; border-color: #46566e; }
- #tab-coach .btn-ghost:hover { background: #2a3850; border-color: #5b6e8a; }
- #tab-coach .empty-state { color: #9aa8bd; }
- #tab-coach .text-sub, #tab-coach .text-xs.text-sub { color: #9aa8bd; }
- #tab-coach .badge-sub { background: #334155; color: #cbd5e1; }
- #tab-coach a { color: #93c5fd; }
- #tab-coach code { background: #0d1525 !important; color: #e8edf5 !important; border: 1px solid #46566e; }
+ #tab-coach .btn-ghost { background: transparent; color: #e2e8f2; border-color: #66738f; }
+ #tab-coach .btn-ghost:hover { background: #515d77; border-color: #7c8aa6; }
+ #tab-coach .empty-state { color: #b7c1d2; }
+ #tab-coach .text-sub, #tab-coach .text-xs.text-sub { color: #b7c1d2; }
+ #tab-coach .badge-sub { background: #56627c; color: #e2e8f2; }
+ #tab-coach a { color: #a8cbff; }
+ #tab-coach code { background: #353f54 !important; color: #f0f3f9 !important; border: 1px solid #66738f; }
  /* 共有の通知手順ボックス(_pushHowto)は背景白なのでダーク化 */
- #tab-coach details.card { background: #182338 !important; border-color: #2f3e55 !important; color: #e8edf5; }
- #tab-coach details.card summary { color: #e8edf5; }
- #tab-coach details.card .font-bold { color: #cbd5e1 !important; }
- #tab-coach .pdb-push, #tab-coach .badge { color: #e8edf5; }
+ #tab-coach details.card { background: #3c4861 !important; border-color: #56627c !important; color: #f0f3f9; }
+ #tab-coach details.card summary { color: #f0f3f9; }
+ #tab-coach details.card .font-bold { color: #dde3ec !important; }
+ #tab-coach .pdb-push, #tab-coach .badge { color: #f0f3f9; }
 </style>
 </head>
 <body>
@@ -2018,7 +2018,7 @@ const CO = {
  const ann = await CO._get("/api/coach/announcements");
  const players = (roster && roster.players) || [];
  const cap = (roster && roster.cap) || CO.coach.player_cap || 50;
- wrap.appendChild(h("div", { className: "card", style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", borderLeft: "4px solid #dc2626", background: "linear-gradient(180deg,#26344f 0%,#1e293b 100%)" } },
+ wrap.appendChild(h("div", { className: "card", style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", borderLeft: "4px solid #ef4444", background: "linear-gradient(180deg,#4f5c78 0%,#434f66 100%)" } },
  h("div", {}, h("div", { className: "card-title", style: { fontSize: "17px" } }, CO.coach.name + "（監督・顧問）"),
  CO.coach.member_name ? h("div", { className: "text-xs", style: { color: "#93c5fd", fontWeight: 700 } }, (CO.coach.member_role || "顧問") + "：" + CO.coach.member_name + " として利用中") : null,
  h("div", { className: "text-sm text-sub" }, "マイ選手 " + players.length + " / " + cap + " 人")),
@@ -2026,10 +2026,10 @@ const CO = {
  // 本部からのお知らせ (#290)
  const anns = (ann && ann.announcements) || [];
  if (anns.length) {
- const ac = h("div", { className: "card", style: { borderLeft: "4px solid #3b82f6", background: "linear-gradient(180deg,#1b2c4d 0%,#16233c 100%)" } });
- ac.appendChild(h("div", { className: "card-title", style: { marginBottom: "6px", color: "#bfdbfe" } }, "本部からのお知らせ"));
- anns.slice(0, 8).forEach(a => ac.appendChild(h("div", { style: { padding: "7px 4px", borderBottom: "1px solid #284268" } },
- h("div", { style: { whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6", color: "#e8edf5" } }, a.body),
+ const ac = h("div", { className: "card", style: { borderLeft: "4px solid #60a5fa", background: "linear-gradient(180deg,#445a82 0%,#3c4d6e 100%)" } });
+ ac.appendChild(h("div", { className: "card-title", style: { marginBottom: "6px", color: "#cfe2ff" } }, "本部からのお知らせ"));
+ anns.slice(0, 8).forEach(a => ac.appendChild(h("div", { style: { padding: "7px 4px", borderBottom: "1px solid #54688f" } },
+ h("div", { style: { whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6", color: "#f0f3f9" } }, a.body),
  h("div", { className: "text-xs text-sub", style: { marginTop: "2px" } }, a.created_at || ""))));
  wrap.appendChild(ac);
  }
