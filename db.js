@@ -3682,6 +3682,8 @@ function getOperationState(tournamentId) {
     callable,
     waiting: waiting.length,
     recent_finished: recent,
+    // 終了タブのバッジ用: BYE/不戦勝を除いた「実際に行われ終了した」試合数 (recent は最大50件に丸めるため別途正確な件数を返す)
+    finished_count: finished.filter(m => m.winner_name !== "BYE" && m.loser_name !== "BYE" && !m.is_walkover).length,
     referee_queue: getRefereeQueue(tournamentId),
     event_stats: eventStats,
     total_matches: allMatches.length,
@@ -3703,6 +3705,30 @@ function getOperationState(tournamentId) {
       return { avg_match_min: avg, remaining, eta_text: etaText, eta_minutes_left: minsLeft };
     })(),
   };
+}
+
+// 大会進行「タブ」の参照タブ用 (待機中/終了/総試合) — 全試合をコンパクトに返す。
+// 進行中/次に呼ぶ は /live・/operations の既存ペイロードで描画するため、こちらは
+// 「ユーザーが参照タブを開いた時だけ」遅延取得する想定 (公開 /live を軽量に保つ #233)。
+// 1試合あたりの列を表示に必要なものへ絞り、bracket_number は entrants から join。
+function getOpMatchList(tournamentId) {
+  const tournament = getTournament(tournamentId);
+  if (!tournament) return null;
+  const rows = sqlite.prepare(`
+    SELECT m.id, m.event, m.round, m.round_order, m.match_label, m.status, m.table_no,
+      m.player1_name, m.player2_name, m.player1_team, m.player2_team,
+      m.winner_name, m.loser_name, m.winner_team, m.loser_team, m.winner_sets, m.loser_sets,
+      COALESCE(m.is_walkover,0) AS is_walkover,
+      m.called_at, m.started_at, m.finished_at, m.duration_sec, m.result_source,
+      e1.bracket_number AS player1_bracket_number,
+      e2.bracket_number AS player2_bracket_number
+    FROM matches m
+    LEFT JOIN entrants e1 ON e1.id = m.player1_entrant_id
+    LEFT JOIN entrants e2 ON e2.id = m.player2_entrant_id
+    WHERE m.tournament_id=?
+    ORDER BY m.bracket_round ASC, m.bracket_pos ASC, m.match_no ASC
+  `).all(tournamentId);
+  return { matches: rows, total: rows.length };
 }
 
 // 選手個人の試合状況 (マイ番号ポータル用)
@@ -5501,7 +5527,7 @@ module.exports = {
   getEventPriority, getPlayerSurvivalByEvent,
   getPriorityLockForPlayer, getMatchPriorityBlocks,
   getCallableMatches, getOnTableMatches, getRefereeQueue,
-  getOperationState, getPlayerLiveStatus, getTeamRosters,
+  getOperationState, getOpMatchList, getPlayerLiveStatus, getTeamRosters,
   getBracket, deleteEventMatches, setCourtLayout,
   // 試合検索 / H2H / 選手統計
   searchMatches, countMatchesForSearch, getSearchFilters,

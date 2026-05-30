@@ -2014,6 +2014,27 @@ app.get("/api/tournaments/:id/applicants", (req, res) => {
     });
   res.json({ tournament_id: req.params.id, applicants: result });
 });
+// 申込台帳 (フラット一覧) Excel 出力。Googleフォーム→スプレッドシートの代替。
+app.get("/api/tournaments/:id/applicants.xlsx", (req, res) => {
+  try {
+    const tournament = db.getTournament(req.params.id);
+    if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
+    const entrants = db.getEntrants(req.params.id);
+    if (!entrants.length) return res.status(400).json({ error: "申込がまだありません" });
+    const buf = reports.buildApplicantsXlsx(tournament, entrants, {});
+    const safeName = (tournament.name || "tournament").replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_");
+    const filename = encodeURIComponent(`申込一覧_${safeName}.xlsx`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=UTF-8''${filename}`);
+    res.setHeader("Content-Length", Buffer.byteLength(buf));
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.end(buf);
+  } catch (e) {
+    console.error("applicants.xlsx error:", e);
+    res.status(500).json({ error: "申込一覧生成失敗: " + e.message });
+  }
+});
 // 統計 (種目×ブロック分布)
 app.get("/api/tournaments/:id/entrants/stats", (req, res) => {
   res.json(db.getEntrantStats(req.params.id));
@@ -2060,6 +2081,7 @@ function slimPublicState(st) {
     tournament: st.tournament, tables: st.tables, on_table: st.on_table,
     callable: slimCall, waiting: st.waiting,
     recent_finished: (st.recent_finished || []).slice(0, 12),
+    finished_count: st.finished_count,
     event_stats: st.event_stats, total_matches: st.total_matches, progress: st.progress,
   };
 }
@@ -2148,6 +2170,36 @@ app.get("/api/public/tournaments/:id/live", (req, res) => {
 // 進行の変化検知用 軽量エンドポイント (クライアントは変化時のみ重い /live を取得)
 app.get("/api/public/tournaments/:id/ops-version", (req, res) => {
   res.json(db.getOpsFingerprint(req.params.id));
+});
+
+// 大会進行「タブ」用 全試合リスト (待機中/終了/総試合タブを開いた時だけ遅延取得)。
+// /live と同様に進行フィンガープリント単位で直列化JSONをキャッシュ → 多数同時でもCPU/帯域節約。
+// 公開 /live のペイロードは軽量に保ったまま、参照タブを開いた人だけが全試合を取得する。
+const _matchListCache = new Map(); // tid -> { key, json }
+function getCachedMatchListJSON(tid) {
+  const fp = db.getOpsFingerprint(tid);
+  if (!fp || fp.error) {
+    const ml = db.getOpMatchList(tid);
+    return ml ? { json: JSON.stringify(ml) } : null;
+  }
+  const key = fp.v + "|" + (fp.status || "");
+  const c = _matchListCache.get(tid);
+  if (c && c.key === key) return c;
+  const ml = db.getOpMatchList(tid);
+  if (!ml) return null;
+  const entry = { key, json: JSON.stringify(ml) };
+  _matchListCache.set(tid, entry);
+  if (_matchListCache.size > 300) {
+    const it = _matchListCache.keys();
+    while (_matchListCache.size > 200) { const k = it.next().value; if (k === undefined) break; _matchListCache.delete(k); }
+  }
+  return entry;
+}
+app.get("/api/public/tournaments/:id/match-list", (req, res) => {
+  const entry = getCachedMatchListJSON(req.params.id);
+  if (!entry) return res.status(404).json({ error: "大会が見つかりません" });
+  res.set("Cache-Control", "public, max-age=2");
+  return res.type("application/json").send(entry.json);
 });
 
 // ─── 進行リアルタイム通知 (SSE: Server-Sent Events) #264 ───

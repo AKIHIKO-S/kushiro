@@ -420,6 +420,14 @@
  .op-stat-num.green { color: var(--ink-500); } /* 終了=灰 */
  .op-stat-num.blue { color: #1d4ed8; }      /* 待機=青 */
  .op-stat-label { font-size: 11px; color: var(--ink-600); margin-top: 4px; font-weight: 600; }
+ /* サマリをタブ化: クリック可能 + アクティブ表示 */
+ .op-summary.tabs .op-stat { cursor: pointer; user-select: none;
+   transition: box-shadow .12s, border-color .12s, transform .06s; }
+ .op-summary.tabs .op-stat:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+ .op-summary.tabs .op-stat:active { transform: translateY(1px); }
+ .op-summary.tabs .op-stat.active { box-shadow: 0 0 0 2px var(--accent, #2563eb); border-top-width: 4px; }
+ /* 参照タブ(待機/総試合)のコンパクト行 */
+ #opTabContent .op-browse-empty { text-align: center; color: var(--ink-500); padding: 26px 10px; }
  .op-stat.s-ongoing { border-top-color: #16a34a; background: linear-gradient(180deg,#f0fdf4,#fff); }
  .op-stat.s-callable { border-top-color: #d97706; background: linear-gradient(180deg,#fffbeb,#fff); }
  .op-stat.s-waiting { border-top-color: #2563eb; background: linear-gradient(180deg,#eff6ff,#fff); }
@@ -3803,6 +3811,8 @@ const A = {
  h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.downloadAggregation(t) }, "集計表ダウンロード"),
+ h("button", { className: "btn btn-sm btn-ghost", style: { background: "#ecfdf5", color: "#065f46", borderColor: "#a7f3d0" },
+ onClick: () => A.downloadApplicantsXlsx(t), title: "申込一覧をExcel(.xlsx)で出力。Googleスプレッドシートの代替" }, "申込一覧をExcel"),
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.openReceiptsDialog(t) }, "領収書一括出力"),
  h("button", { className: "btn btn-sm btn-ghost",
@@ -4158,6 +4168,20 @@ const A = {
  } catch (e) {
  toast("ダウンロード失敗: " + e.message, "err");
  }
+ },
+ // ── 申込一覧 Excel ダウンロード (申込台帳・Googleスプレッドシート代替) ──
+ async downloadApplicantsXlsx(t) {
+ try {
+ const head = await fetch(`/api/tournaments/${t.id}/applicants.xlsx`, { method: "HEAD" });
+ if (!head.ok) return toast(head.status === 400 ? "申込がまだありません" : "申込一覧生成失敗: HTTP " + head.status, "err");
+ const url = `/api/tournaments/${t.id}/applicants.xlsx`;
+ const filename = `申込一覧_${t.name || "tournament"}.xlsx`;
+ const a = document.createElement("a");
+ a.href = url; a.download = filename; a.rel = "noopener";
+ document.body.appendChild(a); a.click();
+ setTimeout(() => a.remove(), 500);
+ toast("申込一覧をダウンロードしました", "ok");
+ } catch (e) { toast("ダウンロード失敗: " + e.message, "err"); }
  },
 
  // ── 領収書 一括出力ダイアログ ──
@@ -6597,16 +6621,24 @@ const O = {
  }
  main.appendChild(progTop);
 
- const statCard = (cls, num, numCls, label) => h("div", { className: "op-stat " + cls },
-   h("div", { className: "op-stat-num " + numCls }, String(num)),
-   h("div", { className: "op-stat-label" }, label));
- main.appendChild(h("div", { className: "op-summary" },
- statCard("s-ongoing", O.state.on_table.length, "red", "進行中"),
- statCard("s-callable", O.state.callable.length, "orange", "呼べる"),
- statCard("s-waiting", O.state.waiting, "blue", "待機"),
- statCard("s-done", totalCompleted, "green", "終了"),
- statCard("s-total", O.state.total_matches, "", "総試合"),
- ));
+ // サマリをタブ化 (クリックで該当状態の試合に振り分け)。バッジ件数は従来どおり。
+ const opTabDefs = [
+   { key: "ongoing", scls: "s-ongoing", numCls: "red", label: "進行中", num: O.state.on_table.length },
+   { key: "callable", scls: "s-callable", numCls: "orange", label: "呼べる", num: O.state.callable.length },
+   { key: "waiting", scls: "s-waiting", numCls: "blue", label: "待機", num: O.state.waiting },
+   { key: "done", scls: "s-done", numCls: "green", label: "終了", num: totalCompleted },
+   { key: "all", scls: "s-total", numCls: "", label: "総試合", num: O.state.total_matches },
+ ];
+ if (!O.activeOpTab) { const fn = opTabDefs.find(t => t.num > 0); O.activeOpTab = fn ? fn.key : "ongoing"; }
+ const opSummary = h("div", { className: "op-summary tabs" });
+ opTabDefs.forEach(t => opSummary.appendChild(h("div", {
+   className: "op-stat " + t.scls + (O.activeOpTab === t.key ? " active" : ""),
+   role: "tab", "aria-selected": O.activeOpTab === t.key ? "true" : "false",
+   onClick: () => O.setOpTab(t.key),
+ },
+   h("div", { className: "op-stat-num " + t.numCls }, String(t.num)),
+   h("div", { className: "op-stat-label" }, t.label))));
+ main.appendChild(opSummary);
 
  // (種目別進捗は上の「大会全体の進捗」カードに統合済み #移動)
 
@@ -6686,7 +6718,15 @@ const O = {
  try { main.appendChild(O._getOpBracketPanel()); }
  catch (e) { console.warn("[opBracket]", e); }
 
+ // ── 進行状態タブの内容 (サマリのタブで選択した状態の試合のみ表示) ──
+ // 進行中/呼べる/終了 は従来どおり操作可。待機/総試合 は一覧(遅延取得)。審判プール・ベスト8は常時表示。
+ const opContent = h("div", { id: "opTabContent" });
+ main.appendChild(opContent);
+ const _opTab = O.activeOpTab;
+ if (_opTab === "waiting" || _opTab === "all") O._fillOpBrowse(opContent, _opTab);
+
  // ── 呼べる対戦 (次に呼ぶ — 最頻アクションを上に) ──
+ if (_opTab === "callable") {
  const prioDot = (c, label) => h("span", { style: { display: "inline-flex", alignItems: "center",
    gap: "3px", fontSize: "10px", color: "var(--ink-600)" } },
    h("span", { className: "ev-priority", style: { background: c, marginRight: "0" } }), label);
@@ -6720,11 +6760,12 @@ const O = {
  const firstFreeIdx = callList.findIndex(m => !(m.blocks || []).length);
  callList.forEach((m, idx) => callCard.appendChild(O.renderCallableRow(m, idx, idx === firstFreeIdx)));
  }
- main.appendChild(callCard);
+ opContent.appendChild(callCard);
  O._applyCallFilter();
+ }
 
  // ── 進行中 (結果入力) ──
- if (O.state.on_table.length) {
+ if (_opTab === "ongoing" && O.state.on_table.length) {
  const onCard = h("div", { className: "card" },
  h("div", { className: "card-head" },
  h("div", { className: "card-title" }, "進行中 (結果入力)"),
@@ -6732,10 +6773,10 @@ const O = {
  ),
  );
  O.state.on_table.forEach(m => onCard.appendChild(O.renderOnTableRow(m)));
- main.appendChild(onCard);
- }
+ opContent.appendChild(onCard);
+ } else if (_opTab === "ongoing") opContent.appendChild(O._opEmpty("進行中の試合はありません。"));
 
- // ── 審判プール (敗者プール) ──
+ // ── 審判プール (敗者プール・常時表示) ──
  if (O.state.referee_queue.length) {
  // 種目別にグループ化
  const byEv = {};
@@ -6767,8 +6808,8 @@ const O = {
  main.appendChild(refCard);
  }
 
- // ── 直近結果 (修正機能つき) ──
- if (O.state.recent_finished.length) {
+ // ── 直近結果 (修正機能つき・終了タブ) ──
+ if (_opTab === "done" && O.state.recent_finished.length) {
  const recentCard = h("div", { className: "card" },
  h("div", { className: "card-head" },
  h("div", { className: "card-title" }, "直近の結果"),
@@ -6807,8 +6848,8 @@ const O = {
  ),
  ));
  });
- main.appendChild(recentCard);
- }
+ opContent.appendChild(recentCard);
+ } else if (_opTab === "done") opContent.appendChild(O._opEmpty("終了した試合はまだありません。"));
 
  // ── 各種目 ベスト8 (準々決勝進出者・常時表示) #208 ──
  const best8 = O.best8 || [];
@@ -6830,6 +6871,96 @@ const O = {
    b8card.appendChild(grid);
    main.appendChild(b8card);
  }
+ },
+
+ // 進行状態タブ切替 (再取得せず O.state から再描画。待機/総試合は _fillOpBrowse 内で遅延取得)
+ setOpTab(key) { if (O.activeOpTab === key) return; O.activeOpTab = key; O.render(); },
+
+ _opEmpty(msg) { return h("div", { className: "op-browse-empty" }, msg); },
+
+ // 待機/総試合タブの参照用シグネチャ (状態が変われば全試合リストを再取得)
+ _opSig() { const s = O.state || {}; return [(s.on_table || []).length, (s.callable || []).length, s.waiting, s.total_matches].join("|"); },
+
+ // 全試合リストを遅延取得 (待機/総試合タブを開いた時だけ。状態変化時のみ再取得)
+ async ensureOpMatchList() {
+ if (!O.tournamentId || O._opMlLoading) return;
+ const sig = O._opSig();
+ if (O._opMatchSig === sig) return;
+ O._opMlLoading = true;
+ let ok = false;
+ try {
+   const r = await api.get("/api/public/tournaments/" + O.tournamentId + "/match-list");
+   if (r && r.matches) { O._opMatchList = r.matches; ok = true; }
+ } catch (e) {}
+ O._opMatchSig = sig;            // 成否に関わらず記録 (失敗時の無限リトライ防止)
+ if (!ok && !O._opMatchList) O._opMatchList = [];
+ O._opMatchErr = !ok;
+ O._opMlLoading = false;
+ if (O.activeOpTab === "waiting" || O.activeOpTab === "all") {
+   const c = document.getElementById("opTabContent");
+   if (c) O._fillOpBrowse(c, O.activeOpTab);
+ }
+ },
+
+ // 待機/総試合タブのコンパクト一覧を描画 (種目フィルタ反映)
+ _fillOpBrowse(container, tab) {
+ clear(container);
+ if (!O._opMatchList || O._opMatchSig !== O._opSig()) {
+   container.appendChild(O._opEmpty(O._opMatchErr ? "読み込みに失敗しました。「↻ 更新」で再取得してください。" : "読み込み中…"));
+   O.ensureOpMatchList();
+   return;
+ }
+ let rows = (tab === "waiting") ? O._opMatchList.filter(m => m.status === "waiting") : O._opMatchList.slice();
+ if (O.selectedEvent) rows = rows.filter(m => m.event === O.selectedEvent);
+ if (!rows.length) { container.appendChild(O._opEmpty(tab === "waiting" ? "待機中の試合はありません。" : "試合がありません。")); return; }
+ const card = h("div", { className: "card" },
+   h("div", { className: "card-head" },
+     h("div", { className: "card-title" }, tab === "waiting" ? "待機中の対戦" : "総試合 (全対戦)"),
+     h("div", { className: "card-title-sub" }, rows.length + "試合")));
+ const CAP = 800;
+ rows.slice(0, CAP).forEach(m => card.appendChild(O.renderOpListRow(m)));
+ if (rows.length > CAP) card.appendChild(h("div", { className: "text-xs text-sub", style: { padding: "6px 4px" } },
+   "他 " + (rows.length - CAP) + "件は省略しています（種目で絞り込み可）"));
+ container.appendChild(card);
+ },
+
+ // 状態チップ (待機/総試合タブのコンパクト行)
+ _opStatusChip(m) {
+ const base = { fontWeight: 700, borderRadius: "6px", padding: "1px 7px", fontSize: "11px" };
+ if (m.status === "completed" && (m.is_walkover || m.winner_name === "BYE" || m.loser_name === "BYE"))
+   return h("span", { style: { ...base, color: "#64748b", background: "#f1f5f9" } }, "不戦");
+ const map = { on_table: ["進行中", "#dc2626", "#fef2f2"], pending: ["呼出可", "#b45309", "#fffbeb"],
+   waiting: ["待機", "#1d4ed8", "#eff6ff"], completed: ["終了", "#15803d", "#f0fdf4"] };
+ const c = map[m.status] || ["—", "#64748b", "#f1f5f9"];
+ return h("span", { style: { ...base, color: c[1], background: c[2] } }, c[0]);
+ },
+
+ // コンパクト試合行 (待機/総試合タブ・読み取り専用)
+ renderOpListRow(m) {
+ const numTxt = (n) => n ? ("#" + n + " ") : "";
+ const isBye = m.is_walkover || m.winner_name === "BYE" || m.loser_name === "BYE";
+ let mid;
+ if (m.status === "completed" && m.winner_name && !isBye) {
+   mid = h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
+     h("span", { className: "font-bold", style: { color: "var(--warn)" } }, m.winner_name),
+     h("span", { className: "font-bold" }, TT.fmtScore(m.winner_sets, m.loser_sets)),
+     h("span", { className: "text-sub" }, m.loser_name || "?"));
+ } else if (isBye) {
+   mid = h("div", { className: "text-sub", style: { fontSize: "12px" } },
+     (m.winner_name && m.winner_name !== "BYE" ? m.winner_name : (m.player1_name || "?")) + " 不戦勝 / BYE");
+ } else {
+   mid = h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
+     h("span", {}, numTxt(m.player1_bracket_number) + (m.player1_name || "?"),
+       m.player1_team ? h("span", { className: "text-xs text-sub" }, " (" + m.player1_team + ")") : null),
+     h("span", { className: "text-xs text-sub" }, "vs"),
+     h("span", {}, numTxt(m.player2_bracket_number) + (m.player2_name || "?"),
+       m.player2_team ? h("span", { className: "text-xs text-sub" }, " (" + m.player2_team + ")") : null),
+     m.status === "on_table" && m.table_no ? h("span", { style: { fontSize: "11px", fontWeight: 700, color: "#dc2626" } }, "コート" + m.table_no) : null);
+ }
+ return h("div", { className: "match-list-item", style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" } },
+   h("span", { className: "round-badge" }, [m.event, m.round].filter(Boolean).join(" ")),
+   m.match_label ? h("span", { className: "text-xs text-sub mono" }, m.match_label) : null,
+   O._opStatusChip(m), mid);
  },
 
  // 埋め込みトーナメント表パネルを取得 (4秒ポーリングでのちらつき防止のためキャッシュ)

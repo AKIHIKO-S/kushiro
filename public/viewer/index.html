@@ -289,6 +289,33 @@
  border-radius: var(--radius); padding: 10px; text-align: center;
  }
  .live-stat-num { font-size: 22px; font-weight: 700; line-height: 1; }
+ /* 進行状態タブ (サマリカードをタブ化) */
+ .live-stats.tabs .live-stat { cursor: pointer; user-select: none;
+   transition: box-shadow .12s, border-color .12s, background .12s; }
+ .live-stats.tabs .live-stat:hover { border-color: var(--accent); }
+ .live-stats.tabs .live-stat.active { border-color: var(--accent);
+   box-shadow: 0 0 0 2px var(--accent); background: #fffaf5; }
+ .live-stats.tabs .stat-label { margin-top: 3px; }
+ /* タブ内 試合行 (待機中/終了/総試合) */
+ .tab-empty { text-align: center; color: var(--sub); padding: 26px 10px; font-size: 14px; }
+ .tab-note { font-size: 11px; color: var(--sub); margin: 2px 0 8px; }
+ .tab-row { background: #fff; border: 1px solid var(--border); border-radius: 10px;
+   padding: 8px 11px; margin-bottom: 6px; }
+ .tab-row-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 3px; }
+ .tab-ev { font-size: 11px; color: var(--sub); font-weight: 700; }
+ .tab-mlabel { font-size: 10px; color: var(--sub-l); font-family: monospace; }
+ .tab-chip { font-size: 10px; font-weight: 700; border-radius: 6px; padding: 1px 7px; }
+ .tab-row-body { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+ .tab-row-body.result .tab-win { font-weight: 700; color: var(--ink-900); }
+ .tab-row-body.result .tab-score { font-weight: 700; font-family: monospace; color: var(--accent); }
+ .tab-row-body.result .tab-lose { color: var(--sub); }
+ .tab-p { font-weight: 600; }
+ .tab-bnum { display: inline-block; font-size: 10px; font-weight: 700; color: #fff;
+   background: var(--ink-500, #64748b); border-radius: 5px; padding: 0 4px; margin-right: 4px; }
+ .tab-vs { font-size: 11px; color: var(--sub); font-weight: 700; }
+ .tab-pteam { font-size: 11px; color: var(--sub); font-weight: 400; margin-left: 3px; }
+ .tab-court { font-size: 11px; font-weight: 700; color: #dc2626; margin-left: auto; }
+ .tab-bye { font-size: 11px; color: var(--sub); }
 
  /* viewer用コートグリッド */
  .live-court-wrap {
@@ -2200,37 +2227,93 @@ const L = {
  clear(main);
  const s = L.state;
 
- // 統計
- main.appendChild(h("div", { className: "live-stats" },
- h("div", { className: "live-stat" },
- h("div", { className: "live-stat-num", style: { color: "var(--accent)" } },
- String(s.on_table.length)),
- h("div", { className: "stat-label" }, "進行中")),
- h("div", { className: "live-stat" },
- h("div", { className: "live-stat-num", style: { color: "var(--warn)" } },
- String(s.callable.length)),
- h("div", { className: "stat-label" }, "次に呼ぶ")),
- h("div", { className: "live-stat" },
- h("div", { className: "live-stat-num", style: { color: "var(--pri)" } },
- String(s.waiting)),
- h("div", { className: "stat-label" }, "待機中")),
- h("div", { className: "live-stat" },
- h("div", { className: "live-stat-num", style: { color: "var(--ok)" } },
- String(s.recent_finished.length)),
- h("div", { className: "stat-label" }, "終了")),
- h("div", { className: "live-stat" },
- h("div", { className: "live-stat-num" }, String(s.total_matches)),
- h("div", { className: "stat-label" }, "総試合")),
- ));
+ // ── 進行状態タブ (サマリカードをタブ化し、該当試合を振り分け) ──
+ const finCount = (s.finished_count != null) ? s.finished_count
+   : (s.recent_finished || []).filter(m => m.winner_name !== "BYE" && m.loser_name !== "BYE" && !m.is_walkover).length;
+ const tabs = [
+   { key: "ongoing", label: "進行中", color: "var(--accent)", count: s.on_table.length },
+   { key: "callable", label: "次に呼ぶ", color: "var(--warn)", count: s.callable.length },
+   { key: "waiting", label: "待機中", color: "var(--pri)", count: s.waiting },
+   { key: "finished", label: "終了", color: "var(--ok)", count: finCount },
+   { key: "all", label: "総試合", color: "var(--ink-900)", count: s.total_matches },
+ ];
+ if (!L.activeTab) { const fn = tabs.find(t => t.count > 0); L.activeTab = fn ? fn.key : "ongoing"; }
+ const bar = h("div", { className: "live-stats tabs" });
+ tabs.forEach(t => bar.appendChild(h("div", {
+   className: "live-stat" + (L.activeTab === t.key ? " active" : ""),
+   role: "tab", "aria-selected": L.activeTab === t.key ? "true" : "false",
+   onClick: () => L.setTab(t.key),
+ },
+   h("div", { className: "live-stat-num", style: { color: t.color } }, String(t.count)),
+   h("div", { className: "stat-label" }, t.label))));
+ main.appendChild(bar);
 
- // コートレイアウト
+ // ── コートレイアウト (常時表示) ──
  main.appendChild(L.renderCourtGrid(s));
 
- // 進行中
- if (s.on_table.length) {
- main.appendChild(h("div", { className: "section-title mt-3" }, "進行中"));
- s.on_table.forEach(m => {
- main.appendChild(h("div", { className: "live-match-card", style: { cursor: "pointer" },
+ // ── タブ内容 (選択中の状態の試合のみ表示) ──
+ const content = h("div", { id: "liveTabContent", className: "mt-3" });
+ main.appendChild(content);
+ L.fillTab(content, s);
+ },
+
+ // タブ切替 (再取得せず L.state から再描画。参照タブは fillTab 内で遅延取得)
+ setTab(key) { if (L.activeTab === key) return; L.activeTab = key; L.render(); },
+
+ // 参照タブ(待機中/終了/総試合)用 全試合リストを遅延取得 (開いた時だけ・進行版が変われば再取得)
+ async ensureMatchList() {
+ if (!L.tournamentId || L._mlLoading) return;
+ if (L._matchList && L._matchListVer === L._ver) return;
+ L._mlLoading = true;
+ try {
+   const r = await api.get("/api/public/tournaments/" + L.tournamentId + "/match-list");
+   if (r && r.matches) { L._matchList = r.matches; L._matchListVer = L._ver; }
+ } catch (e) {} finally {
+   L._mlLoading = false;
+   const c = document.getElementById("liveTabContent");
+   if (c && L.state) L.fillTab(c, L.state);
+ }
+ },
+
+ // 選択中タブの試合行を描画
+ fillTab(content, s) {
+ clear(content);
+ const tab = L.activeTab;
+ if (tab === "ongoing") {
+   if (!s.on_table.length) { content.appendChild(h("div", { className: "tab-empty" }, "進行中の試合はありません。")); return; }
+   s.on_table.forEach(m => content.appendChild(L.renderOnTableCard(m)));
+   return;
+ }
+ if (tab === "callable") {
+   if (!s.callable.length) { content.appendChild(h("div", { className: "tab-empty" }, "コール待ちの対戦はありません。")); return; }
+   content.appendChild(h("div", { className: "tab-note" },
+     "上から順に呼ばれる予定です（目安）。下記以外が呼ばれることもあります。全" + s.callable.length + "試合。"));
+   s.callable.forEach((m, i) => content.appendChild(L.renderCallableCard(m, i)));
+   return;
+ }
+ // 参照タブ: waiting / finished / all
+ if (!L._matchList || L._matchListVer !== L._ver) {
+   content.appendChild(h("div", { className: "tab-empty" }, "読み込み中…"));
+   L.ensureMatchList();
+   return;
+ }
+ const ml = L._matchList;
+ let rows;
+ if (tab === "waiting") rows = ml.filter(m => m.status === "waiting");
+ else if (tab === "finished") rows = ml.filter(m => m.status === "completed"
+   && m.winner_name !== "BYE" && m.loser_name !== "BYE" && !m.is_walkover);
+ else rows = ml;   // all (総試合・BYE/不戦勝を含む)
+ if (!rows.length) { content.appendChild(h("div", { className: "tab-empty" },
+   tab === "waiting" ? "待機中の試合はありません。" : tab === "finished" ? "終了した試合はまだありません。" : "試合がありません。")); return; }
+ const CAP = 600;
+ if (rows.length > CAP) content.appendChild(h("div", { className: "tab-note" },
+   "全" + rows.length + "件中 先頭" + CAP + "件を表示しています。"));
+ rows.slice(0, CAP).forEach(m => content.appendChild(L.renderListRow(m)));
+ },
+
+ // 進行中カード (旧 進行中セクションと同一)
+ renderOnTableCard(m) {
+ return h("div", { className: "live-match-card", style: { cursor: "pointer" },
    title: "タップで試合詳細", onClick: () => L.showCourtDetail({ match: m, table_no: m.table_no }) },
  h("div", { className: "live-tno" }, "コート" + m.table_no),
  h("div", {},
@@ -2244,25 +2327,19 @@ const L = {
    "data-elapsed-since": m.called_at || m.started_at || "" },
    TT.fmtElapsedClock(m.called_at || m.started_at) ? ("経過 " + TT.fmtElapsedClock(m.called_at || m.started_at)) : ""),
  m.referee_name ? h("span", { className: "text-sub" }, "審判: " + m.referee_name) : null),
- ),
  ));
- });
- }
+ },
 
- // まもなく呼ばれそうな選手 (上から順に呼ばれる予定 / その場でインライン表示)
- if (s.callable.length) {
- main.appendChild(h("div", { className: "un-head" },
- h("span", { className: "un-title" }, "まもなく呼ばれそうな選手"),
- h("span", { className: "un-sub" }, "順番はあくまで目安です。下記以外が呼ばれることもあるためコールにご注意ください（全" + s.callable.length + "試合待ち）")));
+ // 次に呼ぶカード (旧 まもなく呼ばれそうな選手と同一・全件)
+ renderCallableCard(m, i) {
  const pEl = (name, num, team) => h("span", { className: "un-p" },
- num ? h("span", { className: "un-num" }, "#" + num) : null,
- h("span", {}, name || "?"),
- team ? h("span", { className: "un-team" }, "(" + team + ")") : null);
- s.callable.slice(0, 5).forEach((m, i) => {
+   num ? h("span", { className: "un-num" }, "#" + num) : null,
+   h("span", {}, name || "?"),
+   team ? h("span", { className: "un-team" }, "(" + team + ")") : null);
  const blocked = !!m.is_blocked;
  const isFirst = i === 0 && !blocked;
  const reason = (blocked && m.blocks && m.blocks[0]) ? m.blocks[0].label : "";
- main.appendChild(h("div", { className: "un-card" + (isFirst ? " is-first" : "") + (blocked ? " is-wait" : "") },
+ return h("div", { className: "un-card" + (isFirst ? " is-first" : "") + (blocked ? " is-wait" : "") },
  h("div", { className: "un-rank" },
  isFirst ? h("span", {}, "次") : h("span", {}, String(i + 1)),
  isFirst ? null : h("span", { className: "un-rank-lbl" }, "番目")),
@@ -2275,20 +2352,46 @@ const L = {
  pEl(m.player1_name, m.player1_bracket_number, m.player1_team),
  h("span", { className: "un-vs" }, "VS"),
  pEl(m.player2_name, m.player2_bracket_number, m.player2_team)),
- ),
  ));
- });
- }
+ },
 
- // 直近結果 (横並び ○勝者 — スコア — 敗者× / BYE除外)
- const recentReal = (s.recent_finished || []).filter(m =>
-   m.winner_name !== "BYE" && m.loser_name !== "BYE" && !m.is_walkover);
- if (recentReal.length) {
- main.appendChild(h("div", { className: "section-title mt-3" }, "直近の結果"));
- const box = h("div", { className: "card", style: { padding: "6px 10px" } });
- recentReal.slice(0, 8).forEach(m => box.appendChild(V.renderMatchResultRow(m)));
- main.appendChild(box);
+ // 状態チップ (待機中/終了/総試合タブのコンパクト行用)
+ statusChip(m) {
+ if (m.status === "completed" && (m.is_walkover || m.winner_name === "BYE" || m.loser_name === "BYE"))
+   return h("span", { className: "tab-chip", style: { color: "#64748b", background: "#f1f5f9" } }, "不戦");
+ const map = { on_table: ["進行中", "#dc2626", "#fef2f2"], pending: ["コール可", "#d97706", "#fffbeb"],
+   waiting: ["待機", "#475569", "#f1f5f9"], completed: ["終了", "#15803d", "#f0fdf4"] };
+ const c = map[m.status] || ["—", "#64748b", "#f1f5f9"];
+ return h("span", { className: "tab-chip", style: { color: c[1], background: c[2] } }, c[0]);
+ },
+
+ // コンパクト試合行 (読み取り専用・全状態対応)
+ renderListRow(m) {
+ const num = (n) => n ? h("span", { className: "tab-bnum" }, "#" + n) : null;
+ const team = (t) => t ? h("span", { className: "tab-pteam" }, "(" + t + ")") : null;
+ const head = h("div", { className: "tab-row-head" },
+   h("span", { className: "tab-ev" }, [m.event, m.round].filter(Boolean).join(" ")),
+   m.match_label ? h("span", { className: "tab-mlabel" }, m.match_label) : null,
+   L.statusChip(m));
+ let body;
+ const isBye = m.is_walkover || m.winner_name === "BYE" || m.loser_name === "BYE";
+ if (m.status === "completed" && m.winner_name && !isBye) {
+   body = h("div", { className: "tab-row-body result" },
+     h("span", { className: "tab-win" }, m.winner_name, team(m.winner_team)),
+     h("span", { className: "tab-score" }, TT.fmtScore(m.winner_sets, m.loser_sets)),
+     h("span", { className: "tab-lose" }, m.loser_name || "?", team(m.loser_team)));
+ } else if (isBye) {
+   body = h("div", { className: "tab-row-body" },
+     h("span", { className: "tab-p" }, (m.winner_name && m.winner_name !== "BYE") ? m.winner_name : (m.player1_name || "?")),
+     h("span", { className: "tab-bye" }, "不戦勝 / BYE"));
+ } else {
+   body = h("div", { className: "tab-row-body" },
+     h("span", { className: "tab-p" }, num(m.player1_bracket_number), m.player1_name || "?", team(m.player1_team)),
+     h("span", { className: "tab-vs" }, "VS"),
+     h("span", { className: "tab-p" }, num(m.player2_bracket_number), m.player2_name || "?", team(m.player2_team)),
+     m.status === "on_table" && m.table_no ? h("span", { className: "tab-court" }, "コート" + m.table_no) : null);
  }
+ return h("div", { className: "tab-row" }, head, body);
  },
 
  renderCourtGrid(s) {
