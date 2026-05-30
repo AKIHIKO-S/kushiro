@@ -8,6 +8,7 @@ const express = require("express");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const crypto = require("crypto");
 const { spawn } = require("child_process");
 const compression = require("compression");
 const multer = require("multer");
@@ -93,9 +94,10 @@ async function sendPushToAllCoaches(payload) {
 // xlsx 一時アップロード保存先 (拡張子保持)
 const uploadDir = path.join(os.tmpdir(), "tt-uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
-// 許可する拡張子 (Excel / PDF / 画像) — それ以外は拒否 (Y4 対策)
+// 許可する拡張子 (Excel / PDF / ラスタ画像) — それ以外は拒否 (Y4 対策)
+// SVG は内部にスクリプトを含み得る (同一オリジン配信で保存型XSSの恐れ) ため除外。
 const ALLOWED_UPLOAD_EXT = new Set([".xlsx", ".xls", ".xlsm", ".csv", ".pdf",
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
+  ".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 const upload = multer({
   storage: multer.diskStorage({
     destination: uploadDir,
@@ -116,7 +118,17 @@ const upload = multer({
 const app = express();
 // リバースプロキシ(Caddy/nginx)・Cloudflare・Cloudflare Tunnel の背後で動作するため
 // X-Forwarded-* を信頼し、req.ip 等が実クライアントを指すようにする (#236)。
-app.set("trust proxy", true);
+// 既定は true (現行動作を維持)。本番で Node ポートを直接到達可能にしている場合は
+// 環境変数 TRUST_PROXY=loopback (やプロキシのIP/サブネット) に絞ると、
+// X-Forwarded-For 偽装によるレート制限/SSE上限の回避を防げる。
+function parseTrustProxy(v) {
+  if (v === undefined || v === "") return true;   // 既定: 現行どおり
+  if (v === "true") return true;
+  if (v === "false") return false;
+  if (/^\d+$/.test(v)) return parseInt(v, 10);    // ホップ数
+  return v;                                        // 'loopback' / IP / サブネットのCSV
+}
+app.set("trust proxy", parseTrustProxy(process.env.TRUST_PROXY));
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
 const IS_PROD = process.env.NODE_ENV === "production";
@@ -261,9 +273,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// ADMIN_KEY 設定時のみ管理APIを保護
-// 変更系 (POST/PUT/DELETE) は X-Admin-Key ヘッダ必須 (URLにキーを載せない/Y2対策)。
-// GET (Excel/PDF ダウンロード等・ヘッダ付与不可) のみ ?key= も許可。
+// 定数時間比較 (タイミング攻撃でキー長/内容を推測されないように)。
+function safeEqualStr(a, b) {
+  const ba = Buffer.from(String(a == null ? "" : a));
+  const bb = Buffer.from(String(b == null ? "" : b));
+  if (ba.length !== bb.length) return false;
+  try { return crypto.timingSafeEqual(ba, bb); } catch (e) { return false; }
+}
+// ADMIN_KEY 設定時のみ管理APIを保護。
+// 認証は X-Admin-Key ヘッダのみ受け付ける (URLに ?key= を載せない=
+// アクセスログ/ブラウザ履歴/Referer への管理キー漏えいを防止)。
 function requireAdmin(req, res, next) {
   if (!ADMIN_KEY) {
     // 本番で管理キー未設定なら「フェイルクローズ」: 無保護で通さず拒否する。
@@ -277,9 +296,8 @@ function requireAdmin(req, res, next) {
     }
     return next(); // 開発環境のみ無保護を許可
   }
-  const headerKey = req.get("X-Admin-Key");
-  const key = headerKey || (req.method === "GET" ? req.query.key : null);
-  if (key === ADMIN_KEY) return next();
+  const key = req.get("X-Admin-Key");
+  if (key && safeEqualStr(key, ADMIN_KEY)) return next();
   res.status(401).json({ error: "管理キーが必要です" });
 }
 
@@ -530,18 +548,38 @@ app.post("/api/players/:id/merge", requireAdmin, (req, res) => {
 });
 
 // ═══ 監督・顧問モード (#285) ════════════════════════════
+// 監督コードの総当たり対策: 認証失敗を per-IP で計数し、閾値超で一時ブロック。
+// 正しいコードでの認証は計数をクリアするため、正規の監督は制限されない。
+const _coachFail = new Map(); // ip -> { count, resetAt }
+const COACH_FAIL_MAX = 15, COACH_FAIL_WINDOW = 5 * 60000; // 5分で15回失敗まで
+setInterval(() => { const now = Date.now(); for (const [ip, e] of _coachFail) if (now > e.resetAt) _coachFail.delete(ip); }, COACH_FAIL_WINDOW).unref();
+function _coachIp(req) {
+  return (req.headers["cf-connecting-ip"] || (req.headers["x-forwarded-for"] || "").toString().split(",")[0].trim()
+    || req.ip || (req.socket && req.socket.remoteAddress) || "unknown").toString().trim();
+}
+function coachBlocked(ip) { const e = _coachFail.get(ip); return !!(e && Date.now() <= e.resetAt && e.count >= COACH_FAIL_MAX); }
+function coachFail(ip) { const now = Date.now(); const e = _coachFail.get(ip);
+  if (!e || now > e.resetAt) _coachFail.set(ip, { count: 1, resetAt: now + COACH_FAIL_WINDOW }); else e.count++; }
+function coachOk(ip) { _coachFail.delete(ip); }
+const COACH_BLOCK_MSG = "試行回数が多すぎます。しばらく待ってから再度お試しください。";
 // 監督コード認証 (X-Coach-Code ヘッダ / body / query)
 function requireCoach(req, res, next) {
+  const ip = _coachIp(req);
+  if (coachBlocked(ip)) return res.status(429).json({ error: COACH_BLOCK_MSG });
   const code = req.get("X-Coach-Code") || (req.body && req.body.coach_code) || req.query.coach_code;
   const coach = db.coachByCode(code);
-  if (!coach) return res.status(401).json({ error: "監督ログインが必要です（コードが無効か無効化されています）" });
+  if (!coach) { coachFail(ip); return res.status(401).json({ error: "監督ログインが必要です（コードが無効か無効化されています）" }); }
+  coachOk(ip);
   req.coach = coach;
   next();
 }
 // 監督ログイン (コード→アカウント情報。コード自体は返さない)
 app.post("/api/coach/login", (req, res) => {
+  const ip = _coachIp(req);
+  if (coachBlocked(ip)) return res.status(429).json({ error: COACH_BLOCK_MSG });
   const coach = db.coachByCode((req.body || {}).code);
-  if (!coach) return res.status(401).json({ error: "コードが無効です。本部にご確認ください。" });
+  if (!coach) { coachFail(ip); return res.status(401).json({ error: "コードが無効です。本部にご確認ください。" }); }
+  coachOk(ip);
   const count = db.getCoachRoster(coach.id).length;
   res.json({ ok: true, coach: { id: coach.id, name: coach.name, team: coach.team || "", player_cap: coach.player_cap, player_count: count,
     member_name: coach.member_name || "", member_role: coach.member_role || "" } });
@@ -2301,7 +2339,7 @@ app.post("/api/matches/:id/uncall", requireAdmin, (req, res) => {
 app.get("/api/push/vapid-public-key", (req, res) => {
   res.json({ enabled: PUSH_ENABLED, key: VAPID_PUBLIC });
 });
-app.post("/api/push/subscribe", (req, res) => {
+app.post("/api/push/subscribe", rateLimit({ windowMs: 60000, max: 30 }), (req, res) => {
   if (!PUSH_ENABLED) return res.status(503).json({ error: "プッシュ通知は無効です" });
   const { player_id, subscription } = req.body || {};
   if (!player_id || !subscription) return res.status(400).json({ error: "player_id と subscription が必要です" });

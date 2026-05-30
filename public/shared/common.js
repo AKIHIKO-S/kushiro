@@ -82,8 +82,11 @@
   }
 
   function esc(s) {
+    // HTML特殊文字をエスケープ。引用符(" ')も対象にして、属性値に展開された場合の
+    // 属性インジェクション(XSS)も防ぐ。テキスト/属性どちらの文脈でも安全。
     return String(s == null ? "" : s)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
   function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }

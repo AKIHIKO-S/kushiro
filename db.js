@@ -970,9 +970,11 @@ function findDuplicatePlayerCandidates() {
 
 // ═══ 監督・顧問アカウント (#285) ════════════════════════
 function _genCoachCode() {
-  const A = "abcdefghjkmnpqrstuvwxyz23456789"; // 小文字+数字、紛らわしい i/l/o/0/1 除外
-  let s = ""; for (let i = 0; i < 6; i++) s += A[Math.floor(Math.random() * A.length)];
-  return s; // 6桁・小文字
+  const A = "abcdefghjkmnpqrstuvwxyz23456789"; // 31種: 小文字+数字、紛らわしい i/l/o/0/1 除外
+  // 暗号学的乱数 + 棄却サンプリング(248=31*8 でモジュロ偏りを排除)。8桁へ拡張。
+  let s = "";
+  while (s.length < 8) { const b = crypto.randomBytes(1)[0]; if (b < 248) s += A[b % 31]; }
+  return s; // 8桁・小文字 (Math.random ではなく crypto)
 }
 // コードが主監督(coach_accounts) か 追加メンバー(coach_members) で使用中か (#292)。
 // exceptAccountId / exceptMemberId は自分自身を除外するため。
