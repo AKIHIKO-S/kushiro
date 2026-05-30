@@ -499,6 +499,73 @@ app.post("/api/players/:id/merge", requireAdmin, (req, res) => {
   res.json(r);
 });
 
+// ═══ 監督・顧問モード (#285) ════════════════════════════
+// 監督コード認証 (X-Coach-Code ヘッダ / body / query)
+function requireCoach(req, res, next) {
+  const code = req.get("X-Coach-Code") || (req.body && req.body.coach_code) || req.query.coach_code;
+  const coach = db.coachByCode(code);
+  if (!coach) return res.status(401).json({ error: "監督ログインが必要です（コードが無効か無効化されています）" });
+  req.coach = coach;
+  next();
+}
+// 監督ログイン (コード→アカウント情報。コード自体は返さない)
+app.post("/api/coach/login", (req, res) => {
+  const coach = db.coachByCode((req.body || {}).code);
+  if (!coach) return res.status(401).json({ error: "コードが無効です。本部にご確認ください。" });
+  const count = db.getCoachRoster(coach.id).length;
+  res.json({ ok: true, coach: { id: coach.id, name: coach.name, player_cap: coach.player_cap, player_count: count } });
+});
+app.get("/api/coach/me", requireCoach, (req, res) => {
+  res.json({ id: req.coach.id, name: req.coach.name, player_cap: req.coach.player_cap,
+    player_count: db.getCoachRoster(req.coach.id).length });
+});
+app.get("/api/coach/roster", requireCoach, (req, res) => {
+  res.json({ players: db.getCoachRoster(req.coach.id), cap: req.coach.player_cap });
+});
+app.get("/api/coach/players/search", requireCoach, (req, res) => {
+  const rows = db.getPlayers({ search: req.query.q || "", sort: "furigana" }).slice(0, 30);
+  res.json(rows.map(p => ({ id: p.id, name: p.name, furigana: p.furigana, team: p.team, branch: p.branch, gender: p.gender })));
+});
+app.post("/api/coach/roster", requireCoach, (req, res) => {
+  const r = db.addCoachPlayer(req.coach.id, (req.body || {}).player_id);
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
+app.delete("/api/coach/roster/:playerId", requireCoach, (req, res) => {
+  res.json(db.removeCoachPlayer(req.coach.id, req.params.playerId));
+});
+app.post("/api/coach/requests", requireCoach, (req, res) => {
+  const r = db.createPlayerRequest(req.coach.id, req.body || {});
+  if (r.error) return res.status(400).json(r);
+  res.status(201).json(r);
+});
+app.get("/api/coach/requests", requireCoach, (req, res) => {
+  res.json({ requests: db.getCoachRequests(req.coach.id) });
+});
+// ── Admin: 監督アカウント発行・管理 ──
+app.get("/api/admin/coaches", requireAdmin, (req, res) => { res.json({ coaches: db.listCoachAccounts() }); });
+app.post("/api/admin/coaches", requireAdmin, (req, res) => { res.status(201).json(db.createCoachAccount(req.body || {})); });
+app.put("/api/admin/coaches/:id", requireAdmin, (req, res) => {
+  const c = db.updateCoachAccount(req.params.id, req.body || {});
+  if (!c) return res.status(404).json({ error: "アカウントが見つかりません" });
+  res.json(c);
+});
+app.post("/api/admin/coaches/:id/regenerate", requireAdmin, (req, res) => {
+  const c = db.regenerateCoachCode(req.params.id);
+  if (!c) return res.status(404).json({ error: "アカウントが見つかりません" });
+  res.json(c);
+});
+app.delete("/api/admin/coaches/:id", requireAdmin, (req, res) => { db.deleteCoachAccount(req.params.id); res.json({ ok: true }); });
+// ── Admin: 選手DB 修正/削除 申請の審査 ──
+app.get("/api/admin/player-requests", requireAdmin, (req, res) => {
+  res.json({ requests: db.listPlayerRequests(req.query.status || "pending"), pending: db.countPendingRequests() });
+});
+app.post("/api/admin/player-requests/:id/resolve", requireAdmin, (req, res) => {
+  const r = db.resolvePlayerRequest(req.params.id, (req.body || {}).action);
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
+
 // ── 戦績 ──
 app.post("/api/players/:id/achievements", requireAdmin, (req, res) => {
   res.status(201).json(db.addAchievement(req.params.id, req.body));

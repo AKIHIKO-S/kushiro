@@ -1086,6 +1086,7 @@
  <button class="tab" data-tab="players">選手データベース</button>
  <button class="tab" data-tab="import">インポート/エクスポート</button>
  <button class="tab" data-tab="api">API連携</button>
+ <button class="tab" data-tab="coaches">監督・申請 <span id="coachReqBadge" class="tab-badge" style="display:none"></span></button>
  </div>
 </div>
 
@@ -1170,6 +1171,11 @@
  </div>
  <div id="playerList"></div>
  </div>
+ </div>
+
+ <!-- 監督・顧問アカウント発行 + 選手DB 修正/削除 申請の審査 #285 -->
+ <div class="tab-panel hidden" id="tab-coaches">
+ <div id="coachesPanel"></div>
  </div>
 
  <!-- インポート/エクスポート -->
@@ -1422,6 +1428,7 @@ const A = {
  else if (name === "players") A.renderPlayers();
  else if (name === "operations") O.init();
  else if (name === "entrants") EnT.init();
+ else if (name === "coaches") A.renderCoaches();
  },
 
  // 直前のページに戻る (履歴がなければ大会一覧へ)
@@ -5636,6 +5643,135 @@ const A = {
  await A.openTournament(t.id);
  } }, "追加");
  openModal("試合を手動追加", body, foot);
+ },
+
+ // ─── 監督・顧問アカウント + 申請審査 (#285) ──────────
+ _updateCoachBadge(n) {
+ const b = document.getElementById("coachReqBadge");
+ if (!b) return;
+ if (n > 0) { b.textContent = n; b.style.cssText = "display:inline-block;background:#dc2626;color:#fff;border-radius:999px;font-size:10px;font-weight:800;padding:1px 7px;margin-left:4px;"; }
+ else b.style.display = "none";
+ },
+ async renderCoaches() {
+ const panel = document.getElementById("coachesPanel");
+ if (!panel) return;
+ panel.innerHTML = "";
+ let coaches = [], reqData = { requests: [], pending: 0 };
+ try { coaches = (await api.get("/api/admin/coaches")).coaches || []; } catch (e) {}
+ try { reqData = await api.get("/api/admin/player-requests?status=pending"); } catch (e) {}
+ A._updateCoachBadge(reqData.pending || 0);
+ // 申請審査 (本部が最優先で確認)
+ const reqCard = h("div", { className: "card", style: { borderLeft: "4px solid #d97706" } });
+ reqCard.appendChild(h("div", { className: "card-head" },
+ h("div", { className: "card-title" }, "選手DB 修正・削除 申請の審査"),
+ h("div", { className: "flex gap-2" },
+ h("select", { className: "input input-sm", id: "reqStatusSel", style: { width: "130px" }, onChange: () => A._loadRequests() },
+ h("option", { value: "pending" }, "承認待ち"),
+ h("option", { value: "approved" }, "承認済み"),
+ h("option", { value: "rejected" }, "却下"),
+ h("option", { value: "all" }, "すべて")),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A._loadRequests() }, "更新"))));
+ const reqBody = h("div", { id: "reqBody" });
+ reqCard.appendChild(reqBody);
+ panel.appendChild(reqCard);
+ A._renderRequestList(reqBody, reqData.requests || []);
+ // アカウント発行
+ const accCard = h("div", { className: "card" });
+ accCard.appendChild(h("div", { className: "card-head" },
+ h("div", {}, h("div", { className: "card-title" }, "監督・顧問アカウント発行"),
+ h("div", { className: "card-title-sub" }, "コードを各監督に伝えると、閲覧ページの「監督・顧問ログイン」から利用できます"))));
+ const nameI = h("input", { className: "input", placeholder: "監督・顧問名 (例: 山本 / ◯◯中学校)" });
+ const capI = h("input", { className: "input", type: "number", min: 1, max: 50, value: 50, style: { width: "90px" } });
+ accCard.appendChild(h("div", { className: "flex gap-2 mb-3", style: { flexWrap: "wrap", alignItems: "flex-end" } },
+ h("div", { className: "field", style: { flex: "1", minWidth: "200px", marginBottom: 0 } },
+ h("label", { className: "field-label" }, "監督・顧問名"), nameI),
+ h("div", { className: "field", style: { marginBottom: 0 } },
+ h("label", { className: "field-label" }, "マイ選手 上限(最大50)"), capI),
+ h("button", { className: "btn", onClick: async () => {
+ const name = nameI.value.trim(); if (!name) return toast("名前を入力してください", "err");
+ const r = await api.post("/api/admin/coaches", { name, player_cap: parseInt(capI.value) || 50 });
+ if (r && r.error) return toast(r.error, "err");
+ toast("発行しました。コード: " + r.login_code, "ok");
+ nameI.value = ""; A.renderCoaches();
+ } }, "+ 発行")));
+ const accList = h("div", {});
+ if (!coaches.length) accList.appendChild(h("div", { className: "empty-state", style: { padding: "16px" } }, "まだアカウントがありません。"));
+ coaches.forEach(c => accList.appendChild(A._coachRow(c)));
+ accCard.appendChild(accList);
+ panel.appendChild(accCard);
+ },
+ async _loadRequests() {
+ const sel = document.getElementById("reqStatusSel");
+ const body = document.getElementById("reqBody");
+ if (!body) return;
+ const st = sel ? sel.value : "pending";
+ let d = { requests: [], pending: 0 };
+ try { d = await api.get("/api/admin/player-requests?status=" + st); } catch (e) {}
+ A._updateCoachBadge(d.pending || 0);
+ A._renderRequestList(body, d.requests || []);
+ },
+ _renderRequestList(body, requests) {
+ body.innerHTML = "";
+ if (!requests.length) { body.appendChild(h("div", { className: "empty-state", style: { padding: "14px" } }, "申請はありません。")); return; }
+ const labelMap = { name: "氏名", furigana: "ふりがな", team: "所属", branch: "支部", gender: "性別", category: "区分", note: "メモ" };
+ requests.forEach(r => {
+ const isEdit = r.type === "edit";
+ const pj = r.payload || {};
+ const changes = Object.keys(pj).filter(k => labelMap[k] && pj[k] !== "" && pj[k] != null)
+ .map(k => labelMap[k] + "→「" + pj[k] + "」").join(" / ");
+ const row = h("div", { className: "card", style: { padding: "10px 12px", marginBottom: "8px",
+ background: r.status === "pending" ? "#fffbeb" : "#f8fafc",
+ borderLeft: "4px solid " + (r.type === "delete" ? "#dc2626" : "#d97706") } },
+ h("div", { className: "flex", style: { justifyContent: "space-between", gap: "8px", flexWrap: "wrap", alignItems: "baseline" } },
+ h("div", {},
+ h("span", { style: { fontWeight: 800, color: r.type === "delete" ? "#b91c1c" : "#78350f" } }, r.type === "delete" ? "削除申請" : "修正申請"),
+ h("span", { style: { marginLeft: "8px", fontWeight: 700 } }, r.player_name || "(不明)"),
+ r.player_team ? h("span", { className: "text-xs text-sub" }, " " + r.player_team) : null),
+ h("span", { className: "text-xs text-sub" }, "申請: " + (r.coach_name || "") + " ・ " + (r.created_at || ""))),
+ isEdit ? h("div", { className: "text-sm", style: { margin: "5px 0", color: "#334155" } }, "修正案: " + (changes || "(内容なし)")) : null,
+ r.reason ? h("div", { className: "text-xs text-sub", style: { marginBottom: "5px" } }, "理由: " + r.reason) : null);
+ if (r.status === "pending") {
+ row.appendChild(h("div", { className: "flex gap-2" },
+ h("button", { className: "btn btn-sm", style: { background: "#15803d", color: "#fff", borderColor: "#15803d" },
+ onClick: () => A._resolveReq(r.id, "approve", r) }, isEdit ? "承認して反映" : "承認して削除"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A._resolveReq(r.id, "reject", r) }, "却下")));
+ } else {
+ row.appendChild(h("div", { className: "text-xs", style: { fontWeight: 700, color: r.status === "approved" ? "#15803d" : "#64748b" } },
+ r.status === "approved" ? "承認済み" : "却下済み"));
+ }
+ body.appendChild(row);
+ });
+ },
+ async _resolveReq(id, action, r) {
+ if (action === "approve" && r.type === "delete" && !confirm("「" + (r.player_name || "") + "」を選手DBから削除します。元に戻せません。よろしいですか?")) return;
+ const res = await api.post("/api/admin/player-requests/" + id + "/resolve", { action });
+ if (res && res.error) return toast(res.error, "err");
+ toast(action === "approve" ? "承認しました" : "却下しました", "ok");
+ A._loadRequests();
+ },
+ _coachRow(c) {
+ const codeBox = h("code", { style: { background: "#f1f5f9", padding: "3px 8px", borderRadius: "6px", fontWeight: 800, letterSpacing: ".05em" } }, c.login_code);
+ return h("div", { className: "card", style: { padding: "10px 12px", marginBottom: "8px", opacity: c.active ? 1 : 0.55 } },
+ h("div", { className: "flex", style: { justifyContent: "space-between", gap: "8px", flexWrap: "wrap", alignItems: "center" } },
+ h("div", {},
+ h("span", { style: { fontWeight: 800, fontSize: "15px" } }, c.name),
+ h("span", { className: "text-xs text-sub", style: { marginLeft: "8px" } }, "マイ選手 " + (c.player_count || 0) + " / " + c.player_cap + " 人"),
+ c.active ? null : h("span", { className: "badge badge-sub", style: { marginLeft: "6px" } }, "無効")),
+ h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
+ h("span", { className: "text-xs text-sub" }, "コード:"), codeBox,
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => { navigator.clipboard && navigator.clipboard.writeText(c.login_code); toast("コードをコピーしました", "ok"); } }, "コピー"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: async () => {
+ if (!confirm("新しいコードを再発行します。古いコードは使えなくなります。")) return;
+ const r = await api.post("/api/admin/coaches/" + c.id + "/regenerate", {});
+ if (r && r.error) return toast(r.error, "err"); toast("再発行: " + r.login_code, "ok"); A.renderCoaches();
+ } }, "コード再発行"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: async () => {
+ await api.put("/api/admin/coaches/" + c.id, { active: c.active ? 0 : 1 }); A.renderCoaches();
+ } }, c.active ? "無効化" : "有効化"),
+ h("button", { className: "btn btn-sm btn-ghost", style: { color: "#b91c1c" }, onClick: async () => {
+ if (!confirm("このアカウントを削除します。よろしいですか?")) return;
+ await api.del("/api/admin/coaches/" + c.id); A.renderCoaches();
+ } }, "削除"))));
  },
 
  // ─── 選手の重複結合 (マージ) #275 ──────────

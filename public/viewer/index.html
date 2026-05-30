@@ -585,6 +585,7 @@
  <button class="tab" data-tab="myportal">マイ番号</button>
  <button class="tab" data-tab="search">選手データベース</button>
  <button class="tab" data-tab="tournaments">大会一覧</button>
+ <button class="tab" data-tab="coach">監督・顧問</button>
  <a class="tab" href="/viewer/live/" style="text-decoration:none;color:inherit;border-left:1px solid var(--border);margin-left:8px;padding-left:14px">観戦ビュー (大画面)</a>
  </div>
 </div>
@@ -637,6 +638,11 @@
  <!-- マイ番号 (選手個人ポータル) -->
  <div class="tab-panel hidden" id="tab-myportal">
  <div id="myportalMain"></div>
+ </div>
+
+ <!-- 監督・顧問モード (#285) -->
+ <div class="tab-panel hidden" id="tab-coach">
+ <div id="coachMain"></div>
  </div>
 
  <!-- 大会詳細 (トーナメント表) -->
@@ -738,6 +744,7 @@ const V = {
  else if (name === "search") V.doSearch();
  else if (name === "live") L.init();
  else if (name === "myportal") MP.init();
+ else if (name === "coach") CO.render();
  },
 
  // 直前のページに戻る (履歴がなければ大会一覧へ)
@@ -1922,6 +1929,125 @@ const EN = {
 // ═══════════════════════════════════════════════════════
 // 進行中 (Live) モジュール - 閲覧用
 // ═══════════════════════════════════════════════════════
+// ═══ 監督・顧問モード (#285) ════════════════════════════
+const CO = {
+ code: "", coach: null,
+ _hdr() { return { "Content-Type": "application/json", "X-Coach-Code": CO.code }; },
+ async _get(url) { try { return await fetch(url, { headers: { "X-Coach-Code": CO.code } }).then(r => r.json()); } catch (e) { return {}; } },
+ async _post(url, body) { try { return await fetch(url, { method: "POST", headers: CO._hdr(), body: JSON.stringify(body || {}) }).then(r => r.json()); } catch (e) { return {}; } },
+ async _del(url) { try { return await fetch(url, { method: "DELETE", headers: { "X-Coach-Code": CO.code } }).then(r => r.json()); } catch (e) { return {}; } },
+ async render() {
+ const main = document.getElementById("coachMain"); if (!main) return;
+ if (!CO.code) CO.code = localStorage.getItem("kttaCoachCode") || "";
+ if (CO.code && !CO.coach) {
+ const me = await CO._get("/api/coach/me");
+ if (me && me.id) CO.coach = me; else { CO.code = ""; localStorage.removeItem("kttaCoachCode"); }
+ }
+ main.innerHTML = "";
+ main.appendChild(CO.coach ? await CO._panel() : CO._loginCard());
+ },
+ _loginCard() {
+ const inp = h("input", { className: "input", placeholder: "監督コード (例 K7QF-3M9X)", style: { textTransform: "uppercase", letterSpacing: ".05em" } });
+ inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+ const go = async () => {
+ const code = inp.value.trim().toUpperCase(); if (!code) return toast("コードを入力してください", "err");
+ const r = await fetch("/api/coach/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) }).then(x => x.json()).catch(() => ({}));
+ if (!r.ok) return toast(r.error || "コードが無効です", "err");
+ CO.code = code; CO.coach = r.coach; localStorage.setItem("kttaCoachCode", code); CO.render();
+ };
+ return h("div", { className: "card", style: { maxWidth: "460px", margin: "8px auto", padding: "18px" } },
+ h("div", { className: "card-title", style: { marginBottom: "4px" } }, "監督・顧問ログイン"),
+ h("div", { className: "text-sm text-sub", style: { marginBottom: "12px", lineHeight: "1.7" } },
+ "本部から配布されたコードを入力してください。マイ選手の登録や、選手データの修正・削除の申請ができます。"),
+ h("div", { className: "field" }, h("label", { className: "field-label" }, "ログインコード"), inp),
+ h("button", { className: "btn", style: { width: "100%" }, onClick: go }, "ログイン"));
+ },
+ async _panel() {
+ const wrap = h("div", {});
+ const roster = await CO._get("/api/coach/roster");
+ const reqs = await CO._get("/api/coach/requests");
+ const players = (roster && roster.players) || [];
+ const cap = (roster && roster.cap) || CO.coach.player_cap || 50;
+ wrap.appendChild(h("div", { className: "card", style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" } },
+ h("div", {}, h("div", { className: "card-title" }, CO.coach.name + "（監督・顧問）"),
+ h("div", { className: "text-sm text-sub" }, "マイ選手 " + players.length + " / " + cap + " 人")),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => { CO.code = ""; CO.coach = null; localStorage.removeItem("kttaCoachCode"); CO.render(); } }, "ログアウト")));
+ const myCard = h("div", { className: "card" });
+ myCard.appendChild(h("div", { className: "card-head" }, h("div", { className: "card-title" }, "マイ選手"),
+ h("span", { className: "text-sm text-sub" }, players.length + " / " + cap)));
+ if (players.length < cap) {
+ const sInp = h("input", { className: "input", placeholder: "選手を検索して追加 (氏名・ふりがな・所属)" });
+ const sRes = h("div", { style: { marginTop: "6px", border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", display: "none" } });
+ let st = null;
+ sInp.addEventListener("input", () => {
+ clearTimeout(st); st = setTimeout(async () => {
+ const q = sInp.value.trim(); if (!q) { sRes.style.display = "none"; sRes.innerHTML = ""; return; }
+ const list = await CO._get("/api/coach/players/search?q=" + encodeURIComponent(q));
+ sRes.innerHTML = ""; const arr = Array.isArray(list) ? list.slice(0, 8) : [];
+ if (!arr.length) { sRes.style.display = "none"; return; }
+ sRes.style.display = "";
+ arr.forEach(p => sRes.appendChild(h("div", { className: "flex", style: { justifyContent: "space-between", alignItems: "center", padding: "7px 9px", borderBottom: "1px solid var(--border)" } },
+ h("div", {}, h("b", {}, p.name), p.team ? h("span", { className: "text-xs text-sub" }, " " + p.team) : ""),
+ h("button", { className: "btn btn-sm", onClick: async () => { const r = await CO._post("/api/coach/roster", { player_id: p.id }); if (r.error) return toast(r.error, "err"); toast("追加しました", "ok"); CO.render(); } }, "追加"))));
+ }, 200);
+ });
+ myCard.appendChild(h("div", { style: { marginBottom: "10px" } }, sInp, sRes));
+ } else {
+ myCard.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "8px" } }, "登録上限に達しています。削除すると追加できます。"));
+ }
+ if (!players.length) myCard.appendChild(h("div", { className: "empty-state", style: { padding: "14px" } }, "まだ登録がありません。上の検索から追加してください。"));
+ players.forEach(p => myCard.appendChild(h("div", { className: "flex", style: { justifyContent: "space-between", alignItems: "center", padding: "8px", borderBottom: "1px solid var(--border)" } },
+ h("div", {}, h("a", { href: "#player/" + p.id, style: { fontWeight: 700, color: "inherit" }, onClick: (e) => { e.preventDefault(); V.openPlayer(p.id); } }, p.name),
+ p.team ? h("span", { className: "text-xs text-sub" }, " " + p.team) : "", p.furigana ? h("span", { className: "text-xs text-sub" }, " (" + p.furigana + ")") : ""),
+ h("div", { className: "flex gap-2" },
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => CO._openRequest(p) }, "修正/削除を申請"),
+ h("button", { className: "btn btn-sm btn-ghost", style: { color: "#b91c1c" }, onClick: async () => { await CO._del("/api/coach/roster/" + p.id); CO.render(); } }, "外す")))));
+ wrap.appendChild(myCard);
+ const rs = (reqs && reqs.requests) || [];
+ if (rs.length) {
+ const rc = h("div", { className: "card" });
+ rc.appendChild(h("div", { className: "card-title", style: { marginBottom: "6px" } }, "申請の状況"));
+ rs.slice(0, 20).forEach(r => {
+ const stt = r.status === "approved" ? "承認済み" : (r.status === "rejected" ? "却下" : "承認待ち");
+ const col = r.status === "approved" ? "#15803d" : (r.status === "rejected" ? "#64748b" : "#d97706");
+ rc.appendChild(h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 4px", borderBottom: "1px solid var(--border)", fontSize: "13px" } },
+ h("span", {}, (r.type === "delete" ? "削除" : "修正") + "申請: " + (r.player_name || "")),
+ h("span", { style: { fontWeight: 700, color: col } }, stt)));
+ });
+ wrap.appendChild(rc);
+ }
+ return wrap;
+ },
+ _openRequest(p) {
+ const fld = (label, el) => h("div", { className: "field" }, h("label", { className: "field-label" }, label), el);
+ const typeSel = h("select", { className: "input" }, h("option", { value: "edit" }, "修正を申請"), h("option", { value: "delete" }, "削除を申請"));
+ const f = { name: h("input", { className: "input", placeholder: "(変更する場合のみ)" }), furigana: h("input", { className: "input", placeholder: "(変更する場合のみ)" }), team: h("input", { className: "input", placeholder: "(変更する場合のみ)" }), branch: h("input", { className: "input", placeholder: "(変更する場合のみ)" }) };
+ const gender = h("select", { className: "input" }, h("option", { value: "" }, "(変更しない)"), h("option", { value: "male" }, "男子"), h("option", { value: "female" }, "女子"));
+ const reason = h("textarea", { className: "input", rows: 2, placeholder: "理由・補足 (任意)" });
+ const editFields = h("div", {},
+ h("div", { className: "text-xs text-sub", style: { margin: "4px 0" } }, "現在: " + p.name + (p.team ? " / " + p.team : "")),
+ fld("正しい氏名", f.name), fld("正しいふりがな", f.furigana), fld("正しい所属", f.team), fld("正しい支部", f.branch), fld("性別", gender));
+ const delNote = h("div", { className: "text-sm", style: { padding: "10px", background: "#fef2f2", borderRadius: "8px", color: "#7f1d1d", display: "none" } },
+ "「" + p.name + "」の削除を申請します。本部が承認すると選手DBから削除されます。");
+ typeSel.addEventListener("change", () => { const d = typeSel.value === "delete"; editFields.style.display = d ? "none" : ""; delNote.style.display = d ? "" : "none"; });
+ const body = h("div", {}, fld("申請の種類", typeSel), editFields, delNote, fld("理由・補足", reason));
+ const foot = h("button", { className: "btn", onClick: async () => {
+ const type = typeSel.value; const payload = {};
+ if (type === "edit") {
+ ["name", "furigana", "team", "branch"].forEach(k => { const v = f[k].value.trim(); if (v) payload[k] = v; });
+ if (gender.value) payload.gender = gender.value;
+ if (!Object.keys(payload).length && !reason.value.trim()) return toast("修正内容か理由を入力してください", "err");
+ }
+ const r = await CO._post("/api/coach/requests", { player_id: p.id, type, payload, reason: reason.value.trim() });
+ if (r.error) return toast(r.error, "err");
+ toast("申請を送信しました。本部の承認をお待ちください。", "ok");
+ document.querySelector(".modal-bg") && document.querySelector(".modal-bg").remove();
+ CO.render();
+ } }, "申請する");
+ TT.openModal(p.name + " の修正・削除 申請", body, foot);
+ },
+};
+
 const L = {
  tournamentId: null,
  state: null,

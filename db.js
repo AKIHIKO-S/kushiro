@@ -180,6 +180,40 @@ sqlite.exec(`
     undone INTEGER DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS idx_oplog_t ON op_log(tournament_id, id);
+
+  -- 監督・顧問アカウント (#285)。Admin が個別コードを発行。マイ選手は上限まで登録。
+  CREATE TABLE IF NOT EXISTS coach_accounts (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    login_code TEXT NOT NULL UNIQUE,
+    player_cap INTEGER DEFAULT 50,
+    active INTEGER DEFAULT 1,
+    note TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  -- 監督のマイ選手 (master players への参照)
+  CREATE TABLE IF NOT EXISTS coach_players (
+    coach_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (coach_id, player_id),
+    FOREIGN KEY (coach_id) REFERENCES coach_accounts(id) ON DELETE CASCADE,
+    FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+  );
+  -- 選手DBの修正/削除 申請 (監督が提出→本部が承認/却下)
+  CREATE TABLE IF NOT EXISTS player_requests (
+    id TEXT PRIMARY KEY,
+    coach_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    type TEXT NOT NULL,            -- 'edit' | 'delete'
+    payload_json TEXT DEFAULT '{}',-- edit時の修正案
+    reason TEXT DEFAULT '',
+    status TEXT DEFAULT 'pending', -- 'pending' | 'approved' | 'rejected'
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    resolved_at TEXT DEFAULT '',
+    FOREIGN KEY (coach_id) REFERENCES coach_accounts(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_preq_status ON player_requests(status, id);
 `);
 
 // 既存DBにカラムがない場合は追加
@@ -915,6 +949,115 @@ function findDuplicatePlayerCandidates() {
   }
   return { count: groups.length, groups };
 }
+
+// ═══ 監督・顧問アカウント (#285) ════════════════════════
+function _genCoachCode() {
+  const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 紛らわしい文字(0/O/1/I)除外
+  let s = ""; for (let i = 0; i < 8; i++) s += A[Math.floor(Math.random() * A.length)];
+  return s.slice(0, 4) + "-" + s.slice(4);
+}
+function _uniqCoachCode() {
+  let code, tries = 0;
+  do { code = _genCoachCode(); tries++; }
+  while (sqlite.prepare("SELECT 1 FROM coach_accounts WHERE login_code=?").get(code) && tries < 30);
+  return code;
+}
+function getCoachAccount(id) { return sqlite.prepare("SELECT * FROM coach_accounts WHERE id=?").get(id) || null; }
+function createCoachAccount(data) {
+  data = data || {};
+  const id = uid();
+  let cap = parseInt(data.player_cap); if (!(cap > 0)) cap = 50; cap = Math.min(50, cap);
+  const code = _uniqCoachCode();
+  sqlite.prepare(`INSERT INTO coach_accounts (id,name,login_code,player_cap,active,note) VALUES (?,?,?,?,1,?)`)
+    .run(id, String(data.name || "").trim() || "監督", code, cap, String(data.note || ""));
+  return getCoachAccount(id);
+}
+function listCoachAccounts() {
+  return sqlite.prepare("SELECT * FROM coach_accounts ORDER BY created_at DESC").all().map(c => ({
+    ...c, player_count: sqlite.prepare("SELECT COUNT(*) n FROM coach_players WHERE coach_id=?").get(c.id).n }));
+}
+function updateCoachAccount(id, data) {
+  const c = getCoachAccount(id); if (!c) return null;
+  data = data || {};
+  const cap = data.player_cap != null ? Math.min(50, Math.max(1, parseInt(data.player_cap) || c.player_cap)) : c.player_cap;
+  sqlite.prepare("UPDATE coach_accounts SET name=?, player_cap=?, active=?, note=? WHERE id=?")
+    .run(data.name != null ? String(data.name).trim() : c.name, cap,
+         data.active != null ? (data.active ? 1 : 0) : c.active,
+         data.note != null ? String(data.note) : c.note, id);
+  return getCoachAccount(id);
+}
+function regenerateCoachCode(id) {
+  const c = getCoachAccount(id); if (!c) return null;
+  sqlite.prepare("UPDATE coach_accounts SET login_code=? WHERE id=?").run(_uniqCoachCode(), id);
+  return getCoachAccount(id);
+}
+function deleteCoachAccount(id) { sqlite.prepare("DELETE FROM coach_accounts WHERE id=?").run(id); }
+function coachByCode(code) {
+  if (!code) return null;
+  return sqlite.prepare("SELECT * FROM coach_accounts WHERE login_code=? AND active=1")
+    .get(String(code).trim().toUpperCase()) || null;
+}
+function getCoachRoster(coachId) {
+  return sqlite.prepare(`SELECT p.* FROM coach_players cp JOIN players p ON p.id=cp.player_id
+    WHERE cp.coach_id=? ORDER BY p.furigana, p.name`).all(coachId);
+}
+function addCoachPlayer(coachId, playerId) {
+  const c = getCoachAccount(coachId); if (!c) return { error: "アカウントが見つかりません" };
+  if (!sqlite.prepare("SELECT 1 FROM players WHERE id=?").get(playerId)) return { error: "選手が見つかりません" };
+  if (sqlite.prepare("SELECT 1 FROM coach_players WHERE coach_id=? AND player_id=?").get(coachId, playerId)) return { ok: true, already: true };
+  const n = sqlite.prepare("SELECT COUNT(*) n FROM coach_players WHERE coach_id=?").get(coachId).n;
+  if (n >= c.player_cap) return { error: `登録上限(${c.player_cap}人)に達しています` };
+  sqlite.prepare("INSERT INTO coach_players (coach_id,player_id) VALUES (?,?)").run(coachId, playerId);
+  return { ok: true };
+}
+function removeCoachPlayer(coachId, playerId) {
+  sqlite.prepare("DELETE FROM coach_players WHERE coach_id=? AND player_id=?").run(coachId, playerId);
+  return { ok: true };
+}
+function createPlayerRequest(coachId, data) {
+  data = data || {};
+  if (!sqlite.prepare("SELECT 1 FROM players WHERE id=?").get(data.player_id)) return { error: "選手が見つかりません" };
+  const type = data.type === "delete" ? "delete" : "edit";
+  const id = uid();
+  sqlite.prepare(`INSERT INTO player_requests (id,coach_id,player_id,type,payload_json,reason,status) VALUES (?,?,?,?,?,?,'pending')`)
+    .run(id, coachId, data.player_id, type, JSON.stringify(data.payload || {}), String(data.reason || "").slice(0, 500));
+  return { ok: true, id };
+}
+function getCoachRequests(coachId) {
+  return sqlite.prepare(`SELECT pr.*, p.name AS player_name, p.team AS player_team
+    FROM player_requests pr LEFT JOIN players p ON p.id=pr.player_id
+    WHERE pr.coach_id=? ORDER BY pr.created_at DESC`).all(coachId)
+    .map(r => ({ ...r, payload: JSON.parse(r.payload_json || "{}") }));
+}
+function listPlayerRequests(status) {
+  const filtered = status && status !== "all";
+  const sql = `SELECT pr.*, p.name AS player_name, p.team AS player_team, p.furigana AS player_furigana,
+    c.name AS coach_name FROM player_requests pr
+    LEFT JOIN players p ON p.id=pr.player_id
+    LEFT JOIN coach_accounts c ON c.id=pr.coach_id
+    ${filtered ? "WHERE pr.status=?" : ""} ORDER BY (pr.status='pending') DESC, pr.created_at DESC`;
+  const rows = filtered ? sqlite.prepare(sql).all(status) : sqlite.prepare(sql).all();
+  return rows.map(r => ({ ...r, payload: JSON.parse(r.payload_json || "{}") }));
+}
+function resolvePlayerRequest(id, action) {
+  const r = sqlite.prepare("SELECT * FROM player_requests WHERE id=?").get(id);
+  if (!r) return { error: "申請が見つかりません" };
+  if (r.status !== "pending") return { error: "この申請は既に処理済みです" };
+  if (action === "approve") {
+    if (r.type === "delete") { deletePlayer(r.player_id); }
+    else {
+      const payload = JSON.parse(r.payload_json || "{}");
+      const allowed = {};
+      ["name", "furigana", "team", "branch", "gender", "category", "note"].forEach(k => { if (payload[k] != null && payload[k] !== "") allowed[k] = payload[k]; });
+      if (Object.keys(allowed).length) updatePlayer(r.player_id, allowed);
+    }
+    sqlite.prepare("UPDATE player_requests SET status='approved', resolved_at=datetime('now','localtime') WHERE id=?").run(id);
+    return { ok: true, applied: true };
+  }
+  sqlite.prepare("UPDATE player_requests SET status='rejected', resolved_at=datetime('now','localtime') WHERE id=?").run(id);
+  return { ok: true, applied: false };
+}
+function countPendingRequests() { return sqlite.prepare("SELECT COUNT(*) n FROM player_requests WHERE status='pending'").get().n; }
 
 function addAchievement(playerId, data) {
   const id = uid();
@@ -5156,6 +5299,11 @@ module.exports = {
   getEventBest8, getAllBest8,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
   mergePlayers, findDuplicatePlayerCandidates,
+  // 監督・顧問モード (#285)
+  createCoachAccount, getCoachAccount, listCoachAccounts, updateCoachAccount,
+  regenerateCoachCode, deleteCoachAccount, coachByCode,
+  getCoachRoster, addCoachPlayer, removeCoachPlayer,
+  createPlayerRequest, getCoachRequests, listPlayerRequests, resolvePlayerRequest, countPendingRequests,
   getGlobalMatchAverages, detectSchoolCategory, normalizePlayerCategories,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,
