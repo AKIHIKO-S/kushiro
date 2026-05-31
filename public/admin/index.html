@@ -2396,6 +2396,13 @@ const A = {
      fontSize: "13px", listStyle: "none" } },
    "試合一覧 (" + t.matches.length + " 試合) — クリックで開閉"));
  const matchList = h("div", { style: { padding: "0 14px 10px" } });
+ listCard.appendChild(matchList);
+ // 遅延描画: 既定で折りたたみ。初めて開かれた時だけ全試合行を構築する
+ // (大規模大会で大会詳細を開いた瞬間に数百行のDOMを作る無駄を回避)。
+ let built = false;
+ listCard.addEventListener("toggle", () => {
+ if (built || !listCard.open) return;
+ built = true;
  const groups = {};
  t.matches.forEach(m => {
  const key = (m.event || "その他") + "|" + (m.round || "その他");
@@ -2411,7 +2418,7 @@ const A = {
    h("span", { className: "round-header-date" }, `${ms.length}試合`)));
  ms.forEach(m => matchList.appendChild(A.renderMatchRow(m)));
  });
- listCard.appendChild(matchList);
+ });
  return listCard;
  },
 
