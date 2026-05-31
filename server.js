@@ -207,11 +207,23 @@ app.use((req, res, next) => {
   // (X-Frame-Options に「任意元許可」値は無い。ALLOWALL は非標準で無視されるため CSP を使用。)
   const p = req.path || "";
   const embeddable = p.startsWith("/widget") || p.startsWith("/entry") || p.includes("/entry-form");
-  if (embeddable) {
-    res.setHeader("Content-Security-Policy", "frame-ancestors *");
-  } else {
-    res.setHeader("X-Frame-Options", "SAMEORIGIN");
-  }
+  // Content-Security-Policy: 既知の外部リソース(Googleフォント / QR生成画像)だけ許可し他を遮断。
+  // インラインscript/styleはアプリ構造上 'unsafe-inline' が必要だが、外部scriptの注入・
+  // connect でのデータ持ち出し・object/base は塞ぐ(XSS時の被害を限定)。
+  // frame-ancestors は埋込許可パスのみ * 、それ以外は 'self' (クリックジャッキング対策)。
+  res.setHeader("Content-Security-Policy", [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    "img-src 'self' data: blob: https://api.qrserver.com",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors " + (embeddable ? "*" : "'self'"),
+  ].join("; "));
+  // 旧ブラウザ向けクリックジャッキング対策フォールバック (埋込パス以外)
+  if (!embeddable) res.setHeader("X-Frame-Options", "SAMEORIGIN");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("X-XSS-Protection", "0");
   // HTTPS 配信時のみ HSTS (nginx/Caddy 経由の x-forwarded-proto を信頼)
@@ -2508,12 +2520,25 @@ app.get("/api/ref/state",
   if (!v) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(v);
 });
+// 会場パスコードの総当たり対策 (#261強化): パスコードは短い数字のため、
+// per-IP の「連続失敗」計数で一時ブロックする。正解でクリアするので正規の審判は影響なし。
+// (報告自体は本部承認制で守られているが、総当たりによる承認待ちスパムを防ぐ)
+const _refPassFail = new Map(); // ip -> { count, resetAt }
+const REF_PASS_MAX = 10, REF_PASS_WINDOW = 5 * 60000; // 5分で10回失敗まででブロック
+setInterval(() => { const now = Date.now(); for (const [ip, e] of _refPassFail) if (now > e.resetAt) _refPassFail.delete(ip); }, REF_PASS_WINDOW).unref();
+function refPassBlocked(ip) { const e = _refPassFail.get(ip); return !!(e && Date.now() <= e.resetAt && e.count >= REF_PASS_MAX); }
+function refPassFail(ip) { const now = Date.now(), e = _refPassFail.get(ip); if (!e || now > e.resetAt) _refPassFail.set(ip, { count: 1, resetAt: now + REF_PASS_WINDOW }); else e.count++; }
+function refPassOk(ip) { _refPassFail.delete(ip); }
+const REF_PASS_BLOCK_MSG = "試行回数が多すぎます。しばらく待ってから再度お試しください。";
 // 会場パスコード照合 (#261): 審判ページが入力前に正誤を確認するための軽量エンドポイント。
 // 要求OFFなら常に ok:true。最終的な担保は finish 側でも再検証する。
 app.post("/api/ref/verify-passcode",
   rateLimit({ windowMs: 60000, max: 60, message: "リクエストが多すぎます。少し待って再試行してください。" }),
   requireReferee, (req, res) => {
+  const ip = _coachIp(req);
+  if (refPassBlocked(ip)) return res.status(429).json({ error: REF_PASS_BLOCK_MSG });
   const ok = db.verifyRefereePasscode(req.refTournament.id, req.body && req.body.passcode);
+  if (ok) refPassOk(ip); else refPassFail(ip);
   res.json({ ok: !!ok });
 });
 // 審判による結果送信。winner-only 可 (sets 空でOK / セット数も任意で送れる)。
@@ -2522,12 +2547,17 @@ app.post("/api/ref/matches/:id/finish",
   rateLimit({ windowMs: 60000, max: 120, message: "送信が多すぎます。少し待って再試行してください。" }),
   requireReferee, (req, res) => {
   // 会場パスコード (#261): 要求ONの大会は、正しいパスコードが無いと報告不可。
+  // 総当たり対策: verify-passcode と同じ per-IP 失敗ゲートで保護。
+  const _refIp = _coachIp(req);
+  if (refPassBlocked(_refIp)) return res.status(429).json({ error: REF_PASS_BLOCK_MSG, passcode_error: true });
   if (!db.verifyRefereePasscode(req.refTournament.id, req.body && req.body.passcode)) {
+    refPassFail(_refIp);
     return res.status(403).json({
       error: "会場パスコードが正しくありません。本部にご確認ください。",
       passcode_error: true,
     });
   }
+  refPassOk(_refIp);
   const m = db.getMatch(req.params.id);
   if (!m) return res.status(404).json({ error: "試合が見つかりません" });
   if (m.tournament_id !== req.refTournament.id)

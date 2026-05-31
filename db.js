@@ -5448,7 +5448,10 @@ function verifyRefereePasscode(tournamentId, code) {
   if (!t.referee_passcode_required) return true;
   const want = String(t.referee_passcode || "").trim();
   if (!want) return true;
-  return String(code == null ? "" : code).trim() === want;
+  // 定数時間比較 (タイミング差からの推測を防ぐ)。長さ違いは即 false。
+  const got = String(code == null ? "" : code).trim();
+  if (got.length !== want.length) return false;
+  try { return crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want)); } catch (e) { return false; }
 }
 // 有効なトークン→大会を解決 (referee_input_enabled=1 のみ)
 function getTournamentByRefereeToken(token) {
