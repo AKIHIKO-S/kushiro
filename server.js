@@ -375,7 +375,8 @@ app.get("/api/public/players/:id", (req, res) => {
 });
 app.get("/api/public/tournaments", (req, res) => { res.json(db.getTournaments()); });
 app.get("/api/public/tournaments/:id", (req, res) => {
-  const t = db.getTournament(req.params.id);
+  // 軽量版: 全試合の埋込みを省く (閲覧はメタ+選手数のみ使用し、試合は /matches を別途取得)。大規模大会で~1MBの無駄を削減。
+  const t = db.getTournamentMeta(req.params.id);
   if (!t) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(t);
 });

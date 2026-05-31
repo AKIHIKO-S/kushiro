@@ -1409,6 +1409,16 @@ function getTournament(id) {
   return t;
 }
 
+// 軽量版 getTournament: 全試合の埋込み(t.matches=大規模大会で~1MB)を省く。
+// 大会メタ + state + 出場選手のみ返す。試合一覧が要る画面は別途 /matches を取得する想定 (公開閲覧)。
+function getTournamentMeta(id) {
+  const t = stmts.getTournament.get(id);
+  if (!t) return null;
+  t.state = JSON.parse(t.state_json || "{}");
+  t.players = stmts.getTournamentPlayers.all(id);
+  return t;
+}
+
 function createTournament(data) {
   const id = uid();
   stmts.insertTournament.run({
@@ -5588,7 +5598,7 @@ module.exports = {
   getGlobalMatchAverages, detectSchoolCategory, normalizePlayerCategories,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,
-  getTournaments, getTournament, createTournament, updateTournament, deleteTournament,
+  getTournaments, getTournament, getTournamentMeta, createTournament, updateTournament, deleteTournament,
   createMatch, createScheduledMatch, updateMatch, deleteMatch, getMatch, getMatchesByTournament,
   bulkImportMatches,
   addTournamentPlayer, removeTournamentPlayer, getTournamentPlayers,
