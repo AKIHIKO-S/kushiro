@@ -2079,6 +2079,11 @@ function slimPublicState(st) {
     player1_furigana: m.player1_furigana, player2_furigana: m.player2_furigana,
     player1_bracket_number: m.player1_bracket_number, player2_bracket_number: m.player2_bracket_number,
     entrant1_bracket_number: m.entrant1_bracket_number, entrant2_bracket_number: m.entrant2_bracket_number,
+    // 選手DBリンク用 (ダブルスは2名を別々にリンクするため id/相方情報も渡す #266)
+    player1_id: m.player1_id, player2_id: m.player2_id,
+    player1_main_name: m.player1_main_name, player2_main_name: m.player2_main_name,
+    player1_partner_id: m.player1_partner_id, player2_partner_id: m.player2_partner_id,
+    player1_partner_name: m.player1_partner_name, player2_partner_name: m.player2_partner_name,
     blocks: m.blocks, is_blocked: m.is_blocked,
   }));
   return {

@@ -1097,7 +1097,7 @@ const V = {
  // 進行中カード等で片サイドの選手名を個人DBリンクにして返す (#266: ダブルスは両名とも)。
  // 親要素のクリック(詳細モーダル)と競合しないよう stopPropagation する。
  liveNameLinks(m, side) {
- const members = V.sideMembers(m, side);
+ const members = L.sideMembers(m, side);
  const team = side === 1 ? m.player1_team : m.player2_team;
  const out = [];
  members.forEach((mem, i) => {
@@ -2337,10 +2337,25 @@ const L = {
 
  // 次に呼ぶカード (旧 まもなく呼ばれそうな選手と同一・全件)
  renderCallableCard(m, i) {
- const pEl = (name, num, team) => h("span", { className: "un-p" },
-   num ? h("span", { className: "un-num" }, "#" + num) : null,
-   h("span", {}, name || "?"),
-   team ? h("span", { className: "un-team" }, "(" + team + ")") : null);
+ // 各選手名を個人DBリンクに。ダブルスは L.sideMembers がペアを2名に分割するので、
+ // それぞれ別々のリンクにする (#266 と同じ仕組み)。
+ const pEl = (side) => {
+   const num = side === 1 ? m.player1_bracket_number : m.player2_bracket_number;
+   const team = side === 1 ? m.player1_team : m.player2_team;
+   const nameEls = [];
+   L.sideMembers(m, side).forEach((mem, k) => {
+     if (k > 0) nameEls.push(h("span", { style: { color: "var(--sub)", margin: "0 2px" } }, "/"));
+     nameEls.push(mem.id
+       ? h("a", { href: "#player/" + mem.id, style: { color: "inherit",
+           textDecorationLine: "underline", textDecorationStyle: "dotted", textUnderlineOffset: "2px" },
+           onClick: (e) => { e.preventDefault(); e.stopPropagation(); V.openPlayer(mem.id); } }, mem.name || "?")
+       : h("span", {}, mem.name || "?"));
+   });
+   return h("span", { className: "un-p" },
+     num ? h("span", { className: "un-num" }, "#" + num) : null,
+     h("span", {}, ...nameEls),
+     team ? h("span", { className: "un-team" }, "(" + team + ")") : null);
+ };
  const blocked = !!m.is_blocked;
  const isFirst = i === 0 && !blocked;
  const reason = (blocked && m.blocks && m.blocks[0]) ? m.blocks[0].label : "";
@@ -2354,9 +2369,9 @@ const L = {
  blocked && reason ? h("span", { className: "un-wait-reason" }, "待機: " + reason) : null,
  h("span", {}, [m.event, m.round].filter(Boolean).join(" "))),
  h("div", { className: "un-players" },
- pEl(m.player1_name, m.player1_bracket_number, m.player1_team),
+ pEl(1),
  h("span", { className: "un-vs" }, "VS"),
- pEl(m.player2_name, m.player2_bracket_number, m.player2_team)),
+ pEl(2)),
  ));
  },
 
@@ -2481,7 +2496,7 @@ const L = {
      const nm = who === "winner" ? m.winner_name : m.loser_name;
      return [{ id: id || null, name: nm || "選手" }];
    }
-   return V.sideMembers(m, who === "winner" ? ws : (ws === 1 ? 2 : 1));
+   return L.sideMembers(m, who === "winner" ? ws : (ws === 1 ? 2 : 1));
  },
  // 試合詳細フッター: シングルス/ダブルス両名の「選手DB ▸」ボタン行 (#260)
  // タップで選手個人DB(戦績・入賞歴つき)へ。admin の _playerDbLinks と同一トンマナ。
@@ -2515,7 +2530,7 @@ const L = {
        onClick: (e) => { e.preventDefault(); document.querySelector(".modal-bg")?.remove(); V.openPlayer(mem.id); } }, mem.name)
    : h("span", {}, mem.name || "?");
  const playerLine = (side, num, team, furi) => {
-   const members = V.sideMembers(m, side);
+   const members = L.sideMembers(m, side);
    const nameRow = h("div", { style: { fontSize: "16px", fontWeight: "700" } },
      num ? h("span", { className: "pnum", style: { marginRight: "5px" } }, "#" + num) : null,
      ...members.map((mem, i) => i === 0 ? nameLink(mem)
@@ -2539,7 +2554,7 @@ const L = {
      color: "#6d28d9", textAlign: "center" } }, "審判: " + m.referee_name) : null,
  );
  // シングルス/ダブルス両名の「選手DB ▸」ボタン (#237/#260) — タップで個人DB(戦績・入賞歴)へ
- const foot = V.playerDbFoot(V.sideMembers(m, 1), V.sideMembers(m, 2));
+ const foot = V.playerDbFoot(L.sideMembers(m, 1), L.sideMembers(m, 2));
  TT.openModal("試合中 — コート " + t.table_no, body, foot);
  },
 };
