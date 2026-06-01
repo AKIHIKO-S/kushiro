@@ -4402,8 +4402,13 @@ const A = {
 
 
  // ── 詳細編集ビュー (旧フル機能) ──
- openEntriesFullView(t) {
+ async openEntriesFullView(t) {
+ // 申込の正本は entrants。/entries(=getEntries)は entrants ベースになったのでそれを表示する (Phase1)。
+ let entries = [];
+ try { entries = await api.get(`/api/tournaments/${t.id}/entries`) || []; } catch (e) {}
  const body = h("div", { style: { maxHeight: "70vh", overflow: "auto" } });
+ if (!entries.length) body.appendChild(h("div", { className: "text-sub", style: { padding: "12px" } },
+   "申込はまだありません（公開フォームからの申込はここに表示されます）。"));
  const tbl = h("table", { className: "tbl" });
  tbl.appendChild(h("thead", {}, h("tr", {},
  h("th", {}, "状態"),
@@ -4415,7 +4420,7 @@ const A = {
  h("th", {}, "操作"),
  )));
  const tbody = h("tbody", {});
- (t.players || []).forEach(e => {
+ entries.forEach(e => {
  const status = e.entry_status || "confirmed";
  tbody.appendChild(h("tr", {},
  h("td", {},

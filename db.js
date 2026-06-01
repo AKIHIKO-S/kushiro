@@ -1913,6 +1913,13 @@ const entrantStmts = {
       updated_at = datetime('now','localtime')
     WHERE id = ?
   `),
+  // 申込承認フロー用 (entrants を申込の唯一の正本にする / Phase1)
+  setStatus: sqlite.prepare(`
+    UPDATE entrants SET status = ?, updated_at = datetime('now','localtime') WHERE id = ?
+  `),
+  setSeedById: sqlite.prepare(`
+    UPDATE entrants SET seed = ?, updated_at = datetime('now','localtime') WHERE id = ?
+  `),
 };
 
 function createEntrant(data) {
@@ -4364,6 +4371,23 @@ function createEntry(tournamentId, data) {
       applied_at: now,
       entry_note: data.note || "",
     });
+    // entrants(申込の唯一の正本)にも記録 → 申込管理一覧・件数に必ず出る (Phase1: 旧経路を entrants へ寄せる/H-1)。
+    // 同一(大会・種目・選手)の entrant が既にあれば status のみ更新し重複作成しない(冪等)。
+    const exists = sqlite.prepare(
+      `SELECT id FROM entrants WHERE tournament_id=? AND event=? AND (player_id=? OR (name=? AND team=?)) LIMIT 1`
+    ).get(tournamentId, ev, player.id, player.name, player.team || "");
+    if (exists) {
+      entrantStmts.setStatus.run(status, exists.id);
+    } else {
+      createEntrant({
+        tournament_id: tournamentId, event: ev,
+        name: player.name, team: player.team || "",
+        furigana: player.furigana || data.furigana || "",
+        gender: player.gender || data.gender || "male",
+        category: player.category || data.category || "general",
+        status, player_id: player.id, note: data.note || "",
+      });
+    }
   });
   return { ok: true, player_id: player.id, player_name: player.name, events, status, new_player: isNewPlayer };
 }
@@ -4536,33 +4560,50 @@ function createTeamEntry(tournamentId, formData) {
   };
 }
 
+// 申込一覧。entrants(公開フォーム本線の保存先)を唯一の正本として読む (Phase1: C-1/C-2/H-3 解消)。
+// 以前は tournament_players を読んでいたため、フォーム申込(entrants)が一覧に出ず「申込なし」表示だった。
+// admin の申込管理UIが期待する形(entry_event/entry_status/applied_at/name)へ整形して返す。id は entrant.id。
 function getEntries(tournamentId, statusFilter) {
-  let sql = `
-    SELECT p.id, p.name, p.furigana, p.team, p.gender, p.category, p.rating,
-      tp.event AS entry_event, tp.seed, tp.status AS entry_status,
-      tp.applied_at, tp.entry_note
-    FROM tournament_players tp
-    JOIN players p ON tp.player_id = p.id
-    WHERE tp.tournament_id = ?
-  `;
+  let sql = `SELECT * FROM entrants WHERE tournament_id = ?`;
   const params = [tournamentId];
-  if (statusFilter) { sql += ` AND tp.status = ?`; params.push(statusFilter); }
-  sql += ` ORDER BY tp.status ASC, tp.applied_at DESC, p.furigana ASC`;
-  return sqlite.prepare(sql).all(...params);
+  if (statusFilter) { sql += ` AND status = ?`; params.push(statusFilter); }
+  // 承認待ち(pending)を先頭に → confirmed → rejected。同status内は種目・seed・ふりがな順。
+  sql += ` ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'confirmed' THEN 1 WHEN 'rejected' THEN 2 ELSE 3 END,
+           event, seed, furigana`;
+  return sqlite.prepare(sql).all(...params).map(e => ({
+    id: e.id,                                   // entrant id (status/seed 操作のキー)
+    name: e.display_name || e.name,
+    display_short: e.display_short,
+    furigana: e.furigana,
+    team: e.team,
+    gender: e.gender,
+    category: e.category,
+    is_doubles: e.is_doubles,
+    partner_name: e.partner_name,
+    entry_event: e.event,
+    seed: e.seed,
+    entry_status: e.status || "confirmed",
+    applied_at: e.created_at,
+    player_id: e.player_id,
+  }));
 }
 
-function setEntryStatus(tournamentId, playerId, event, status) {
-  if (event) {
-    entryStmts.setEntryStatusForEvent.run(status, tournamentId, playerId, event);
-  } else {
-    entryStmts.setEntryStatus.run(status, tournamentId, playerId);
+// entrants の承認状態を遷移 (申込の正本は entrants / Phase1)。
+function setEntrantStatus(entrantId, status) {
+  if (!["pending", "confirmed", "rejected"].includes(status)) {
+    return { error: "status は pending/confirmed/rejected" };
   }
-  return { ok: true };
+  const e = entrantStmts.get.get(entrantId);
+  if (!e) return { error: "申込が見つかりません" };
+  entrantStmts.setStatus.run(status, entrantId);
+  return { ok: true, id: entrantId, status };
 }
 
-function setEntrySeed(tournamentId, playerId, event, seed) {
-  entryStmts.setEntrySeed.run(parseInt(seed) || 0, tournamentId, playerId, event);
-  return { ok: true };
+function setEntrantSeed(entrantId, seed) {
+  const e = entrantStmts.get.get(entrantId);
+  if (!e) return { error: "申込が見つかりません" };
+  entrantStmts.setSeedById.run(parseInt(seed) || 0, entrantId);
+  return { ok: true, id: entrantId, seed: parseInt(seed) || 0 };
 }
 
 function updateEntrySettings(tournamentId, settings) {
@@ -5775,6 +5816,38 @@ function resolveRefereeCourt(tournamentId, courtNo, key) {
   return { tournament: t, court: courtNo };
 }
 
+// ── 一度きりの移行: 旧 tournament_players ベースの申込を entrants(新・正本)へ取り込む (Phase1) ──
+// createEntry は今後 entrants にも書くため、移行対象は本デプロイ以前の既存行のみ。kv フラグで一度だけ実行。
+// 全定義の後(createEntrant/kv/entrantStmts が初期化済み)に置く必要があるためここで実行する。
+try {
+  if (kvGet("entrants_migrated_from_tp_v1") !== "1") {
+    const tpRows = sqlite.prepare(`
+      SELECT tp.tournament_id, tp.player_id, tp.event, tp.seed, tp.status, tp.applied_at,
+             p.name, p.team, p.furigana, p.gender, p.category
+      FROM tournament_players tp JOIN players p ON p.id = tp.player_id
+    `).all();
+    const findEnt = sqlite.prepare(
+      `SELECT id FROM entrants WHERE tournament_id=? AND event=? AND (player_id=? OR (name=? AND team=?)) LIMIT 1`
+    );
+    let migrated = 0;
+    const tx = sqlite.transaction(() => {
+      for (const r of tpRows) {
+        if (findEnt.get(r.tournament_id, r.event || "", r.player_id, r.name || "", r.team || "")) continue;
+        createEntrant({
+          tournament_id: r.tournament_id, event: r.event || "",
+          name: r.name || "", team: r.team || "", furigana: r.furigana || "",
+          gender: r.gender || "male", category: r.category || "general",
+          seed: r.seed || 0, status: r.status || "confirmed", player_id: r.player_id,
+        });
+        migrated++;
+      }
+      kvSet("entrants_migrated_from_tp_v1", "1");
+    });
+    tx();
+    if (migrated) console.log(`[migration] tournament_players → entrants: ${migrated}件を移行しました`);
+  }
+} catch (e) { console.error("entrants migration error:", e.message); }
+
 module.exports = {
   // 審判結果入力 (テスト環境付き)
   setRefereeToken, setRefereeInputEnabled, getRefereeConfig,
@@ -5825,7 +5898,8 @@ module.exports = {
   // 個別戦績 (手動)
   createManualMatch, getPlayerMatchesForEdit,
   // 申込
-  createEntry, createTeamEntry, getEntries, setEntryStatus, setEntrySeed,
+  createEntry, createTeamEntry, getEntries,
+  setEntrantStatus, setEntrantSeed,
   updateEntrySettings, getOpenTournaments,
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,

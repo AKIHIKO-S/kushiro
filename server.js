@@ -2861,17 +2861,21 @@ app.post("/api/tournaments/:id/entries", requireAdmin, (req, res) => {
   if (r.error) return res.status(400).json(r);
   res.status(201).json(r);
 });
+// 申込の承認状態/シード操作は entrants(申込の正本)に対して行う。:pid は entrant.id (Phase1)。
 app.put("/api/tournaments/:id/entries/:pid/status", requireAdmin, (req, res) => {
-  const { status, event } = req.body || {};
+  const { status } = req.body || {};
   if (!["pending", "confirmed", "rejected"].includes(status)) {
     return res.status(400).json({ error: "status は pending/confirmed/rejected" });
   }
-  res.json(db.setEntryStatus(req.params.id, req.params.pid, event || null, status));
+  const r = db.setEntrantStatus(req.params.pid, status);
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
 });
 app.put("/api/tournaments/:id/entries/:pid/seed", requireAdmin, (req, res) => {
-  const { event, seed } = req.body || {};
-  if (!event) return res.status(400).json({ error: "event が必要です" });
-  res.json(db.setEntrySeed(req.params.id, req.params.pid, event, seed));
+  const { seed } = req.body || {};
+  const r = db.setEntrantSeed(req.params.pid, seed);
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
 });
 app.put("/api/tournaments/:id/entry-settings", requireAdmin, (req, res) => {
   const body = req.body || {};
