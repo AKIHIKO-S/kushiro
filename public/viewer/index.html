@@ -2172,6 +2172,8 @@ const L = {
  tournamentId: null,
  state: null,
  poller: null,
+ _es: null,            // SSE (EventSource) 接続 (#264 を観戦ビューへ移植)
+ _sseLastMsg: 0,       // 直近にSSEメッセージを受けた時刻 (ポーリング省略判定用)
 
  async init() {
  const sel = document.getElementById("liveTournamentSel");
@@ -2188,8 +2190,8 @@ const L = {
  const def = ongoing[0];
  if (def) { sel.value = def.id; L.select(def.id); return; }
  } else {
- // 再開
- if (L.tournamentId) L.fetch();
+ // 再開: データ再取得 + SSE が閉じていれば再接続
+ if (L.tournamentId) { L.fetch(); if (!L._es) L._initOpsStream(); }
  }
  if (!sel.value) {
  document.getElementById("liveMain").innerHTML = '<div class="empty-state">'
@@ -2202,14 +2204,18 @@ const L = {
  L.tournamentId = id;
  L._ver = null;
  if (L.poller) clearInterval(L.poller);
+ L._closeOpsStream();
  if (!id) { document.getElementById("liveMain").innerHTML = ""; return; }
  L.fetch();
- // 変化検知: 軽量 ops-version を見て、変化時だけ重い /live を取得 (サーバ負荷を最小化)
+ // 変化検知: SSE で即時 push (#264)。SSE 不可/断の環境では下の ops-version ポーリングが代替。
+ L._initOpsStream();
  L.poller = setInterval(() => L.tick(), 4000);
  },
 
  async tick() {
  if (!L.tournamentId) return;
+ // SSE が生きている間 (直近メッセージ < 7秒) はポーリングを省略 (SSE が変化を即push)。
+ if (L._sseLastMsg && (Date.now() - L._sseLastMsg) < 7000) return;
  try {
  const r = await api.get("/api/public/tournaments/" + L.tournamentId + "/ops-version");
  if (r && r.v !== undefined && r.v !== L._ver) { L._ver = r.v; L.fetch(); }
@@ -2224,6 +2230,31 @@ const L = {
  L.state = r;
  L.render();
  } catch (e) { console.error(e); }
+ },
+
+ // ── SSE リアルタイム push (#264 パターンを観戦ビューへ移植) ──
+ // サーバが進行変化を即push。EventSource は自動再接続。SSE 不可/断の環境 (旧端末・
+ // 会場NATで上限超過の 429/503 等) では tick(ポーリング)が代替するため安全に縮退する。
+ // 送られるのは reload 合図のみ (PII無し)。実データは従来どおり /live で取得。
+ _initOpsStream() {
+ L._closeOpsStream();
+ if (typeof EventSource === "undefined" || !L.tournamentId) return;
+ try {
+ const es = new EventSource("/api/public/tournaments/" + encodeURIComponent(L.tournamentId) + "/ops-stream");
+ L._es = es;
+ es.onmessage = (e) => {
+ L._sseLastMsg = Date.now();   // hello/ping/ops いずれでも健全性を更新
+ let d = null; try { d = JSON.parse(e.data || "{}"); } catch (_) {}
+ // 変化 → 即時 /live 取得。観戦タブを離れている間は隠れた再描画を避け、
+ // 復帰時に init() が再取得する (接続は維持し変化検知だけ継続)。
+ if (d && d.type === "ops" && V.activeTab === "live") L.fetch();
+ };
+ es.onerror = () => { /* 自動再接続。復帰までは tick(ポーリング)が代替 */ };
+ } catch (e) { /* SSE 不可環境 → tick が代替 */ }
+ },
+ _closeOpsStream() {
+ if (L._es) { try { L._es.close(); } catch (e) {} L._es = null; }
+ L._sseLastMsg = 0;
  },
 
  render() {
