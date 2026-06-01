@@ -502,8 +502,12 @@ app.get("/api/public/head-to-head", (req, res) => {
 app.get("/api/public/open-tournaments", (req, res) => {
   res.json(db.getOpenTournaments().map(sanitizeTournamentPublic));
 });
-app.post("/api/public/tournaments/:id/entry", entryRateLimit, (req, res) => {
-  const r = db.createEntry(req.params.id, req.body || {});
+app.post("/api/public/tournaments/:id/entry", entryRateLimit, async (req, res) => {
+  const payload = req.body || {};
+  if (isHoneypotTripped(payload)) return res.status(201).json({ ok: true, screened: true });
+  const ts = await verifyTurnstile(payload.cf_turnstile_token, clientIp(req));
+  if (!ts.ok) return res.status(403).json({ error: "認証(Turnstile)に失敗しました。ページを再読み込みしてお試しください。", captcha: true });
+  const r = db.createEntry(req.params.id, payload);
   if (r.error) return res.status(400).json(r);
   res.status(201).json(r);
 });
@@ -533,6 +537,30 @@ async function relayEntryToGas(gasUrl, payload) {
   }
 }
 
+// ── スパム対策: Cloudflare Turnstile 検証 + ハニーポット (無償・無人運用) ──
+// TURNSTILE_SECRET を設定した瞬間に有効化。未設定なら素通り(他の対策=スクリーニング/レート制限/承認は機能)。
+const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET || "";
+async function verifyTurnstile(token, ip) {
+  if (!TURNSTILE_SECRET) return { ok: true, skipped: true };     // 未設定=無効化
+  if (!token) return { ok: false, error: "captcha-missing" };
+  try {
+    const body = new URLSearchParams({ secret: TURNSTILE_SECRET, response: String(token) });
+    if (ip) body.set("remoteip", ip);
+    const resp = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify",
+      { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+    const data = await resp.json();
+    return { ok: !!data.success, errors: data["error-codes"] };
+  } catch (e) {
+    // 検証サーバーへ到達できない時は「申込漏れ防止」を最優先しフェイルオープン(通す)。ログのみ。
+    console.warn("[turnstile] verify失敗(フェイルオープン):", e && e.message);
+    return { ok: true, degraded: true };
+  }
+}
+// ハニーポット: 人間に見えない隠しフィールドに値が入っていればボット。
+function isHoneypotTripped(payload) {
+  return !!(payload && (payload.hp_url || payload.website || payload.hp_email));
+}
+
 // GAS 経由でも、同一サーバー直接でも受けられる (text/plain or application/json)
 // CORS は全開放 (公開フォームのため)
 app.options("/api/public/tournaments/:id/submit-team-entry", (req, res) => {
@@ -554,6 +582,15 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
     if (!payload || typeof payload !== "object") {
       return res.status(400).json({ error: "ペイロードが空です" });
     }
+    // ハニーポット(隠しフィールド)に値→ボット。黙って成功を返す(作成もメールもしない)。
+    if (isHoneypotTripped(payload)) {
+      return res.status(201).json({ ok: true, screened: true });
+    }
+    // Turnstile 検証 (有効時のみ)。明確な不合格(ボット)は拒否。
+    const ts = await verifyTurnstile(payload.cf_turnstile_token, clientIp(req));
+    if (!ts.ok) {
+      return res.status(403).json({ error: "認証(Turnstile)に失敗しました。ページを再読み込みしてお試しください。", captcha: true });
+    }
     try {
       const tournament = db.getTournament(req.params.id);
       const r = db.createTeamEntry(req.params.id, payload);
@@ -572,9 +609,10 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
         return res.status(400).json({ error: r.error, gas: gasRelay });
       }
 
-      // ── 控えメール送信 (自サーバー保存が成立している時のみ。失敗してもOKを返す) ──
+      // ── 控えメール送信 (実際に申込が作成された時のみ。全件スクリーニング除外なら送らない=いたずらメール防止) ──
       const mailResults = { confirmation: null, admin: null };
-      if (!r.error && mailer.isEnabled() && tournament) {
+      const created = !r.error && r.entrant_ids && r.entrant_ids.length > 0;
+      if (created && mailer.isEnabled() && tournament) {
         const adminUrl = `${req.protocol}://${req.headers.host}/admin#tournament/${req.params.id}`;
         const [confirmRes, adminRes] = await Promise.allSettled([
           mailer.sendConfirmationEmail({ tournament, formData: payload, result: r }),
@@ -2089,6 +2127,7 @@ app.get("/api/tournaments/:id/entry-form.html", (req, res) => {
       deadline: req.query.deadline || "",
       payment_note: req.query.payment_note || "",
       notes: req.query.notes || "",
+      turnstile_sitekey: process.env.TURNSTILE_SITEKEY || "",
     });
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
@@ -3076,6 +3115,7 @@ app.get("/entry/:id", (req, res) => {
       deadline: tournament.entry_deadline || req.query.deadline || "",
       payment_note: req.query.payment_note || "",
       notes: req.query.notes || "",
+      turnstile_sitekey: process.env.TURNSTILE_SITEKEY || "",
     });
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");

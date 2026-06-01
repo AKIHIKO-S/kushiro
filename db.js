@@ -4377,7 +4377,11 @@ function createEntry(tournamentId, data) {
   }
 
   const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-  const status = data.auto_confirm ? "confirmed" : "pending";
+  // 公開申込はいたずらスクリーニング(明らかなjunkは黙って受理扱い=作成しない)。admin直接追加は対象外。
+  if (!data.auto_confirm && looksLikeSpamText(`${data.name} ${data.team || ""}`)) {
+    return { ok: true, screened: true };
+  }
+  const status = "confirmed";   // 自動承認(無人運用)。事後の却下は本部が手動で。
   events.forEach(ev => {
     entryStmts.insertOrUpdateEntry.run({
       tournament_id: tournamentId,
@@ -4419,6 +4423,21 @@ function createEntry(tournamentId, data) {
 //       { event, type:"team", fee, team_name, members:[...] },
 //       { event, type:"custom", fee, name, team },
 //     ] }
+// いたずら/spam 申込の無料ヒューリスティック判定 (Turnstile と併用)。
+// 誤検知で正規の申込を捨てないよう「明らかなjunkのみ true」で保守的に判定する。
+// 将来 AI 分類(Cloudflare Workers AI / 無料LLM)へ差し替え可能なよう単一関数に隔離。
+function looksLikeSpamText(s) {
+  const str = String(s || "").trim();
+  if (!str) return false;
+  if (/https?:\/\/|www\.|\.(com|net|org|ru|cn|info|xyz|top|tk)\b/i.test(str)) return true;   // URL
+  if (/<[^>]+>|javascript:|onerror\s*=|<script|\{\{|\}\}/i.test(str)) return true;            // markup/script/template
+  if (/[\u0000-\u001f\u007f]/.test(str)) return true;                                  // 制御文字
+  if ((str.match(/\d/g) || []).length >= 7) return true;                                      // 数字過多(連投ID/電話羅列)
+  if (/(.)\1{6,}/.test(str)) return true;                                                     // 同一文字7連以上(aaaaaaa)
+  if (/(死ね|殺す|fuck|shit|bitch|asshole|porn|viagra|casino|くたばれ)/i.test(str)) return true; // 暴言/spam語(最小限)
+  return false;
+}
+
 function createTeamEntry(tournamentId, formData) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
@@ -4465,7 +4484,10 @@ function createTeamEntry(tournamentId, formData) {
     ? new Date(formData.submitted_at)
     : new Date()).toISOString().slice(0, 19).replace("T", " ");
 
-  const status = "pending"; // 全申込は受付確認待ち
+  // 自動承認(無人運用 / ユーザー方針): 通常はそのまま confirmed。明らかないたずらはスクリーニングで
+  // 黙って捨て、誤判定や事後の却下は本部が手動上書きする(承認フローは“例外時のみ”の保険に降格)。
+  const status = "confirmed";
+  let spamSkipped = 0;
   const noteBase = String(formData.note || "").trim();
   const contactInfo = [
     formData.contact_name ? `担当: ${formData.contact_name}` : "",
@@ -4480,6 +4502,11 @@ function createTeamEntry(tournamentId, formData) {
     const evName = String(ent.event || "").trim();
     if (!evName) continue;
     const type = ent.type || "singles";
+
+    // いたずら/spam 自動スクリーニング: 明らかなjunkは黙って捨てる(承認待ちにも残さない=無人運用)。
+    const screenText = [ent.name, ent.name1, ent.name2, ent.team, ent.team1, ent.team_name,
+      Array.isArray(ent.members) ? ent.members.join(" ") : ""].filter(Boolean).join(" ");
+    if (looksLikeSpamText(screenText)) { spamSkipped++; continue; }
 
     if (type === "team") {
       // 団体戦: 1チーム=1 entrant。members は note に保持

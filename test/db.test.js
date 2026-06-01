@@ -18,11 +18,13 @@ after(() => {
 test("createEntry: 不正氏名は throw せず error を返し、正常はok。team/note はクリップ", () => {
   const t = db.createTournament({ name: "申込検証", date: "2027-01-01" });
   db.updateEntrySettings(t.id, { entries_open: 1 });
-  const bad = db.createEntry(t.id, { name: "X".repeat(5000), events: ["男子シングルス"], team: "A" });
-  assert.ok(bad && bad.error, "長すぎ氏名 -> error(例外でない)");
+  // 長すぎ氏名(多様な文字)→ createPlayer のバリデーションで graceful に error(例外でない)
+  const bad = db.createEntry(t.id, { name: "山田太郎ペア".repeat(600), events: ["男子シングルス"], team: "A" });
+  assert.ok(bad && (bad.error || bad.screened), "長すぎ氏名 -> error/screened(例外でない)");
   const num = db.createEntry(t.id, { name: "12345", events: ["男子シングルス"], team: "A" });
-  assert.ok(num && num.error, "数値のみ氏名 -> error");
-  const ok = db.createEntry(t.id, { name: "山田 太郎", events: ["男子シングルス"], team: "あ".repeat(400), note: "ね".repeat(900) });
+  assert.ok(num && (num.error || num.screened), "数値のみ氏名 -> error/screened");
+  // team は多様な長文字列(スクリーニング非該当)で200字クリップを検証。note は screen 対象外。
+  const ok = db.createEntry(t.id, { name: "山田 太郎", events: ["男子シングルス"], team: "釧路卓球協会支部".repeat(40), note: "ね".repeat(900) });
   assert.ok(ok && ok.ok, "正常 -> ok");
   const p = db.getPlayer(ok.player_id);
   assert.ok(p.team.length <= 200, "team が200字以内にクリップ");

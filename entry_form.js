@@ -46,6 +46,7 @@ function buildEntryFormHTML(tournament, events, opts) {
   opts = opts || {};
   const gasUrl = opts.gas_url || "REPLACE_WITH_GAS_WEB_APP_URL";
   const adminEmail = opts.admin_email || "";
+  const turnstileSitekey = opts.turnstile_sitekey || "";   // 設定時のみ Turnstile ウィジェットを表示
   const _c = _formPreamble(tournament, opts, events);
   const { deadline, paymentNote, notes, tournName, tournDate } = _c;
   events = _c.events;   // 壊れた event_config (name=オブジェクト) は _formPreamble で正規化済み
@@ -475,6 +476,7 @@ function buildEntryFormHTML(tournament, events, opts) {
     .total-box .amount { font-size: 26px; }
   }
 </style>
+${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : ''}
 </head>
 <body>
 <div class="form-header">
@@ -544,6 +546,11 @@ function buildEntryFormHTML(tournament, events, opts) {
   </div>
 </div>
 
+<!-- ハニーポット: 人間には不可視。ボットが埋めるとサーバーで弾く (スパム対策) -->
+<div aria-hidden="true" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden">
+  <label>この欄は空のままにしてください<input type="text" name="hp_url" tabindex="-1" autocomplete="off"></label>
+</div>
+${turnstileSitekey ? '<div class="cf-turnstile" data-sitekey="' + escapeHtml(turnstileSitekey) + '" style="margin:14px 0"></div>' : ''}
 <button type="submit" class="submit-btn" id="submitBtn">申込内容を送信</button>
 <div id="messageBox"></div>
 
@@ -752,6 +759,8 @@ function gatherFormData() {
     submitted_at: new Date().toISOString(),
     entries: [],
     total_amount: 0,
+    cf_turnstile_token: fd.get("cf-turnstile-response") || "",   // Turnstile ウィジェットが挿入する隠しトークン
+    hp_url: fd.get("hp_url") || "",                              // ハニーポット(空のはず)
   };
 
   EVENTS.forEach((ev, idx) => {
