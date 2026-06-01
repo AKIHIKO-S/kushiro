@@ -114,6 +114,44 @@ function buildEntryFormHTML(tournament, events, opts) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${tournName} 申込フォーム</title>
+<script>
+/* ── 埋込安全網: 何が起きても真っ白(クラッシュ)にせず、利用者に分かる案内を出す ──
+   Jimdo/STUDIO 等への iframe 埋込で稀に発生する初期化/通信エラーを捕捉し、
+   再読み込み導線を提示する。最初の<script>として最優先で設置。*/
+(function () {
+  function showFatal(msg) {
+    try {
+      var b = document.getElementById("ttFatal");
+      if (!b) {
+        b = document.createElement("div");
+        b.id = "ttFatal";
+        b.style.cssText = "margin:16px;padding:14px 16px;background:#fef2f2;" +
+          "border:2px solid #dc2626;border-radius:8px;color:#7f1d1d;" +
+          "font-family:'Hiragino Sans','Yu Gothic UI',system-ui,sans-serif;" +
+          "font-size:14px;line-height:1.7;max-width:840px;margin-left:auto;margin-right:auto";
+        var host = document.body || document.documentElement;
+        host.insertBefore(b, host.firstChild);
+      }
+      b.innerHTML =
+        "<strong>申込フォームの読み込みで問題が発生しました。</strong><br>" +
+        "お手数ですが「再読み込み」を押すか、時間をおいて再度お試しください。" +
+        "繰り返す場合は大会主催者へお知らせください。" +
+        "<div style='margin-top:10px'><button type='button' onclick='location.reload()' " +
+        "style='padding:8px 16px;border:0;border-radius:6px;background:#dc2626;color:#fff;" +
+        "font-weight:700;cursor:pointer'>再読み込み</button></div>" +
+        "<div style='margin-top:6px;font-size:11px;color:#9ca3af'>" +
+        (msg ? String(msg).slice(0, 200).replace(/[<>&]/g, " ") : "") + "</div>";
+    } catch (_) {}
+  }
+  window.__ttShowFatal = showFatal;
+  window.addEventListener("error", function (e) {
+    showFatal(e && (e.message || (e.error && e.error.message)));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var r = e && e.reason; showFatal(r && (r.message || r) || "通信エラー");
+  });
+})();
+</script>
 <style>
   /* システムフォントのみ使用 (HTTPS / Jimdo / STUDIO / CSP 準拠) */
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -514,7 +552,7 @@ function buildEntryFormHTML(tournament, events, opts) {
 <script>
 const TOURNAMENT_ID = ${escapeJs(tournament.id)};
 const TOURNAMENT_NAME = ${escapeJs(tournament.name || "")};
-const GAS_URL = ${escapeJs(gasUrl)};
+const SUBMIT_URL = ${escapeJs(gasUrl)};  // 送信先。原則 同一オリジン(自サーバー)。サーバーが必要に応じGASへ中継。
 const EVENTS = ${eventsJson};
 
 // 各種目ブロックを動的生成 (開いた状態 + 初期1行を表示)
@@ -840,17 +878,23 @@ async function submitForm(e) {
   btn.disabled = true;
   btn.textContent = "送信中...";
 
+  // 通信タイムアウト (25秒) — 圏外/不安定回線でボタンが「送信中…」のまま固まるのを防ぐ
+  const controller = (typeof AbortController !== "undefined") ? new AbortController() : null;
+  const timer = controller ? setTimeout(function () { controller.abort(); }, 25000) : null;
   try {
-    // GAS Web App は CORS のため text/plain で送信
-    const resp = await fetch(GAS_URL, {
+    // 同一オリジン(自サーバー)へ text/plain で送信。サーバーが必要に応じGASへ中継するため、
+    // ブラウザからのクロスオリジン送信(応答がCORSで読めず誤エラーになる問題)を回避。
+    const resp = await fetch(SUBMIT_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify(data),
+      signal: controller ? controller.signal : undefined,
     });
+    if (timer) clearTimeout(timer);
     const txt = await resp.text();
     let result;
     try { result = JSON.parse(txt); } catch { result = { ok: resp.ok, raw: txt }; }
-    if (result.ok || resp.ok) {
+    if (result.ok || resp.ok || resp.status === 201) {
       // ★ 送信成功 → LINE 共有用コピーカードを表示
       const summary = buildSummaryText(data);
       const card = document.createElement("div");
@@ -900,10 +944,16 @@ async function submitForm(e) {
       };
       window.scrollTo({ top: 0, behavior: "smooth" });
     } else {
-      showMessage("送信失敗: " + (result.error || resp.statusText), "err");
+      showMessage("送信できませんでした: " + (result.error || ("サーバー応答 " + resp.status)) +
+        "。入力内容をご確認のうえ、もう一度お試しください。", "err");
     }
   } catch (err) {
-    showMessage("送信エラー: " + err.message, "err");
+    if (timer) clearTimeout(timer);
+    const aborted = err && err.name === "AbortError";
+    showMessage(aborted
+      ? "通信がタイムアウトしました。電波の良い場所で、もう一度「送信」ボタンを押してください。(入力内容は保持されています)"
+      : "送信できませんでした。通信環境をご確認のうえ、もう一度お試しください。(" + ((err && err.message) || "network") + ")",
+      "err");
   } finally {
     btn.disabled = false;
     btn.textContent = "申込内容を送信";
@@ -918,9 +968,14 @@ function showMessage(text, type) {
   if (type === "ok") setTimeout(() => box.innerHTML = "", 8000);
 }
 
-// 初期化
-renderEvents();
-recalcTotal();
+// 初期化 (失敗しても安全網が案内を表示)
+try {
+  renderEvents();
+  recalcTotal();
+} catch (e) {
+  if (window.__ttShowFatal) window.__ttShowFatal(e && e.message);
+  else throw e;
+}
 </script>
 </body>
 </html>`;

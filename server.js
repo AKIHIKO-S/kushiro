@@ -460,6 +460,30 @@ app.post("/api/public/tournaments/:id/entry", entryRateLimit, (req, res) => {
 });
 
 // 新方式: 申込フォーム (entry_form.js) からの team-style POST 受け口
+// 申込ペイロードを GAS Web App へサーバー側から中継する (server→GAS は CORS 制約なし)。
+// ブラウザからの直POSTを廃し、ここで中継することで「保存成功なのに送信エラー誤表示」を解消。
+// 失敗しても申込受付(DB保存)は成立済みのため、結果オブジェクトを返すだけで例外は投げない。
+async function relayEntryToGas(gasUrl, payload) {
+  if (typeof fetch !== "function") return { ok: false, error: "fetch 利用不可" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const resp = await fetch(gasUrl, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload),
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    return { ok: resp.ok, status: resp.status };
+  } catch (e) {
+    console.warn("[GAS relay] 失敗:", e && e.message);
+    return { ok: false, error: (e && e.name === "AbortError") ? "timeout" : String(e && e.message || e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // GAS 経由でも、同一サーバー直接でも受けられる (text/plain or application/json)
 // CORS は全開放 (公開フォームのため)
 app.options("/api/public/tournaments/:id/submit-team-entry", (req, res) => {
@@ -482,15 +506,27 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
       return res.status(400).json({ error: "ペイロードが空です" });
     }
     try {
-      const r = db.createTeamEntry(req.params.id, payload);
-      if (r.error) return res.status(400).json(r);
-
-      // ── 控えメール送信 (非同期・失敗してもレスポンスはOKを返す) ──
       const tournament = db.getTournament(req.params.id);
+      const r = db.createTeamEntry(req.params.id, payload);
+
+      // GAS 連携が設定されていればサーバー側から中継 (スプレッドシート反映、best-effort)。
+      // server→GAS は CORS 制約なし。ブラウザ直POSTの誤エラーを解消する要。
+      let gasRelay = null;
+      if (tournament && tournament.entry_gas_url
+          && /^https:\/\/script\.google\.com\//.test(tournament.entry_gas_url)) {
+        gasRelay = await relayEntryToGas(tournament.entry_gas_url, payload);
+      }
+
+      // 受付成立 = 自サーバー保存 または GAS中継 の少なくとも一方が成功。
+      // GAS主運用(自サーバーが受理しない構成)でも、スプレッドシートへ届けば成功扱い。
+      if (r.error && !(gasRelay && gasRelay.ok)) {
+        return res.status(400).json({ error: r.error, gas: gasRelay });
+      }
+
+      // ── 控えメール送信 (自サーバー保存が成立している時のみ。失敗してもOKを返す) ──
       const mailResults = { confirmation: null, admin: null };
-      if (mailer.isEnabled() && tournament) {
+      if (!r.error && mailer.isEnabled() && tournament) {
         const adminUrl = `${req.protocol}://${req.headers.host}/admin#tournament/${req.params.id}`;
-        // 並列送信
         const [confirmRes, adminRes] = await Promise.allSettled([
           mailer.sendConfirmationEmail({ tournament, formData: payload, result: r }),
           mailer.sendAdminNotification({ tournament, formData: payload, result: r, adminUrl }),
@@ -500,7 +536,8 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
         mailResults.admin = adminRes.status === "fulfilled"
           ? adminRes.value : { ok: false, error: String(adminRes.reason) };
       }
-      res.status(201).json({ ...r, mail: mailResults });
+      const base = r.error ? { ok: true, saved_to: "gas_only" } : r;
+      res.status(201).json({ ...base, mail: mailResults, gas: gasRelay });
     } catch (e) {
       recordError(e, req, res, 500);
       res.status(500).json({ error: "申込処理エラー: " + e.message });
@@ -2990,9 +3027,10 @@ app.get("/entry/:id", (req, res) => {
     const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
     const host = req.headers["x-forwarded-host"] || req.headers.host;
     const selfUrl = `${proto}://${host}/api/public/tournaments/${tournament.id}/submit-team-entry`;
-    const postUrl = (tournament.entry_gas_url && /^https:\/\/script\.google\.com\//.test(tournament.entry_gas_url))
-      ? tournament.entry_gas_url
-      : (req.query.gas_url || selfUrl);
+    // 送信は常に同一オリジン(自サーバー)へ。GAS連携が設定されていても、ブラウザから
+    // script.google.com へ直接POSTすると応答が CORS で読めず「送信エラー」を誤表示する
+    // (実際は保存成功)。そのため submit-team-entry がサーバー側でGASへ中継する方式に統一。
+    const postUrl = selfUrl;
 
     const html = entryForm.buildEntryFormHTML(tournament, events, {
       gas_url: postUrl,
