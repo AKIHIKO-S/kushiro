@@ -6,6 +6,9 @@
 Description=KTTA Platform (Kushiro Table Tennis Association)
 Documentation=https://github.com/AKIHIKO-S/kushiro
 After=network.target
+# クラッシュが連続しても systemd が再起動を諦めない (既定は10秒で5回失敗すると停止→恒久ダウン)。
+# 試合運用中の恒久停止を防ぐため起動レート制限を無効化し「常に再起動」を保証する。
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -13,7 +16,9 @@ User=ktta
 WorkingDirectory=/opt/ktta
 ExecStart=/usr/bin/node /opt/ktta/server.js
 Restart=always
-RestartSec=3
+RestartSec=2
+# graceful shutdown 用に SIGTERM 後の猶予を確保 (アプリが接続を畳んで終了する余地)。
+TimeoutStopSec=15
 Environment=NODE_ENV=production
 Environment=PORT=3000
 # 管理キー + DB パス等は /etc/ktta.env から読み込む (chmod 600)
