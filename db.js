@@ -2180,7 +2180,9 @@ function autoAssignDrawNumbers(tournamentId, opts) {
 
   const txn = sqlite.transaction(() => {
     for (const ev of events) {
-      const list = entrantStmts.listByEvent.all(tournamentId, ev);
+      // 抽選番号も承認済(confirmed)のみに付与 (Phase2: ブラケットと整合)。pending/却下は番号を振らない。
+      const list = entrantStmts.listByEvent.all(tournamentId, ev)
+        .filter(e => opts.include_all_status || (e.status || "confirmed") === "confirmed");
       if (!list.length) continue;
 
       // シード付き選手 (seed > 0) は予約番号 1〜N に配置 (seed昇順)
@@ -2539,6 +2541,21 @@ function generateBracket(tournamentId, event, options) {
         });
         entrants.push(e);
       });
+    }
+  }
+
+  // 承認フロー実効化 (Phase2): entrant_ids で本部が明示選択した場合はその指定を尊重し、
+  // それ以外(種目全件/全件)は「承認済(confirmed)のみ」を出場対象とし pending/却下を除外する。
+  // 旧 tournament_players からの自動移行 entrant は status 未指定=既定 'confirmed' なので含まれる。
+  const explicitIds = !!(options.entrant_ids && options.entrant_ids.length);
+  if (!explicitIds && !options.include_all_status) {
+    const before = entrants.length;
+    entrants = entrants.filter(e => (e.status || "confirmed") === "confirmed");
+    if (entrants.length < 2 && before >= 2) {
+      return {
+        error: "承認済みの出場選手が2人未満です。申込管理で承認(confirmed)してからブラケットを生成してください。",
+        confirmed: entrants.length, total: before, needs_approval: true,
+      };
     }
   }
 
