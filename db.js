@@ -2773,6 +2773,14 @@ function finishMatchInternal(matchId, data) {
   else if (data.winner_id != null && data.winner_id === m.player2_id) { winner = p2; loser = p1; }
   else return null;
 
+  // 冪等ガード: 既に「同じ勝者」で完了済みなら何もしない。連打/オフライン再送で finish が
+  // 2回適用されると二重Elo・勝者の再進出が起きるため(op_id は呼出ごとに新規=連打を防げない)。
+  // correctResult は status を pending/on_table に戻してから呼ぶので、ここには該当しない。
+  if (m.status === "completed" && m.winner_name && winner.name === m.winner_name &&
+      (winner.id == null || m.winner_id == null || winner.id === m.winner_id)) {
+    return m;
+  }
+
   // セットスコア集計 (sets は [p1, p2] 視点。勝者が p1 側か p2 側かで数え方を反転)
   // 注: player_id が両方 null の entrant ブラケットでは m.player1_id===winner.id が
   //     null===null で誤判定するため、解決済みの winner 参照そのもので判定する。

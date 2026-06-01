@@ -135,9 +135,10 @@
   // 各 op に op_id を付け、サーバ側で冪等判定して二重適用を防止する。
   (function () {
     const QKEY = "tt_op_queue_v1";
+    const QMAX = 300;   // 送信待ちの上限。無制限だと localStorage 枯渇(QuotaExceeded)で新規opが黙って落ちる
     const listeners = [];
     function loadQ() { try { return JSON.parse(localStorage.getItem(QKEY) || "[]"); } catch (e) { return []; } }
-    function saveQ(q) { try { localStorage.setItem(QKEY, JSON.stringify(q)); } catch (e) {} notify(); }
+    function saveQ(q) { try { localStorage.setItem(QKEY, JSON.stringify((q || []).slice(-QMAX))); } catch (e) {} notify(); }
     function notify() { const n = loadQ().length; listeners.forEach(cb => { try { cb(n, api.online); } catch (e) {} }); }
     function uuid() { try { return crypto.randomUUID(); } catch (e) { return "op-" + Date.now() + "-" + Math.random().toString(16).slice(2); } }
 
@@ -148,15 +149,24 @@
     api.hasPending = function (tag) { return !!(tag && api.pendingTags()[tag]); };
     api.onQueueFlushed = null; // アプリ側で再描画したい時に差し込む
 
+    // 応答は status まで見る。2xx か X-Idempotent-Replay(既適用)=成功、5xx=一時障害(残して再試行)、
+    // 4xx=恒久エラー(再送不可)。旧実装は応答が返れば成否問わず除去しており、5xx/401で
+    // 未適用なのに finish/correct を取りこぼしていた(本部の書込みキュー=結果消失)。
     function deliver(item) {
       const headers = api._headers();
       if (item.op_id) headers["X-Op-Id"] = item.op_id;
       return fetch(api.baseUrl + item.url, {
         method: item.method, headers,
         body: (item.method === "DELETE") ? undefined : JSON.stringify(item.body || {}),
-      }).then(r => r.json().catch(() => ({})));
+      }).then(async (r) => ({
+        ok: r.ok,
+        status: r.status,
+        replay: !!(r.headers && r.headers.get && r.headers.get("X-Idempotent-Replay") === "1"),
+        json: await r.json().catch(() => ({})),
+      }));
     }
 
+    api.onQueueDrop = null;  // 4xx恒久エラーで破棄した op をアプリへ通知 (任意)
     let flushing = false;
     api.flushQueue = async function () {
       if (flushing) return;
@@ -166,11 +176,21 @@
         let q = loadQ();
         while (q.length) {
           const item = q[0];
+          let res;
           try {
-            await deliver(item);          // 応答が返れば到達成功 (成否問わずキューから除去・冪等で二重防止)
-            q = loadQ(); q.shift(); saveQ(q); delivered++;
+            res = await deliver(item);
           } catch (e) {
-            break;                        // ネット断: 中断して残す
+            break;                        // ネット断: 中断して残す(次回再試行)
+          }
+          if (res.ok || res.replay) {
+            q = loadQ(); q.shift(); saveQ(q); delivered++;   // 適用成功 or 既適用 → 除去
+          } else if (res.status >= 500) {
+            break;                        // サーバ一時障害: 残して次回再試行
+          } else {
+            // 4xx(検証/認可/競合)は再送しても通らない。先頭で詰まらせないよう除去し記録。
+            q = loadQ(); const dropped = q.shift(); saveQ(q);
+            console.warn("opQueue: 恒久エラー(status " + res.status + ")で破棄:", dropped && dropped.url);
+            try { if (typeof api.onQueueDrop === "function") api.onQueueDrop(dropped, res.status, res.json); } catch (e) {}
           }
         }
         if (delivered && api.online !== true) { api.online = true; notify(); }
@@ -187,13 +207,20 @@
       const op_id = opts.op_id || uuid();
       const body = Object.assign({}, data || {}, { op_id });
       const item = { op_id, method, url, body, tag: opts.tag || "", ts: Date.now() };
+      let res;
       try {
-        return await deliver(item);       // オンライン: 即時送信
+        res = await deliver(item);        // オンライン: 即時送信
       } catch (e) {
         const q = loadQ(); q.push(item); saveQ(q);   // ネット断: キューへ
         api.online = false; notify();
         return { queued: true, op_id };
       }
+      if (res.ok || res.replay) return res.json;       // 適用成功 or 既適用
+      if (res.status >= 500) {                         // サーバ一時障害: キューへ積み再試行(取りこぼし防止)
+        const q = loadQ(); q.push(item); saveQ(q); notify();
+        return { queued: true, op_id, retry: true };
+      }
+      return res.json;                                 // 4xx 恒久エラー: 応答をそのまま返す(呼出側がエラー表示)
     };
 
     if (typeof window !== "undefined") {

@@ -391,6 +391,18 @@
     card.querySelectorAll(".pbtn").forEach(function (btn) {
       btn.onclick = function () {
         var slot = parseInt(btn.getAttribute("data-slot"));
+        var prev = selWinner[m.id];
+        if (prev && prev !== slot) {
+          // 勝者を入れ替えたら下書きの勝者/敗者(左右)列も入れ替える。これをしないと
+          // showConfirm が新しい勝者の列へ旧勝者の点数を復元し、誤った点数で報告される。
+          var d = loadDraft(m.id);
+          if (d) {
+            var tw = d.ws; d.ws = d.ls; d.ls = tw;
+            if (d.games) d.games = d.games.map(function (g) { return g ? [g[1], g[0]] : g; });
+            d.slot = slot;
+            saveDraft(m.id, d);
+          }
+        }
         selWinner[m.id] = slot;
         card.querySelectorAll(".pbtn").forEach(function (b) {
           b.classList.toggle("sel", parseInt(b.getAttribute("data-slot")) === slot);
@@ -485,7 +497,12 @@
         load();   // → パスコード入力ゲートを表示
         return;
       }
-      var qq = loadQ(); qq.shift(); saveQ(qq);   // 応答が返れば除去 (成否問わず=冪等)
+      if (res && res.status >= 500) {   // サーバ一時障害: 破棄せず保持し、次の機会に再送(報告を失わない)
+        flushing = false;
+        return;
+      }
+      // 2xx(適用/既適用) または 4xx恒久エラー(409=台に無い等、再送しても通らない) → 除去
+      var qq = loadQ(); qq.shift(); saveQ(qq);
       flushing = false;
       if (loadQ().length) flushQueue();
       else { toast("保存していた報告を送信しました。", "ok"); load(); }

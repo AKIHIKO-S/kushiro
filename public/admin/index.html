@@ -7281,10 +7281,15 @@ const O = {
        const sets = setInputs
          .map(({ p1, p2 }) => [parseInt(p1.value) || 0, parseInt(p2.value) || 0])
          .filter(s => s[0] > 0 || s[1] > 0);
-       const r = await api.opSend("POST", `/api/matches/${m.id}/correct`, {
-         winner_slot: winnerSlot,
-         sets,
-       }, { tag: m.id });
+       const payload = { winner_slot: winnerSlot, sets };
+       // セット別点数が無い修正(「セット数だけ」「勝者のみ」由来=m.sets が空)で sets=[] を送ると
+       // サーバが 0-0 と計算し、記録済みの 3-1 等が消える。記録済みスコアを勝者基準(高い方=勝者)で保持。
+       if (!sets.length) {
+         const hi = Math.max(m.winner_sets || 0, m.loser_sets || 0);
+         const lo = Math.min(m.winner_sets || 0, m.loser_sets || 0);
+         payload.winner_sets = hi; payload.loser_sets = lo;
+       }
+       const r = await api.opSend("POST", `/api/matches/${m.id}/correct`, payload, { tag: m.id });
        if (r.queued) { document.querySelector(".modal-bg")?.remove();
          return toast("オフライン: 修正を保存しました（接続復帰後に自動送信）", "warn"); }
        if (r.error) {
@@ -7486,19 +7491,28 @@ const O = {
  },
 
  async recallMatch(m, slot) {
- const r = await api.post(`/api/matches/${m.id}/recall`,
-   slot ? { slot } : {});
- if (r.error) return toast(r.error, "err");
- const next = slot === 2 ? (parseInt(r.call_count_p2) || 0)
-            : slot === 1 ? (parseInt(r.call_count_p1) || 0)
-            : (parseInt(r.call_count) || 0);
- const pname = slot === 2 ? r.player2_name : slot === 1 ? r.player1_name : "";
- const lbl = next === 1 ? "再コール 1回目 (注意)"
-           : next === 2 ? "再コール 2回目 (警告・最終)"
-           : next > 2 ? "再コール " + next + " 回目"
-           : "呼出";
- toast((pname ? pname + ": " : "") + lbl, "ok");
- O.reload();
+ // 連打防止: recall は call_count+1 で冪等でない(op_id も付かない)ため、
+ // 送信中の重複タップを弾く。これが無いと1回の物理再コールで +2 され警告が誤発火する。
+ const key = m.id + ":" + (slot || 0);
+ if (!O._recallInFlight) O._recallInFlight = new Set();
+ if (O._recallInFlight.has(key)) return;
+ O._recallInFlight.add(key);
+ try {
+   const r = await api.post(`/api/matches/${m.id}/recall`, slot ? { slot } : {});
+   if (r.error) { toast(r.error, "err"); return; }
+   const next = slot === 2 ? (parseInt(r.call_count_p2) || 0)
+              : slot === 1 ? (parseInt(r.call_count_p1) || 0)
+              : (parseInt(r.call_count) || 0);
+   const pname = slot === 2 ? r.player2_name : slot === 1 ? r.player1_name : "";
+   const lbl = next === 1 ? "再コール 1回目 (注意)"
+             : next === 2 ? "再コール 2回目 (警告・最終)"
+             : next > 2 ? "再コール " + next + " 回目"
+             : "呼出";
+   toast((pname ? pname + ": " : "") + lbl, "ok");
+   O.reload();
+ } finally {
+   O._recallInFlight.delete(key);
+ }
  },
 
  async setCallCount(m, count, slot) {
