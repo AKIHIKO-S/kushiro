@@ -29,6 +29,27 @@ const fs = require('fs');
 const path = require('path');
 const XLSX = require('xlsx');
 
+// 宣言上の !ref はアップロード側が巨大値(A1:XFD1048576 等)を仕込め、そのまま二重ループすると
+// 数百億セルの空走査でイベントループが固まる (#8 DoS)。実際に値を持つセルの範囲にクランプして走査する。
+function safeRange(ws) {
+  const declared = (ws && ws['!ref']) ? XLSX.utils.decode_range(ws['!ref']) : { s: { r: 0, c: 0 }, e: { r: -1, c: -1 } };
+  let maxR = -1, maxC = -1;
+  for (const k in ws) {
+    if (k[0] === '!') continue;
+    const cell = XLSX.utils.decode_cell(k);
+    if (cell.r > maxR) maxR = cell.r;
+    if (cell.c > maxC) maxC = cell.c;
+  }
+  const HARD_R = 20000, HARD_C = 512;   // 実データ範囲が異常に大きい場合の保険上限
+  return {
+    s: declared.s,
+    e: {
+      r: Math.min(declared.e.r, maxR, declared.s.r + HARD_R),
+      c: Math.min(declared.e.c, maxC, declared.s.c + HARD_C),
+    },
+  };
+}
+
 // ─── 設定 ─────────────────────────────────
 const TEAM_KEYWORDS = ['団体', 'チーム', 'チームカップ', 'ダブルスチーム'];
 const DOUBLES_KEYWORDS = ['ダブルス', 'ミックス', '混合', 'ペア'];
@@ -146,7 +167,7 @@ function isTopOfMerge(row, col, merges) {
 // ─── セクションヘッダー検出 ─────────────────
 // 1 シート内の全 ○ / ブロック / 種目キーワードを含むセルを抽出
 function findHeaderCandidates(ws) {
-  const range = XLSX.utils.decode_range(ws['!ref']);
+  const range = safeRange(ws);
   const headers = [];
   for (let r = 0; r <= range.e.r; r++) {
     for (let c = 0; c <= range.e.c; c++) {
@@ -274,7 +295,7 @@ function collectPlayerNear(ws, posItem, side, region, merges, opts) {
 // ─── BOUNDING REGION 推定 ────────────────
 // ヘッダー行から次のセクションヘッダー or シート末まで
 function inferRegion(ws, header, allHeaders) {
-  const range = XLSX.utils.decode_range(ws['!ref']);
+  const range = safeRange(ws);
   const sameRowHeaders = allHeaders.filter(h => h.r === header.r);
   sameRowHeaders.sort((a, b) => a.c - b.c);
   const idxInRow = sameRowHeaders.findIndex(h => h === header);
@@ -497,7 +518,7 @@ function parseSheet(ws, sheetName, opts) {
   const brackets = [];
   if (!headers.length) {
     // ヘッダー無しの場合: シート全体を 1 セクションとして処理
-    const range = XLSX.utils.decode_range(ws['!ref']);
+    const range = safeRange(ws);
     const fakeHeader = {
       r: 0, c: 0,
       event: opts.eventHint || sheetName,

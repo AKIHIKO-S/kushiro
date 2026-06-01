@@ -366,6 +366,11 @@ try {
   addMCol("call_count_p2", "INTEGER DEFAULT 0");  // 選手2の再コール回数
   addMCol("match_label", "TEXT DEFAULT ''");  // "1-1", "2-1" 形式の試合番号 (R-N)
   addMCol("is_walkover", "INTEGER DEFAULT 0");  // 1=不戦勝/BYE (DB戦績・参加記録に算入しない)
+  // finish 時に適用したElo差分を保存し、訂正/undo/編集で厳密に逆算する (#3/#4/#6/#10/#12/#22)。
+  addMCol("winner_rating_delta", "INTEGER DEFAULT 0");
+  addMCol("loser_rating_delta", "INTEGER DEFAULT 0");
+  // 勝者の entrant_id を保存 (#21: player_id=null・同名のentrantブラケットで冪等ガードが誤短絡しないように)。
+  addMCol("winner_entrant_id", "TEXT DEFAULT ''");
   // entrants にブロック情報・大会固有番号追加
   const ecols = sqlite.prepare("PRAGMA table_info(entrants)").all();
   if (ecols.length && !ecols.find(c => c.name === "block")) {
@@ -378,6 +383,17 @@ try {
     sqlite.exec("ALTER TABLE entrants ADD COLUMN bracket_side TEXT DEFAULT ''");
   }
 } catch (e) { console.error("migration error:", e.message); }
+
+// ── 追加インデックス (#23) ──────────────────────────────
+// matches には tournament_id/winner_id/loser_id の索引は既にあるが、status の索引が無く、
+// 公開試合検索(searchMatches: WHERE status='completed' + 任意で tournament_id) が status で
+// 全表スキャンしていた。status 単体 + (tournament_id,status) 複合を追加。IF NOT EXISTS で冪等。
+try {
+  sqlite.exec(`
+    CREATE INDEX IF NOT EXISTS idx_matches_status ON matches(status);
+    CREATE INDEX IF NOT EXISTS idx_matches_tournament_status ON matches(tournament_id, status);
+  `);
+} catch (e) { console.error("index error:", e.message); }
 
 // ── ふりがな辞書 ────────────────────────────────────────
 const FD = {
@@ -532,6 +548,24 @@ function calcElo(rWin, rLose, K = 32) {
     newLose: Math.round(rL + K * (0 - (1 - expW))),
   };
 }
+// finish 時に試合行へ保存した Elo 差分を「厳密に」巻き戻す (訂正/undo 共通)。
+// post-rating からの再計算 (rating*2-newWin) は途中で他試合が rating を変えると不正確だったため、
+// 保存済み差分を引くことで常に正確に逆算する (#10/#12/#22)。
+function reverseEloForMatch(m) {
+  if (!m) return;
+  const wd = m.winner_rating_delta || 0, ld = m.loser_rating_delta || 0;
+  if (!wd && !ld) return;
+  if (m.winner_id) { const wp = stmts.getPlayer.get(m.winner_id); if (wp) stmts.updateRating.run(wp.rating - wd, wp.id); }
+  if (m.loser_id)  { const lp = stmts.getPlayer.get(m.loser_id);  if (lp) stmts.updateRating.run(lp.rating - ld, lp.id); }
+}
+// 復元された完了試合の Elo 差分を再適用する (undo で旧結果のEloを復活させる用)。
+function reapplyEloForMatch(m) {
+  if (!m || m.status !== "completed") return;
+  const wd = m.winner_rating_delta || 0, ld = m.loser_rating_delta || 0;
+  if (!wd && !ld) return;
+  if (m.winner_id) { const wp = stmts.getPlayer.get(m.winner_id); if (wp) stmts.updateRating.run(wp.rating + wd, wp.id); }
+  if (m.loser_id)  { const lp = stmts.getPlayer.get(m.loser_id);  if (lp) stmts.updateRating.run(lp.rating + ld, lp.id); }
+}
 
 // ── プリペアドステートメント ───────────────────────────
 // 戦績の勝敗カウント (BYE・不戦勝は除外)。下記3つのプリペアド文で共用 (DRY)。
@@ -570,6 +604,8 @@ const stmts = {
     ) ml ON ml.pid = p.id
   `),
   getPlayer: sqlite.prepare(`SELECT * FROM players WHERE id = ?`),
+  // 集計を伴わない軽量版 (バルク取込の重複判定用 #5)。getPlayers の 3 LEFT JOIN+GROUP BY を避ける。
+  getPlayersLite: sqlite.prepare(`SELECT id, name, furigana, team, branch, gender, category, note, appearances, rating FROM players`),
   getAchievements: sqlite.prepare(`SELECT * FROM achievements WHERE player_id = ? ORDER BY year DESC`),
   insertPlayer: sqlite.prepare(`
     INSERT INTO players (id, name, furigana, team, branch, gender, category, note, appearances, rating)
@@ -1475,7 +1511,13 @@ function updateTournament(id, data) {
   return getTournament(id);
 }
 
-function deleteTournament(id) { stmts.deleteTournament.run(id); }
+// matches/entrants/tournament_players は FK ON DELETE CASCADE で消えるが、op_log は tournaments への
+// FK を持たないため孤児が残る (#24)。op_log を明示削除し、大会削除と同一トランザクションで原子的に行う。
+const deleteTournamentTxn = sqlite.transaction((id) => {
+  sqlite.prepare("DELETE FROM op_log WHERE tournament_id=?").run(id);
+  stmts.deleteTournament.run(id);
+});
+function deleteTournament(id) { deleteTournamentTxn(id); }
 
 // ── 試合 ────────────────────────────────────────────────
 function buildMatchRecord(data) {
@@ -1685,10 +1727,17 @@ function bulkImportMatches(tournamentId, matches) {
 // ── 選手バルクインポート ───────────────────────────────
 const importPlayersTxn = sqlite.transaction((players) => {
   let added = 0, merged = 0;
+  // 取込前に既存選手を一度だけ軽量ロードし name+team で索引する (#5)。
+  // 以前は行ごとに重い集計クエリ(getPlayers: 3 LEFT JOIN+GROUP BY)を実行し O(取込数×選手×試合) で
+  // イベントループを数秒固めていた。集計値はここで未使用なので JOIN 不要。
+  const idx = new Map();
+  const keyOf = (name, team) => (name || "") + " " + (team || "");
+  for (const e of stmts.getPlayersLite.all()) {
+    const k = keyOf(e.name, e.team);
+    if (!idx.has(k)) idx.set(k, e);   // getPlayers の find と同じく先勝ち
+  }
   for (const p of players) {
-    const existing = stmts.getPlayers.all().find(
-      e => e.name === p.name && e.team === (p.team || "")
-    );
+    const existing = idx.get(keyOf(p.name, p.team || ""));
     if (existing) {
       stmts.updatePlayer.run({
         id: existing.id,
@@ -1702,10 +1751,18 @@ const importPlayersTxn = sqlite.transaction((players) => {
         appearances: Math.max(existing.appearances || 0, p.appearances || 0),
         rating: p.rating || existing.rating || 1500,
       });
+      // 同一バッチ内の後続重複が最新値を見るよう索引も更新 (旧: 毎回再クエリで最新を取得していた)。
+      existing.furigana = p.furigana || existing.furigana;
+      existing.branch = p.branch || existing.branch || "";
+      existing.gender = p.gender || existing.gender;
+      existing.category = p.category || existing.category;
+      existing.note = p.note || existing.note;
+      existing.appearances = Math.max(existing.appearances || 0, p.appearances || 0);
+      existing.rating = p.rating || existing.rating || 1500;
       merged++;
     } else {
       const id = uid();
-      stmts.insertPlayer.run({
+      const row = {
         id,
         name: p.name || "",
         furigana: p.furigana || lookupFurigana(p.name),
@@ -1716,7 +1773,10 @@ const importPlayersTxn = sqlite.transaction((players) => {
         note: p.note || "",
         appearances: p.appearances || 0,
         rating: p.rating || 1500,
-      });
+      };
+      stmts.insertPlayer.run(row);
+      // 新規挿入を索引へ登録 → 同一バッチ内の同名同所属は次行以降マージされる (旧挙動を維持)。
+      idx.set(keyOf(row.name, row.team), row);
       if (p.achievements) {
         for (const a of p.achievements) {
           stmts.insertAchievement.run({
@@ -2496,13 +2556,32 @@ function generateBracket(tournamentId, event, options) {
   let bracketSize, totalRounds;
   // 相対スロット(0始まり)→選手 (as_drawn 用)
   const playerByDrawNo = {};
+  const nameOf = (p) => p && (p.display_name || p.name || p.surname || "?");
+  const conflicts = [];   // as_drawn の組番号衝突 (#9)
   if (asDrawn) {
+    // #2: as_drawn は組番号で位置を確定する。番号未設定(seed<1)の選手は黙って配置から漏れ、
+    //     その枠が幻のBYEになるため、ここで明示エラーにして取りこぼしを防ぐ。
+    const seedless = sorted.filter(p => seedOf(p) < 1);
+    if (seedless.length) {
+      const names = seedless.map(nameOf).slice(0, 10).join("・");
+      return {
+        error: "取込どおりの配置(as_drawn)には全選手に1以上の組番号が必要です。番号未設定: " +
+          names + (seedless.length > 10 ? " ほか" : ""),
+        seedless: seedless.length,
+      };
+    }
     const blocks = [...new Set(sorted.map(p => (p.block || "").trim()).filter(Boolean))].sort();
     // 1サイド(L/R)分を配置するヘルパ: 各サイド内を最小番号で正規化して相対スロットへ
     const placeSide = (list, offset, sideSize, dest) => {
       const seeds = list.map(seedOf).filter(s => s >= 1);
       const minS = seeds.length ? Math.min(...seeds) : 1;
-      list.forEach(p => { const r = seedOf(p) - minS; if (r >= 0 && r < sideSize) dest[offset + r] = p; });
+      list.forEach(p => {
+        const r = seedOf(p) - minS;
+        if (r >= 0 && r < sideSize) {
+          if (dest[offset + r]) conflicts.push({ seed: seedOf(p), a: dest[offset + r], b: p });  // #9
+          else dest[offset + r] = p;
+        }
+      });
     };
     // 各グループ(ブロック or 全体)の必要サイドサイズを算出
     const sideSpan = (list) => {
@@ -2541,7 +2620,23 @@ function generateBracket(tournamentId, event, options) {
       const minSeed = seeds.length ? Math.min(...seeds) : 1;
       const maxSeed = seeds.length ? Math.max(...seeds) : N;
       bracketSize = Math.pow(2, Math.ceil(Math.log2(Math.max(2, maxSeed - minSeed + 1, N))));
-      sorted.forEach(p => { const s = seedOf(p); if (s < 1) return; const r = s - minSeed; if (r >= 0 && r < bracketSize) playerByDrawNo[r] = p; });
+      sorted.forEach(p => {
+        const s = seedOf(p); if (s < 1) return;
+        const r = s - minSeed;
+        if (r >= 0 && r < bracketSize) {
+          if (playerByDrawNo[r]) conflicts.push({ seed: s, a: playerByDrawNo[r], b: p });  // #9
+          else playerByDrawNo[r] = p;
+        }
+      });
+    }
+    // #9: 組番号の重複は黙って上書き(=選手消失)せず、明示エラーで停止する。
+    if (conflicts.length) {
+      const c = conflicts[0];
+      return {
+        error: "取込どおりの配置(as_drawn)で組番号が重複しています: 番号" + c.seed +
+          " に「" + nameOf(c.a) + "」と「" + nameOf(c.b) + "」。組番号を一意にしてから再生成してください。",
+        conflicts: conflicts.length,
+      };
     }
   } else {
     bracketSize = Math.pow(2, Math.ceil(Math.log2(N)));
@@ -2773,18 +2868,24 @@ function finishMatchInternal(matchId, data) {
   else if (data.winner_id != null && data.winner_id === m.player2_id) { winner = p2; loser = p1; }
   else return null;
 
+  // sets 集計や冪等判定で「勝者が p1 側か」を使う。player_id が両方 null の entrant ブラケットでは
+  // m.player1_id===winner.id が null===null で誤判定するため、解決済みの winner 参照そのもので判定する。
+  const winnerIsP1 = (winner === p1);
+
   // 冪等ガード: 既に「同じ勝者」で完了済みなら何もしない。連打/オフライン再送で finish が
   // 2回適用されると二重Elo・勝者の再進出が起きるため(op_id は呼出ごとに新規=連打を防げない)。
   // correctResult は status を pending/on_table に戻してから呼ぶので、ここには該当しない。
-  if (m.status === "completed" && m.winner_name && winner.name === m.winner_name &&
-      (winner.id == null || m.winner_id == null || winner.id === m.winner_id)) {
-    return m;
+  // #21: 同名・player_id=null のentrantブラケットで「別人(同名)の勝ち」を同一視しないよう、
+  //      player_id→entrant_id の順で識別子一致を確認し、どちらも無い場合のみ名前一致にフォールバック。
+  if (m.status === "completed" && m.winner_name && winner.name === m.winner_name) {
+    const sameWinner =
+      (winner.id != null && m.winner_id != null) ? (winner.id === m.winner_id) :
+      (winner.entrant_id != null && m.winner_entrant_id) ? (winner.entrant_id === m.winner_entrant_id) :
+      (winner.id == null && m.winner_id == null);
+    if (sameWinner) return m;
   }
 
   // セットスコア集計 (sets は [p1, p2] 視点。勝者が p1 側か p2 側かで数え方を反転)
-  // 注: player_id が両方 null の entrant ブラケットでは m.player1_id===winner.id が
-  //     null===null で誤判定するため、解決済みの winner 参照そのもので判定する。
-  const winnerIsP1 = (winner === p1);
   const sets = data.sets || [];
   let ws = 0, ls = 0;
   sets.forEach(s => {
@@ -2833,16 +2934,22 @@ function finishMatchInternal(matchId, data) {
     } catch (e) { /* 所要時間記録は本処理に影響させない */ }
   }
 
-  // Elo 更新 (不戦勝は除外)
+  // Elo 更新 (不戦勝は除外)。適用した差分を試合行に保存し、訂正/undo/編集で厳密に逆算する。
+  let wDelta = 0, lDelta = 0;
   if (!isWO && winner.id && loser.id) {
     const wp = stmts.getPlayer.get(winner.id);
     const lp = stmts.getPlayer.get(loser.id);
     if (wp && lp) {
       const { newWin, newLose } = calcElo(wp.rating, lp.rating);
+      wDelta = newWin - wp.rating;
+      lDelta = newLose - lp.rating;
       stmts.updateRating.run(newWin, wp.id);
       stmts.updateRating.run(newLose, lp.id);
     }
   }
+  // 0 でも必ず上書き (再finish=correct で前回の差分が残らないように)。winner_entrant_id も #21 用に保存。
+  sqlite.prepare("UPDATE matches SET winner_rating_delta=?, loser_rating_delta=?, winner_entrant_id=? WHERE id=?")
+    .run(wDelta, lDelta, winner.entrant_id || "", matchId);
 
   // 勝者を次の試合へ
   if (m.next_match_id) {
@@ -2946,16 +3053,9 @@ function correctResult(matchId, data) {
       winner_team: "", loser_team: "",
       sets_json: "[]", winner_sets: 0, loser_sets: 0,
     });
-    // 元の rating 変更も巻き戻し (簡易: 元勝者/敗者の rating を反映前に戻す)
-    if (wasCompleted && m.winner_id && m.loser_id) {
-      const wp = stmts.getPlayer.get(m.winner_id);
-      const lp = stmts.getPlayer.get(m.loser_id);
-      if (wp && lp) {
-        const { newWin, newLose } = calcElo(wp.rating, lp.rating);
-        stmts.updateRating.run(wp.rating * 2 - newWin, wp.id);
-        stmts.updateRating.run(lp.rating * 2 - newLose, lp.id);
-      }
-    }
+    // 元の rating 変更を厳密に巻き戻す (#10/#12/#22)。保存済み差分を引くので post-rating 再計算による
+    // ドリフトが起きない。直後の finishMatchInternal が新結果の差分を改めて適用する。
+    if (wasCompleted) reverseEloForMatch(m);
     // 試合ステータスを pending or on_table に
     opStmts.setStatus.run(m.table_no > 0 ? "on_table" : "pending", matchId);
 
@@ -5136,12 +5236,29 @@ function editMatch(matchId, data) {
           }
         }
       });
+      // is_walkover を再計算 (#11): 旧W.O./BYE フラグが残って実結果がW/Lに算入されない問題を防ぐ。
+      const isWO = !!data.walkover || winner.name === "BYE" || loser.name === "BYE";
+      // 完了済み結果を編集する場合は旧Eloを厳密に巻き戻してから新Eloを適用する (#4)。
+      // m は編集前の行 = 旧結果の差分を保持。finishMatchInternal と同じ「保存差分」方式で整合させる。
+      if (m.status === "completed") reverseEloForMatch(m);
+      let wDelta = 0, lDelta = 0;
+      if (!isWO && winner.id && loser.id) {
+        const wp = stmts.getPlayer.get(winner.id);
+        const lp = stmts.getPlayer.get(loser.id);
+        if (wp && lp) {
+          const { newWin, newLose } = calcElo(wp.rating, lp.rating);
+          wDelta = newWin - wp.rating; lDelta = newLose - lp.rating;
+          stmts.updateRating.run(newWin, wp.id);
+          stmts.updateRating.run(newLose, lp.id);
+        }
+      }
       sqlite.prepare(`
         UPDATE matches SET
           winner_id = ?, loser_id = ?,
           winner_name = ?, loser_name = ?,
           winner_team = ?, loser_team = ?,
           sets_json = ?, winner_sets = ?, loser_sets = ?,
+          is_walkover = ?, winner_rating_delta = ?, loser_rating_delta = ?, winner_entrant_id = ?,
           status = 'completed', finished_at = COALESCE(NULLIF(finished_at,''), datetime('now','localtime'))
         WHERE id = ?
       `).run(
@@ -5151,6 +5268,8 @@ function editMatch(matchId, data) {
         JSON.stringify(useSets),
         data.winner_sets !== undefined ? data.winner_sets : ws,
         data.loser_sets !== undefined ? data.loser_sets : ls,
+        isWO ? 1 : 0, wDelta, lDelta,
+        (winnerIsP1 ? m2.player1_entrant_id : m2.player2_entrant_id) || "",
         matchId,
       );
       // 勝者を次戦へ送り込む (#190: 手動編集で結果を入れてもブラケットが進まない不具合を修正)
@@ -5313,13 +5432,22 @@ function collectForwardChain(matchId, maxHops = 64) {
   }
   return ids;
 }
+const OP_LOG_KEEP = 500;   // 1大会あたり保持する操作ログ件数 (undoは最新のみ使用。履歴は十分すぎる量)
 function recordOp(tournamentId, action, summary, matchIds, beforeRows) {
   try {
+    const tid = tournamentId || "";
     sqlite.prepare(
       `INSERT INTO op_log (tournament_id, action, summary, match_ids, before_json)
        VALUES (?,?,?,?,?)`
-    ).run(tournamentId || "", action || "", summary || "",
+    ).run(tid, action || "", summary || "",
       JSON.stringify(matchIds || []), JSON.stringify(beforeRows || []));
+    // 保持上限 (#24): 最新 OP_LOG_KEEP 件だけ残して古い行を削除し、無制限肥大を防ぐ。
+    // idx_oplog_t(tournament_id,id) があるため軽量 (大会あたりの行数は常に上限以下に保たれる)。
+    sqlite.prepare(
+      `DELETE FROM op_log WHERE tournament_id=? AND id NOT IN (
+         SELECT id FROM op_log WHERE tournament_id=? ORDER BY id DESC LIMIT ?
+       )`
+    ).run(tid, tid, OP_LOG_KEEP);
   } catch (e) { /* ログ失敗は本処理に影響させない */ }
 }
 function getOpLog(tournamentId, limit) {
@@ -5343,13 +5471,20 @@ function undoLastOp(tournamentId) {
   if (!row) return { error: "取り消せる操作がありません" };
   let before = [];
   try { before = JSON.parse(row.before_json || "[]"); } catch (e) {}
+  let matchIds = [];
+  try { matchIds = JSON.parse(row.match_ids || "[]"); } catch (e) {}
   const tx = sqlite.transaction(() => {
+    // Elo の巻き戻し (#3/#6): finish/correct は players.rating を増減するが before_json には rating が
+    // 含まれない。そこで (1)現在の完了試合に適用済みの差分を引き、(2)行を before へ復元し、
+    // (3)復元後に完了状態へ戻った試合の差分を再適用する、という対称操作で正確に元へ戻す。
+    //  ・finish の undo: 現在=完了(差分有)→引く / before=未完了(差分0)→再適用なし ⇒ 反映前へ
+    //  ・correct の undo: 現在=新結果(新差分)→引く / before=旧結果(旧差分)→再適用 ⇒ 元の結果のEloへ
+    for (const id of matchIds) { const cur = stmts.getMatch.get(id); if (cur) reverseEloForMatch(cur); }
     for (const r of before) _restoreMatchRow(r);
+    for (const r of before) reapplyEloForMatch(r);
     sqlite.prepare(`UPDATE op_log SET undone=1 WHERE id=?`).run(row.id);
   });
   tx();
-  let matchIds = [];
-  try { matchIds = JSON.parse(row.match_ids || "[]"); } catch (e) {}
   return { ok: true, summary: row.summary, action: row.action, match_ids: matchIds };
 }
 

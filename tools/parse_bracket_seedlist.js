@@ -16,6 +16,27 @@
 'use strict';
 const XLSX = require('xlsx');
 
+// 宣言上の !ref はアップロード側が巨大値(A1:XFD1048576 等)を仕込め、そのまま二重ループすると
+// 数百億セルの空走査でイベントループが固まる (#8 DoS)。実際に値を持つセルの範囲にクランプする。
+function safeRange(ws) {
+  const declared = (ws && ws['!ref']) ? XLSX.utils.decode_range(ws['!ref']) : { s: { r: 0, c: 0 }, e: { r: -1, c: -1 } };
+  let maxR = -1, maxC = -1;
+  for (const k in ws) {
+    if (k[0] === '!') continue;
+    const cell = XLSX.utils.decode_cell(k);
+    if (cell.r > maxR) maxR = cell.r;
+    if (cell.c > maxC) maxC = cell.c;
+  }
+  const HARD_R = 20000, HARD_C = 512;
+  return {
+    s: declared.s,
+    e: {
+      r: Math.min(declared.e.r, maxR, declared.s.r + HARD_R),
+      c: Math.min(declared.e.c, maxC, declared.s.c + HARD_C),
+    },
+  };
+}
+
 // 北海道の地区(支部)トークン。組合せ表で氏名脇に出る「地区」列の判定に使う。
 const REGION_TOKENS = [
   '釧路', '十勝', '札幌', '北見', '根室', '名寄', '斜里', '千歳', '苫小牧', '帯広',
@@ -79,7 +100,7 @@ function cleanTeam(s) {
 //       これにより (所属)カッコ有り(男子)・無し(女子)・地区列の有無 を統一的に扱える。
 function extractSheet(ws) {
   if (!ws || !ws['!ref']) return [];
-  const R = XLSX.utils.decode_range(ws['!ref']);
+  const R = safeRange(ws);
   const cand = [];
   const seenName = new Set(); // 氏名セル座標の重複防止
   for (let r = R.s.r; r <= R.e.r; r++) {
@@ -127,7 +148,7 @@ function extractSheet(ws) {
 //  男子=横並び [seed, 氏名1, 氏名2, (所属), 地区] / 女子=縦並び [seed, 氏名1, 所属1] + 次行 [氏名2, 所属2]
 function extractDoubles(ws) {
   if (!ws || !ws['!ref']) return [];
-  const R = XLSX.utils.decode_range(ws['!ref']);
+  const R = safeRange(ws);
   const cand = [];
   const seenName = new Set();
   const mkTeam = (t1, t2) => {

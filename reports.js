@@ -85,6 +85,29 @@ function teamItemsOf(teams, F) {
   });
 }
 
+// event_config (種目ごとの fee) を kind×gender バケットの単価へ写像する (#17)。
+// これで集計表/領収書が、申込フォーム・確認メールと同じ「設定された参加料」を使う。
+// 同一バケットに料金違いの種目が混在する場合は先に設定された種目の料金を採用 (近似)。
+function feesFromEventConfig(tournament) {
+  let cfg = [];
+  try {
+    cfg = typeof tournament.event_config === "string"
+      ? JSON.parse(tournament.event_config || "[]")
+      : (tournament.event_config || []);
+  } catch (e) { cfg = []; }
+  const out = {};
+  (Array.isArray(cfg) ? cfg : []).forEach(c => {
+    if (!c || !c.name) return;
+    const fee = parseInt(c.fee, 10);
+    if (!(fee >= 0)) return;
+    const kind = classifyEvent(c.name);
+    const gender = genderOf(c.name, {});
+    const key = `${kind}_${gender === "female" ? "female" : "male"}`;   // countByKindGender と同じ規則
+    if (out[key] === undefined) out[key] = fee;   // 先勝ち
+  });
+  return out;
+}
+
 // 大会の出場選手から集計データを構築
 function buildAggregation(tournament, entrants, fees) {
   // 団体名でグルーピング (チーム名 ≒ 申込団体名 として扱う)
@@ -107,14 +130,15 @@ function buildAggregation(tournament, entrants, fees) {
     byTeam.get(records[0].team).push(records[0]);
   });
 
-  // 単価 (テンプレ由来 or fees パラメータ)
+  // 単価: ハードコード既定 → event_config 由来(#17) → 明示 fees パラメータ の順で上書き。
+  // これで領収書/集計が申込フォーム・確認メールと同じ参加料を使う (請求額の食い違いを防止)。
   const F = Object.assign({
     team_male: 1000, team_female: 1000,
     doubles_male: 1000, doubles_female: 1000,
     mixed_male: 1000, mixed_female: 1000,
     singles_male: 700, singles_female: 700,
     bento: 800, party: 3500,
-  }, fees || {});
+  }, feesFromEventConfig(tournament), fees || {});
 
   return { teams: byTeam, fees: F };
 }
@@ -927,4 +951,5 @@ module.exports = {
   buildMatchCardsXlsx,
   buildCoachResultsHTML,
   classifyEvent, genderOf,
+  buildAggregation, feesFromEventConfig,   // テスト用に公開 (#17)
 };

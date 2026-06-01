@@ -8526,7 +8526,7 @@ const O = {
    if (!w) return toast("ポップアップがブロックされました。許可してください。", "err");
    w.document.write(
      '<!doctype html><html lang="ja"><head><meta charset="utf-8">' +
-     '<title>' + tName + " - " + selectedEv + '</title>' +
+     '<title>' + esc(tName) + " - " + esc(selectedEv) + '</title>' +
      '<style>' +
      '@page{size:A3 landscape;margin:8mm}' +
      'body{font-family:"Hiragino Sans","Yu Gothic",system-ui,sans-serif;padding:12px;color:#1c1917}' +
@@ -8536,8 +8536,8 @@ const O = {
      'button{padding:8px 16px;font-size:14px;cursor:pointer;border:1px solid #ccc;border-radius:6px;background:#fff}' +
      '</style></head><body>' +
      '<div class="toolbar"><button onclick="window.print()">印刷する</button></div>' +
-     '<h1>' + tName + '</h1>' +
-     '<div class="sub">' + selectedEv + '　トーナメント表</div>' +
+     '<h1>' + esc(tName) + '</h1>' +
+     '<div class="sub">' + esc(selectedEv) + '　トーナメント表</div>' +
      bracketArea.innerHTML +
      '</body></html>');
    w.document.close();

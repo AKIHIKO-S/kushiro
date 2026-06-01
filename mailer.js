@@ -52,6 +52,38 @@ function formatYen(n) {
   return `¥${v.toLocaleString("ja-JP")}`;
 }
 
+// 大会設定 (event_config) の種目別参加料マップ。
+function eventFeeMap(tournament) {
+  let cfg = [];
+  try {
+    cfg = typeof tournament.event_config === "string"
+      ? JSON.parse(tournament.event_config || "[]")
+      : (tournament.event_config || []);
+  } catch (e) { cfg = []; }
+  const map = {};
+  (Array.isArray(cfg) ? cfg : []).forEach(c => {
+    if (!c || !c.name) return;
+    const f = parseInt(c.fee, 10);
+    if (f >= 0) map[String(c.name).trim()] = f;
+  });
+  return map;
+}
+
+// 各申込の参加料と合計をサーバ側で確定する (#26)。
+// クライアント供給の fee / total_amount は信用せず、設定済み(event_config)の料金を最優先。
+// 設定に無い種目(お弁当/懇親会等の任意項目)のみ、申込側の fee をフォールバックとして使う。
+function authoritativeFees(tournament, entries) {
+  const map = eventFeeMap(tournament);
+  let total = 0;
+  const list = (entries || []).map(e => {
+    const configured = map[String(e.event || "").trim()];
+    const fee = (configured != null) ? configured : (parseInt(e.fee, 10) || 0);
+    total += fee;
+    return Object.assign({}, e, { fee });
+  });
+  return { entries: list, total };
+}
+
 // 申込内容を HTML テーブルにする
 function entriesTable(entries) {
   if (!entries || !entries.length) return "";
@@ -106,7 +138,10 @@ async function sendConfirmationEmail(opts) {
   const contactName = formData.contact_name || "";
   const contactTel = formData.contact_tel || "";
   const teamName = formData.team_name || "";
-  const total = result.total_amount || formData.total_amount || 0;
+  // #26: 参加料・合計はサーバ側で event_config から再計算 (クライアント値は信用しない)。
+  const feeCalc = authoritativeFees(tournament, formData.entries);
+  const feeEntries = feeCalc.entries;
+  const total = feeCalc.total;
   const note = formData.note || "";
 
   const subject = `【${tournName}】申込を受け付けました`;
@@ -129,8 +164,8 @@ async function sendConfirmationEmail(opts) {
     contactTel ? `  電話: ${contactTel}` : "",
     `  メール: ${toEmail}`,
     ``,
-    `■ 申込内容 (${(formData.entries || []).length}件)`,
-    ...((formData.entries || []).map(e => {
+    `■ 申込内容 (${feeEntries.length}件)`,
+    ...(feeEntries.map(e => {
       if (e.type === "team") {
         return `  ・${e.event} : ${e.team_name || ""} [${(e.members || []).join("、")}] - ${formatYen(e.fee)}`;
       }
@@ -181,7 +216,7 @@ async function sendConfirmationEmail(opts) {
   </table>
 
   <h2 style="font-size:14px;border-left:4px solid #b91c1c;padding-left:8px;margin:24px 0 12px;">申込内容</h2>
-  ${entriesTable(formData.entries || [])}
+  ${entriesTable(feeEntries)}
   <div style="text-align:right;margin-top:8px;font-size:16px;font-weight:bold;color:#7c2d12;">
     合計: ${formatYen(total)}
   </div>
@@ -221,6 +256,8 @@ async function sendAdminNotification(opts) {
   if (!ADMIN_EMAIL) return { ok: false, skipped: true, reason: "ADMIN_EMAIL未設定" };
   const transporter = getTransporter();
   const { tournament, formData, result, adminUrl } = opts;
+  // #26: 合計はサーバ側で event_config から再計算 (クライアント値は信用しない)。
+  const total = authoritativeFees(tournament, formData.entries).total;
   const subject = `【新規申込】${tournament.name} - ${formData.team_name || formData.contact_name || ""}`;
   const text = [
     `新規申込が届きました。`,
@@ -230,7 +267,7 @@ async function sendAdminNotification(opts) {
     `担当: ${formData.contact_name || ""}`,
     `連絡先: ${formData.contact_email || ""} / ${formData.contact_tel || ""}`,
     `申込件数: ${result.entry_count}件`,
-    `合計: ${formatYen(result.total_amount || formData.total_amount || 0)}`,
+    `合計: ${formatYen(total)}`,
     ``,
     adminUrl ? `管理画面: ${adminUrl}` : "",
   ].filter(Boolean).join("\n");
@@ -264,5 +301,7 @@ module.exports = {
   sendConfirmationEmail,
   sendAdminNotification,
   sendTestEmail,
+  authoritativeFees,   // テスト用に公開 (#26)
+  eventFeeMap,
   config: { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_FROM, ADMIN_EMAIL },
 };

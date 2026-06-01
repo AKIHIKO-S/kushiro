@@ -17,6 +17,27 @@ const fs = require('fs');
 const path = require('path');
 const XLSX = require('xlsx');
 
+// 宣言上の !ref はアップロード側が巨大値(A1:XFD1048576 等)を仕込め、そのまま二重ループすると
+// 数百億セルの空走査でイベントループが固まる (#8 DoS)。実際に値を持つセルの範囲にクランプする。
+function safeRange(ws) {
+  const declared = (ws && ws['!ref']) ? XLSX.utils.decode_range(ws['!ref']) : { s: { r: 0, c: 0 }, e: { r: -1, c: -1 } };
+  let maxR = -1, maxC = -1;
+  for (const k in ws) {
+    if (k[0] === '!') continue;
+    const cell = XLSX.utils.decode_cell(k);
+    if (cell.r > maxR) maxR = cell.r;
+    if (cell.c > maxC) maxC = cell.c;
+  }
+  const HARD_R = 20000, HARD_C = 512;
+  return {
+    s: declared.s,
+    e: {
+      r: Math.min(declared.e.r, maxR, declared.s.r + HARD_R),
+      c: Math.min(declared.e.c, maxC, declared.s.c + HARD_C),
+    },
+  };
+}
+
 // ─── ヘルパー ───────────────────────────
 function cellValue(ws, r, c) {
   const cell = ws[XLSX.utils.encode_cell({ r, c })];
@@ -65,7 +86,7 @@ function parseTemplate(filePath) {
   let tournamentName = '';
   const wsSet = wb.Sheets['設定'];
   if (wsSet) {
-    const r = XLSX.utils.decode_range(wsSet['!ref']);
+    const r = safeRange(wsSet);
     for (let row = 0; row <= r.e.r; row++) {
       const key = cellValue(wsSet, row, 0);
       const val = cellValue(wsSet, row, 1);
@@ -87,7 +108,7 @@ function parseTemplate(filePath) {
   if (!wsM) {
     return { error: '「組合せ」シートが見つかりません。テンプレートをご利用ください。' };
   }
-  const range = XLSX.utils.decode_range(wsM['!ref']);
+  const range = safeRange(wsM);
   // ヘッダー行を探す (「ラウンド」「試合番号」が並ぶ行)
   let headerRow = -1;
   for (let row = 0; row <= range.e.r; row++) {

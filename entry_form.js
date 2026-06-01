@@ -17,10 +17,15 @@ function _formPreamble(tournament, opts, events) {
       "参加料は、大会当日の開会式前に受付でお支払いください。",
     notes: opts.notes || "",
     tournName: escapeHtml(tournament.name || ""),
-    tournDate: tournament.date
-      ? new Date(tournament.date).toLocaleDateString("ja-JP",
-          { year: "numeric", month: "long", day: "numeric", weekday: "short" })
-      : "",
+    tournDate: (() => {
+      if (!tournament.date) return "";
+      const dt = new Date(tournament.date);
+      // date は自由記入TEXT。非ISO値(例「未定」)だと Invalid Date になるため、reports.js 同様 isNaN でガードし
+      // そのまま表示する。tournDate はテンプレートで未エスケープ展開されるため、passthrough は escapeHtml する (#16)。
+      return isNaN(dt.getTime())
+        ? escapeHtml(String(tournament.date))
+        : dt.toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric", weekday: "short" });
+    })(),
     events: (events || []).map(e => ({ ...e, name: _eventName(e.name) })),
   };
 }
