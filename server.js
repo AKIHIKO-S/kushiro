@@ -16,6 +16,8 @@ const db = require("./db");
 const reports = require("./reports");
 const entryForm = require("./entry_form");
 const mailer = require("./mailer");
+const { conditional } = require("./lib/http-cache");          // 条件付きGET(ETag/304)で未変化ポーリングを軽量化
+const { installServerHardening } = require("./lib/lifecycle"); // HTTPタイムアウト調整 + graceful shutdown
 
 // ─── Web Push (任意機能) ────────────────────────────────
 // web-push 未インストールでもサーバーは動作する (プッシュのみ無効化)。
@@ -2222,14 +2224,19 @@ app.post("/api/admin/snapshots/restore", requireAdmin, (req, res) => {
 app.get("/api/public/tournaments/:id/live", (req, res) => {
   const entry = getCachedLiveJSON(req.params.id);
   if (!entry) return res.status(404).json({ error: "大会が見つかりません" });
-  // 直列化済み文字列をそのまま返す (再シリアライズなし)。短期ブラウザキャッシュも許可。
-  res.set("Cache-Control", "public, max-age=2");
+  // 進行fingerprint(entry.key)を ETag 化。未変化のポーリングは 304(本体なし)で返し帯域/再シリアライズを節約。
+  // 直列化済み文字列をそのまま返す (再シリアライズなし)。短期ブラウザ/CDNキャッシュも許可。
+  if (conditional(req, res, entry.key, "public, max-age=2")) return;
   return res.type("application/json").send(entry.json);
 });
 
 // 進行の変化検知用 軽量エンドポイント (クライアントは変化時のみ重い /live を取得)
 app.get("/api/public/tournaments/:id/ops-version", (req, res) => {
-  res.json(db.getOpsFingerprint(req.params.id));
+  const fp = db.getOpsFingerprint(req.params.id);
+  // fp 自体を ETag 化。未変化のポーリング(大半)は 304 で返し、Cloudflare/ブラウザが安価に再検証できる。
+  const tag = (fp && fp.v != null ? fp.v : "0") + "|" + (fp && fp.status || "");
+  if (conditional(req, res, tag, "public, max-age=2")) return;
+  res.json(fp);
 });
 
 // 大会進行「タブ」用 全試合リスト (待機中/終了/総試合タブを開いた時だけ遅延取得)。
@@ -2258,7 +2265,8 @@ function getCachedMatchListJSON(tid) {
 app.get("/api/public/tournaments/:id/match-list", (req, res) => {
   const entry = getCachedMatchListJSON(req.params.id);
   if (!entry) return res.status(404).json({ error: "大会が見つかりません" });
-  res.set("Cache-Control", "public, max-age=2");
+  // 進行fingerprint(entry.key)を ETag 化。参照タブの再取得が未変化なら 304 で軽量化。
+  if (conditional(req, res, entry.key, "public, max-age=2")) return;
   return res.type("application/json").send(entry.json);
 });
 
@@ -2984,13 +2992,23 @@ process.on("unhandledRejection", (reason) => {
   console.error("[FATAL] unhandledRejection:", reason);
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n🏓 卓球大会運営アプリ 起動中`);
   console.log(`   閲覧画面:  http://localhost:${PORT}/viewer`);
   console.log(`   管理画面:  http://localhost:${PORT}/admin`);
   console.log(`   API:       http://localhost:${PORT}/api/health`);
   if (ADMIN_KEY) console.log(`   ADMIN_KEY: 設定あり（管理API保護）`);
   console.log("");
+});
+// 耐性: HTTPタイムアウト(keep-alive延長/slow-loris遮断) + graceful shutdown。
+// SIGTERM(デプロイ時の systemctl restart 等)で新規受付を停止し在席を畳み、SSEを明示クローズして
+// クライアントの自動再接続を促す。取りこぼし/中断を最小化する。
+installServerHardening(server, {
+  closeExtras: () => {
+    for (const set of sseClients.values()) {
+      for (const r of set) { try { r.end(); } catch (e) {} }
+    }
+  },
 });
 
 // 試合中の自動スナップショット: 進行中の大会がある時だけ定期バックアップ (既定7分)。
