@@ -168,19 +168,38 @@ app.use(express.json({ limit: "10mb" }));
 // 既に成功済みなら処理を再実行せず前回のレスポンスを返す。
 // op_id 無しのリクエストは素通り (従来通り)。成功(2xx)のみキャッシュ。
 const _idempCache = new Map(); // op_id -> { status, body, t }
-const IDEMP_MAX = 1000;
+// 有効期限ベースで保持する。数量(FIFO)evictだと、オフライン端末が1000件超の後に
+// 復帰して再送した場合に op_id が押し出されて二重適用(/finish・/correct=二重Elo/枠再反映)
+// が起きるため、再送猶予(大会1日分)を確保しつつ古いものは時間で破棄する。
+const IDEMP_TTL_MS = 12 * 60 * 60 * 1000;  // 12時間 (大会1日をカバー)
+const IDEMP_MAX = 20000;                    // メモリ上限の保険 (主役はTTL掃引)
+let _idempLastSweep = 0;
+function _idempSweep(now) {
+  for (const [k, v] of _idempCache) { if (now - v.t > IDEMP_TTL_MS) _idempCache.delete(k); }
+  // 掃引後もなお上限超過(異常な大量書込み)なら古い順に間引く保険
+  while (_idempCache.size > IDEMP_MAX) {
+    const k = _idempCache.keys().next().value;
+    if (k === undefined) break;
+    _idempCache.delete(k);
+  }
+  _idempLastSweep = now;
+}
 app.use((req, res, next) => {
   if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
   const opId = (req.body && req.body.op_id) || req.get("X-Op-Id");
   if (!opId) return next();
   const hit = _idempCache.get(opId);
-  if (hit) { res.set("X-Idempotent-Replay", "1"); return res.status(hit.status).json(hit.body); }
+  if (hit) {
+    if (Date.now() - hit.t <= IDEMP_TTL_MS) { res.set("X-Idempotent-Replay", "1"); return res.status(hit.status).json(hit.body); }
+    _idempCache.delete(opId);  // 期限切れ(再送猶予を過ぎた)→破棄して通常処理
+  }
   const origJson = res.json.bind(res);
   res.json = (body) => {
     const sc = res.statusCode || 200;
     if (sc < 400) {
-      _idempCache.set(opId, { status: sc, body, t: Date.now() });
-      if (_idempCache.size > IDEMP_MAX) { const k = _idempCache.keys().next().value; _idempCache.delete(k); }
+      const now = Date.now();
+      _idempCache.set(opId, { status: sc, body, t: now });
+      if (now - _idempLastSweep > 60000 || _idempCache.size > IDEMP_MAX) _idempSweep(now);
     }
     return origJson(body);
   };
@@ -2262,7 +2281,7 @@ setInterval(() => {
     if (fp !== sseLastFp.get(tid)) { sseLastFp.set(tid, fp); sseBroadcast(tid, { type: "ops" }); }
     else if (now - (sseLastEmit.get(tid) || 0) > 5000) { sseBroadcast(tid, { type: "ping" }); }
   }
-}, 800);
+}, 800).unref();  // プロセスのクリーン終了を妨げない (他の定期掃引と同じ方針)
 
 app.get("/api/public/tournaments/:id/ops-stream", (req, res) => {
   if (sseTotal >= SSE_MAX) return res.status(503).end();

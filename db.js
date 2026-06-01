@@ -2855,6 +2855,10 @@ function autoAdvanceByes(tournamentId, event) {
       const p2 = (m.player2_name || "").trim();
       if (p1 && p1 !== "BYE" && p2 === "BYE") { finishMatchInternal(m.id, { winner_slot: 1, sets: [] }); changed = true; advanced++; }
       else if (p2 && p2 !== "BYE" && p1 === "BYE") { finishMatchInternal(m.id, { winner_slot: 2, sets: [] }); changed = true; advanced++; }
+      // 両側 BYE (大きいブラケットに小人数=BYE多数で生じる) は次戦へ "BYE" を送り、
+      // 進出先が「実選手 vs BYE」になった時点で実選手が繰り上がる。送らないと
+      // 相手スロットが永久に空のままで進行が停止するため。空欄("")は前試合待ちなので対象外。
+      else if (p1 === "BYE" && p2 === "BYE") { finishMatchInternal(m.id, { winner_slot: 1, sets: [] }); changed = true; advanced++; }
     }
     if (!changed) break;
   }
@@ -4182,7 +4186,12 @@ function createEntry(tournamentId, data) {
   }
 
   if (!data.name || !data.name.trim()) return { error: "氏名は必須です" };
-  const events = Array.isArray(data.events) ? data.events.filter(Boolean) : (data.events ? [data.events] : []);
+  // events は文字列の配列を期待。オブジェクト等が混入しても SQLite バインドエラー(500)に
+  // ならないよう文字列へ正規化し、空要素は除去・長さも制限する。
+  const events = (Array.isArray(data.events) ? data.events : (data.events != null ? [data.events] : []))
+    .map(e => (e && typeof e === "object") ? String(e.name || e.event || "") : String(e == null ? "" : e))
+    .map(s => s.trim().slice(0, 100))
+    .filter(Boolean);
   if (!events.length) return { error: "出場種目を1つ以上選択してください" };
 
   // 入力長を安全に制限 (createTeamEntry と同様の DoS/巨大データ対策。氏名は createPlayer 側で検証されるため除く) #QA-2026-05-30

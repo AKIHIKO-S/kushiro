@@ -93,6 +93,11 @@ async function sendConfirmationEmail(opts) {
   const { tournament, formData, result } = opts;
   const toEmail = formData.contact_email;
   if (!toEmail) return { ok: false, skipped: true, reason: "宛先メールなし" };
+  // 形式が不正なら送信を試みず明確にスキップ (sendMail の分かりにくい reject を避ける)。
+  // 申込自体は成立済みなので控えメールのみ見送る。
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(toEmail).trim())) {
+    return { ok: false, skipped: true, reason: "宛先メール形式が不正" };
+  }
 
   const tournName = tournament.name || "";
   const tournDate = tournament.date || "";

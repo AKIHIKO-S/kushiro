@@ -31,7 +31,7 @@ function categoryLabel(entrant, eventName) {
   const cat = entrant.category || "general";
   const catLabel = {
     general: "一般", high: "高校", middle: "中学",
-    elementary: "小学", senior: "シニア", junior: "ジュニア",
+    elementary: "小学", university: "大学", senior: "シニア", junior: "ジュニア",
     youth: "ユース", large: "ラージ",
   }[cat] || "一般";
   const gLabel = g === "female" ? "女子" : g === "male" ? "男子" : "混合";
@@ -45,9 +45,20 @@ const KIND_LABEL = {
   mixed_male: "混合ダブルス男子", mixed_female: "混合ダブルス女子",
   singles_male: "シングルス男子", singles_female: "シングルス女子",
 };
-const _jaLongDate = d => d
-  ? new Date(d).toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" })
-  : "";
+// date は自由記入TEXT列。非ISO値("未定"等)だと new Date() が Invalid Date になり
+// 領収書/対戦票に literally "Invalid Date" と印字されるため、パース不能なら原文を返す。
+const _jaLongDate = d => {
+  if (!d) return "";
+  const dt = new Date(d);
+  return isNaN(dt.getTime()) ? String(d)
+    : dt.toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" });
+};
+// 短い日付 (対戦票ヘッダー用)。非ISOは原文をそのまま返す。
+const _jaShortDate = d => {
+  if (!d) return "";
+  const dt = new Date(d);
+  return isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString("ja-JP");
+};
 // 団体 Map を団体名(ja)順に [team, members] で返す
 const sortedTeams = teams => Array.from(teams.entries()).sort((a, b) => a[0].localeCompare(b[0], "ja"));
 // メンバー配列を 種別×性別 で集計 (8キー固定・挿入順保持)
@@ -85,6 +96,7 @@ function buildAggregation(tournament, entrants, fees) {
       team: e.team || "(無所属)",
       kind: classifyEvent(e.event),
       gender: genderOf(e.event, e),
+      category: e.category || "general",  // categoryLabel 用。これが無いと名簿/団体/D/混合の区分が全て「一般」になる
       event_name: e.event,
       name: e.name,
       partner_name: e.partner_name || "",
@@ -429,7 +441,11 @@ ${shown.map((item, i) => renderReceipt(item, i, tournament, dateStr, sealPath, i
 }
 
 function renderReceipt(item, i, tournament, dateStr, sealPath, issuer, president, logoPath, startNo) {
-  const serialNo = (startNo || 1) + i;
+  // 連番は団体固有の通し番号(item.no)を基準にする。配列インデックス i だと
+  // 個別発行(only_team で1件のみ=i=0)時に全団体が No.0001 になり連番が衝突するため。
+  // start_no はオフセット(既定1=item.no そのまま)。xlsx 版(item.no 使用)とも一致。
+  const baseNo = item.no || (i + 1);
+  const serialNo = (startNo || 1) + (baseNo - 1);
   const amountStr = item.total.toLocaleString("ja-JP");
   const sealHtml = sealPath
     ? `<div class="seal-wrap"><img src="${sealPath}" alt="印鑑" onerror="this.outerHTML='<span class=no-seal>印</span>'"></div>`
@@ -617,7 +633,7 @@ function buildMatchCardsXlsx(tournament, matches, entrants, opts) {
     // ページヘッダー
     rows.push([
       tournament.name || "", "", "", "",
-      tournament.date ? new Date(tournament.date).toLocaleDateString("ja-JP") : "",
+      _jaShortDate(tournament.date),
       "", "", "",
     ]);
     rows.push(["対戦票 (審判用記録票) — " + eventName, "", "", "", "", "", "", ""]);
@@ -747,10 +763,24 @@ function buildCoachResultsHTML(coach, tournament, roster, matches, opts) {
     });
     const w = ms.filter(x => x.result === "win").length;
     const l = ms.filter(x => x.result === "loss").length;
-    teamW += w; teamL += l; playedCount += ms.length;
     return { player: p, matches: ms, w, l };
   });
   rows.sort((a, b) => String(a.player.furigana || a.player.name).localeCompare(String(b.player.furigana || b.player.name), "ja"));
+
+  // 団体集計タイル(勝/敗/総試合数)は試合ID単位で重複排除する。ダブルスで相方2名が
+  // ともに名簿に居ると同一試合が2回計上され水増しされるため(個人行は各自の記録なので別)。
+  {
+    const teamByMatch = new Map();
+    played.forEach(m => {
+      for (const p of roster) {
+        const r = resultOf(m, p);
+        if (!r) continue;
+        if (!teamByMatch.has(m.id)) teamByMatch.set(m.id, new Set());
+        teamByMatch.get(m.id).add(r);
+      }
+    });
+    for (const set of teamByMatch.values()) { playedCount++; if (set.has("win")) teamW++; if (set.has("loss")) teamL++; }
+  }
 
   const playerBlocks = rows.map(row => {
     const p = row.player;
