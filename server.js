@@ -847,7 +847,9 @@ app.get("/api/tournaments/:id/entrants", (req, res) => {
 app.get("/api/public/tournaments/:id/entrants", (req, res) => {
   res.json(stripEntrantPII(db.getEntrants(req.params.id, req.query.event)));
 });
-app.get("/api/entrants/:id", (req, res) => {
+// 単一エントリーは note(申込者の連絡先PII)を含む生データを返すため要管理キー
+// (利用元は admin の編集/連携フローのみ。一覧APIは stripEntrantPII 済み)。
+app.get("/api/entrants/:id", requireAdmin, (req, res) => {
   const e = db.getEntrant(req.params.id);
   if (!e) return res.status(404).json({ error: "エントリーが見つかりません" });
   res.json(e);
@@ -1531,10 +1533,14 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
   let stdout = "", stderr = "";
   py.stdout.on("data", (d) => { stdout += d.toString(); });
   py.stderr.on("data", (d) => { stderr += d.toString(); });
+  // python3 が無い等で spawn が失敗すると error と close(code≠0) が両方発火し、
+  // res を二重送信(ERR_HTTP_HEADERS_SENT)し得るため、応答を1回に限定するガード。
+  let replied = false;
+  const reply = (status, body) => { if (replied) return; replied = true; res.status(status).json(body); };
   py.on("close", (code) => {
     try { fs.unlinkSync(xlsxPath); } catch {}
     if (code !== 0) {
-      return res.status(500).json({
+      return reply(500, {
         error: "パーサー失敗 (exit code " + code + ")",
         stderr: stderr.slice(0, 500),
         used_parser: "parse_jtta_excel.py (fallback)",
@@ -1543,11 +1549,11 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
     let data;
     try { data = JSON.parse(stdout); }
     catch (e) {
-      return res.status(500).json({ error: "JSON 解析失敗: " + e.message,
+      return reply(500, { error: "JSON 解析失敗: " + e.message,
         used_parser: "parse_jtta_excel.py (fallback)" });
     }
     if (data.error) {
-      return res.status(400).json({ ...data, used_parser: "parse_jtta_excel.py (fallback)" });
+      return reply(400, { ...data, used_parser: "parse_jtta_excel.py (fallback)" });
     }
     data.regenerate = regenerate;
     data.auto_link_to_players = autoLink;
@@ -1555,15 +1561,15 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
     // ここで importBracket が throw すると uncaughtException → リクエストがハングするため明示的に捕捉。
     try {
       const r = db.importBracket(req.params.id, data);
-      res.json({ ...r, used_parser: "parse_jtta_excel.py (fallback)" });
+      reply(200, { ...r, used_parser: "parse_jtta_excel.py (fallback)" });
     } catch (e) {
-      res.status(500).json({ error: "取込に失敗しました: " + e.message,
+      reply(500, { error: "取込に失敗しました: " + e.message,
         used_parser: "parse_jtta_excel.py (fallback)" });
     }
   });
   py.on("error", (err) => {
     try { fs.unlinkSync(xlsxPath); } catch {}
-    res.status(500).json({ error: "python3 が見つかりません: " + err.message });
+    reply(500, { error: "python3 が見つかりません: " + err.message });
   });
 });
 
@@ -2151,7 +2157,7 @@ app.get("/api/tournaments/:id/best8", (req, res) => {
 
 // ─── DB スナップショット (試合中の自動バックアップ + 手動保存/復元) ───────────
 // 一覧 (名前/サイズ/日時のみ・中身は返さない → GET 可)
-app.get("/api/admin/snapshots", (req, res) => {
+app.get("/api/admin/snapshots", requireAdmin, (req, res) => {
   res.json({ snapshots: db.listSnapshots(), auto_enabled: true,
     ongoing: db.hasOngoingTournament() });
 });
@@ -2672,7 +2678,8 @@ app.put("/api/tournaments/:id/court-layout", requireAdmin, (req, res) => {
 });
 
 // ── 申込管理 (admin) ─────────────────────────────
-app.get("/api/tournaments/:id/entries", (req, res) => {
+// 申込台帳(entry_note=連絡先PIIを含む)。利用元は admin の申込管理のみ → 要管理キー。
+app.get("/api/tournaments/:id/entries", requireAdmin, (req, res) => {
   res.json(db.getEntries(req.params.id, req.query.status));
 });
 app.post("/api/tournaments/:id/entries", requireAdmin, (req, res) => {

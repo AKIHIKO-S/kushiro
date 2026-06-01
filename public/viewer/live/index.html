@@ -1101,6 +1101,10 @@ const LV = {
     const s = LV.state;
     if (!s) return;
     const main = document.getElementById("lvMain");
+    // V2: 全再描画で検索入力のフォーカス/カーソルが失われる(毎キーストローク+ポーリング)ため、再描画前に保存
+    const _ae = document.activeElement;
+    const _searchFocused = !!(_ae && _ae.id === "lvSearchInput");
+    const _caret = _searchFocused ? _ae.selectionStart : null;
     clear(main);
 
     // 大会タイトル+メタ
@@ -1151,6 +1155,7 @@ const LV = {
     // 検索
     const searchBox = h("div", { className: "lv-search" },
       h("input", {
+        id: "lvSearchInput",
         placeholder: "選手名・所属チームで検索",
         value: LV.searchQuery,
         onInput: (e) => { LV.searchQuery = e.target.value; LV.render(); },
@@ -1175,6 +1180,15 @@ const LV = {
 
     // 試合タブ
     main.appendChild(LV.renderMatchTabs(s));
+
+    // V2: 再描画後に検索入力のフォーカス/カーソル位置を復元 (入力が途切れない)
+    if (_searchFocused) {
+      const inp = document.getElementById("lvSearchInput");
+      if (inp) {
+        inp.focus();
+        try { const p = (_caret == null ? inp.value.length : _caret); inp.setSelectionRange(p, p); } catch (e) {}
+      }
+    }
   },
 
   renderCourtBoard(s) {

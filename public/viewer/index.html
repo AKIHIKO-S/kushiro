@@ -1055,7 +1055,7 @@ const V = {
    m.loser_name ? h("div", { style: { padding: "10px", marginTop: "8px", background: "#f8fafc", borderRadius: "8px" } },
      h("div", { className: "text-sub" }, "" + m.loser_name,
        m.loser_team ? h("span", { className: "text-sm" }, " (" + m.loser_team + ")") : null)) : null);
- const foot = V.playerDbFoot(V.resultSideMembers(m, "winner"), V.resultSideMembers(m, "loser"));
+ const foot = L.playerDbFoot(L.resultSideMembers(m, "winner"), L.resultSideMembers(m, "loser"));
  TT.openModal("試合詳細", body, foot);
  },
 
@@ -1773,7 +1773,7 @@ const MS = {
  ),
  );
  // シングルス/ダブルス両名の「選手DB ▸」ボタン (#237/#260)
- const foot = V.playerDbFoot(V.resultSideMembers(m, "winner"), V.resultSideMembers(m, "loser"));
+ const foot = L.playerDbFoot(L.resultSideMembers(m, "winner"), L.resultSideMembers(m, "loser"));
  TT.openModal("試合詳細", body, foot);
  },
 };
@@ -2554,7 +2554,7 @@ const L = {
      color: "#6d28d9", textAlign: "center" } }, "審判: " + m.referee_name) : null,
  );
  // シングルス/ダブルス両名の「選手DB ▸」ボタン (#237/#260) — タップで個人DB(戦績・入賞歴)へ
- const foot = V.playerDbFoot(L.sideMembers(m, 1), L.sideMembers(m, 2));
+ const foot = L.playerDbFoot(L.sideMembers(m, 1), L.sideMembers(m, 2));
  TT.openModal("試合中 — コート " + t.table_no, body, foot);
  },
 };

@@ -1200,7 +1200,12 @@ function getCoachDashboard(coachId, tournamentId) {
     if (split(m.player2_name).includes(pn)) return m.player1_name || "";
     return m.player2_name || m.player1_name || "";
   };
-  const onTable = st.on_table || [], callable = st.callable || [], waiting = st.waiting || [], finished = st.recent_finished || [];
+  const onTable = st.on_table || [], callable = st.callable || [], finished = st.recent_finished || [];
+  // 注意: getOperationState は waiting を「件数(number)」で返すため st.waiting.find は TypeError(500)。
+  // 監督ダッシュボードでは待機中の試合実体が要るので直接取得する。
+  const waiting = sqlite.prepare(
+    "SELECT id, player1_id, player2_id, winner_id, loser_id, player1_name, player2_name, winner_name, loser_name, event FROM matches WHERE tournament_id=? AND status='waiting'"
+  ).all(tournamentId);
   const slim = p => ({ id: p.id, name: p.name, furigana: p.furigana || "", team: p.team || "" });
   const items = roster.map(p => {
     let m;
@@ -2757,10 +2762,11 @@ function finishMatchInternal(matchId, data) {
   let winner, loser;
   if (data.winner_slot === 1) { winner = p1; loser = p2; }
   else if (data.winner_slot === 2) { winner = p2; loser = p1; }
-  else if (data.winner_id) {
-    if (m.player1_id === data.winner_id) { winner = p1; loser = p2; }
-    else { winner = p2; loser = p1; }
-  } else return null;
+  // winner_id は実プレイヤーに一致する場合のみ採用。どちらにも一致しなければ
+  // 黙って player2 を勝者にせず null を返す(誤った勝者記録/ブラケット破壊を防ぐ)。
+  else if (data.winner_id != null && data.winner_id === m.player1_id) { winner = p1; loser = p2; }
+  else if (data.winner_id != null && data.winner_id === m.player2_id) { winner = p2; loser = p1; }
+  else return null;
 
   // セットスコア集計 (sets は [p1, p2] 視点。勝者が p1 側か p2 側かで数え方を反転)
   // 注: player_id が両方 null の entrant ブラケットでは m.player1_id===winner.id が
@@ -4580,6 +4586,9 @@ function swapBracketSlots(tournamentId, event, a, b) {
     });
   });
   setSlot();
+  // 入れ替えで「実選手 vs BYE」が生じた場合はシード繰り上がりを自動適用 (#57766方針)。
+  // autoAdvanceByes は status!='completed' のみ対象・最大12パスで安全。
+  autoAdvanceByes(tournamentId, event);
   return { success: true };
 }
 
@@ -5069,21 +5078,24 @@ function editMatch(matchId, data) {
   if (data.winner_slot || data.winner_id || sets !== null ||
       data.winner_sets !== undefined || data.loser_sets !== undefined) {
     const m2 = stmts.getMatch.get(matchId);
-    let winner, loser;
-    if (data.winner_slot === 1 || data.winner_id === m2.player1_id) {
-      winner = { id: m2.player1_id, name: m2.player1_name, team: m2.player1_team };
-      loser = { id: m2.player2_id, name: m2.player2_name, team: m2.player2_team };
-    } else if (data.winner_slot === 2 || data.winner_id === m2.player2_id) {
+    let winner, loser, winnerIsP1 = null;
+    // 注意: entrant ブラケットは player1_id/player2_id が両方 null になり得るため、
+    //       id 比較(null===null=true)で side を判定すると誤る。side を明示的に確定する。
+    if (data.winner_slot === 2 || (data.winner_id != null && data.winner_id === m2.player2_id)) {
       winner = { id: m2.player2_id, name: m2.player2_name, team: m2.player2_team };
       loser = { id: m2.player1_id, name: m2.player1_name, team: m2.player1_team };
+      winnerIsP1 = false;
+    } else if (data.winner_slot === 1 || (data.winner_id != null && data.winner_id === m2.player1_id)) {
+      winner = { id: m2.player1_id, name: m2.player1_name, team: m2.player1_team };
+      loser = { id: m2.player2_id, name: m2.player2_name, team: m2.player2_team };
+      winnerIsP1 = true;
     }
     if (winner) {
       const useSets = sets !== null ? sets : JSON.parse(m2.sets_json || "[]");
       let ws = 0, ls = 0;
       useSets.forEach(s => {
         if (Array.isArray(s) && s.length === 2) {
-          // m2の player1 視点
-          const winnerIsP1 = winner.id === m2.player1_id;
+          // winnerIsP1 は上で side 確定済み (id 比較しないこと: entrant=null同士で誤判定するため)
           if (winnerIsP1) {
             if (s[0] > s[1]) ws++; else if (s[1] > s[0]) ls++;
           } else {
@@ -5109,11 +5121,18 @@ function editMatch(matchId, data) {
         matchId,
       );
       // 勝者を次戦へ送り込む (#190: 手動編集で結果を入れてもブラケットが進まない不具合を修正)
+      // ただし次戦が既に進行中/完了済みなら、スロット上書きで下流を壊すため自動進出はしない
+      // (correctResult と同じ安全策。必要時は本部が個別に修正)。
       if (m2.next_match_id) {
-        try {
-          advanceWinnerInline(m2.next_match_id, m2.next_slot === 2 ? 2 : 1,
-            { id: winner.id, name: winner.name, team: winner.team });
-        } catch (e) { console.error("editMatch advance error:", e); }
+        const nm = stmts.getMatch.get(m2.next_match_id);
+        if (nm && (nm.status === "completed" || nm.status === "on_table")) {
+          console.warn(`editMatch: 次戦 ${nm.id} が ${nm.status} のため自動進出をスキップ`);
+        } else {
+          try {
+            advanceWinnerInline(m2.next_match_id, m2.next_slot === 2 ? 2 : 1,
+              { id: winner.id, name: winner.name, team: winner.team });
+          } catch (e) { console.error("editMatch advance error:", e); }
+        }
       }
     }
   }

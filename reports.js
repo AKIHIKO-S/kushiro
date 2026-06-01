@@ -270,8 +270,9 @@ function buildAggregationXlsx(tournament, entrants, opts) {
 function buildReceiptsHTML(tournament, entrants, opts) {
   opts = opts || {};
   const { teams, fees: F } = buildAggregation(tournament, entrants, opts.fees);
-  const sealPath = opts.seal_url || "/shared/assets/seal.png";
-  const logoPath = opts.logo_url || "/shared/assets/icon-192.png";   // 協会ロゴ (#272)
+  // src属性に展開するため必ずエスケープ (seal_url/logo_url はクエリ由来=反射XSS防止)
+  const sealPath = escapeHtml(opts.seal_url || "/shared/assets/seal.png");
+  const logoPath = escapeHtml(opts.logo_url || "/shared/assets/icon-192.png");   // 協会ロゴ (#272)
   const issuer = opts.issuer || "釧路卓球協会";
   const president = opts.president || "会長  山本 満";
   const startNo = parseInt(opts.start_no) > 0 ? parseInt(opts.start_no) : 1;
@@ -714,7 +715,7 @@ function _crSplit(s) { return String(s == null ? "" : s).split(/\s*[\/／・]\s*
 
 function buildCoachResultsHTML(coach, tournament, roster, matches, opts) {
   opts = opts || {};
-  const logoPath = opts.logo_url || "/shared/assets/icon-192.png";
+  const logoPath = escapeHtml(opts.logo_url || "/shared/assets/icon-192.png");   // src展開のためエスケープ(反射XSS防止)
   coach = coach || {}; tournament = tournament || {}; roster = roster || []; matches = matches || [];
   const teamName = coach.team || "";
   const dateStr = _jaLongDate(tournament.date);

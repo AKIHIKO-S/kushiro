@@ -324,12 +324,17 @@ function extractDoublesPlayers(items, classification, eventName) {
     const n1 = names[0] ? normalizeName(names[0].str) : '';
     const n2 = names[1] ? normalizeName(names[1].str) : '';
     const team = teams[0] ? stripParens(teams[0].str) : '';
-    const pairName = (n1 && n2 && n1 !== n2) ? n1 + '/' + n2 : (n1 || n2);
-    if (!pairName) return null;
+    // ペアは name(選手1)/partner_name(選手2) に分離 → 2名とも個別DB連携可能に。
+    // importer は data.partner_name を参照する。name:"A/B" 結合だと1名扱いになり
+    // パートナー分離・DB連携が壊れるため、parse_ktta_bracket.js と同じ形に揃える。
+    const member1 = n1 || n2;
+    const member2 = (n1 && n2 && n1 !== n2) ? n2 : '';
+    if (!member1) return null;
     return {
-      name: pairName,
-      name1: n1, name2: n2,
+      name: member1,
+      partner_name: member2,
       team,
+      partner_team: team, // 同チーム既定 (別チームは取込後に編集可)
       is_doubles: true,
       seed: posItem.value,
     };

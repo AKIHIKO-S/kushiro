@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════
 
 // 共通ユーティリティ (lib/) を取り込み。escapeHtml/escapeJs/escapeJsId/eventName は entry_form 既存実装と同一。
-const { escapeHtml, escapeJs, escapeJsId } = require("./lib/text");
+const { escapeHtml, escapeJs, escapeJsId, jsonForScript } = require("./lib/text");
 const { eventName: _eventName } = require("./lib/events");
 
 // buildEntryFormHTML の前処理(締切/参加料注記/種目名正規化などの派生値)を計算する内部ヘルパ。
@@ -51,8 +51,8 @@ function buildEntryFormHTML(tournament, events, opts) {
   const singlesEvents = events.filter(e => e.type === "singles");
   const doublesEvents = events.filter(e => e.type === "doubles");
 
-  // 各種目を JS データとして埋込
-  const eventsJson = JSON.stringify(events.map(e => ({
+  // 各種目を JS データとして埋込 (インラインscript安全化: </script>等のブレイクアウト防止)
+  const eventsJson = jsonForScript(events.map(e => ({
     name: e.name,
     fee: e.fee || 0,
     type: e.type || "singles",
@@ -685,33 +685,6 @@ function recalcTotal() {
   document.getElementById("totalAmount").textContent = total.toLocaleString("ja-JP");
   // ★ 種目ごとのカウント表示も更新 (記入済みのみ)
   updateCounts();
-}
-
-// その他種目 (自由記入) の行を追加
-function addCustomEvent() {
-  const container = document.getElementById("customEvents");
-  const idx = container.children.length;
-  const row = document.createElement("div");
-  row.className = "entry-row";
-  row.style.marginBottom = "8px";
-  row.style.padding = "10px";
-  row.style.background = "#fff7ed";
-  row.style.borderLeft = "3px solid #f59e0b";
-  row.style.borderRadius = "4px";
-  row.innerHTML =
-    '<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">' +
-    '<strong style="font-size:13px;">自由記入 #' + (idx + 1) + '</strong>' +
-    '<button type="button" class="btn-del" ' +
-    'onclick="this.closest(\\'.entry-row\\').remove(); recalcTotal();">削除</button>' +
-    '</div>' +
-    '<div style="display:grid; grid-template-columns:2fr 1fr; gap:6px; margin-bottom:6px;">' +
-    '<input type="text" name="cust_name" placeholder="種目名 (例: ミックスダブルス・小学団体 等)" style="padding:6px;" />' +
-    '<input type="number" name="cust_fee" placeholder="参加料(円)" min="0" step="100" style="padding:6px;" oninput="recalcTotal()" />' +
-    '</div>' +
-    '<input type="text" name="cust_players" placeholder="参加者氏名 (複数の場合はカンマ区切り)" style="width:100%; padding:6px; font-size:12px; margin-bottom:4px;" />' +
-    '<input type="text" name="cust_team" placeholder="所属" style="width:100%; padding:6px; font-size:12px;" />';
-  container.appendChild(row);
-  recalcTotal();
 }
 
 function escapeHtml(s) {

@@ -1428,9 +1428,12 @@ const A = {
 
  showTab(name, skipHash) {
  A.activeTab = name;
- // 進行管理タブから離れる時は 4秒ポーリングを停止 (#190: タブ切替後もポーリングが残る漏れを修正)
- if (name !== "operations" && typeof O !== "undefined" && O.poller) {
-   clearInterval(O.poller); O.poller = null;
+ // 進行管理タブから離れる時はポーリング停止＋SSEも閉じる
+ // (#190 ポーリング残り / SSEを閉じないと裏で ops 受信→hiddenな #opMain へ再描画し続ける #264)
+ // 復帰時は O.init()→selectTournament() がSSE/ポーリングを張り直すため安全。
+ if (name !== "operations" && typeof O !== "undefined") {
+   if (O.poller) { clearInterval(O.poller); O.poller = null; }
+   if (typeof O._closeOpsStream === "function") O._closeOpsStream();
  }
  document.querySelectorAll(".tab").forEach(t =>
  t.classList.toggle("active", t.dataset.tab === name));
@@ -2110,7 +2113,7 @@ const A = {
  if (!name) return toast("大会名は必須です", "err");
  const tplId = tplSelect.value;
  const tpl = tplId && window.TT_buildTournamentFromTemplate
- ? window.TT_buildTournamentFromTemplate(tplId, document.getElementById("tDate").value)
+ ? window.TT_buildTournamentFromTemplate(tplId, { date: document.getElementById("tDate").value })
  : null;
  // 大会本体作成
  const created = await api.post("/api/tournaments", {
