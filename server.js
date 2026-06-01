@@ -2134,8 +2134,16 @@ function slimPublicState(st) {
 }
 // /live は直列化済みJSON文字列をフィンガープリント単位でキャッシュ。
 // 多数同時アクセスでも再シリアライズせず文字列を send → CPU/帯域を大幅節約。
-const _liveCache = new Map(); // tid -> { key, json }
+const _liveCache = new Map(); // tid -> { key, json, fpAt }
+// 突発負荷(SSE一斉切断→全員が同時に /live をポーリング 等)で fingerprint 取得(DB読取)が集中し
+// event-loop を飽和させるのを防ぐため、直近 TTL 内は fingerprint を引かずに前回JSONを返す。
+// SSE が変化を即push する主経路のため、ポーリング側の最大 TTL 遅延は実用上問題なし。
+const LIVE_FP_TTL_MS = parseInt(process.env.LIVE_FP_TTL_MS) || 200;
 function getCachedLiveJSON(tid) {
+  const cached = _liveCache.get(tid);
+  const now = Date.now();
+  // 直近 TTL 内に検証済みなら、DBを引かずそのまま返す (バースト時のDB読取を集約)
+  if (cached && cached.fpAt && (now - cached.fpAt) < LIVE_FP_TTL_MS) return cached;
   const fp = db.getOpsFingerprint(tid);
   if (!fp || fp.error) {
     const st = db.getOperationState(tid);
@@ -2143,10 +2151,10 @@ function getCachedLiveJSON(tid) {
   }
   const key = fp.v + "|" + (fp.status || "");
   const c = _liveCache.get(tid);
-  if (c && c.key === key) return c;
+  if (c && c.key === key) { c.fpAt = now; return c; }   // 変化なし → 再シリアライズせず流用
   const st = db.getOperationState(tid);
   if (!st) return null;
-  const entry = { key, json: JSON.stringify(slimPublicState(st)) };
+  const entry = { key, json: JSON.stringify(slimPublicState(st)), fpAt: now };
   _liveCache.set(tid, entry);
   if (_liveCache.size > 300) {
     const it = _liveCache.keys();
@@ -2257,9 +2265,13 @@ const sseClients = new Map();    // tid -> Set<res>
 const sseLastFp = new Map();     // tid -> fingerprint
 const sseLastEmit = new Map();   // tid -> ms
 let sseTotal = 0;
-const SSE_MAX = 300;             // 同時接続の上限 (リソース枯渇/DoS 対策)
-const sseByIp = new Map();       // IP -> 接続数。per-IP 上限 (#271 DoS対策)。NAT配下の正規利用も考慮し緩め。
-const SSE_PER_IP = 12;
+// 同時SSE接続の上限。会場の共有WiFi/Cloudflare 経由では多数の視聴者が「1つの IP」に集約されるため、
+// per-IP 上限が低いと正規の観戦者が締め出される(#271の方針=閲覧ページはIP制限しない)。
+// グローバル上限(SSE_MAX)を資源枯渇/DoSの主防御とし、per-IP は会場規模を通すため大きめ。env で運用調整可。
+// 拒否されても CLIENT は自動でポーリングに退避するため致命ではないが、100人規模の会場では受理されるべき。
+const SSE_MAX = parseInt(process.env.SSE_MAX) || 600;
+const sseByIp = new Map();       // IP -> 接続数
+const SSE_PER_IP = parseInt(process.env.SSE_PER_IP) || 200;
 function sseClientIp(req) {
   return (req.headers["cf-connecting-ip"]
     || (req.headers["x-forwarded-for"] || "").toString().split(",")[0].trim()
