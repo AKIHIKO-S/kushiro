@@ -968,10 +968,33 @@ function showMessage(text, type) {
   if (type === "ok") setTimeout(() => box.innerHTML = "", 8000);
 }
 
+// ── 埋込iframeの高さ自動調整 ──
+// 実コンテンツ高さを親フレームへ通知。親側リスナ(埋込スニペットに同梱)が iframe の
+// 高さを合わせる。スクリプトを除去するCMS(一部Jimdo)では通知が無視され固定高にフォールバック。
+function ttPostHeight() {
+  try {
+    if (window.parent === window) return; // 埋込でない(単独表示)なら不要
+    var h = Math.max(
+      document.body ? document.body.scrollHeight : 0,
+      document.documentElement ? document.documentElement.scrollHeight : 0
+    );
+    if (h > 0) window.parent.postMessage(
+      { __ktta_entry_form: true, id: TOURNAMENT_ID, height: h }, "*");
+  } catch (_) {}
+}
+if (window.ResizeObserver) {
+  try { new ResizeObserver(ttPostHeight).observe(document.body); } catch (_) {}
+}
+window.addEventListener("load", ttPostHeight);
+window.addEventListener("resize", ttPostHeight);
+// レイアウト/フォント確定後の取りこぼし対策に数回だけ遅延送信
+[120, 500, 1200].forEach(function (ms) { setTimeout(ttPostHeight, ms); });
+
 // 初期化 (失敗しても安全網が案内を表示)
 try {
   renderEvents();
   recalcTotal();
+  ttPostHeight();
 } catch (e) {
   if (window.__ttShowFatal) window.__ttShowFatal(e && e.message);
   else throw e;

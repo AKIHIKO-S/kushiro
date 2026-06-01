@@ -2892,19 +2892,32 @@ const A = {
  if (!formUrl.startsWith("https://")) {
    errors.push("[致命] iframe方式は HTTPS 必須。「本番URL設定」で https:// で始まる URL を設定してください。");
  }
+ // iframe 高さ自動調整リスナ (スクリプト可のサイト=STUDIO/独自HTML等で有効。
+ // スクリプトを除去するCMS=一部Jimdo では無視され固定高にフォールバックするだけで無害)。
+ // 送信元オリジンを厳格に照合し、自分の申込フォームからの高さ通知のみ反映。
+ const resizeScript =
+   `\n<script>\n` +
+   `/* KTTA 申込フォーム iframe 高さ自動調整 (任意・無害) */\n` +
+   `(function(){var O=${JSON.stringify(origin)},T=${JSON.stringify(String(t.id))};\n` +
+   `window.addEventListener("message",function(e){if(e.origin!==O)return;var d=e.data;\n` +
+   `if(!d||d.__ktta_entry_form!==true||d.id!==T||typeof d.height!=="number")return;\n` +
+   `var f=document.querySelector('iframe[data-ktta-entry="'+T+'"]');\n` +
+   `if(f&&d.height>200){f.style.height=(d.height+24)+"px";}});})();\n` +
+   `<\/script>`;
  if (platform === "jimdo") {
    // Jimdo: HTTPS iframe (Jimdo の HTML埋込ウィジェットで動作)
    code =
      `<!-- ${t.name} 申込フォーム (Jimdo HTML埋込ウィジェット用) -->\n` +
      `<div style="width:100%;max-width:840px;margin:20px auto;padding:0">\n` +
      `  <iframe src="${formUrl}"\n` +
+     `          data-ktta-entry="${t.id}"\n` +
      `          width="100%" height="1600"\n` +
      `          frameborder="0" scrolling="auto"\n` +
      `          style="border:0;display:block;width:100%;background:#fff;border-radius:8px"\n` +
      `          title="${t.name} 申込フォーム"\n` +
      `          loading="lazy"\n` +
      `          allow="clipboard-write"></iframe>\n` +
-     `</div>`;
+     `</div>` + resizeScript;
  } else if (platform === "studio") {
    // STUDIO: HTTPS iframe
    code =
