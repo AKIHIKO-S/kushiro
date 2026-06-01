@@ -812,6 +812,10 @@ const V = {
    location.hash = name;
  }
  if (name !== "coach" && typeof CO !== "undefined") CO._stopDash();  // ダッシュボード自動更新を停止 (#286)
+ // タブ離脱時は各モジュールのSSE接続を閉じ、会場NAT配下の同時接続数を節約 (#264)。
+ // 再入時に各 init() が張り直す。
+ if (name !== "live" && typeof L !== "undefined") L._closeOpsStream();
+ if (name !== "myportal" && typeof MP !== "undefined") MP._closeOpsStream();
  if (name === "tournaments") V.renderTournaments();
  else if (name === "search") V.doSearch();
  else if (name === "live") L.init();
@@ -1903,6 +1907,7 @@ const EN = {
 // ═══ 監督・顧問モード (#285) ════════════════════════════
 const CO = {
  code: "", coach: null,
+ _es: null, _sseLastMsg: 0,   // 進行SSE (#264 パターン)
  _hdr() { return { "Content-Type": "application/json", "X-Coach-Code": CO.code }; },
  async _get(url) { try { return await fetch(url, { headers: { "X-Coach-Code": CO.code } }).then(r => r.json()); } catch (e) { return {}; } },
  async _post(url, body) { try { return await fetch(url, { method: "POST", headers: CO._hdr(), body: JSON.stringify(body || {}) }).then(r => r.json()); } catch (e) { return {}; } },
@@ -2072,7 +2077,24 @@ const CO = {
  TT.openModal(p.name + " の修正・削除 申請", body, foot);
  },
  // ── マイ選手の進行ダッシュボード (#286) ──
- _stopDash() { if (CO._dashTimer) { clearInterval(CO._dashTimer); CO._dashTimer = null; } },
+ _stopDash() { if (CO._dashTimer) { clearInterval(CO._dashTimer); CO._dashTimer = null; } CO._closeOpsStream(); },
+ // 進行SSE購読 (#264 パターン)。進行変化を即push受信しダッシュボードを再取得。
+ // 送られるのは reload 合図のみ (PII無)。SSE不可/断時は下のタイマーが代替。
+ _initOpsStream(tid) {
+ CO._closeOpsStream();
+ if (typeof EventSource === "undefined" || !tid) return;
+ try {
+ const es = new EventSource("/api/public/tournaments/" + encodeURIComponent(tid) + "/ops-stream");
+ CO._es = es;
+ es.onmessage = (e) => {
+ CO._sseLastMsg = Date.now();
+ let d = null; try { d = JSON.parse(e.data || "{}"); } catch (_) {}
+ if (d && d.type === "ops") { const el = document.getElementById("coachDashList"); if (el && CO.coach) CO._loadDash(el, CO._dashTid); }
+ };
+ es.onerror = () => { /* 自動再接続。復帰までタイマーが代替 */ };
+ } catch (e) { /* SSE 不可環境 → タイマーが代替 */ }
+ },
+ _closeOpsStream() { if (CO._es) { try { CO._es.close(); } catch (e) {} CO._es = null; } CO._sseLastMsg = 0; },
  _statusStyle(s) {
  const m = { playing: ["#dc2626", "#fff"], callable: ["#d97706", "#fff"], waiting: ["#64748b", "#fff"],
  won: ["#16a34a", "#fff"], lost: ["#475569", "#fff"], none: ["#334155", "#cbd5e1"] };
@@ -2122,7 +2144,9 @@ const CO = {
  card.appendChild(listEl);
  CO._loadDash(listEl, CO._dashTid);
  CO._stopDash();
+ CO._initOpsStream(CO._dashTid);   // 変化は即push。下のタイマーはSSE断時のフォールバック。
  CO._dashTimer = setInterval(() => {
+ if (CO._sseLastMsg && (Date.now() - CO._sseLastMsg) < 9000) return;  // SSE健全時はポーリング省略
  const el = document.getElementById("coachDashList");
  if (el && CO.coach) CO._loadDash(el, CO._dashTid); else CO._stopDash();
  }, 6000);
@@ -2601,6 +2625,9 @@ const MP = {
  lastNotified: null, // 直前に通知した状態(連続通知防止)
  notifEnabled: false,
  _pushReady: false,   // 購読登録済みフラグ (通知ON表示に使用) #268-push
+ _es: null,           // SSE (EventSource) 接続 — 呼出をより速く検知 (#264 パターン)
+ _sseTid: null,       // 購読中の大会ID
+ _sseLastMsg: 0,      // 直近SSEメッセージ時刻 (ポーリング省略判定用)
 
  async init() {
  MP.playerId = localStorage.getItem("tt_player_id") || null;
@@ -2610,7 +2637,9 @@ const MP = {
  MP.renderRegister();
  } else {
  await MP.fetch();
- MP.poller = setInterval(() => MP.fetch(), 5000);
+ // SSE健全時はポーリングを省略し、変化時はSSE pushで即 fetch (呼出をより速く通知)。
+ // SSE不可/断時は5秒ポーリングが確実な代替として残る (呼出見落とし防止)。
+ MP.poller = setInterval(() => MP.tick(), 5000);
  // 既登録なら Web Push を(再)購読 (端末/許可状況が変わっている場合に備える)
  if (("Notification" in window) && Notification.permission === "granted") MP.setupPush();
  }
@@ -2693,6 +2722,7 @@ const MP = {
  localStorage.removeItem("tt_player_id");
  MP.playerId = null;
  if (MP.poller) clearInterval(MP.poller);
+ MP._closeOpsStream();
  MP.init();
  },
 
@@ -2709,6 +2739,11 @@ const MP = {
  const prevState = MP.state?.my_state;
  MP.state = r;
  MP.render();
+ // 出場中の大会が判明したら、その大会の進行SSEを購読 (変化を即push→fetch)。
+ // 大会が変わった/未参加になった場合は購読を張り替え/解除。
+ const tid = r.tournament && r.tournament.id;
+ if (tid && MP._sseTid !== tid) MP._initOpsStream(tid);
+ else if (!tid && MP._es) MP._closeOpsStream();
  // 状態が「callable」(呼出可能) になった瞬間 or 「playing」になった瞬間に通知
  const newKey = r.my_state + "|" + (r.current?.id || r.next?.id || "");
  if (newKey !== MP.lastNotified) {
@@ -2719,6 +2754,33 @@ const MP = {
  MP.lastNotified = newKey;
  }
  } catch (e) { console.error(e); }
+ },
+
+ // SSE健全時 (直近メッセージ < 7秒) はポーリングを省略。SSE断時は 5秒ごとに fetch して代替。
+ tick() {
+ if (MP._sseLastMsg && (Date.now() - MP._sseLastMsg) < 7000) return;
+ MP.fetch();
+ },
+
+ // ── 進行SSE購読 (#264 パターン)。呼出/状態変化を即 push 受信し fetch を前倒し。──
+ // 送られるのは reload 合図のみ (PII無)。実データ・通知判定は従来どおり fetch() 内で実施。
+ _initOpsStream(tid) {
+ MP._closeOpsStream();
+ if (typeof EventSource === "undefined" || !tid) return;
+ try {
+ const es = new EventSource("/api/public/tournaments/" + encodeURIComponent(tid) + "/ops-stream");
+ MP._es = es; MP._sseTid = tid;
+ es.onmessage = (e) => {
+ MP._sseLastMsg = Date.now();
+ let d = null; try { d = JSON.parse(e.data || "{}"); } catch (_) {}
+ if (d && d.type === "ops") MP.fetch();   // 進行変化 → 即 fetch (呼出を素早く検知/通知)
+ };
+ es.onerror = () => { /* 自動再接続。復帰までは tick(ポーリング)が代替 */ };
+ } catch (e) { /* SSE 不可環境 → tick が代替 */ }
+ },
+ _closeOpsStream() {
+ if (MP._es) { try { MP._es.close(); } catch (e) {} MP._es = null; }
+ MP._sseTid = null; MP._sseLastMsg = 0;
  },
 
  // ── 通知発火 (ブラウザ通知 + 音 + バイブ) ──
