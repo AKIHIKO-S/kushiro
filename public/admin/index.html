@@ -1817,7 +1817,13 @@ const A = {
      "サイズ: " + (r.db.file_size_mb ? r.db.file_size_mb + " MB" : "不明"), h("br", {}),
      "大会数: " + (r.db.tournaments || 0), h("br", {}),
      "選手数: " + (r.db.players || 0), h("br", {}),
-     "試合数: " + (r.db.matches || 0)));
+     "試合数: " + (r.db.matches || 0),
+     (r.disk && !r.disk.error) ? h("br", {}) : null,
+     (r.disk && !r.disk.error)
+       ? h("span", { style: { color: (r.disk.used_pct >= 90 ? "#b91c1c" : "inherit"), fontWeight: (r.disk.used_pct >= 90 ? 700 : 400) } },
+           "ディスク: " + r.disk.free_gb + " GB 空き / " + r.disk.total_gb + " GB (" + r.disk.used_pct + "% 使用)"
+           + (r.disk.used_pct >= 90 ? "  ※残量わずか・要確認" : ""))
+       : null));
 
  // トラフィック
  const trafCard = h("div", { className: "card", style: { padding: "12px", marginBottom: "10px" } },

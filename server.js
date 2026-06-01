@@ -2817,6 +2817,20 @@ app.get("/api/diagnostics", requireAdmin, (req, res) => {
       ...dbStats,
       file_size_mb: dbSize ? Math.round(dbSize / 1024 / 1024 * 100) / 100 : null,
     },
+    // ディスク残量 (DB/スナップショットが置かれるボリューム)。満杯になると書込失敗→運用停止のため監視用。
+    disk: (() => {
+      try {
+        if (typeof fs.statfsSync !== "function") return null;  // Node 18.15+/19.6+
+        const dbp = process.env.DB_PATH || path.join(__dirname, "data", "tournament.db");
+        const s = fs.statfsSync(path.dirname(dbp));
+        const free = s.bavail * s.bsize, total = s.blocks * s.bsize;
+        return {
+          free_gb: Math.round(free / 1e9 * 100) / 100,
+          total_gb: Math.round(total / 1e9 * 100) / 100,
+          used_pct: total ? Math.round((1 - free / total) * 1000) / 10 : null,
+        };
+      } catch (e) { return { error: String(e.message || e) }; }
+    })(),
     traffic: {
       total_requests: DIAG.totalRequests,
       error_count: DIAG.errorCount,
