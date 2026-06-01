@@ -190,8 +190,9 @@ function extractDoubles(ws) {
       const key = r + ':' + n1c;
       if (seenName.has(key)) continue;
       seenName.add(key);
-      const name = name2 ? (name1 + ' / ' + name2) : name1;
-      cand.push({ seed, name, team, region, _r: r, _c: n1c, _seedCol: c });
+      // ペアは name(選手1)/partner_name(選手2) を分離して保持する。"A / B" 結合だと
+      // importer(buildEntrantNames)が1名扱いし、相方の脱落・氏名に "/" 混入が起きるため。
+      cand.push({ seed, name: name1, partner_name: name2 || '', team, region, _r: r, _c: n1c, _seedCol: c });
     }
   }
   // リーフseed列のみ採用(孤立整数=勝ち上がり位置を除外)
@@ -201,11 +202,12 @@ function extractDoubles(ws) {
   Object.keys(byCol).forEach(col => { if (byCol[col].length >= 3) out.push(...byCol[col]); });
   // ペアで重複除去: 左右ブロックで A/B と B/A の順違い、勝ち上がりの再掲を、
   // 2名を並べ替えた順序非依存キーで畳み込み、最小seedの1件を残す。
-  const pairKey = (nm) => String(nm || '').split('/')
-    .map(x => x.replace(/[\s　]/g, '')).filter(Boolean).sort().join('|');
+  // name と partner_name の両方から順序非依存キーを作る(A/B と B/A を畳み込む)。
+  const pairKey = (p) => [p.name, p.partner_name]
+    .map(x => String(x || '').replace(/[\s　]/g, '')).filter(Boolean).sort().join('|');
   const byPair = {};
   out.forEach(p => {
-    const k = pairKey(p.name);
+    const k = pairKey(p);
     if (!byPair[k] || p.seed < byPair[k].seed) byPair[k] = p;
   });
   return Object.values(byPair).sort((a, b) => a.seed - b.seed);
@@ -255,6 +257,8 @@ function parseSeedList(filePath, opts = {}) {
     const gender = guessGender(sn);
     const playersOut = ordered.map((p, i) => {
       const rec = { name: p.name, team: p.team || '', seed: i + 1 };
+      // ダブルス相方を分離して伝播 → importer が2名を個別DB連携できる
+      if (p.partner_name) { rec.partner_name = p.partner_name; rec.partner_team = p.team || ''; rec.is_doubles = true; }
       if (p.region) rec.region = p.region;
       if (gender) rec.gender = gender;
       rec.category = 'general';

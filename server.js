@@ -188,17 +188,21 @@ app.use((req, res, next) => {
   if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
   const opId = (req.body && req.body.op_id) || req.get("X-Op-Id");
   if (!opId) return next();
-  const hit = _idempCache.get(opId);
+  // キーは method+path+op_id に名前空間化する。op_id 単体だと、別ルート/別権限の要求が
+  // 同じ op_id を提示した際に前回応答を取り違える(公開POSTでキャッシュを仕込み、後続の
+  // 管理操作が素通りする等)。同一URL+同一op_idの再送だけが正しくヒットする。
+  const cacheKey = req.method + " " + req.path + "::" + opId;
+  const hit = _idempCache.get(cacheKey);
   if (hit) {
     if (Date.now() - hit.t <= IDEMP_TTL_MS) { res.set("X-Idempotent-Replay", "1"); return res.status(hit.status).json(hit.body); }
-    _idempCache.delete(opId);  // 期限切れ(再送猶予を過ぎた)→破棄して通常処理
+    _idempCache.delete(cacheKey);  // 期限切れ(再送猶予を過ぎた)→破棄して通常処理
   }
   const origJson = res.json.bind(res);
   res.json = (body) => {
     const sc = res.statusCode || 200;
     if (sc < 400) {
       const now = Date.now();
-      _idempCache.set(opId, { status: sc, body, t: now });
+      _idempCache.set(cacheKey, { status: sc, body, t: now });
       if (now - _idempLastSweep > 60000 || _idempCache.size > IDEMP_MAX) _idempSweep(now);
     }
     return origJson(body);
@@ -2057,7 +2061,8 @@ app.get("/api/tournaments/:id/applicants", (req, res) => {
   res.json({ tournament_id: req.params.id, applicants: result });
 });
 // 申込台帳 (フラット一覧) Excel 出力。Googleフォーム→スプレッドシートの代替。
-app.get("/api/tournaments/:id/applicants.xlsx", (req, res) => {
+// note 列(=氏名/メール/電話の連絡先PII)を「備考(連絡先等)」として出力するため要管理キー。
+app.get("/api/tournaments/:id/applicants.xlsx", requireAdmin, (req, res) => {
   try {
     const tournament = db.getTournament(req.params.id);
     if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
@@ -2458,7 +2463,9 @@ app.put("/api/tournaments/:id/op-settings", requireAdmin, (req, res) => {
 
 app.post("/api/matches/:id/finish", requireAdmin, (req, res) => {
   const pre = db.getMatch(req.params.id);
-  const ids = pre ? [pre.id, pre.next_match_id].filter(Boolean) : [req.params.id];
+  // 前方チェーン全体を snapshot/undo 対象に。BYE連鎖の自動進行は1回の確定で次戦より先
+  // (C,D..)まで書き換えるため、1ホップ[A,B]だと undo が下流の進出を戻せない(#undo)。
+  const ids = pre ? db.collectForwardChain(pre.id) : [req.params.id];
   const before = db.snapshotMatchRows(ids);
   const r = db.finishMatchOp(req.params.id, req.body || {});
   if (!r) return res.status(404).json({ error: "試合が見つかりません" });
@@ -2473,7 +2480,9 @@ app.post("/api/matches/:id/finish", requireAdmin, (req, res) => {
 // 次の試合に既に進出済みなら自動で取消 → 新勝者で再進出
 app.post("/api/matches/:id/correct", requireAdmin, (req, res) => {
   const pre = db.getMatch(req.params.id);
-  const ids = pre ? [pre.id, pre.next_match_id].filter(Boolean) : [req.params.id];
+  // 前方チェーン全体を snapshot/undo 対象に。BYE連鎖の自動進行は1回の確定で次戦より先
+  // (C,D..)まで書き換えるため、1ホップ[A,B]だと undo が下流の進出を戻せない(#undo)。
+  const ids = pre ? db.collectForwardChain(pre.id) : [req.params.id];
   const before = db.snapshotMatchRows(ids);
   const r = db.correctResult(req.params.id, req.body || {});
   if (r?.error) return res.status(400).json(r);
@@ -2624,7 +2633,8 @@ app.post("/api/matches/:id/approve-result", requireAdmin, (req, res) => {
   if (!m) return res.status(404).json({ error: "試合が見つかりません" });
   const pend = db.getPendingResult(req.params.id);
   if (!pend) return res.status(400).json({ error: "承認待ちの結果がありません" });
-  const ids = [m.id, m.next_match_id].filter(Boolean);
+  // 前方チェーン全体を undo 対象に (BYE連鎖で次戦より先まで波及するため。#undo)
+  const ids = db.collectForwardChain(m.id);
   const before = db.snapshotMatchRows(ids);
   const r = db.finishMatchOp(req.params.id, pend);
   if (!r) return res.status(404).json({ error: "試合が見つかりません" });

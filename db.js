@@ -2341,7 +2341,9 @@ const opStmts = {
       started_at=datetime('now','localtime'),
       call_count = COALESCE(call_count,0) + 1 WHERE id=?
   `),
-  clearTable: sqlite.prepare(`UPDATE matches SET table_no=0, status='pending' WHERE id=?`),
+  // 台から戻す(uncall)。割当審判と追加台もクリアする。残すと getPlayerRefereeLock が
+  // pending のこの試合を理由にその選手を「審判担当中」と判定し、本人の対戦呼出を阻む(取り残し)。
+  clearTable: sqlite.prepare(`UPDATE matches SET table_no=0, status='pending', referee_id=NULL, referee_name='', extra_tables='' WHERE id=?`),
   setCallCount: sqlite.prepare(`UPDATE matches SET call_count=? WHERE id=?`),
   bumpCallCount: sqlite.prepare(`UPDATE matches SET call_count = COALESCE(call_count,0) + 1 WHERE id=?`),
   resetCallCount: sqlite.prepare(`
@@ -2551,10 +2553,9 @@ function generateBracket(tournamentId, event, options) {
   const playerBySeed = {};
   sorted.forEach((p, i) => { playerBySeed[i + 1] = p; });
 
-  // 既存の同event試合を削除（regen）
-  if (options.regenerate) {
-    opStmts.deleteEventMatches.run(tournamentId, event);
-  }
+  // 既存試合の削除はトランザクション内(下の txn 冒頭)で行う。
+  // 外で先に消すと、その後の挿入が throw した際に旧ブラケットだけ消えて
+  // event が試合ゼロになる(復旧不能)ため、削除+挿入を1トランザクションに束ねる。
 
   // 全round/全matchを構築
   const matchesByRound = [];
@@ -2601,6 +2602,10 @@ function generateBracket(tournamentId, event, options) {
 
   // SQLite トランザクションで一括挿入 (小さい山=round1 から順に挿入)
   const txn = sqlite.transaction(() => {
+    // 再生成時の削除も同一トランザクション内で(挿入失敗時に旧ブラケットごと巻き戻す)
+    if (options.regenerate) {
+      opStmts.deleteEventMatches.run(tournamentId, event);
+    }
     matchesByRound.forEach((rnd, r) => {
       const roundName = roundNameForBracket(r + 1, totalRounds);
       const roundIdx = r + 1;  // 1=1回戦, 2=2回戦, ...
@@ -2784,6 +2789,10 @@ function finishMatchInternal(matchId, data) {
     }
   });
 
+  // 結果書込み〜次戦への送り込みを1トランザクションに束ねる。途中で throw すると
+  // 「完了済みなのに勝者が未進出」という半端なブラケット状態が残るため(correctResult と同じ原子性)。
+  // better-sqlite3 のネストは SAVEPOINT なので、再帰(BYE自動進行)や外側 txn からの呼出も安全。
+  const applyFinish = sqlite.transaction(() => {
   opStmts.setResult.run({
     id: matchId,
     winner_id: winner.id || null,
@@ -2831,6 +2840,8 @@ function finishMatchInternal(matchId, data) {
   if (m.next_match_id) {
     advanceWinnerInline(m.next_match_id, m.next_slot, winner);
   }
+  });
+  applyFinish();
 
   return stmts.getMatch.get(matchId);
 }
@@ -3446,6 +3457,10 @@ function assignAnyReferee(matchId, refereeId, opts) {
   if (!m) return { error: "試合が見つかりません" };
   const ref = stmts.getPlayer.get(refereeId);
   if (!ref) return { error: "選手が見つかりません" };
+  // 対戦者本人を自分の試合の審判に指定できない (拘束チェックは自試合を除外するため別途禁止)
+  if (refereeId === m.player1_id || refereeId === m.player2_id) {
+    return { error: "対戦者本人は審判に指定できません" };
+  }
 
   // 拘束チェック (force=true で skip)
   const t = stmts.getTournament.get(m.tournament_id);
@@ -3482,6 +3497,10 @@ function uncallMatch(matchId) {
 // 審判を割り当て
 function assignReferee(matchId, refereeId) {
   if (refereeId) {
+    const m = stmts.getMatch.get(matchId);
+    if (m && (refereeId === m.player1_id || refereeId === m.player2_id)) {
+      return { error: "対戦者本人は審判に指定できません" };
+    }
     const ref = stmts.getPlayer.get(refereeId);
     if (ref) opStmts.setReferee.run(refereeId, ref.name, matchId);
   } else {
@@ -4797,20 +4816,14 @@ function importFromSeedList(tournamentId, data) {
     entrantIds.push(e.id);
   });
 
+  // matches 生成は1回だけ。regenerate 時は generateBracket が「削除+生成」を同一
+  // トランザクションで行う(上の修正)。旧コードは generate→bare DELETE→再generate の
+  // 二重生成で、DELETE 後に2回目が throw すると matches が消えたまま復旧不能だった。
   const r = generateBracket(tournamentId, data.event, {
     entrant_ids: entrantIds,
-    regenerate: false, // 既に entrants は再生成済み (matches だけ regen)
+    regenerate: data.regenerate !== false,
     placement: data.placement,
   });
-
-  // matches だけ消す必要があるので generateBracket 内の regenerate を改めて呼ぶ
-  if (data.regenerate !== false) {
-    sqlite.prepare(`DELETE FROM matches WHERE tournament_id=? AND event=?`)
-      .run(tournamentId, data.event);
-    // 再呼出
-    const r2 = generateBracket(tournamentId, data.event, { entrant_ids: entrantIds, placement: data.placement });
-    return { ...r2, entrants_created: entrantIds.length, linked_to_players: linkedPlayers.length };
-  }
 
   return { ...r, entrants_created: entrantIds.length, linked_to_players: linkedPlayers.length };
 }
@@ -4822,17 +4835,17 @@ function importFromMatches(tournamentId, data) {
     return { error: "matches が必要です" };
   }
 
-  // 既存削除（再生成）
-  if (data.regenerate !== false) {
-    opStmts.deleteEventMatches.run(tournamentId, data.event);
-  }
+  // 既存削除（再生成）はトランザクション内(下記 txn 冒頭)で行う。
+  // 外で先に消すと、挿入が throw した際に event が試合ゼロのまま残る(復旧不能)。
 
   // bracket_size / total_rounds 推定
   // ※ insert 側は (m.bracket_round || 1) で round1 扱いするため、ここも同じ既定値に揃える。
   //   (bracket_round 未指定の取込データで round1 のBYE自動繰り上げ・選手番号付与が漏れるのを防ぐ)
   const round1Matches = data.matches.filter(m => (m.bracket_round || 1) === 1);
   let bracketSize = data.bracket_size;
-  if (!bracketSize && round1Matches.length) bracketSize = round1Matches.length * 2;
+  // round1件数×2 を必ず2の冪へ切り上げる。非2冪のままだと totalRounds が小数になり
+  // round名・左右(L/R)番号(halfSize=bracketSize/2)が壊れるため。
+  if (!bracketSize && round1Matches.length) bracketSize = Math.pow(2, Math.ceil(Math.log2(round1Matches.length * 2)));
   if (!bracketSize) {
     const maxRound = Math.max(...data.matches.map(m => m.bracket_round || 1));
     bracketSize = Math.pow(2, maxRound);
@@ -4849,11 +4862,7 @@ function importFromMatches(tournamentId, data) {
   let withResult = 0;
   let entrantsCreated = 0;
 
-  // 既存 entrants 削除 (同 event, regenerate デフォルト true)
-  if (data.regenerate !== false) {
-    sqlite.prepare(`DELETE FROM entrants WHERE tournament_id=? AND event=?`)
-      .run(tournamentId, data.event);
-  }
+  // 既存 entrants の削除も下記 txn 内で実施(挿入失敗時に巻き戻すため)。
 
   // 取込済 entrant 重複防止のキャッシュ (氏名+所属 → entrant_id)
   const entrantByKey = new Map();
@@ -4873,6 +4882,13 @@ function importFromMatches(tournamentId, data) {
   };
 
   const txn = sqlite.transaction(() => {
+    // 再生成: 既存の試合と entrants の削除も同一トランザクション内で行う
+    // (途中で throw した際に旧データごと巻き戻し、event が空になるのを防ぐ)。
+    if (data.regenerate !== false) {
+      opStmts.deleteEventMatches.run(tournamentId, data.event);
+      sqlite.prepare(`DELETE FROM entrants WHERE tournament_id=? AND event=?`)
+        .run(tournamentId, data.event);
+    }
     // 全試合 insert
     data.matches.forEach(m => {
       const r = m.bracket_round || 1;
@@ -5274,6 +5290,21 @@ function snapshotMatchRows(ids) {
   const ph = ids.map(() => "?").join(",");
   return sqlite.prepare(`SELECT * FROM matches WHERE id IN (${ph})`).all(...ids);
 }
+// 結果確定が前方(次戦)へ波及し得る試合id列を返す。BYE連鎖の自動進行は1回の finish で
+// next_match_id を辿って複数試合(C, D...)を書き換えるため、undo 用スナップショットは
+// 1ホップ([A, B])でなく前方チェーン全体を対象にする必要がある(#undo)。循環は seen で防止。
+function collectForwardChain(matchId, maxHops = 64) {
+  const ids = [];
+  const seen = new Set();
+  let cur = matchId;
+  while (cur && !seen.has(cur) && ids.length < maxHops) {
+    seen.add(cur);
+    ids.push(cur);
+    const m = stmts.getMatch.get(cur);
+    cur = m && m.next_match_id;
+  }
+  return ids;
+}
 function recordOp(tournamentId, action, summary, matchIds, beforeRows) {
   try {
     sqlite.prepare(
@@ -5612,7 +5643,7 @@ module.exports = {
   // DB スナップショット (バックアップ/復元)
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, hasOngoingTournament,
   // 操作ログ + Undo
-  snapshotMatchRows, recordOp, getOpLog, undoLastOp,
+  snapshotMatchRows, collectForwardChain, recordOp, getOpLog, undoLastOp,
   // ベスト8 (準々決勝進出者)
   getEventBest8, getAllBest8,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
