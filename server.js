@@ -1374,11 +1374,64 @@ app.post("/api/tournaments/:id/kumiawase/upload",
         try { fs.unlinkSync(filePath); } catch {}
         return res.json({ ok: true, source: "kumiawase_seedlist", used_parser: "parse_bracket_seedlist.js", imported });
       }
-      // 何も取れなければ旧パーサーにフォールバック
+      // 何も取れなければ Python 罫線パーサー → 旧パーサーへフォールバック
     } catch (e) {
-      // seed-list 失敗時も旧パーサーにフォールバック
       console.warn("[kumiawase] seed-list parse failed, fallback:", e.message);
     }
+  }
+  // ── 副系統: Python 罫線パーサー (tools/bracket_parser, 実測100%) ──
+  // 本体にロジックは置かず subprocess の JSON のみ取込む(疎結合・将来改修容易)。
+  // JS seed-list が空振りした表でも openpyxl で罫線/番号を読み直す second opinion。
+  try {
+    const pyEnv = Object.assign({}, process.env);
+    const pyPaths = [path.join(__dirname, "tools"), path.join(__dirname, ".python-packages")];
+    pyEnv.PYTHONPATH = pyPaths.join(path.delimiter) + (pyEnv.PYTHONPATH ? path.delimiter + pyEnv.PYTHONPATH : "");
+    const pyArgs = ["-m", "bracket_parser", filePath];
+    if (sheet) {
+      pyArgs.push("--sheet", sheet);
+      if (event) pyArgs.push("--event", event);
+      if (["singles", "doubles", "team"].includes(format)) pyArgs.push("--format", format);
+    }
+    const pyRes = await new Promise((resolve) => {
+      let out = "", err = "";
+      const proc = spawn("python3", pyArgs, { env: pyEnv });
+      proc.stdout.on("data", (d) => { out += d.toString(); });
+      proc.stderr.on("data", (d) => { err += d.toString(); });
+      proc.on("close", (code) => resolve({ code, out, err }));
+      proc.on("error", (e) => resolve({ code: -1, out: "", err: e.message }));
+    });
+    let parsed = null;
+    if (pyRes.code === 0 && pyRes.out) {
+      try { parsed = JSON.parse(pyRes.out); } catch { parsed = null; }
+    }
+    const pyEvents = (parsed && !parsed.error ? (parsed.events || []) : [])
+      .filter((ev) => (ev.players || []).length >= 2);
+    if (pyEvents.length) {
+      if (dryRun) {
+        try { fs.unlinkSync(filePath); } catch {}
+        return res.json({
+          preview: { events: pyEvents.map((e) => ({ event: e.event, format: e.format, count: e.players.length, players: e.players })) },
+          message: `解析プレビュー: ${pyEvents.length}種目 / 計${pyEvents.reduce((s, e) => s + e.players.length, 0)}人 (まだ取込されていません)`,
+          used_parser: "bracket_parser (python)",
+        });
+      }
+      const imported = [];
+      for (const ev of pyEvents) {
+        const r = db.importBracket(req.params.id, {
+          format: "tabletennis-seed-list-v1",
+          event: ev.event,
+          players: ev.players,
+          regenerate: true,
+          auto_link_to_players: true,
+          auto_create_players: true,
+        });
+        imported.push({ event: ev.event, format: ev.format, count: ev.players.length, result: r });
+      }
+      try { fs.unlinkSync(filePath); } catch {}
+      return res.json({ ok: true, source: "kumiawase_seedlist", used_parser: "bracket_parser (python)", imported });
+    }
+  } catch (e) {
+    console.warn("[kumiawase] python bracket_parser fallback failed:", e.message);
   }
   // ── フォールバック: 旧 parse_ktta_bracket (テンプレ/特殊形式向け) ──
   try {
