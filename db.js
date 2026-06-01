@@ -5892,6 +5892,21 @@ try {
   }
 } catch (e) { console.error("entrants migration error:", e.message); }
 
+// ── 一度きりの移行: 既存の pending entrant を confirmed へ引き上げる (自動承認への切替時の互換) ──
+// 旧コードはブラケットを status 無視で全件生成していた。新コードは confirmed のみ出場させるため、
+// このデプロイ以前に作られた pending(旧フォーム申込) が突然ブラケットから消えるのを防ぐ。
+// 以後の新規申込はそもそも自動 confirmed なので、本処理は移行時の一度きりで十分。kv フラグで保護。
+try {
+  if (kvGet("entrants_pending_to_confirmed_v1") !== "1") {
+    const r = sqlite.prepare(
+      `UPDATE entrants SET status='confirmed', updated_at=datetime('now','localtime')
+       WHERE status='pending' OR status IS NULL OR status=''`
+    ).run();
+    kvSet("entrants_pending_to_confirmed_v1", "1");
+    if (r.changes) console.log(`[migration] 既存 pending 申込を confirmed へ引き上げ: ${r.changes}件`);
+  }
+} catch (e) { console.error("pending→confirmed migration error:", e.message); }
+
 module.exports = {
   // 審判結果入力 (テスト環境付き)
   setRefereeToken, setRefereeInputEnabled, getRefereeConfig,
