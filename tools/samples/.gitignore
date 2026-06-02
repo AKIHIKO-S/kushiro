@@ -1,0 +1,4 @@
+# 実データ(選手名等のPII)はコミットしない。ここに置いた *.xlsx/*.pdf/*.csv は Git 追跡外。
+*
+!.gitignore
+!README.md
