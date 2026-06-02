@@ -14,10 +14,16 @@ set -euo pipefail
 
 # 既定値
 APP_DIR="${APP_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
-DB_FILE="${DB_FILE:-$APP_DIR/tabletennis.db}"
-BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
+# DB の場所: DB_FILE 明示 > DB_PATH(env) > Oracle本番(/var/data) > ローカル(data/) の順に自動判定。
+# 旧既定 $APP_DIR/tabletennis.db は実在せずバックアップが失敗していたため修正。
+if [ -z "${DB_FILE:-}" ]; then
+  if [ -n "${DB_PATH:-}" ] && [ -f "$DB_PATH" ]; then DB_FILE="$DB_PATH"
+  elif [ -f /var/data/tournament.db ]; then DB_FILE="/var/data/tournament.db"
+  else DB_FILE="$APP_DIR/data/tournament.db"; fi
+fi
+BACKUP_DIR="${BACKUP_DIR:-$(dirname "$DB_FILE")/backups}"
 KEEP_DAYS="${KEEP_DAYS:-30}"
-LOG_FILE="${LOG_FILE:-$APP_DIR/backups/backup.log}"
+LOG_FILE="${LOG_FILE:-$BACKUP_DIR/backup.log}"
 
 mkdir -p "$BACKUP_DIR"
 
