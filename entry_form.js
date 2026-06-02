@@ -162,84 +162,135 @@ function buildEntryFormHTML(tournament, events, opts) {
 })();
 </script>
 <style>
-  /* システムフォントのみ使用 (HTTPS / Jimdo / STUDIO / CSP 準拠) */
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho',
-                 'Hiragino Sans', 'Yu Gothic UI', system-ui, sans-serif;
-    background: #ffffff;
-    color: #1c1917;
-    line-height: 1.7;
-    padding: 18px 12px;
-    max-width: 820px; margin: 0 auto;
+  /* ───────────────────────────────────────────────
+     丹頂エディトリアル — 釧路卓球協会 申込フォーム
+     温かみのある紙 × 丹頂レッド × 墨。明朝の見出し + ゴシック本文。
+     システムフォントのみ (HTTPS/Jimdo/STUDIO/CSP 準拠)。
+     ─────────────────────────────────────────────── */
+  :root {
+    --paper:   #f1e9d9;
+    --card:    #fffdf8;
+    --card-2:  #fbf6ec;
+    --ink:     #211b15;
+    --ink-2:   #6c6153;
+    --line:    #e4d8c2;
+    --line-2:  #efe6d4;
+    --red:     #c01526;   /* 丹頂レッド */
+    --red-2:   #9c0f1c;
+    --amber:   #9a6a10;
+    --amber-bg:#f6ebcd;
+    --green:   #1a7a45;
+    --green-bg:#e9f7ee;
+    --gothic:  'Hiragino Sans','BIZ UDPGothic','Yu Gothic UI','Yu Gothic','Meiryo',system-ui,sans-serif;
+    --mincho:  'Hiragino Mincho ProN','Yu Mincho','YuMincho','Hiragino Mincho Pro',serif;
+    --shadow:  0 18px 44px -22px rgba(48,32,16,.45);
+    --radius:  16px;
   }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--gothic);
+    color: var(--ink);
+    line-height: 1.78;
+    font-size: 16.5px;
+    letter-spacing: .005em;
+    padding: 30px 16px 48px;
+    max-width: 768px; margin: 0 auto;
+    background-color: var(--paper);
+    background-image:
+      radial-gradient(1100px 520px at 108% -8%, rgba(192,21,38,.07), transparent 58%),
+      radial-gradient(900px 520px at -12% 112%, rgba(154,106,16,.08), transparent 58%);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* かすかな紙の粒状感 */
+  body::before {
+    content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; opacity:.6;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.04'/%3E%3C/svg%3E");
+  }
+  @keyframes ttRise { from { opacity:0; transform: translateY(14px); } to { opacity:1; transform:none; } }
+
+  /* ── ヘッダー (大会プログラム風バナー) ── */
   .form-header {
-    background: #fafafa;
-    color: #1c1917;
-    padding: 28px 32px 32px;
-    border-radius: 14px 14px 0 0;
-    border: 1px solid #e7e5e4;
-    border-bottom: none;
-    position: relative;
-    overflow: hidden;
+    position: relative; overflow: hidden;
+    background: linear-gradient(155deg, #241d16 0%, #36281c 60%, #2c2118 100%);
+    color: #f6efe2;
+    padding: 34px 34px 30px;
+    border-radius: var(--radius) var(--radius) 0 0;
+    border-top: 5px solid var(--red);
+    animation: ttRise .5s ease both;
+  }
+  .form-header::after {
+    content:""; position:absolute; left:0; right:0; bottom:0; height:3px;
+    background: linear-gradient(90deg, var(--red), #d4a017 70%, transparent);
+    opacity:.85;
   }
   .form-header-art {
-    position: absolute; right: -10px; top: -10px;
-    width: 200px; height: 100px; opacity: 0.95;
-    pointer-events: none;
+    position: absolute; right: -6px; top: -6px;
+    width: 224px; height: 116px; opacity: .9; pointer-events: none;
+    filter: drop-shadow(0 4px 12px rgba(0,0,0,.25));
   }
   .form-header-art svg { width: 100%; height: 100%; }
   .form-header h1 {
-    font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
-    font-size: 26px; font-weight: 700;
-    margin-bottom: 8px; letter-spacing: 0.01em;
+    font-family: var(--mincho);
+    font-size: 34px; font-weight: 700; line-height: 1.25;
+    letter-spacing: .02em;
     position: relative; z-index: 1;
+    text-wrap: balance;
   }
   .form-header .seal {
-    display: inline-block;
-    background: #b91c1c; color: #fff;
-    font-size: 10px; font-weight: 700;
-    padding: 3px 9px; border-radius: 3px;
-    margin-right: 8px;
-    letter-spacing: 0.18em;
-    vertical-align: middle;
+    display: inline-block; vertical-align: middle;
+    background: var(--red); color: #fff;
+    font-family: var(--gothic);
+    font-size: 11px; font-weight: 800;
+    padding: 5px 11px; border-radius: 4px;
+    margin-right: 12px; letter-spacing: .22em;
+    box-shadow: 0 2px 0 rgba(0,0,0,.25);
   }
   .form-header .meta {
-    font-size: 13px; color: #44403c;
-    position: relative; z-index: 1;
+    font-family: var(--gothic);
+    font-size: 13.5px; color: #d8cdba; margin-top: 12px;
+    position: relative; z-index: 1; letter-spacing: .04em;
   }
+
+  /* ── 本文セクション ── */
   .form-section {
-    background: #fff;
-    padding: 22px 26px;
-    margin-bottom: 6px;
-    border-left: 1px solid #e7e5e4;
-    border-right: 1px solid #e7e5e4;
+    background: var(--card);
+    padding: 28px 30px;
+    border-left: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    animation: ttRise .5s ease both;
   }
+  .form-section:nth-of-type(2){ animation-delay:.05s; }
+  .form-section:nth-of-type(3){ animation-delay:.1s; }
   .form-section:last-of-type {
-    border-radius: 0 0 14px 14px;
-    border-bottom: 1px solid #e7e5e4;
-    padding-bottom: 28px;
+    border-radius: 0 0 var(--radius) var(--radius);
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 30px;
+    box-shadow: var(--shadow);
   }
   .form-section h2 {
-    font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
-    font-size: 17px; font-weight: 700;
-    margin-bottom: 14px;
-    padding-left: 14px;
-    border-left: 4px solid #b91c1c;
-    color: #1c1917;
+    font-family: var(--mincho);
+    font-size: 21px; font-weight: 700;
+    margin-bottom: 18px; color: var(--ink);
+    display: flex; align-items: center; gap: 11px;
+    letter-spacing: .03em;
   }
-  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .form-section h2::before {
+    content:""; width: 6px; height: 22px; border-radius: 2px;
+    background: linear-gradient(var(--red), var(--red-2));
+    box-shadow: 0 1px 4px rgba(192,21,38,.4);
+  }
+
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
   .form-row.full { grid-template-columns: 1fr; }
   .form-row label {
-    display: block; font-size: 12px; font-weight: 700;
-    color: #57534e; margin-bottom: 5px;
-    letter-spacing: 0.03em;
+    display: block; font-size: 12.5px; font-weight: 800;
+    color: var(--ink-2); margin-bottom: 7px; letter-spacing: .08em;
   }
   .form-row label .required {
-    background: #b91c1c; color: #fff;
-    font-size: 9px; padding: 1px 6px;
-    border-radius: 2px; margin-left: 5px;
-    letter-spacing: 0.08em;
+    background: var(--red); color: #fff;
+    font-size: 9.5px; padding: 2px 7px; border-radius: 3px;
+    margin-left: 7px; letter-spacing: .12em; vertical-align: 1px;
   }
   .form-row input[type="text"],
   .form-row input[type="email"],
@@ -247,240 +298,285 @@ function buildEntryFormHTML(tournament, events, opts) {
   .form-row input[type="number"],
   .form-row select,
   .form-row textarea {
-    width: 100%; padding: 11px 13px;
-    border: 1px solid #d6d3d1; border-radius: 6px;
-    font-family: inherit; font-size: 14.5px;
-    background: #fdfdfc;
-    transition: all .15s;
+    width: 100%; padding: 13px 15px;
+    border: 1.5px solid var(--line); border-radius: 9px;
+    font-family: inherit; font-size: 16px;
+    background: var(--card-2); color: var(--ink);
+    transition: border-color .15s, box-shadow .15s, background .15s;
   }
   .form-row input:focus, .form-row select:focus, .form-row textarea:focus {
-    outline: none;
-    border-color: #b91c1c;
-    box-shadow: 0 0 0 3px rgba(185, 28, 28, .1);
+    outline: none; border-color: var(--red);
+    box-shadow: 0 0 0 4px rgba(192,21,38,.12);
     background: #fff;
   }
+  .form-row input::placeholder, .form-row textarea::placeholder { color: #b3a892; }
+
+  /* ── 追加ボタン / カウント ── */
   .btn-add {
-    background: #ffffff; color: #78350f;
-    border: 1.5px dashed #d6d3d1;
-    padding: 10px 18px; border-radius: 6px;
-    cursor: pointer; font-size: 14px; font-weight: 700;
+    background: #fff; color: var(--amber);
+    border: 1.5px dashed #d9c8a8;
+    padding: 12px 20px; border-radius: 9px;
+    cursor: pointer; font-size: 14.5px; font-weight: 800;
     font-family: inherit; transition: all .15s;
   }
-  .btn-add:hover { background: #fef3c7; border-color: #92400e; }
-  .btn-add-bulk { background: #fef3c7; border-style: solid; border-color: #f59e0b; }
-  .btn-add-bulk:hover { background: #fde68a; }
-  .add-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .btn-add:hover { background: var(--amber-bg); border-color: var(--amber); transform: translateY(-1px); }
+  .btn-add-bulk { background: var(--amber-bg); border-style: solid; border-color: #e0b75a; }
+  .btn-add-bulk:hover { background: #f0e0b8; }
+  .add-buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
   .count-badge {
-    display: inline-block; margin-left: auto;
-    padding: 3px 10px; background: #f0fdf4;
-    color: #14532d; border: 1px solid #86efac;
-    border-radius: 12px; font-size: 11px; font-weight: 700;
-    font-family: inherit;
+    display: inline-flex; align-items:center; margin-left: auto;
+    padding: 4px 12px; background: var(--green-bg);
+    color: var(--green); border: 1px solid #aee3c2;
+    border-radius: 999px; font-size: 11.5px; font-weight: 800;
+    font-family: var(--gothic); letter-spacing: .04em;
   }
-  /* 確認モーダル */
-  .confirm-overlay {
-    position: fixed; inset: 0; z-index: 9999;
-    background: rgba(0,0,0,.55); display: flex;
-    align-items: center; justify-content: center;
-    padding: 20px;
-  }
-  .confirm-modal {
-    background: #fff; max-width: 560px; width: 100%;
-    max-height: 88vh; overflow: auto;
-    border-radius: 10px; padding: 20px 22px;
-    box-shadow: 0 20px 60px rgba(0,0,0,.3);
-    font-family: 'Hiragino Sans', system-ui, sans-serif;
-  }
-  .confirm-modal h3 {
-    font-size: 18px; margin-bottom: 12px; color: #7c2d12;
-    border-bottom: 2px solid #b91c1c; padding-bottom: 8px;
-  }
-  .confirm-modal table {
-    width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px;
-  }
-  .confirm-modal td {
-    padding: 5px 8px; border-bottom: 1px solid #f3f4f6; vertical-align: top;
-  }
-  .confirm-modal td.label { color: #78716c; width: 80px; }
-  .confirm-modal td.val { font-weight: bold; }
-  .confirm-modal .total {
-    margin-top: 14px; padding: 12px 16px;
-    background: linear-gradient(135deg, #fef3c7, #fef9c3);
-    border-radius: 6px; display: flex; justify-content: space-between;
-    align-items: center; font-size: 15px;
-  }
-  .confirm-modal .total .amount {
-    font-size: 26px; font-weight: 700; color: #b91c1c;
-  }
-  .confirm-modal .buttons {
-    display: flex; gap: 8px; margin-top: 16px;
-  }
-  .confirm-modal .buttons button {
-    flex: 1; padding: 12px; border-radius: 6px;
-    border: none; cursor: pointer; font-size: 14px;
-    font-weight: 700; font-family: inherit;
-  }
-  .confirm-modal .btn-cancel { background: #f5f5f4; color: #44403c; }
-  .confirm-modal .btn-confirm { background: #b91c1c; color: #fff; }
-  .confirm-modal .btn-confirm:disabled { background: #a8a29e; cursor: wait; }
-  /* iframe埋込(自動高さ)では position:fixed のオーバーレイが画面外に出る/高さが暴れるため、
-     確認はインライン(通常フロー)で表示する。confirm-overlay は単独表示時の保険として残す。 */
-  .confirm-inline { max-width: 560px; margin: 8px auto 20px; }
-  .confirm-inline .confirm-modal { max-height: none; box-shadow: 0 4px 18px rgba(0,0,0,.12); }
-  /* 送信完了画面 (LINE 共有用) */
-  .success-card {
-    margin: 20px 0; padding: 20px;
-    background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
-    border: 2px solid #15803d; border-radius: 8px;
-  }
-  .success-card h3 {
-    font-size: 18px; color: #14532d; margin-bottom: 10px;
-    text-align: center;
-  }
-  .success-card .summary-text {
-    background: #fff; padding: 14px;
-    border-radius: 6px; font-size: 12px; line-height: 1.7;
-    white-space: pre-wrap; word-break: break-word;
-    font-family: 'Hiragino Sans', monospace;
-    margin: 12px 0; max-height: 200px; overflow-y: auto;
-    border: 1px solid #d1fae5;
-  }
-  .copy-btn {
-    width: 100%; padding: 12px; border-radius: 6px;
-    background: #15803d; color: #fff; border: none;
-    cursor: pointer; font-size: 14px; font-weight: 700;
-    font-family: inherit;
-  }
-  .copy-btn:hover { background: #166534; }
-  .copy-btn.copied { background: #166534; }
-  .btn-del {
-    background: transparent; color: #b91c1c;
-    border: 1px solid #fecaca; padding: 3px 10px;
-    border-radius: 4px; cursor: pointer; font-size: 11px;
-    font-weight: 600; font-family: inherit;
-  }
-  .btn-del:hover { background: #fef2f2; }
-  .total-box {
-    background: #ffffff;
-    border: 2px solid #b45309;
-    border-radius: 10px;
-    padding: 18px 22px;
-    margin: 18px 0;
-    display: flex; justify-content: space-between; align-items: center;
-    position: relative;
-    overflow: hidden;
-  }
-  .total-box::before {
-    content: ""; position: absolute;
-    top: 0; right: 0;
-    width: 70px; height: 70px;
-    background: radial-gradient(circle, rgba(220,38,38,.07) 30%, transparent 70%);
-  }
-  .total-box .label {
-    font-family: 'Hiragino Mincho ProN', serif;
-    font-size: 15px; font-weight: 700; color: #78350f;
-    letter-spacing: 0.04em;
-  }
-  .total-box .amount {
-    font-family: 'Hiragino Mincho ProN', serif;
-    font-size: 32px; font-weight: 700; color: #b91c1c;
-    letter-spacing: 0.02em;
-    position: relative; z-index: 1;
-  }
-  .submit-btn {
-    width: 100%; padding: 17px;
-    font-size: 16px; font-weight: 700;
-    font-family: 'Hiragino Mincho ProN', serif;
-    background: #b91c1c; color: #fff;
-    border: none; border-radius: 8px;
-    cursor: pointer; margin-top: 18px;
-    letter-spacing: 0.18em;
-    transition: all .15s;
-    box-shadow: 0 2px 6px rgba(185, 28, 28, .25);
-  }
-  .submit-btn:hover { background: #991b1b; transform: translateY(-1px); }
-  .submit-btn:disabled { background: #a8a29e; cursor: not-allowed; transform: none; }
-  .notice {
-    background: #ffffff;
-    border-left: 3px solid #b45309;
-    padding: 11px 16px; font-size: 12.5px; margin: 14px 0;
-    border-radius: 0 6px 6px 0;
-    color: #44403c;
-  }
-  .message {
-    padding: 18px; margin: 16px 0;
-    border-radius: 8px; text-align: center;
-    font-weight: 700; font-size: 15px;
-    font-family: 'Hiragino Mincho ProN', serif;
-  }
-  .message.ok { background: #f0fdf4; color: #14532d; border: 1px solid #86efac; }
-  .message.err { background: #fef2f2; color: #7f1d1d; border: 1px solid #fca5a5; }
-  .fee-tag {
-    display: inline-block;
-    padding: 3px 10px;
-    background: #fef3c7;
-    color: #78350f;
-    border: 1px solid #fde68a;
-    border-radius: 12px;
-    font-size: 11px; font-weight: 700;
-    margin-left: 8px;
-    font-family: inherit;
-  }
+
+  /* ── 種目ブロック ── */
   .event-block {
-    border: 1px solid #e7e5e4; border-radius: 8px;
-    padding: 16px 18px; margin-bottom: 12px;
-    background: #ffffff;
+    border: 1.5px solid var(--line); border-radius: 13px;
+    padding: 18px 20px; margin-bottom: 14px;
+    background: var(--card);
+    box-shadow: 0 2px 0 var(--line-2);
   }
+  .event-block[open] { border-color: #d8c6a6; box-shadow: 0 6px 22px -14px rgba(160,90,16,.4); }
   .event-block summary {
-    cursor: pointer; font-weight: 700;
-    font-size: 14.5px; font-family: 'Hiragino Mincho ProN', serif;
+    cursor: pointer; font-weight: 800;
+    font-size: 16px; font-family: var(--gothic);
     list-style: none; outline: none;
-    display: flex; align-items: center; flex-wrap: wrap;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+    letter-spacing: .02em;
   }
   .event-block summary::-webkit-details-marker { display: none; }
   .event-block summary::before {
     content: "+"; display: inline-flex;
     align-items: center; justify-content: center;
-    width: 22px; height: 22px; margin-right: 10px;
-    background: #b91c1c; color: #fff;
-    border-radius: 4px; font-size: 14px;
+    width: 26px; height: 26px; margin-right: 12px;
+    background: linear-gradient(var(--red), var(--red-2)); color: #fff;
+    border-radius: 7px; font-size: 17px; font-weight: 700;
+    box-shadow: 0 2px 6px rgba(192,21,38,.35);
     transition: transform .2s;
   }
   .event-block[open] summary::before { content: "−"; }
-  .event-block .members { margin-top: 14px; }
+  .event-block .members { margin-top: 16px; }
   .entry-row {
-    background: #fafafa;
-    border-left: 3px solid #d6d3d1;
-    border-radius: 5px;
-    padding: 12px 14px;
-    margin-bottom: 8px;
-    transition: border-color .15s;
+    background: var(--card-2);
+    border: 1.5px solid var(--line-2);
+    border-left: 4px solid #d6c8ab;
+    border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 10px;
+    transition: border-color .15s, box-shadow .15s;
+    animation: ttRise .3s ease both;
   }
-  .entry-row:hover { border-left-color: #b45309; }
+  .entry-row:hover { border-left-color: var(--red); box-shadow: 0 4px 16px -10px rgba(192,21,38,.3); }
+  .entry-row .row-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .entry-row .row-head .num {
+    font-weight:800; font-size:13px; color:#fff;
+    background: linear-gradient(var(--red),var(--red-2));
+    width:24px; height:24px; border-radius:50%;
+    display:inline-flex; align-items:center; justify-content:center;
+  }
+  .entry-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+  .entry-row input[type="text"] {
+    width:100%; padding:12px 14px;
+    border:1.5px solid var(--line); border-radius:9px;
+    font-size:15.5px; background:#fff; color:var(--ink);
+    font-family:inherit; transition:border-color .15s, box-shadow .15s;
+  }
+  .entry-row input[type="text"]:focus { outline:none; border-color:var(--red); box-shadow:0 0 0 3px rgba(192,21,38,.13); }
+  .entry-row input[type="text"]::placeholder { color:#b3a892; }
+
+  /* ── 参加区分セグメント (一般 / 中学生 / 高校生) ── */
+  .div-seg {
+    display: flex; gap: 6px; margin: 4px 0 12px;
+    background: #f0e7d6; padding: 4px; border-radius: 11px;
+    border: 1px solid var(--line);
+  }
+  .div-seg .seg { flex: 1; position: relative; cursor: pointer; }
+  .div-seg .seg input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+  .div-seg .seg span {
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+    padding: 8px 4px; border-radius: 8px; text-align: center;
+    font-size: 13.5px; font-weight: 800; color: var(--ink-2);
+    transition: all .15s; line-height: 1.25;
+  }
+  .div-seg .seg span small { font-size: 11px; font-weight: 700; color: #a99a80; }
+  .div-seg .seg input:checked + span {
+    background: #fff; color: var(--red);
+    box-shadow: 0 2px 8px -2px rgba(192,21,38,.35);
+  }
+  .div-seg .seg input:checked + span small { color: var(--red); }
+  .div-seg .seg input:focus-visible + span { box-shadow: 0 0 0 3px rgba(192,21,38,.25); }
+  .div-label { font-size: 11.5px; font-weight: 800; color: var(--ink-2); letter-spacing: .08em; margin-bottom: 2px; }
+
+  .fee-tag {
+    display: inline-flex; align-items:center;
+    padding: 4px 12px; background: var(--amber-bg);
+    color: var(--amber); border: 1px solid #e7d3a4;
+    border-radius: 999px; font-size: 11.5px; font-weight: 800;
+    margin-left: 10px; font-family: var(--gothic); letter-spacing: .03em;
+  }
+
+  .btn-del {
+    background: transparent; color: var(--red);
+    border: 1px solid #ecc6c6; padding: 4px 11px;
+    border-radius: 6px; cursor: pointer; font-size: 11.5px;
+    font-weight: 700; font-family: inherit; transition: all .15s;
+  }
+  .btn-del:hover { background: #fbe9e9; border-color: var(--red); }
+
+  /* ── 合計 ── */
+  .total-box {
+    background: linear-gradient(150deg, #fffdf8, #faf2e3);
+    border: 2px solid var(--amber);
+    border-radius: 13px;
+    padding: 20px 24px; margin: 22px 0;
+    display: flex; justify-content: space-between; align-items: center;
+    position: relative; overflow: hidden;
+    box-shadow: 0 8px 26px -16px rgba(160,90,16,.5);
+  }
+  .total-box::before {
+    content:""; position:absolute; top:-30px; right:-20px;
+    width: 120px; height: 120px;
+    background: radial-gradient(circle, rgba(192,21,38,.1) 30%, transparent 70%);
+  }
+  .total-box .label {
+    font-family: var(--mincho);
+    font-size: 16px; font-weight: 700; color: var(--amber); letter-spacing: .06em;
+  }
+  .total-box .amount {
+    font-family: var(--mincho);
+    font-size: 38px; font-weight: 700; color: var(--red);
+    letter-spacing: .01em; line-height: 1; position: relative; z-index: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── 送信ボタン ── */
+  .submit-btn {
+    width: 100%; padding: 19px;
+    font-size: 17px; font-weight: 800;
+    font-family: var(--gothic);
+    background: linear-gradient(var(--red), var(--red-2)); color: #fff;
+    border: none; border-radius: 11px;
+    cursor: pointer; margin-top: 20px;
+    letter-spacing: .2em;
+    transition: transform .12s, box-shadow .15s, filter .15s;
+    box-shadow: 0 10px 24px -10px rgba(192,21,38,.6);
+  }
+  .submit-btn:hover { transform: translateY(-2px); filter: brightness(1.05); box-shadow: 0 14px 30px -10px rgba(192,21,38,.7); }
+  .submit-btn:active { transform: translateY(0); }
+  .submit-btn:disabled { background: #b9ad9c; cursor: not-allowed; transform: none; box-shadow: none; filter: none; }
+
+  .notice {
+    background: var(--card-2);
+    border-left: 4px solid var(--amber);
+    padding: 13px 18px; font-size: 13px; margin: 16px 0;
+    border-radius: 0 8px 8px 0; color: var(--ink-2);
+  }
+  .message {
+    padding: 18px; margin: 16px 0;
+    border-radius: 10px; text-align: center;
+    font-weight: 800; font-size: 15.5px; font-family: var(--gothic);
+  }
+  .message.ok  { background: var(--green-bg); color: var(--green); border: 1px solid #aee3c2; }
+  .message.err { background: #fbeaea; color: #8c1118; border: 1px solid #f0b9bb; }
+
+  /* ── 確認 / 完了 ── */
+  .confirm-overlay {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(33,27,21,.6); display: flex;
+    align-items: center; justify-content: center; padding: 20px;
+  }
+  .confirm-modal {
+    background: var(--card); max-width: 580px; width: 100%;
+    max-height: 88vh; overflow: auto;
+    border-radius: 16px; padding: 26px 28px;
+    box-shadow: 0 30px 70px rgba(20,12,4,.4);
+    font-family: var(--gothic);
+    border-top: 5px solid var(--red);
+  }
+  .confirm-modal h3 {
+    font-family: var(--mincho);
+    font-size: 21px; margin-bottom: 16px; color: var(--ink);
+    border-bottom: 2px solid var(--line); padding-bottom: 12px;
+    letter-spacing: .03em;
+  }
+  .confirm-modal table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  .confirm-modal td { padding: 8px 8px; border-bottom: 1px solid var(--line-2); vertical-align: top; }
+  .confirm-modal td.label { color: var(--ink-2); width: 84px; font-weight: 700; }
+  .confirm-modal td.val { font-weight: 700; }
+  .confirm-modal .total {
+    margin-top: 18px; padding: 16px 18px;
+    background: linear-gradient(150deg, var(--amber-bg), #fbf2dc);
+    border-radius: 10px; display: flex; justify-content: space-between;
+    align-items: center; font-size: 15px;
+  }
+  .confirm-modal .total .amount {
+    font-family: var(--mincho);
+    font-size: 30px; font-weight: 700; color: var(--red);
+    font-variant-numeric: tabular-nums;
+  }
+  .confirm-modal .buttons { display: flex; gap: 10px; margin-top: 20px; }
+  .confirm-modal .buttons button {
+    flex: 1; padding: 14px; border-radius: 10px;
+    border: none; cursor: pointer; font-size: 14.5px;
+    font-weight: 800; font-family: inherit; transition: filter .15s, transform .12s;
+  }
+  .confirm-modal .buttons button:hover { filter: brightness(1.04); transform: translateY(-1px); }
+  .confirm-modal .btn-cancel { background: #efe7d6; color: var(--ink); }
+  .confirm-modal .btn-confirm { background: linear-gradient(var(--red), var(--red-2)); color: #fff; }
+  .confirm-modal .btn-confirm:disabled { background: #b9ad9c; cursor: wait; }
+  .confirm-inline { max-width: 580px; margin: 8px auto 22px; animation: ttRise .35s ease both; }
+  .confirm-inline .confirm-modal { max-height: none; box-shadow: var(--shadow); }
+
+  .success-card {
+    margin: 22px 0; padding: 24px;
+    background: linear-gradient(150deg, var(--green-bg) 0%, #eafaf0 100%);
+    border: 2px solid var(--green); border-radius: 14px;
+    animation: ttRise .4s ease both;
+  }
+  .success-card h3 {
+    font-family: var(--mincho);
+    font-size: 21px; color: var(--green); margin-bottom: 12px; text-align: center;
+  }
+  .success-card .summary-text {
+    background: #fff; padding: 16px;
+    border-radius: 9px; font-size: 12.5px; line-height: 1.8;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: var(--gothic);
+    margin: 14px 0; max-height: 220px; overflow-y: auto;
+    border: 1px solid #c9ecd6;
+  }
+  .copy-btn {
+    width: 100%; padding: 14px; border-radius: 10px;
+    background: var(--green); color: #fff; border: none;
+    cursor: pointer; font-size: 14.5px; font-weight: 800; font-family: inherit;
+    transition: filter .15s;
+  }
+  .copy-btn:hover { filter: brightness(1.06); }
+  .copy-btn.copied { background: #14633a; }
+
+  /* ── フッター ── */
   .form-footer {
-    text-align: center;
-    margin-top: 24px;
-    padding: 20px;
-    color: #78716c;
-    font-size: 11px;
-    border-top: 1px solid #e7e5e4;
+    text-align: center; margin-top: 28px; padding: 22px;
+    color: var(--ink-2); font-size: 11.5px;
   }
   .form-footer .org {
-    font-family: 'Hiragino Mincho ProN', serif;
-    font-size: 13px; font-weight: 600;
-    color: #44403c;
-    margin-bottom: 4px;
-    letter-spacing: 0.1em;
+    font-family: var(--mincho);
+    font-size: 14px; font-weight: 700; color: var(--ink);
+    margin-bottom: 5px; letter-spacing: .14em;
   }
+
+  /* ── レスポンシブ ── */
   @media (max-width: 600px) {
-    body { padding: 10px 8px; }
-    .form-header { padding: 22px 18px; }
-    .form-header h1 { font-size: 21px; }
-    .form-header-art { width: 130px; height: 70px; opacity: 0.85; }
-    .form-section { padding: 18px 16px; }
-    .form-row { grid-template-columns: 1fr; gap: 10px; margin-bottom: 10px; }
-    .total-box { padding: 14px 16px; }
-    .total-box .amount { font-size: 26px; }
+    body { padding: 16px 10px 36px; font-size: 16px; }
+    .form-header { padding: 26px 20px 24px; }
+    .form-header h1 { font-size: 27px; }
+    .form-header-art { width: 150px; height: 80px; opacity: .8; }
+    .form-section { padding: 22px 17px; }
+    .form-row { grid-template-columns: 1fr; gap: 12px; margin-bottom: 13px; }
+    .total-box { padding: 16px 18px; }
+    .total-box .amount { font-size: 30px; }
+    .div-seg .seg span { font-size: 12.5px; }
   }
 </style>
 ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : ''}
@@ -675,49 +771,50 @@ function addEntry(eventIdx) {
 
   const row = document.createElement("div");
   row.className = "entry-row";
-  row.style.marginBottom = "8px";
-  row.style.padding = "10px";
-  row.style.background = "#f9fafb";
-  row.style.borderRadius = "4px";
-  row.style.position = "relative";
 
-  // 中高校生に別料金がある種目だけ、行ごとに区分セレクタを出す (選んだ区分で料金が変動)。
+  // 中高校生に別料金がある種目だけ、行ごとに参加区分セグメント(一般/中学生/高校生)を出す。
+  // 選んだ区分で料金が変動 (中学生・高校生は fee_student)。グループ名はグローバル一意にする。
   const hasStuFee = (ev.fee_student != null && ev.fee_student !== (ev.fee || 0));
-  const divSelect = hasStuFee
-    ? '<select class="tt-div" onchange="recalcTotal()" title="参加区分で料金が変わります" ' +
-        'style="margin-left:auto;font-size:12px;padding:4px 6px;border:1px solid #d6d3d1;border-radius:4px;background:#fff;">' +
-        '<option value="general">一般 ¥' + (ev.fee || 0).toLocaleString("ja-JP") + '</option>' +
-        '<option value="student">中高校生 ¥' + (ev.fee_student || 0).toLocaleString("ja-JP") + '</option>' +
-      '</select>'
-    : '';
-  let html = '<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">' +
-    '<strong style="font-size:13px;">#' + (idx + 1) + '</strong>' +
-    '<button type="button" class="btn-del" onclick="removeEntry(this, ' + eventIdx + ')">削除</button>' +
-    divSelect +
-    '</div>';
+  const seq = (window.__ttSeq = (window.__ttSeq || 0) + 1);
+  let divSeg = "";
+  if (hasStuFee) {
+    const opts = [["general", "一般", ev.fee || 0],
+                  ["middle", "中学生", ev.fee_student || 0],
+                  ["high", "高校生", ev.fee_student || 0]];
+    divSeg = '<div class="div-label">参加区分を選択してください</div>' +
+      '<div class="div-seg" role="radiogroup" aria-label="参加区分">' +
+      opts.map(function (o, i) {
+        return '<label class="seg"><input type="radio" name="ttdiv' + seq + '" value="' + o[0] + '"' +
+          (i === 0 ? ' checked' : '') + ' onchange="recalcTotal()">' +
+          '<span>' + o[1] + '<small>¥' + o[2].toLocaleString("ja-JP") + '</small></span></label>';
+      }).join('') + '</div>';
+  }
+
+  let html = '<div class="row-head"><span class="num">' + (idx + 1) + '</span>' +
+    '<button type="button" class="btn-del" onclick="removeEntry(this, ' + eventIdx + ')">削除</button></div>';
 
   if (isTeam) {
-    html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_name" placeholder="チーム名" oninput="recalcTotal()" style="width:100%; margin-bottom:6px; padding:6px;" />';
+    html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_name" placeholder="チーム名" oninput="recalcTotal()" style="margin-bottom:9px;" />';
     const per = ev.per_team || 6;
+    html += '<div class="entry-grid">';
     for (let i = 0; i < per; i++) {
-      html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_m' + i + '" placeholder="メンバー' + (i + 1) + ' 氏名" oninput="recalcTotal()" style="width:100%; margin-bottom:4px; padding:6px; font-size:12px;" />';
+      html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_m' + i + '" placeholder="メンバー' + (i + 1) + ' 氏名" oninput="recalcTotal()" />';
     }
+    html += '</div>';
   } else if (isDoubles) {
-    // 選手1 (氏名 + 所属) / 選手2 (氏名 + 所属) — 違うチーム同士のペアにも対応
-    html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:4px;">' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n1" placeholder="選手1 氏名" oninput="recalcTotal()" style="padding:6px;" />' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t1" placeholder="選手1 所属" oninput="recalcTotal()" style="padding:6px; font-size:12px;" />' +
-      '</div>' +
-      '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n2" placeholder="選手2 氏名" oninput="recalcTotal()" style="padding:6px;" />' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t2" placeholder="選手2 所属" oninput="recalcTotal()" style="padding:6px; font-size:12px;" />' +
+    html += '<div class="entry-grid">' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n1" placeholder="選手1 氏名" oninput="recalcTotal()" />' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t1" placeholder="選手1 所属" oninput="recalcTotal()" />' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n2" placeholder="選手2 氏名" oninput="recalcTotal()" />' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t2" placeholder="選手2 所属" oninput="recalcTotal()" />' +
       '</div>';
   } else {
-    html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">' +
-      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_name" placeholder="氏名 (フルネーム)" oninput="recalcTotal()" style="padding:6px;" />' +
-      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_team" placeholder="所属" oninput="recalcTotal()" style="padding:6px; font-size:12px;" />' +
+    html += '<div class="entry-grid">' +
+      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_name" placeholder="氏名 (フルネーム)" oninput="recalcTotal()" />' +
+      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_team" placeholder="所属" oninput="recalcTotal()" />' +
       '</div>';
   }
+  html += divSeg;
   row.innerHTML = html;
   container.appendChild(row);
   recalcTotal();
@@ -728,14 +825,19 @@ function removeEntry(btn, eventIdx) {
   recalcTotal();
 }
 
-// 行の参加区分(一般/中高校生)に応じた料金を返す。区分セレクタが無い種目は一般料金。
+// 行の参加区分(general/middle/high)を返す。セグメントが無い種目は general。
 function rowDivision(row) {
-  const sel = row.querySelector("select.tt-div");
-  return (sel && sel.value === "student") ? "student" : "general";
+  const r = row.querySelector(".div-seg input:checked");
+  return r ? r.value : "general";
 }
+// 区分に応じた料金。一般以外(中学生/高校生)は中高生料金 fee_student。
 function rowFee(ev, row) {
-  return (rowDivision(row) === "student" && ev.fee_student != null)
+  return (rowDivision(row) !== "general" && ev.fee_student != null)
     ? ev.fee_student : (ev.fee || 0);
+}
+// 区分の表示ラベル (一般は空文字 = 表示しない)。
+function ttDivLabel(d) {
+  return d === "middle" ? "中学生" : d === "high" ? "高校生" : d === "student" ? "中高生" : "";
 }
 
 function recalcTotal() {
@@ -848,15 +950,15 @@ function buildSummaryText(data) {
       const members = (e.members || []).join("、");
       lines.push("・[団体] " + e.event);
       lines.push("    " + (e.team_name || "") + ": " + members);
-      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP") + (e.division === "student" ? "（中高生）" : ""));
+      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP") + (ttDivLabel(e.division) ? "（" + ttDivLabel(e.division) + "）" : ""));
     } else if (e.type === "doubles") {
       lines.push("・[ダブルス] " + e.event);
       lines.push("    " + (e.name1 || "") + " (" + (e.team1 || e.team || "") + ")");
       lines.push("    " + (e.name2 || "") + " (" + (e.team2 || e.team1 || e.team || "") + ")");
-      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP") + (e.division === "student" ? "（中高生）" : ""));
+      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP") + (ttDivLabel(e.division) ? "（" + ttDivLabel(e.division) + "）" : ""));
     } else {
       lines.push("・" + e.event + ": " + (e.name || "") + " (" + (e.team || "") + ")");
-      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP") + (e.division === "student" ? "（中高生）" : ""));
+      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP") + (ttDivLabel(e.division) ? "（" + ttDivLabel(e.division) + "）" : ""));
     }
   });
   lines.push("━━━━━━━━━━━━━━━━━━");
@@ -885,7 +987,7 @@ function showConfirmModal(data) {
       entriesHTML +=
         '<tr><td class="label">' + escapeHtml(e.event) + '</td>' +
         '<td class="val">' + escapeHtml(memberText) +
-          (e.division === "student" ? ' <span style="font-size:11px;color:#0369a1;font-weight:bold;">中高生</span>' : '') +
+          (ttDivLabel(e.division) ? ' <span style="font-size:11px;color:#0369a1;font-weight:bold;">' + ttDivLabel(e.division) + '</span>' : '') +
           ' <span style="color:#b91c1c;font-weight:bold;">¥' +
           (e.fee || 0).toLocaleString("ja-JP") + '</span></td></tr>';
     });

@@ -82,7 +82,8 @@ function authoritativeFees(tournament, entries) {
     const cfg = map[String(e.event || "").trim()];
     let fee;
     if (cfg) {
-      fee = (e.division === "student" && cfg.fee_student != null) ? cfg.fee_student : cfg.fee;
+      const isStudent = e.division && e.division !== "general";   // 中学生/高校生(旧 student 含む)
+      fee = (isStudent && cfg.fee_student != null) ? cfg.fee_student : cfg.fee;
     } else {
       fee = parseInt(e.fee, 10) || 0;
     }

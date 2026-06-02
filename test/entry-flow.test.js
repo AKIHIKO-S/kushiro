@@ -164,6 +164,21 @@ test("区分(division)で entrant のカテゴリが変わる (一般→general 
   assert.strictEqual(es.find((e) => e.name === "学生 次郎").category, "high", "中高校生は high カテゴリ");
 });
 
+test("3区分(中学生/高校生/一般)が entrant.category に反映される", () => {
+  const t = db.createTournament({ name: "3区分", date: "2027-01-01" });
+  db.updateEntrySettings(t.id, { entries_open: 1,
+    event_config: [{ name: "男子シングルス", type: "singles", fee: 700, fee_student: 400 }] });
+  db.createTeamEntry(t.id, { team_name: "甲", contact_name: "x", contact_email: "x@y.jp", entries: [
+    { event: "男子シングルス", type: "singles", name: "中学 太郎", team: "甲", division: "middle" },
+    { event: "男子シングルス", type: "singles", name: "高校 次郎", team: "甲", division: "high" },
+    { event: "男子シングルス", type: "singles", name: "一般 三郎", team: "甲", division: "general" },
+  ] });
+  const es = db.getEntries(t.id);
+  assert.strictEqual(es.find((e) => e.name === "中学 太郎").category, "middle");
+  assert.strictEqual(es.find((e) => e.name === "高校 次郎").category, "high");
+  assert.strictEqual(es.find((e) => e.name === "一般 三郎").category, "general");
+});
+
 test("statusフィルタで絞り込める", () => {
   const t = openTournament();
   db.createTeamEntry(t.id, { team_name: "T", contact_name: "x", contact_email: "x@y.jp",
