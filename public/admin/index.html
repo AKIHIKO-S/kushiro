@@ -1102,6 +1102,32 @@
  /* 危険操作(取消/削除/不可逆)= 丹頂レッド */
  .btn-danger{ background:transparent; color:var(--tancho); border:1px solid var(--tancho); }
  .btn-danger:hover{ background:var(--tancho); color:#fff; }
+
+ /* ── 丹頂デイ: 選手画面の統計(共有 playerStatsSection)を admin トーンに統一 ──
+    緑ヒーロー → スレート白カード＋氷青の左帯。タイル/フォーム/内訳も白基調へ。
+    勝=緑/敗=赤 は意味色として維持。admin専用<style>なので viewer(別doc)には非干渉。 */
+ .psum{ background:#eef2f7!important; color:var(--txt)!important; border:1px solid var(--border);
+   border-left:5px solid var(--accent); border-radius:14px; box-shadow:none; }
+ .psum-rate-v{ color:var(--txt); }
+ .psum-rate-k, .psum-rec{ color:var(--sub); opacity:1; }
+ .psum-rec b{ color:var(--txt); }
+ .psum-wl{ background:#d6dde6; }
+ .psum-wl .w{ background:#1a7a45; } .psum-wl .l{ background:#c01526; opacity:.85; }
+ .psum-kv-i b{ color:var(--txt); } .psum-kv-i span{ color:var(--sub); opacity:1; }
+ @media(min-width:560px){ .psum-kv{ border-left:1px solid var(--border); } }
+ .pkey-tiles .pstat-tile, .pstat-tile{ background:#fff; border:1px solid var(--border); }
+ .pstat-v{ color:var(--txt); } .pstat-l{ color:var(--sub); } .pstat-s{ color:var(--sub-l); }
+ .pstat-cmp-a{ color:var(--sub-l); }
+ .pstat-cmp.up .pstat-cmp-d{ color:#1a7a45; } .pstat-cmp.down .pstat-cmp-d{ color:#c01526; }
+ .pform-dot.win{ background:#1a7a45; } .pform-dot.lose{ background:#c01526; }
+ .pform-label{ color:var(--sub); }
+ .pmore{ background:#fff; border:1px solid var(--border); }
+ .pmore-sum::after{ color:var(--accent); }
+ .pstat-table, .pstat-row{ border-color:var(--border); }
+ .pdist-chip.w{ background:#e8f6ee; color:#15633a; border-color:#cde9d8; }
+ .pdist-chip.l{ background:#fdecee; color:#9c0f1c; border-color:#f3d3d6; }
+ .pdist-label.w{ color:#1a7a45; } .pdist-label.l{ color:#c01526; }
+ .pstat-bar i.hi{ background:#1a7a45; } .pstat-rp.hi{ color:#1a7a45; }
 </style>
 </head>
 <body>
