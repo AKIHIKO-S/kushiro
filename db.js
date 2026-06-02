@@ -148,6 +148,7 @@ sqlite.exec(`
     id TEXT PRIMARY KEY,
     tournament_id TEXT NOT NULL,
     token_hash TEXT DEFAULT '',
+    op_id TEXT DEFAULT '',
     contact_name TEXT DEFAULT '',
     contact_email TEXT DEFAULT '',
     contact_tel TEXT DEFAULT '',
@@ -162,6 +163,17 @@ sqlite.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_submissions_tournament ON entry_submissions(tournament_id);
   CREATE INDEX IF NOT EXISTS idx_submissions_token ON entry_submissions(token_hash);
+  CREATE INDEX IF NOT EXISTS idx_submissions_opid ON entry_submissions(tournament_id, op_id);
+
+  -- 申込番号トークン → 申込原本(submission) の対応表。1申込に複数トークンを持てる
+  -- (部分再送で併合した際、旧トークンと新トークンの両方が同じ submission を指す)。
+  -- 平文は保持せず SHA-256 ハッシュのみ。閲覧は submission_id 経由で entrants を引く。
+  CREATE TABLE IF NOT EXISTS submission_tokens (
+    token_hash TEXT PRIMARY KEY,
+    submission_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_submission_tokens_sub ON submission_tokens(submission_id);
 
   CREATE INDEX IF NOT EXISTS idx_entrants_tournament ON entrants(tournament_id);
   CREATE INDEX IF NOT EXISTS idx_entrants_event ON entrants(tournament_id, event);
@@ -425,6 +437,13 @@ try {
   addECol("submission_id", "TEXT DEFAULT ''");
   // 混合ダブルス等で相方の性別を別途保持(集計の男女別が崩れないように)。
   addECol("partner_gender", "TEXT DEFAULT ''");
+  // Phase4残: 既存 entry_submissions に op_id 列を追加(コールド再送の replay 判定用)。
+  try {
+    const scols = sqlite.prepare("PRAGMA table_info(entry_submissions)").all();
+    if (scols.length && !scols.find(c => c.name === "op_id")) {
+      sqlite.exec("ALTER TABLE entry_submissions ADD COLUMN op_id TEXT DEFAULT ''");
+    }
+  } catch (e) { /* entry_submissions 未作成の初回起動は CREATE TABLE 側で op_id 込み */ }
 } catch (e) { console.error("migration error:", e.message); }
 
 // ── 追加インデックス (#23) ──────────────────────────────
@@ -4429,17 +4448,27 @@ const entryStmts = {
 const submissionStmts = {
   insert: sqlite.prepare(`
     INSERT INTO entry_submissions (
-      id, tournament_id, token_hash, contact_name, contact_email, contact_tel,
+      id, tournament_id, token_hash, op_id, contact_name, contact_email, contact_tel,
       team_name, total_amount, entrant_ids, payload_json, source, screened_count
     ) VALUES (
-      @id, @tournament_id, @token_hash, @contact_name, @contact_email, @contact_tel,
+      @id, @tournament_id, @token_hash, @op_id, @contact_name, @contact_email, @contact_tel,
       @team_name, @total_amount, @entrant_ids, @payload_json, @source, @screened_count
     )
   `),
   getByTokenHash: sqlite.prepare(`SELECT * FROM entry_submissions WHERE token_hash = ?`),
   getById: sqlite.prepare(`SELECT * FROM entry_submissions WHERE id = ?`),
+  getByOpId: sqlite.prepare(
+    `SELECT * FROM entry_submissions WHERE tournament_id = ? AND op_id = ? AND op_id <> '' LIMIT 1`),
   listByTournament: sqlite.prepare(
     `SELECT * FROM entry_submissions WHERE tournament_id = ? ORDER BY created_at DESC`),
+  // 併合時に原本の集計を更新
+  updateTotals: sqlite.prepare(
+    `UPDATE entry_submissions SET entrant_ids = @entrant_ids, total_amount = @total_amount,
+       token_hash = @token_hash, op_id = @op_id WHERE id = @id`),
+  // 申込番号トークン → submission の対応表(1申込に複数トークン可)
+  addToken: sqlite.prepare(
+    `INSERT OR IGNORE INTO submission_tokens (token_hash, submission_id) VALUES (?, ?)`),
+  subIdByToken: sqlite.prepare(`SELECT submission_id FROM submission_tokens WHERE token_hash = ?`),
 };
 
 // team_members 列(JSON配列文字列)を安全に配列へ。壊れていれば空配列。
@@ -4472,14 +4501,30 @@ function _hashToken(token) {
   return crypto.createHash("sha256").update(norm).digest("hex");
 }
 
+// トークン(申込番号)から submission 行を引く。新方式: submission_tokens 対応表。
+// 旧データ(対応表未backfill)向けに entry_submissions.token_hash 直引きもフォールバック。
+function _submissionByToken(token) {
+  const h = _hashToken(token);
+  const map = submissionStmts.subIdByToken.get(h);
+  if (map) return submissionStmts.getById.get(map.submission_id) || null;
+  return submissionStmts.getByTokenHash.get(h) || null;
+}
+
 // 申込者本人がトークンで自分の申込を閲覧する(閲覧のみ)。連絡先メール等の生PIIは返さない。
+// 閲覧する申込内容は submission_id に紐づく entrants を「生で」引くため、部分再送で
+// 後から併合された種目も(同じトークンで)常に全件表示される (Phase4残: 併合)。
 function getSubmissionByToken(token) {
   if (!token) return { error: "申込番号を入力してください" };
-  const sub = submissionStmts.getByTokenHash.get(_hashToken(token));
+  const sub = _submissionByToken(token);
   if (!sub) return { error: "申込が見つかりません。申込番号をご確認ください" };
-  let entrantIds = [];
-  try { entrantIds = JSON.parse(sub.entrant_ids || "[]"); } catch (_) {}
-  const entries = entrantIds.map(id => entrantStmts.get.get(id)).filter(Boolean).map(e => ({
+  const ents = sqlite.prepare(
+    `SELECT * FROM entrants WHERE submission_id = ? ORDER BY event, seed, furigana`).all(sub.id);
+  // 万一 submission_id 紐付けが無い旧データは、原本の entrant_ids にフォールバック。
+  const rows = ents.length ? ents : (() => {
+    let ids = []; try { ids = JSON.parse(sub.entrant_ids || "[]"); } catch (_) {}
+    return ids.map(id => entrantStmts.get.get(id)).filter(Boolean);
+  })();
+  const entries = rows.map(e => ({
     name: e.display_name || e.name,
     team: e.team || "",
     event: e.event || "",
@@ -4491,13 +4536,14 @@ function getSubmissionByToken(token) {
     fee: e.fee || 0,
     status: e.status || "confirmed",
   }));
+  const total = rows.reduce((s, e) => s + (e.fee || 0), 0);
   const t = stmts.getTournament.get(sub.tournament_id);
   return {
     ok: true,
     tournament: t ? { id: t.id, name: t.name, date: t.date } : null,
     team_name: sub.team_name || "",
     contact_name: sub.contact_name || "",
-    total_amount: sub.total_amount || 0,
+    total_amount: total || sub.total_amount || 0,
     created_at: sub.created_at,
     entries,
   };
@@ -4653,9 +4699,27 @@ function inferGenderCategory(eventName, g, c) {
   return { gender: gender || "male", category: category || "general" };
 }
 
-function createTeamEntry(tournamentId, formData) {
+function createTeamEntry(tournamentId, formData, opId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
+
+  // 真のDB冪等(Phase4残): 同一 op_id の申込原本が既にあれば「処理済み」を返す。
+  // HTTPの op_id キャッシュ(メモリ)が再起動で消えた後の再送でも、entrant二重作成や
+  // 「空成功(entry_count:0)」の混乱を避ける(平文トークンは保持しないので返さない)。
+  opId = String(opId || formData.op_id || "").trim();
+  if (opId) {
+    const prev = submissionStmts.getByOpId.get(tournamentId, opId);
+    if (prev) {
+      let n = 0; try { n = (JSON.parse(prev.entrant_ids || "[]") || []).length; } catch (_) {}
+      return {
+        ok: true, replayed: true, already_registered: true,
+        entry_count: 0, registered_count: n,
+        total_amount: prev.total_amount || 0,
+        entrant_ids: [], submission_id: prev.id, applicant_token: "",
+        contact: { name: prev.contact_name || "", email: prev.contact_email || "", tel: prev.contact_tel || "" },
+      };
+    }
+  }
 
   // 申込受付チェック
   if (!t.entries_open) return { error: "現在この大会は申込を受け付けていません" };
@@ -4735,14 +4799,17 @@ function createTeamEntry(tournamentId, formData) {
   // 申込原本(entry_submissions)の id を先に採番し、作成する entrant 全てに紐づける。
   const submissionId = uid();
   // 同一(大会・種目・氏名・所属・相方)の重複作成を防ぐ(冪等)。createEntry と同じ方針。
+  // 既存 entrant の submission_id も取り、部分再送を既存申込へ併合する手掛かりにする。
   const dupStmt = sqlite.prepare(
-    `SELECT id FROM entrants WHERE tournament_id=? AND event=? AND name=? AND team=? AND partner_name=? LIMIT 1`);
+    `SELECT id, submission_id FROM entrants WHERE tournament_id=? AND event=? AND name=? AND team=? AND partner_name=? LIMIT 1`);
 
   const createdEntrants = [];
   const pricedEntries = [];   // 確認メール用: 実際に作成した申込のみ・権威料金(クライアント値に依存しない)
   const tpEntries = [];       // for tournament_players (status tracking)
   let token = "";
   let computedTotal = 0;
+  let existingSubId = "";      // 重複で見つかった既存 entrant の申込原本(併合先)
+  let mergedInto = "";         // 併合した場合の既存原本 id
 
   // entrant 作成 + tournament_players + 申込原本 を1トランザクションで原子的に行う。
   // 途中で例外が出ても全てロールバックし「entrant だけ残って原本/トークンが無い」不整合を防ぐ
@@ -4820,7 +4887,12 @@ function createTeamEntry(tournamentId, formData) {
       if (canDedup) {
         const nm = buildEntrantNames(data);
         const exists = dupStmt.get(tournamentId, evName, nm.name, normalizeName(data.team), nm.partner_name || "");
-        if (exists) { dupSkipped++; continue; }
+        if (exists) {
+          dupSkipped++;
+          // 既存 entrant が属する申込原本を併合先として控える(部分再送のトークン分裂を防ぐ)。
+          if (!existingSubId && exists.submission_id) existingSubId = exists.submission_id;
+          continue;
+        }
       }
 
       const e = createEntrant(data);
@@ -4853,8 +4925,33 @@ function createTeamEntry(tournamentId, formData) {
 
     computedTotal = createdEntrants.reduce((s, e) => s + (e.fee || 0), 0);
 
-    // 申込番号(トークン)発行 + 申込原本を保存。1件も作成されなければトークンは出さない(全部spam等)。
-    if (createdEntrants.length > 0) {
+    // 既存申込への併合: 一部が重複で既存原本(existingSubId)に属し、かつ新規作成もある場合、
+    // 新規 entrant をその既存原本へ張り替える。原本の集計を更新し、新トークンも同原本へ対応付ける
+    // (旧トークン・新トークンの双方が、併合後の全種目を表示できる / Phase4残: 部分再送の併合)。
+    const mergeTarget = (existingSubId && createdEntrants.length > 0)
+      ? submissionStmts.getById.get(existingSubId) : null;
+
+    if (mergeTarget) {
+      // 新規 entrant の submission_id を既存原本へ付け替え
+      sqlite.prepare(`UPDATE entrants SET submission_id=? WHERE submission_id=?`)
+        .run(mergeTarget.id, submissionId);
+      // 原本の集計を「その原本に属する全 entrant」から再計算
+      const all = sqlite.prepare(`SELECT id, fee FROM entrants WHERE submission_id=?`).all(mergeTarget.id);
+      const mergedTotal = all.reduce((s, e) => s + (e.fee || 0), 0);
+      token = _genApplicantToken();
+      submissionStmts.updateTotals.run({
+        id: mergeTarget.id,
+        entrant_ids: JSON.stringify(all.map(e => e.id)),
+        total_amount: mergedTotal,
+        token_hash: _hashToken(token),                      // 最新トークン(表示用)
+        op_id: opId || mergeTarget.op_id || "",
+      });
+      submissionStmts.addToken.run(_hashToken(token), mergeTarget.id);   // 新トークン→既存原本
+      // 返す total_amount は「今回の追加分」(created_entries と整合=確認メールの明細と合計が一致)。
+      // 原本の total_amount は全体(mergedTotal)。/entry/status は entrants から都度再計算するため全体が出る。
+      mergedInto = mergeTarget.id;
+    } else if (createdEntrants.length > 0) {
+      // 新規申込: 申込番号(トークン)発行 + 申込原本を保存。
       token = _genApplicantToken();
       const safePayload = {
         team_name: formData.team_name || "",
@@ -4872,6 +4969,7 @@ function createTeamEntry(tournamentId, formData) {
         id: submissionId,
         tournament_id: tournamentId,
         token_hash: _hashToken(token),
+        op_id: opId || "",
         contact_name: contact.name, contact_email: contact.email, contact_tel: contact.tel,
         team_name: formData.team_name || "",
         total_amount: computedTotal,
@@ -4880,6 +4978,7 @@ function createTeamEntry(tournamentId, formData) {
         source: formData.source === "gas" ? "gas" : (formData.source === "admin" ? "admin" : "form"),
         screened_count: spamSkipped,
       });
+      submissionStmts.addToken.run(_hashToken(token), submissionId);     // トークン→原本
     }
   });
   persist();
@@ -4889,12 +4988,13 @@ function createTeamEntry(tournamentId, formData) {
     entry_count: createdEntrants.length,
     // 既に申込済み(全て重複で新規作成なし)。UI が「失敗」と誤認しないよう明示する (Phase4 review #5)。
     already_registered: createdEntrants.length === 0 && dupSkipped > 0,
+    merged: !!mergedInto,     // 既存申込へ追加併合した (Phase4残: 部分再送)
     skipped_spam: spamSkipped,
     skipped_duplicate: dupSkipped,
     total_amount: computedTotal,
     entrant_ids: createdEntrants.map(e => e.id),
     created_entries: pricedEntries,   // 確認メール用(作成分のみ・権威料金)
-    submission_id: createdEntrants.length ? submissionId : "",
+    submission_id: mergedInto || (createdEntrants.length ? submissionId : ""),
     applicant_token: token,   // 申込番号(平文)。DBには SHA-256 ハッシュのみ保持。
     contact,
   };
@@ -6321,6 +6421,24 @@ try {
     if (mem || app) console.log(`[migration] Phase4 backfill: team_members ${mem}件 / applied_at ${app}件`);
   }
 } catch (e) { console.error("phase4 backfill migration error:", e.message); }
+
+// ── Phase4残: 既存 entry_submissions の token_hash を submission_tokens 対応表へバックフィル ──
+// 既存の申込番号(旧トークン)も新しい submission_id 経由の閲覧で引けるようにする。kv で保護。
+try {
+  if (kvGet("submission_tokens_backfill_v1") !== "1") {
+    const rows = sqlite.prepare(
+      `SELECT id, token_hash FROM entry_submissions WHERE token_hash <> ''`).all();
+    const ins = sqlite.prepare(
+      `INSERT OR IGNORE INTO submission_tokens (token_hash, submission_id) VALUES (?, ?)`);
+    let n = 0;
+    const tx = sqlite.transaction(() => {
+      for (const r of rows) { if (r.token_hash) { ins.run(r.token_hash, r.id); n++; } }
+    });
+    tx();
+    kvSet("submission_tokens_backfill_v1", "1");
+    if (n) console.log(`[migration] submission_tokens backfill: ${n}件`);
+  }
+} catch (e) { console.error("submission_tokens backfill error:", e.message); }
 
 module.exports = {
   // 審判結果入力 (テスト環境付き)

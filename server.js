@@ -610,7 +610,10 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
     }
     try {
       const tournament = db.getTournament(req.params.id);
-      const r = db.createTeamEntry(req.params.id, payload);
+      // op_id(X-Op-Id ヘッダ / body)を渡し、メモリキャッシュ非ヒット(再起動後など)でも
+      // DBレベルで replay 判定する (Phase4残: 真のDB冪等)。
+      const opId = req.get("X-Op-Id") || (payload && payload.op_id) || "";
+      const r = db.createTeamEntry(req.params.id, payload, opId);
 
       // GAS 連携が設定されていればサーバー側から中継 (スプレッドシート反映、best-effort)。
       // server→GAS は CORS 制約なし。ブラウザ直POSTの誤エラーを解消する要。

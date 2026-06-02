@@ -1123,15 +1123,19 @@ async function submitForm(e) {
       ) : "";
       // 全件が重複(既に申込済み)で新規作成が無かった場合は、失敗と誤認させないよう明示する。
       const alreadyRegistered = !!result.already_registered || (result.entry_count === 0 && !token);
+      const merged = !!result.merged && !alreadyRegistered;   // 既存申込へ追加併合
+      const heading = alreadyRegistered ? 'この内容はすでに申込済みです'
+        : merged ? '既存のお申込に追加しました' : '申込を受け付けました';
+      const intro = alreadyRegistered
+        ? '同じ内容の申込がすでに登録されています。最初に申込まれた際の<b>申込番号</b>(控えメール)でご確認ください。お心当たりがない場合や修正が必要な場合は大会本部までご連絡ください。'
+        : merged
+          ? '今回の追加分を、既存のお申込にまとめました。下記の<b>申込番号</b>で全種目をまとめて確認できます(以前の申込番号でも確認できます)。'
+          : 'お申込ありがとうございます。下記の申込番号を控えてください。<br>お申込内容をLINE等で関係者と共有する場合は、下記をコピーしてご利用ください。';
       const card = document.createElement("div");
       card.className = "success-card";
       card.innerHTML =
-        (alreadyRegistered ? '<h3>この内容はすでに申込済みです</h3>' : '<h3>申込を受け付けました</h3>') +
-        '<div style="text-align:center;font-size:13px;color:#14532d;line-height:1.7;">' +
-          (alreadyRegistered
-            ? '同じ内容の申込がすでに登録されています。最初に申込まれた際の<b>申込番号</b>(控えメール)でご確認ください。お心当たりがない場合や修正が必要な場合は大会本部までご連絡ください。'
-            : 'お申込ありがとうございます。下記の申込番号を控えてください。<br>お申込内容をLINE等で関係者と共有する場合は、下記をコピーしてご利用ください。') +
-        '</div>' +
+        '<h3>' + heading + '</h3>' +
+        '<div style="text-align:center;font-size:13px;color:#14532d;line-height:1.7;">' + intro + '</div>' +
         tokenBlock +
         '<div class="summary-text" id="ttSummaryText">' + escapeHtml(summary) + '</div>' +
         '<button type="button" class="copy-btn" id="ttCopyBtn">クリップボードにコピー (LINE等で共有可)</button>' +
