@@ -383,6 +383,10 @@ try {
   addMCol("referee_entrant_id", "TEXT");
   // 団体戦の追加台 (2台同時使用): カンマ区切り "5,6" 等
   addMCol("extra_tables", "TEXT DEFAULT ''");
+  // 団体戦(tie)の内訳: この対戦を構成する各個別試合の結果(JSON配列)。
+  // 例 [{slot:"S1",type:"S",winner:"home",home:"…",away:"…",score:"3-1"}, …]。
+  // チームスコアは winner_sets/loser_sets(=勝った試合数)を流用。個人戦では空。
+  addMCol("tie_results", "TEXT DEFAULT ''");
   // 再コール回数 (1=初回,2=再コール1回目=注意,3=再コール2回目=警告,4+ = 最終警告)
   addMCol("call_count", "INTEGER DEFAULT 0");  // 互換用 (累計)
   addMCol("call_count_p1", "INTEGER DEFAULT 0");  // 選手1の再コール回数
@@ -1695,16 +1699,21 @@ function deleteMatch(id) {
   tx();
 }
 
+function _parseTieResults(v) {
+  if (!v) return [];
+  try { const a = JSON.parse(v); return Array.isArray(a) ? a : []; } catch (_) { return []; }
+}
 function getMatch(id) {
   const m = stmts.getMatch.get(id);
   if (!m) return null;
   m.sets = JSON.parse(m.sets_json || "[]");
+  m.tie_results = _parseTieResults(m.tie_results);   // 団体戦の内訳(個人戦は [])
   return m;
 }
 
 function getMatchesByTournament(tournamentId) {
   return stmts.getMatchesByTournament.all(tournamentId).map(m => ({
-    ...m, sets: JSON.parse(m.sets_json || "[]")
+    ...m, sets: JSON.parse(m.sets_json || "[]"), tie_results: _parseTieResults(m.tie_results)
   }));
 }
 
@@ -3014,6 +3023,14 @@ function finishMatchInternal(matchId, data) {
   const isWO = !!data.walkover || winner.name === "BYE" || loser.name === "BYE";
   sqlite.prepare("UPDATE matches SET is_walkover=? WHERE id=?").run(isWO ? 1 : 0, matchId);
 
+  // 団体戦(tie)の内訳を保存(指定があれば)。correct 経由でも data.tie_results を渡せば上書きされる。
+  // 個人戦の finish では未指定なので既存値を触らない。
+  if (data.tie_results !== undefined) {
+    const tr = typeof data.tie_results === "string"
+      ? data.tie_results : JSON.stringify(data.tie_results || []);
+    sqlite.prepare("UPDATE matches SET tie_results=? WHERE id=?").run(tr, matchId);
+  }
+
   // 所要時間 (呼出→結果入力) を自動記録。called_at が無ければ started_at を起点に。
   if (!isWO) {
     try {
@@ -3149,6 +3166,8 @@ function correctResult(matchId, data) {
       winner_team: "", loser_team: "",
       sets_json: "[]", winner_sets: 0, loser_sets: 0,
     });
+    // 団体戦の内訳もクリア(再 finish が新しい tie_results を渡せば再設定される)。
+    sqlite.prepare("UPDATE matches SET tie_results='' WHERE id=?").run(matchId);
     // 元の rating 変更を厳密に巻き戻す (#10/#12/#22)。保存済み差分を引くので post-rating 再計算による
     // ドリフトが起きない。直後の finishMatchInternal が新結果の差分を改めて適用する。
     if (wasCompleted) reverseEloForMatch(m);
@@ -3822,7 +3841,7 @@ function getOperationState(tournamentId) {
     LEFT JOIN entrants e2 ON e2.id = m.player2_entrant_id
     WHERE m.tournament_id=?
     ORDER BY m.bracket_round ASC, m.bracket_pos ASC, m.match_no ASC
-  `).all(tournamentId).map(m => ({ ...m, sets: JSON.parse(m.sets_json || "[]") }));
+  `).all(tournamentId).map(m => ({ ...m, sets: JSON.parse(m.sets_json || "[]"), tie_results: _parseTieResults(m.tie_results) }));
 
   // localtime 文字列 ("YYYY-MM-DD HH:MM:SS") を分差に (サーバー時計基準で一貫)
   const _minsSince = (s) => {
@@ -3988,6 +4007,14 @@ function getOperationState(tournamentId) {
       court_rows: rows, court_cols: cols, hq_position: tournament.hq_position || "bottom",
       enforce_referee_rule: tournament.enforce_referee_rule,
       referee_input_enabled: !!tournament.referee_input_enabled,
+      // 団体戦の結果入力UIが種目の type / tie_format を参照できるよう同梱 (Phase: 団体戦運営)。
+      event_config: (() => {
+        try {
+          const c = typeof tournament.event_config === "string"
+            ? JSON.parse(tournament.event_config || "[]") : (tournament.event_config || []);
+          return Array.isArray(c) ? c : [];
+        } catch (_) { return []; }
+      })(),
     },
     tables,
     on_table: onTable,
@@ -4030,7 +4057,7 @@ function getOpMatchList(tournamentId) {
     SELECT m.id, m.event, m.round, m.round_order, m.match_label, m.status, m.table_no,
       m.player1_name, m.player2_name, m.player1_team, m.player2_team,
       m.winner_name, m.loser_name, m.winner_team, m.loser_team, m.winner_sets, m.loser_sets,
-      COALESCE(m.is_walkover,0) AS is_walkover,
+      COALESCE(m.is_walkover,0) AS is_walkover, m.tie_results,
       m.called_at, m.started_at, m.finished_at, m.duration_sec, m.result_source,
       e1.bracket_number AS player1_bracket_number,
       e2.bracket_number AS player2_bracket_number
@@ -4040,6 +4067,7 @@ function getOpMatchList(tournamentId) {
     WHERE m.tournament_id=?
     ORDER BY m.bracket_round ASC, m.bracket_pos ASC, m.match_no ASC
   `).all(tournamentId);
+  rows.forEach(m => { m.tie_results = _parseTieResults(m.tie_results); });
   return { matches: rows, total: rows.length };
 }
 

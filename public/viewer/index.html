@@ -1056,6 +1056,17 @@ const V = {
        m.winner_team ? h("span", { className: "text-sub text-sm" }, " (" + m.winner_team + ")") : null),
      h("div", { className: "text-lg font-bold mt-1", style: { fontFamily: "monospace" } }, TT.fmtScore(m.winner_sets, m.loser_sets)),
      setsStr ? h("div", { className: "text-sm text-sub mt-1" }, setsStr) : null),
+   // 団体戦(tie)の内訳: 各個別試合の勝ちチーム(home=選手1 / away=選手2)を表示。
+   (Array.isArray(m.tie_results) && m.tie_results.length) ? h("div", { style: { marginTop: "8px", padding: "10px", background: "#f8fafc", borderRadius: "8px" } },
+     h("div", { className: "text-sm font-bold text-sub mb-1" }, "団体戦の内訳"),
+     ...m.tie_results.map(r => {
+       const winName = r.winner === "home" ? (m.player1_name || "ホーム")
+         : r.winner === "away" ? (m.player2_name || "アウェイ") : "—";
+       return h("div", { className: "flex", style: { justifyContent: "space-between", fontSize: "13px", padding: "3px 0", borderBottom: "1px solid #eef2f7" } },
+         h("span", { className: "text-sub", style: { width: "52px" } }, r.slot || ""),
+         h("span", { className: "font-bold", style: { flex: "1" } }, winName, r.winner ? " ○" : ""),
+         r.score ? h("span", { className: "text-sub", style: { fontFamily: "monospace" } }, r.score) : null);
+     })) : null,
    m.loser_name ? h("div", { style: { padding: "10px", marginTop: "8px", background: "#f8fafc", borderRadius: "8px" } },
      h("div", { className: "text-sub" }, "" + m.loser_name,
        m.loser_team ? h("span", { className: "text-sm" }, " (" + m.loser_team + ")") : null)) : null);

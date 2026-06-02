@@ -911,9 +911,42 @@
       style: Object.assign({ background: c.bg, color: c.fg }, extraStyle || {}) }, label);
   }
 
+  // ── 団体戦(tie)フォーマット解析 (admin/viewer 共通) ──
+  // 入力例: "S,S,D,S,S" / "単 複 単" / "5"(=5試合) / ""(空)
+  // 戻り値: { slots:[{key,type,label}], count, threshold(過半数) }
+  function parseTieFormat(format) {
+    const raw = String(format == null ? "" : format).trim();
+    // 数字だけ → N試合(汎用ラベル)
+    if (/^\d+$/.test(raw)) {
+      const n = Math.max(1, Math.min(99, parseInt(raw, 10)));
+      const slots = [];
+      for (let i = 1; i <= n; i++) slots.push({ key: "M" + i, type: "G", label: "第" + i + "試合" });
+      return { slots, count: n, threshold: Math.floor(n / 2) + 1 };
+    }
+    const toks = raw.split(/[\s,、，･・\/]+/).filter(Boolean);
+    if (!toks.length) return { slots: [], count: 0, threshold: 0 };
+    let s = 0, d = 0, g = 0;
+    const slots = toks.slice(0, 30).map(t => {
+      if (/^(s|単|シングルス?)$/i.test(t)) { s++; return { key: "S" + s, type: "S", label: "第" + s + "S" }; }
+      if (/^(d|複|ダブルス?|ミックス|混合)$/i.test(t)) { d++; return { key: "D" + d, type: "D", label: "第" + d + "D" }; }
+      g++; return { key: "M" + g, type: "G", label: t || ("第" + g + "試合") };
+    });
+    return { slots, count: slots.length, threshold: Math.floor(slots.length / 2) + 1 };
+  }
+  // tie の各試合結果(winner: "home"|"away"|"")から home/away の勝ち数を数える
+  function tieScore(results) {
+    let home = 0, away = 0;
+    (results || []).forEach(r => {
+      if (r && r.winner === "home") home++;
+      else if (r && r.winner === "away") away++;
+    });
+    return { home, away };
+  }
+
   // Export
   global.TT = {
     GENDERS, CATS, EV_TYPES, ROUNDS, PLACES,
+    parseTieFormat, tieScore,
     h, esc, clear, api, toast, showLoading, hideLoading,
     ratingLabel, ratingBadge,
     lookupFurigana, parsePaste,
