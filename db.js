@@ -4540,6 +4540,10 @@ function createTeamEntry(tournamentId, formData) {
 
     // 方式A: フォームは性別/カテゴリを集めないので、種目名から自動推定する (集計の男女別/区分が崩れない)。
     const gc = inferGenderCategory(evName, ent.gender, ent.category);
+    // フォームの参加区分(一般/中高校生)が来ていればカテゴリ=料金区分を上書きする。
+    // 一般→general / 中高校生→種目名から高/中を推定、不明なら high(中高生まとめ)。
+    if (ent.division === "general") gc.category = "general";
+    else if (ent.division === "student" && gc.category === "general") gc.category = "high";
 
     if (type === "team") {
       // 団体戦: 1チーム=1 entrant。members は note に保持

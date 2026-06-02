@@ -61,6 +61,9 @@ function buildEntryFormHTML(tournament, events, opts) {
   const eventsJson = jsonForScript(events.map(e => ({
     name: e.name,
     fee: e.fee || 0,
+    // 中高校生料金 (空/未設定なら一般と同額)。数値化し、未設定は null にして「一般と同じ」と判定。
+    fee_student: (e.fee_student != null && e.fee_student !== "" && !isNaN(parseInt(e.fee_student)))
+      ? (parseInt(e.fee_student) || 0) : null,
     type: e.type || "singles",
     note: e.note || "",
     per_team: e.per_team || 6,
@@ -591,11 +594,16 @@ function renderEvents() {
     det.dataset.idx = idx;
     det.open = true; // ★ 種目セクションは初期表示で開く
     const fee = ev.fee || 0;
+    const hasStuFee = (ev.fee_student != null && ev.fee_student !== fee);   // 中高生に別料金がある種目
+    const feeStu = hasStuFee ? ev.fee_student : fee;
     const unit = isTeam ? "チーム" : (isDoubles ? "ペア" : "選手");
+    const unitSfx = isTeam ? " / チーム" : (isDoubles ? " / ペア" : " / 人");
+    const feeTagHtml = hasStuFee
+      ? '一般 ¥' + fee.toLocaleString("ja-JP") + ' ／ 中高生 ¥' + feeStu.toLocaleString("ja-JP") + unitSfx
+      : '参加料 ¥' + fee.toLocaleString("ja-JP") + unitSfx;
     det.innerHTML = '<summary>' +
       escapeHtml(ev.name) +
-      '<span class="fee-tag">参加料 ¥' + fee.toLocaleString("ja-JP") +
-        (isTeam ? " / チーム" : (isDoubles ? " / ペア" : " / 人")) + '</span>' +
+      '<span class="fee-tag">' + feeTagHtml + '</span>' +
       '<span class="count-badge" id="count_' + idx + '">0 ' + unit + '</span>' +
       '</summary>' +
       '<div class="members" id="members_' + idx + '"></div>' +
@@ -673,9 +681,19 @@ function addEntry(eventIdx) {
   row.style.borderRadius = "4px";
   row.style.position = "relative";
 
+  // 中高校生に別料金がある種目だけ、行ごとに区分セレクタを出す (選んだ区分で料金が変動)。
+  const hasStuFee = (ev.fee_student != null && ev.fee_student !== (ev.fee || 0));
+  const divSelect = hasStuFee
+    ? '<select class="tt-div" onchange="recalcTotal()" title="参加区分で料金が変わります" ' +
+        'style="margin-left:auto;font-size:12px;padding:4px 6px;border:1px solid #d6d3d1;border-radius:4px;background:#fff;">' +
+        '<option value="general">一般 ¥' + (ev.fee || 0).toLocaleString("ja-JP") + '</option>' +
+        '<option value="student">中高校生 ¥' + (ev.fee_student || 0).toLocaleString("ja-JP") + '</option>' +
+      '</select>'
+    : '';
   let html = '<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">' +
     '<strong style="font-size:13px;">#' + (idx + 1) + '</strong>' +
     '<button type="button" class="btn-del" onclick="removeEntry(this, ' + eventIdx + ')">削除</button>' +
+    divSelect +
     '</div>';
 
   if (isTeam) {
@@ -710,6 +728,16 @@ function removeEntry(btn, eventIdx) {
   recalcTotal();
 }
 
+// 行の参加区分(一般/中高校生)に応じた料金を返す。区分セレクタが無い種目は一般料金。
+function rowDivision(row) {
+  const sel = row.querySelector("select.tt-div");
+  return (sel && sel.value === "student") ? "student" : "general";
+}
+function rowFee(ev, row) {
+  return (rowDivision(row) === "student" && ev.fee_student != null)
+    ? ev.fee_student : (ev.fee || 0);
+}
+
 function recalcTotal() {
   let total = 0;
   EVENTS.forEach((ev, idx) => {
@@ -732,9 +760,8 @@ function recalcTotal() {
         const n = row.querySelector('input[name*="_name"]');
         if (n && n.value.trim()) hasContent = true;
       }
-      if (hasContent) filled++;
+      if (hasContent) { filled++; total += rowFee(ev, row); }   // 区分別料金で加算
     });
-    total += filled * (ev.fee || 0);
   });
   document.getElementById("totalAmount").textContent = total.toLocaleString("ja-JP");
   // ★ 種目ごとのカウント表示も更新 (記入済みのみ)
@@ -776,7 +803,8 @@ function gatherFormData() {
     //   index非依存で拾うことでデータ欠落を解消し、表示合計と送信内容を常に一致させる。
     Array.from(container.children).forEach((row) => {
       const val = (sel) => { const el = row.querySelector(sel); return el ? (el.value || "") : ""; };
-      const obj = { event: ev.name, type: ev.type || "singles", fee: ev.fee || 0 };
+      const obj = { event: ev.name, type: ev.type || "singles",
+        fee: rowFee(ev, row), division: rowDivision(row) };   // 区分別料金 + 区分(general/student)
       if (ev.type === "team") {
         obj.team_name = val('input[name*="_team"][name$="_name"]');
         obj.members = [];
@@ -820,15 +848,15 @@ function buildSummaryText(data) {
       const members = (e.members || []).join("、");
       lines.push("・[団体] " + e.event);
       lines.push("    " + (e.team_name || "") + ": " + members);
-      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP"));
+      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP") + (e.division === "student" ? "（中高生）" : ""));
     } else if (e.type === "doubles") {
       lines.push("・[ダブルス] " + e.event);
       lines.push("    " + (e.name1 || "") + " (" + (e.team1 || e.team || "") + ")");
       lines.push("    " + (e.name2 || "") + " (" + (e.team2 || e.team1 || e.team || "") + ")");
-      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP"));
+      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP") + (e.division === "student" ? "（中高生）" : ""));
     } else {
       lines.push("・" + e.event + ": " + (e.name || "") + " (" + (e.team || "") + ")");
-      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP"));
+      lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP") + (e.division === "student" ? "（中高生）" : ""));
     }
   });
   lines.push("━━━━━━━━━━━━━━━━━━");
@@ -857,6 +885,7 @@ function showConfirmModal(data) {
       entriesHTML +=
         '<tr><td class="label">' + escapeHtml(e.event) + '</td>' +
         '<td class="val">' + escapeHtml(memberText) +
+          (e.division === "student" ? ' <span style="font-size:11px;color:#0369a1;font-weight:bold;">中高生</span>' : '') +
           ' <span style="color:#b91c1c;font-weight:bold;">¥' +
           (e.fee || 0).toLocaleString("ja-JP") + '</span></td></tr>';
     });

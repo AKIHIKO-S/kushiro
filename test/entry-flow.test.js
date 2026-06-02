@@ -151,6 +151,19 @@ test("申込締切は JST 基準で判定 (過去=拒否/未来=許可)", () => 
   assert.ok(future.ok, "未来締切は許可");
 });
 
+test("区分(division)で entrant のカテゴリが変わる (一般→general / 中高校生→high)", () => {
+  const t = db.createTournament({ name: "区分検証", date: "2027-01-01" });
+  db.updateEntrySettings(t.id, { entries_open: 1,
+    event_config: [{ name: "男子シングルス", type: "singles", fee: 700, fee_student: 500 }] });
+  db.createTeamEntry(t.id, { team_name: "甲", contact_name: "x", contact_email: "x@y.jp", entries: [
+    { event: "男子シングルス", type: "singles", name: "一般 太郎", team: "甲", division: "general" },
+    { event: "男子シングルス", type: "singles", name: "学生 次郎", team: "甲", division: "student" },
+  ] });
+  const es = db.getEntries(t.id);
+  assert.strictEqual(es.find((e) => e.name === "一般 太郎").category, "general");
+  assert.strictEqual(es.find((e) => e.name === "学生 次郎").category, "high", "中高校生は high カテゴリ");
+});
+
 test("statusフィルタで絞り込める", () => {
   const t = openTournament();
   db.createTeamEntry(t.id, { team_name: "T", contact_name: "x", contact_email: "x@y.jp",

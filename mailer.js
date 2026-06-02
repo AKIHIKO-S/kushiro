@@ -64,20 +64,28 @@ function eventFeeMap(tournament) {
   (Array.isArray(cfg) ? cfg : []).forEach(c => {
     if (!c || !c.name) return;
     const f = parseInt(c.fee, 10);
-    if (f >= 0) map[String(c.name).trim()] = f;
+    if (!(f >= 0)) return;
+    const fs = parseInt(c.fee_student, 10);   // 中高校生料金 (未設定なら null=一般と同額)
+    map[String(c.name).trim()] = { fee: f, fee_student: (fs >= 0 ? fs : null) };
   });
   return map;
 }
 
 // 各申込の参加料と合計をサーバ側で確定する (#26)。
 // クライアント供給の fee / total_amount は信用せず、設定済み(event_config)の料金を最優先。
+// 参加区分(division: general/student)が中高校生なら fee_student を使う。
 // 設定に無い種目(お弁当/懇親会等の任意項目)のみ、申込側の fee をフォールバックとして使う。
 function authoritativeFees(tournament, entries) {
   const map = eventFeeMap(tournament);
   let total = 0;
   const list = (entries || []).map(e => {
-    const configured = map[String(e.event || "").trim()];
-    const fee = (configured != null) ? configured : (parseInt(e.fee, 10) || 0);
+    const cfg = map[String(e.event || "").trim()];
+    let fee;
+    if (cfg) {
+      fee = (e.division === "student" && cfg.fee_student != null) ? cfg.fee_student : cfg.fee;
+    } else {
+      fee = parseInt(e.fee, 10) || 0;
+    }
     total += fee;
     return Object.assign({}, e, { fee });
   });

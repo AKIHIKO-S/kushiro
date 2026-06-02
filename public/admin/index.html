@@ -2817,8 +2817,9 @@ const A = {
  eventsTable.appendChild(h("thead", {}, h("tr", {},
  h("th", {}, "種目名"),
  h("th", { style: { width: "100px" } }, "形式"),
- h("th", { style: { width: "100px" } }, "料金(¥)"),
- h("th", { style: { width: "80px" } }, "/チーム人数"),
+ h("th", { style: { width: "88px" } }, "一般(¥)"),
+ h("th", { style: { width: "88px" } }, "中高生(¥)"),
+ h("th", { style: { width: "76px" } }, "/チーム人数"),
  h("th", { style: { width: "60px" } }, ""),
  )));
  const tbody = h("tbody", {});
@@ -2836,6 +2837,11 @@ const A = {
  h("td", {}, h("input", { className: "input", type: "number",
  value: ev.fee || 0,
  onInput: (e) => { ev.fee = parseInt(e.target.value) || 0; refreshCode(); } })),
+ h("td", {}, h("input", { className: "input", type: "number",
+ value: ev.fee_student != null && ev.fee_student !== "" ? ev.fee_student : "",
+ placeholder: "一般と同じ",
+ title: "中高校生の料金。空欄なら一般と同額",
+ onInput: (e) => { ev.fee_student = e.target.value === "" ? "" : (parseInt(e.target.value) || 0); refreshCode(); } })),
  h("td", {},
  ev.type === "team"
  ? h("input", { className: "input", type: "number",

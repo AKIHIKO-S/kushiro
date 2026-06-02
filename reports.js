@@ -68,11 +68,23 @@ function countByKindGender(members) {
   members.forEach(m => { const k = `${m.kind}_${m.gender === "female" ? "female" : "male"}`; if (cnt[k] !== undefined) cnt[k]++; });
   return cnt;
 }
-// 集計(cnt) → 明細 [{label,n,fee,sub}] と合計 sum
-function breakdownOf(cnt, F) {
+// メンバー配列 → 種別×性別の明細 [{label,n,fee,sub}] と合計 sum。
+// 料金は各メンバーに付与済みの m.fee(区分=一般/中高校生で異なる)を合算する。
+// 未付与なら kind×gender 単価 F をフォールバック。fee 列は表示用に平均単価(均一なら実額)。
+function breakdownOf(members, F) {
+  const buckets = {};
+  (members || []).forEach(m => {
+    const k = `${m.kind}_${m.gender === "female" ? "female" : "male"}`;
+    if (!(k in KIND_LABEL)) return;
+    const b = (buckets[k] = buckets[k] || { n: 0, sub: 0 });
+    b.n++;
+    b.sub += (m.fee != null ? m.fee : (F[k] || 0));
+  });
   let sum = 0; const breakdown = [];
-  Object.entries(cnt).forEach(([k, n]) => {
-    if (n > 0) { const fee = F[k] || 0, sub = n * fee; sum += sub; breakdown.push({ label: KIND_LABEL[k], n, fee, sub }); }
+  Object.keys(KIND_LABEL).forEach(k => {
+    const b = buckets[k]; if (!b || !b.n) return;
+    sum += b.sub;
+    breakdown.push({ label: KIND_LABEL[k], n: b.n, fee: Math.round(b.sub / b.n), sub: b.sub });
   });
   return { breakdown, sum };
 }
@@ -80,7 +92,7 @@ function breakdownOf(cnt, F) {
 function teamItemsOf(teams, F) {
   let no = 1;
   return sortedTeams(teams).map(([team, members]) => {
-    const { breakdown, sum } = breakdownOf(countByKindGender(members), F);
+    const { breakdown, sum } = breakdownOf(members, F);
     return { no: no++, team, total: sum, breakdown };
   });
 }
@@ -140,7 +152,42 @@ function buildAggregation(tournament, entrants, fees) {
     bento: 800, party: 3500,
   }, feesFromEventConfig(tournament), fees || {});
 
+  // 各メンバーに参加料を付与 (区分=category で 一般/中高校生 を切替)。event_config に無い種目は
+  // kind×gender 単価 F をフォールバック。集計表/領収書の合計が区分別料金で正しくなる。
+  const feeMap = eventFeeByName(tournament);
+  for (const members of byTeam.values()) {
+    members.forEach(m => {
+      const bucket = `${m.kind}_${m.gender === "female" ? "female" : "male"}`;
+      const cfg = feeMap[String(m.event_name || "").trim()];
+      if (cfg) {
+        const isStudent = m.category && m.category !== "general";
+        m.fee = (isStudent && cfg.fee_student != null) ? cfg.fee_student : cfg.fee;
+      } else {
+        m.fee = F[bucket] != null ? F[bucket] : 0;
+      }
+    });
+  }
+
   return { teams: byTeam, fees: F };
+}
+
+// event_config の種目別 {一般料金, 中高校生料金} マップ (名称キー)。
+function eventFeeByName(tournament) {
+  let cfg = [];
+  try {
+    cfg = typeof tournament.event_config === "string"
+      ? JSON.parse(tournament.event_config || "[]")
+      : (tournament.event_config || []);
+  } catch (e) { cfg = []; }
+  const map = {};
+  (Array.isArray(cfg) ? cfg : []).forEach(c => {
+    if (!c || !c.name) return;
+    const fee = parseInt(c.fee, 10);
+    if (!(fee >= 0)) return;
+    const fs = parseInt(c.fee_student, 10);
+    map[String(c.name).trim()] = { fee, fee_student: (fs >= 0 ? fs : null) };
+  });
+  return map;
 }
 
 // ─── 集計表 Excel 出力 (まりもオープン形式) ───
