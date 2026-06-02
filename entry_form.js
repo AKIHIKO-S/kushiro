@@ -320,6 +320,10 @@ function buildEntryFormHTML(tournament, events, opts) {
   .confirm-modal .btn-cancel { background: #f5f5f4; color: #44403c; }
   .confirm-modal .btn-confirm { background: #b91c1c; color: #fff; }
   .confirm-modal .btn-confirm:disabled { background: #a8a29e; cursor: wait; }
+  /* iframe埋込(自動高さ)では position:fixed のオーバーレイが画面外に出る/高さが暴れるため、
+     確認はインライン(通常フロー)で表示する。confirm-overlay は単独表示時の保険として残す。 */
+  .confirm-inline { max-width: 560px; margin: 8px auto 20px; }
+  .confirm-inline .confirm-modal { max-height: none; box-shadow: 0 4px 18px rgba(0,0,0,.12); }
   /* 送信完了画面 (LINE 共有用) */
   .success-card {
     margin: 20px 0; padding: 20px;
@@ -834,8 +838,9 @@ function buildSummaryText(data) {
 // 確認モーダルを表示
 function showConfirmModal(data) {
   return new Promise((resolve) => {
+    // iframe埋込(自動高さ)では position:fixed が画面外に出るため、確認はインラインで表示する。
     const ov = document.createElement("div");
-    ov.className = "confirm-overlay";
+    ov.className = "confirm-inline";
     let entriesHTML = "";
     data.entries.forEach((e, i) => {
       let memberText = "";
@@ -871,9 +876,28 @@ function showConfirmModal(data) {
       '<button type="button" class="btn-cancel">戻って修正</button>' +
       '<button type="button" class="btn-confirm">この内容で送信する</button>' +
       '</div></div>';
-    document.body.appendChild(ov);
-    ov.querySelector(".btn-cancel").onclick = () => { ov.remove(); resolve(false); };
-    ov.querySelector(".btn-confirm").onclick = () => { ov.remove(); resolve(true); };
+    // フォームを一時的に隠し、確認パネルをその位置にインライン表示する。
+    // → iframe はパネルの高さに自動縮小し、グレーの全画面オーバーレイや高さ暴走が起きない。
+    const form = document.getElementById("entryForm");
+    const sections = form ? form.querySelectorAll(".form-section") : [];
+    const submitBtn = document.getElementById("submitBtn");
+    sections.forEach(function (s) { s.style.display = "none"; });
+    if (submitBtn) submitBtn.style.display = "none";
+    if (form && form.parentNode) form.parentNode.insertBefore(ov, form);
+    else document.body.appendChild(ov);
+    ttScrollTop();
+    setTimeout(ttPostHeight, 0);
+    function finish(result) {
+      ov.remove();
+      // 確認を抜けたらフォームを元に戻す(送信成功時は submitForm 側で改めて隠す)。
+      sections.forEach(function (s) { s.style.display = ""; });
+      if (submitBtn) submitBtn.style.display = "";
+      ttScrollTop();
+      setTimeout(ttPostHeight, 0);
+      resolve(result);
+    }
+    ov.querySelector(".btn-cancel").onclick = function () { finish(false); };
+    ov.querySelector(".btn-confirm").onclick = function () { finish(true); };
   });
 }
 
@@ -954,9 +978,11 @@ async function submitForm(e) {
         document.getElementById("messageBox").innerHTML = "";
         renderEvents();
         recalcTotal();
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        ttScrollTop();
+      setTimeout(ttPostHeight, 0);
       };
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      ttScrollTop();
+      setTimeout(ttPostHeight, 0);
     } else {
       showMessage("送信できませんでした: " + (result.error || ("サーバー応答 " + resp.status)) +
         "。入力内容をご確認のうえ、もう一度お試しください。", "err");
@@ -985,6 +1011,17 @@ function showMessage(text, type) {
 // ── 埋込iframeの高さ自動調整 ──
 // 実コンテンツ高さを親フレームへ通知。親側リスナ(埋込スニペットに同梱)が iframe の
 // 高さを合わせる。スクリプトを除去するCMS(一部Jimdo)では通知が無視され固定高にフォールバック。
+// 確認/完了の表示に切り替えた時、フォーム先頭へスクロールし、親フレームにも「上へスクロール」を依頼する。
+// 親の埋込スニペットが対応していれば iframe を視界へ送る。未対応でもインライン表示なので破綻しない。
+function ttScrollTop() {
+  try { window.scrollTo(0, 0); } catch (_) {}
+  try {
+    if (window.parent !== window) {
+      window.parent.postMessage(
+        { __ktta_entry_form: true, id: TOURNAMENT_ID, scrollIntoView: true }, "*");
+    }
+  } catch (_) {}
+}
 function ttPostHeight() {
   try {
     if (window.parent === window) return; // 埋込でない(単独表示)なら不要

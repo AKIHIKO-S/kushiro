@@ -2900,9 +2900,10 @@ const A = {
    `/* KTTA 申込フォーム iframe 高さ自動調整 (任意・無害) */\n` +
    `(function(){var O=${JSON.stringify(origin)},T=${JSON.stringify(String(t.id))};\n` +
    `window.addEventListener("message",function(e){if(e.origin!==O)return;var d=e.data;\n` +
-   `if(!d||d.__ktta_entry_form!==true||d.id!==T||typeof d.height!=="number")return;\n` +
-   `var f=document.querySelector('iframe[data-ktta-entry="'+T+'"]');\n` +
-   `if(f&&d.height>200){f.style.height=(d.height+24)+"px";}});})();\n` +
+   `if(!d||d.__ktta_entry_form!==true||d.id!==T)return;\n` +
+   `var f=document.querySelector('iframe[data-ktta-entry="'+T+'"]');if(!f)return;\n` +
+   `if(d.scrollIntoView){try{f.scrollIntoView({behavior:"smooth",block:"start"});}catch(_){}return;}\n` +
+   `if(typeof d.height==="number"&&d.height>200){f.style.height=(d.height+24)+"px";}});})();\n` +
    `<\/script>`;
  if (platform === "jimdo") {
    // Jimdo: HTTPS iframe (Jimdo の HTML埋込ウィジェットで動作)
