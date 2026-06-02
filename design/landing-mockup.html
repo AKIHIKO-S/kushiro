@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>釧路卓球協会 — 大会運営プラットフォーム</title>
+<style>
+  /* ───── KTTA 入口ページ(モック): 幣舞橋の夕日 × 釧路湿原 × タンチョウ ─────
+     世界三大夕日の茜空、橋のシルエット、湿原の葦と水鏡、舞う丹頂。CSS＋SVGのみ。 */
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --gothic:'Hiragino Sans','BIZ UDPGothic','Yu Gothic UI','Yu Gothic','Meiryo',system-ui,sans-serif;
+    --mincho:'Hiragino Mincho ProN','Yu Mincho','YuMincho',serif;
+    --tancho:#c01526;
+  }
+  html,body{height:100%}
+  body{font-family:var(--gothic);color:#fff;overflow:hidden;background:#241640;-webkit-font-smoothing:antialiased}
+  .scene{position:relative;height:100vh;min-height:600px;overflow:hidden}
+
+  /* 空(夕景グラデ) */
+  .sky{position:absolute;inset:0;
+    background:linear-gradient(180deg,
+      #1c1238 0%, #3a1f4e 14%, #6b2a5c 30%, #a8385a 44%,
+      #d4544a 57%, #ea7437 68%, #f5a23c 78%, #ffc964 88%, #ffe09a 96%);}
+  /* 星(薄暮) */
+  .stars{position:absolute;inset:0;opacity:.7;
+    background-image:
+      radial-gradient(1.4px 1.4px at 12% 9%, #fff,transparent),
+      radial-gradient(1.2px 1.2px at 28% 16%, #fff,transparent),
+      radial-gradient(1.5px 1.5px at 47% 7%, #fff,transparent),
+      radial-gradient(1px 1px at 63% 14%, #fff,transparent),
+      radial-gradient(1.3px 1.3px at 81% 10%, #fff,transparent),
+      radial-gradient(1px 1px at 91% 18%, #fff,transparent);}
+  /* 太陽(地平近く・幣舞橋の上で発光) */
+  .sun{position:absolute;left:50%;top:60%;width:140px;height:140px;transform:translate(-50%,-50%);
+    border-radius:50%;background:radial-gradient(circle,#fff6d8 0%,#ffd472 38%,#ffae44 60%,rgba(255,150,60,0) 72%);
+    box-shadow:0 0 120px 50px rgba(255,170,70,.55);animation:glow 7s ease-in-out infinite}
+  @keyframes glow{0%,100%{opacity:.92;filter:brightness(1)}50%{opacity:1;filter:brightness(1.08)}}
+
+  /* 水面(水鏡=空の反射・地平から下) */
+  .water{position:absolute;left:0;right:0;top:67%;bottom:0;
+    background:linear-gradient(180deg,#c95f33 0%,#9a4538 28%,#5e2f45 60%,#2e1d3c 100%);}
+  .water::before{content:"";position:absolute;left:50%;top:0;width:90px;height:100%;transform:translateX(-50%);
+    background:linear-gradient(180deg,rgba(255,214,120,.85),rgba(255,170,70,.15) 55%,transparent);
+    filter:blur(2px);opacity:.8}
+  .water::after{content:"";position:absolute;inset:0;opacity:.5;
+    background:repeating-linear-gradient(180deg,transparent 0 7px,rgba(255,255,255,.06) 7px 8px)}
+
+  .silho{position:absolute;left:0;right:0;width:100%;display:block}
+  .bridge{bottom:30%;color:#1a1222;filter:drop-shadow(0 0 24px rgba(0,0,0,.25))}
+  .reeds{bottom:0;color:#120c18}
+  .cranes{top:16%;left:0;color:#1a1222;opacity:.92}
+  .crane-head{fill:var(--tancho)}
+
+  /* オーバーレイ(ブランド＋入口) */
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    padding:38px 20px;z-index:5;text-align:center}
+  .brand{display:flex;align-items:center;gap:10px;font-size:13px;letter-spacing:.28em;font-weight:800;
+    color:#fff;text-shadow:0 1px 8px rgba(0,0,0,.4)}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--tancho);box-shadow:0 0 0 3px rgba(255,255,255,.85)}
+  .hero{margin-top:min(11vh,90px)}
+  .hero .lead{font-family:var(--mincho);font-size:clamp(15px,2.6vw,20px);letter-spacing:.14em;
+    color:#fff;text-shadow:0 2px 14px rgba(0,0,0,.45);opacity:.95}
+  .hero h1{font-family:var(--mincho);font-size:clamp(34px,8vw,68px);font-weight:800;letter-spacing:.06em;
+    line-height:1.08;margin:8px 0 4px;text-shadow:0 4px 28px rgba(0,0,0,.5)}
+  .hero .en{font-size:11px;letter-spacing:.42em;font-weight:800;color:#ffe09a;text-shadow:0 1px 10px rgba(0,0,0,.5)}
+  .hero .sub{margin-top:14px;font-size:13.5px;color:#fff;opacity:.92;text-shadow:0 1px 10px rgba(0,0,0,.5);line-height:1.8}
+
+  .enter{margin-top:auto;display:flex;gap:14px;flex-wrap:wrap;justify-content:center;width:100%;max-width:720px}
+  .ecard{flex:1;min-width:180px;background:rgba(20,12,24,.34);backdrop-filter:blur(8px);
+    border:1px solid rgba(255,255,255,.28);border-radius:16px;padding:18px 18px 16px;
+    color:#fff;text-decoration:none;text-align:left;transition:.18s;display:block}
+  .ecard:hover{background:rgba(20,12,24,.5);border-color:#fff;transform:translateY(-3px)}
+  .ecard .et{font-size:11px;letter-spacing:.2em;font-weight:800;color:#ffd98a}
+  .ecard .en2{font-size:18px;font-weight:800;margin:4px 0 5px;letter-spacing:.02em}
+  .ecard .ed{font-size:12px;opacity:.85;line-height:1.6}
+  .ecard.primary{background:rgba(192,21,38,.78);border-color:rgba(255,255,255,.5)}
+  .ecard.primary:hover{background:rgba(192,21,38,.92)}
+  .ecard .arrow{margin-top:8px;font-size:12px;font-weight:800;color:#ffe09a}
+  .ecard.primary .et,.ecard.primary .arrow{color:#ffe6c2}
+
+  .foot{margin-top:18px;font-size:11px;color:rgba(255,255,255,.7);letter-spacing:.08em}
+  @media(max-width:560px){ .enter{flex-direction:column} .hero{margin-top:8vh} }
+  @media(prefers-reduced-motion:reduce){ .sun,.crane{animation:none!important} }
+  .crane{transform-origin:center;animation:drift 22s linear infinite}
+  .crane.c2{animation-duration:30s;animation-delay:-6s}
+  .crane.c3{animation-duration:26s;animation-delay:-12s}
+  @keyframes drift{from{transform:translateX(-6vw)}to{transform:translateX(8vw)}}
+</style>
+</head>
+<body>
+<div class="scene">
+  <div class="sky"></div>
+  <div class="stars"></div>
+  <div class="sun"></div>
+
+  <!-- タンチョウ(舞う) -->
+  <svg class="silho cranes" viewBox="0 0 1000 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+    <g class="crane c1" transform="translate(180,20) scale(0.9)">
+      <path fill="currentColor" d="M0 18 Q14 2 28 16 Q40 4 52 18 L40 22 Q30 16 26 24 Q22 16 12 22 Z"/>
+      <circle class="crane-head" cx="52" cy="18" r="2.4"/>
+    </g>
+    <g class="crane c2" transform="translate(520,8) scale(0.7)">
+      <path fill="currentColor" d="M0 18 Q14 2 28 16 Q40 4 52 18 L40 22 Q30 16 26 24 Q22 16 12 22 Z"/>
+      <circle class="crane-head" cx="52" cy="18" r="2.4"/>
+    </g>
+    <g class="crane c3" transform="translate(760,30) scale(0.6)">
+      <path fill="currentColor" d="M0 18 Q14 2 28 16 Q40 4 52 18 L40 22 Q30 16 26 24 Q22 16 12 22 Z"/>
+      <circle class="crane-head" cx="52" cy="18" r="2.4"/>
+    </g>
+  </svg>
+
+  <!-- 幣舞橋 シルエット(アーチ＋四季の像の柱) -->
+  <svg class="silho bridge" viewBox="0 0 1000 150" preserveAspectRatio="none" aria-hidden="true">
+    <path fill="currentColor" d="M0 86 L1000 86 L1000 96 L0 96 Z"/>
+    <!-- アーチ(下部) -->
+    <path fill="currentColor" d="M0 96
+      Q70 150 140 96 Q210 150 280 96 Q350 150 420 96 Q490 150 560 96
+      Q630 150 700 96 Q770 150 840 96 Q910 150 980 96 L1000 96 L1000 150 L0 150 Z"/>
+    <!-- 親柱＋四季の像(4本) -->
+    <g fill="currentColor">
+      <rect x="206" y="64" width="9" height="24"/><ellipse cx="210.5" cy="58" rx="6" ry="11"/>
+      <rect x="406" y="64" width="9" height="24"/><ellipse cx="410.5" cy="58" rx="6" ry="11"/>
+      <rect x="586" y="64" width="9" height="24"/><ellipse cx="590.5" cy="58" rx="6" ry="11"/>
+      <rect x="786" y="64" width="9" height="24"/><ellipse cx="790.5" cy="58" rx="6" ry="11"/>
+    </g>
+    <!-- 欄干の細リズム -->
+    <g fill="currentColor">
+      <rect x="40" y="78" width="3" height="8"/><rect x="100" y="78" width="3" height="8"/>
+      <rect x="300" y="78" width="3" height="8"/><rect x="500" y="78" width="3" height="8"/>
+      <rect x="700" y="78" width="3" height="8"/><rect x="900" y="78" width="3" height="8"/><rect x="960" y="78" width="3" height="8"/>
+    </g>
+  </svg>
+
+  <div class="water"></div>
+
+  <!-- 湿原の葦(前景) -->
+  <svg class="silho reeds" viewBox="0 0 1000 90" preserveAspectRatio="none" aria-hidden="true">
+    <path fill="currentColor" d="M0 90 L0 60 Q40 40 30 18 Q52 44 60 60 Q70 36 84 20 Q88 48 96 60
+      Q150 50 170 22 Q178 50 196 60 L1000 60 L1000 90 Z"/>
+    <g stroke="currentColor" stroke-width="3" fill="none" opacity=".9">
+      <path d="M120 90 Q118 50 108 24"/><path d="M140 90 Q142 52 150 28"/>
+      <path d="M860 90 Q858 48 848 22"/><path d="M884 90 Q886 50 896 26"/><path d="M912 90 Q910 54 904 30"/>
+    </g>
+  </svg>
+
+  <!-- ブランド＋入口 -->
+  <div class="overlay">
+    <div class="brand"><span class="dot"></span>KUSHIRO TABLE TENNIS ASSOCIATION</div>
+    <div class="hero">
+      <div class="lead">釧路卓球協会</div>
+      <h1>大会運営<br>プラットフォーム</h1>
+      <div class="en">KTTA PLATFORM</div>
+      <div class="sub">申込から当日進行・結果・選手データベースまで。<br>幣舞橋に陽が落ちる街から、卓球の記録を。</div>
+    </div>
+
+    <div class="enter">
+      <a class="ecard primary" href="/viewer">
+        <div class="et">閲覧</div><div class="en2">大会結果・選手DB</div>
+        <div class="ed">対戦結果や選手の戦績を見る</div><div class="arrow">ひらく →</div>
+      </a>
+      <a class="ecard" href="/viewer/live/">
+        <div class="et">観戦</div><div class="en2">観戦ビュー(大画面)</div>
+        <div class="ed">会場の進行をリアルタイム表示</div><div class="arrow">ひらく →</div>
+      </a>
+      <a class="ecard" href="/admin">
+        <div class="et">運営</div><div class="en2">管理コンソール</div>
+        <div class="ed">大会作成・進行管理・結果入力</div><div class="arrow">ログイン →</div>
+      </a>
+    </div>
+    <div class="foot">© 釧路卓球協会 — Kushiro Table Tennis Association</div>
+  </div>
+</div>
+</body>
+</html>
