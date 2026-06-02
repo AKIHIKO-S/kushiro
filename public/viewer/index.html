@@ -713,6 +713,20 @@
  #tab-player .section-sub{color:var(--tc-ink2);font-weight:800;display:flex;align-items:center;gap:8px}
  #tab-player .section-sub::before{content:"";width:3px;height:13px;background:var(--tc-red);border-radius:2px;display:inline-block}
  #tab-player .preach-chip{font-weight:800}
+
+ /* 太さ・被り(重なり)調整: 大きな表示文字は 700 に、値クラスは行間を確保して
+    「1時間56分」等の折返し時の重なりを防止。ラベルとの間隔も少し広げる。 */
+ .pdb-masthead h2{font-weight:700}
+ #tab-search .pdb-card .pdb-name{font-weight:700;line-height:1.3}
+ #tab-search .pdb-cat,#tab-search .pdb-stats .pdb-stat{font-weight:700}
+ #tab-player .psum-rate-v{font-weight:700;font-size:44px;line-height:1.06}
+ #tab-player .psum-kv-i b{font-weight:700}
+ #tab-player .pstat-v{font-weight:700;line-height:1.2}
+ #tab-player .pstat-l{font-weight:700;margin-top:6px}
+ #tab-player .pstat-cmp-d{font-weight:700}
+ #tab-player .pmore-sum{font-weight:700}
+ #tab-player .pform-label{font-weight:700}
+ #tab-player .preach-chip{font-weight:700}
 </style>
 </head>
 <body>
