@@ -801,6 +801,7 @@ input:focus, select:focus, textarea:focus {
 .badge-warn { background: #fef3c7; color: var(--warn); }
 .badge-err { background: var(--accent-bg); color: var(--accent); }
 .badge-sub { background: #f1f5f9; color: var(--sub); }
+.badge-ghost { background: #eef2f7; color: #475569; border: 1px solid #dbe2ea; }
 
 /* 大会ステータス専用バッジ (色とアイコンで明快化) */
 .badge.status-scheduled,

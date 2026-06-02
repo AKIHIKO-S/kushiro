@@ -4413,77 +4413,82 @@ const A = {
  },
 
 
- // ── 詳細編集ビュー (旧フル機能) ──
+ // ── 申込一覧 (大きいモーダル + 種目タブ) ──
  async openEntriesFullView(t) {
- // 申込の正本は entrants。/entries(=getEntries)は entrants ベースになったのでそれを表示する (Phase1)。
+ const catLabel = { general: "一般", high: "高校", middle: "中学", elementary: "小学",
+   university: "大学", senior: "シニア", junior: "ジュニア", youth: "ユース", large: "ラージ" };
+ const stBadge = (s) => h("span", { className: "badge " + (
+   s === "pending" ? "badge-warn" : s === "rejected" ? "badge-err" : "badge-ok") },
+   s === "pending" ? "申込中" : s === "rejected" ? "却下" : "承認");
  let entries = [];
- try { entries = await api.get(`/api/tournaments/${t.id}/entries`) || []; } catch (e) {}
- const body = h("div", { style: { maxHeight: "70vh", overflow: "auto" } });
- if (!entries.length) body.appendChild(h("div", { className: "text-sub", style: { padding: "12px" } },
-   "申込はまだありません（公開フォームからの申込はここに表示されます）。"));
- const tbl = h("table", { className: "tbl" });
- tbl.appendChild(h("thead", {}, h("tr", {},
- h("th", {}, "状態"),
- h("th", {}, "氏名"),
- h("th", {}, "所属"),
- h("th", {}, "種目"),
- h("th", {}, "シード"),
- h("th", {}, "申込日"),
- h("th", {}, "操作"),
- )));
- const tbody = h("tbody", {});
- entries.forEach(e => {
- const status = e.entry_status || "confirmed";
- tbody.appendChild(h("tr", {},
- h("td", {},
- h("span", { className: "badge " + (
- status === "pending" ? "badge-warn" :
- status === "confirmed" ? "badge-ok" : "badge-err"
- )},
- status === "pending" ? "申込中" : status === "confirmed" ? "承認" : "却下")),
- h("td", { className: "font-bold" }, e.name,
- e.furigana ? h("span", { className: "text-xs text-sub",
- style: { fontWeight: 400, marginLeft: "4px" } }, `(${e.furigana})`) : null),
- h("td", {}, e.team || "—"),
- h("td", {}, e.entry_event || "—"),
- h("td", {},
- h("input", { type: "number", className: "input-sm",
- style: { width: "60px" }, value: e.seed || 0,
- onChange: async (ev) => {
- if (!e.entry_event) return;
- await api.put(`/api/tournaments/${t.id}/entries/${e.id}/seed`, {
- event: e.entry_event, seed: parseInt(ev.target.value) || 0
- });
- toast("シード設定を更新", "ok");
- }
- })),
- h("td", { className: "text-xs text-sub" },
- e.applied_at ? e.applied_at.split(" ")[0] : "—"),
- h("td", { className: "flex gap-1" },
- status !== "confirmed" ? h("button", {
- className: "btn btn-sm btn-ok",
- onClick: () => A.setEntryStatus(t, e, "confirmed")
- }, "承認") : null,
- status !== "rejected" ? h("button", {
- className: "btn btn-sm btn-danger",
- onClick: () => A.setEntryStatus(t, e, "rejected")
- }, "却下") : null,
- ),
- ));
- });
- tbl.appendChild(tbody);
- body.appendChild(tbl);
- openModal(`申込管理 - 詳細編集 (${t.name})`, body,
- h("button", { className: "btn",
- onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
- },
-
- async setEntryStatus(t, e, status) {
- await api.put(`/api/tournaments/${t.id}/entries/${e.id}/status`, {
- status, event: e.entry_event
- });
- toast(status === "confirmed" ? "承認しました" : "却下しました", "ok");
- A.openTournament(t.id);
+ let activeTab = "all";
+ const tabStrip = h("div", { className: "flex", style: { gap: "6px", flexWrap: "wrap", marginBottom: "12px" } });
+ const tableWrap = h("div", { style: { overflow: "auto", maxHeight: "calc(86vh - 150px)" } });
+ const summary = h("div", { className: "text-sub", style: { fontSize: "13px", marginBottom: "10px" } });
+ const eventsList = () => [...new Set(entries.map(e => e.entry_event).filter(Boolean))].sort();
+ const filtered = () => activeTab === "all" ? entries : entries.filter(e => e.entry_event === activeTab);
+ const cntOf = (ev) => entries.filter(e => e.entry_event === ev).length;
+ const renderTabs = () => {
+   clear(tabStrip);
+   const tabs = [["all", "すべて", entries.length]].concat(eventsList().map(ev => [ev, ev, cntOf(ev)]));
+   tabs.forEach(([key, label, cnt]) => {
+     tabStrip.appendChild(h("button", {
+       className: "btn btn-sm " + (activeTab === key ? "" : "btn-ghost"),
+       onClick: () => { activeTab = key; renderTabs(); renderTable(); } },
+       label + " (" + cnt + ")"));
+   });
+ };
+ const setStatus = async (e, status) => {
+   try { await api.put(`/api/tournaments/${t.id}/entries/${e.id}/status`, { status });
+     toast(status === "confirmed" ? "承認しました" : "却下しました", "ok"); await load(); }
+   catch (err) { toast("失敗: " + err.message, "err"); }
+ };
+ const renderTable = () => {
+   clear(tableWrap);
+   const rows = filtered();
+   if (!rows.length) { tableWrap.appendChild(h("div", { className: "text-sub", style: { padding: "18px" } },
+     "この種目の申込はまだありません。")); return; }
+   const tbl = h("table", { className: "tbl" });
+   tbl.appendChild(h("thead", {}, h("tr", {},
+     h("th", {}, "状態"), h("th", {}, "氏名"), h("th", {}, "所属"),
+     h("th", {}, "区分"), h("th", {}, "種目"), h("th", {}, "シード"),
+     h("th", {}, "申込日"), h("th", {}, "操作"))));
+   const tbody = h("tbody", {});
+   rows.forEach(e => {
+     const status = e.entry_status || "confirmed";
+     tbody.appendChild(h("tr", {},
+       h("td", {}, stBadge(status)),
+       h("td", { className: "font-bold" }, e.name,
+         e.furigana ? h("span", { className: "text-xs text-sub", style: { fontWeight: 400, marginLeft: "4px" } }, `(${e.furigana})`) : null),
+       h("td", {}, e.team || "—"),
+       h("td", {}, h("span", { className: "badge badge-ghost" }, catLabel[e.category] || e.category || "一般")),
+       h("td", {}, e.entry_event || "—"),
+       h("td", {}, h("input", { type: "number", className: "input-sm", style: { width: "62px" },
+         value: e.seed || 0,
+         onChange: async (ev) => { try {
+           await api.put(`/api/tournaments/${t.id}/entries/${e.id}/seed`, { seed: parseInt(ev.target.value) || 0 });
+           toast("シード更新", "ok"); } catch (err) { toast("失敗", "err"); } } })),
+       h("td", { className: "text-xs text-sub" }, e.applied_at ? e.applied_at.split(" ")[0] : "—"),
+       h("td", { className: "flex gap-1" },
+         status !== "confirmed" ? h("button", { className: "btn btn-sm btn-ok", onClick: () => setStatus(e, "confirmed") }, "承認") : null,
+         status !== "rejected" ? h("button", { className: "btn btn-sm btn-danger", onClick: () => setStatus(e, "rejected") }, "却下") : null)));
+   });
+   tbl.appendChild(tbody);
+   tableWrap.appendChild(tbl);
+ };
+ const load = async () => {
+   try { entries = await api.get(`/api/tournaments/${t.id}/entries`) || []; } catch (e) { entries = []; }
+   const pend = entries.filter(e => (e.entry_status || "confirmed") === "pending").length;
+   summary.textContent = `申込 ${entries.length}件 ・ 種目 ${eventsList().length} ・ 承認待ち ${pend}`;
+   if (activeTab !== "all" && !eventsList().includes(activeTab)) activeTab = "all";
+   renderTabs(); renderTable();
+ };
+ const body = h("div", {}, summary, tabStrip, tableWrap);
+ const modalBg = openModal(`申込一覧 — ${t.name}`, body,
+   h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
+ const box = modalBg && modalBg.querySelector ? modalBg.querySelector(".modal-box") : null;
+ if (box) { box.style.width = "94vw"; box.style.maxWidth = "1080px"; box.style.height = "86vh"; }
+ await load();
  },
 
  editEntrySettings(t) {
