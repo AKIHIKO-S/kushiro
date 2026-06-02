@@ -554,6 +554,28 @@ function buildEntryFormHTML(tournament, events, opts) {
   }
   .copy-btn:hover { filter: brightness(1.06); }
   .copy-btn.copied { background: #14633a; }
+  /* Phase4: 申込番号(本人が後から確認するためのチケット) */
+  .ticket {
+    margin: 6px 0 16px; padding: 16px 18px; text-align: center;
+    background: var(--card); border: 2px dashed var(--red);
+    border-radius: 12px; position: relative;
+  }
+  .ticket-label {
+    font-family: var(--gothic); font-size: 11px; font-weight: 800;
+    letter-spacing: .18em; color: var(--red); text-transform: uppercase;
+  }
+  .ticket-code {
+    font-family: 'SFMono-Regular','Menlo','Consolas',monospace;
+    font-size: 26px; font-weight: 800; letter-spacing: .12em;
+    color: var(--ink); margin: 6px 0 8px; user-select: all;
+  }
+  .ticket-note { font-family: var(--gothic); font-size: 11.5px; color: var(--ink-2); line-height: 1.7; }
+  .ticket-link {
+    display: inline-block; margin-top: 11px; padding: 9px 18px;
+    background: var(--red); color: #fff; border-radius: 8px;
+    font-size: 13px; font-weight: 800; text-decoration: none; font-family: var(--gothic);
+  }
+  .ticket-link:hover { background: var(--red-2); }
 
   /* ── フッター ── */
   .form-footer {
@@ -1086,14 +1108,31 @@ async function submitForm(e) {
     if (result.ok || resp.ok || resp.status === 201) {
       // ★ 送信成功 → LINE 共有用コピーカードを表示
       const summary = buildSummaryText(data);
+      // Phase4: 申込番号(トークン)。本人が後から /entry/status で申込内容を確認できる。
+      const token = result.applicant_token || "";
+      let appOrigin = ""; try { appOrigin = new URL(SUBMIT_URL).origin; } catch (_) {}
+      const statusUrl = token ? appOrigin + "/entry/status?token=" + encodeURIComponent(token) : "";
+      const tokenBlock = token ? (
+        '<div class="ticket">' +
+          '<div class="ticket-label">申込番号</div>' +
+          '<div class="ticket-code">' + escapeHtml(token) + '</div>' +
+          '<div class="ticket-note">この番号で申込内容をいつでも確認できます。' +
+            (statusUrl ? '' : '控えメールにも記載しています。') + '</div>' +
+          (statusUrl ? '<a class="ticket-link" href="' + statusUrl + '" target="_blank" rel="noopener">申込内容を確認する →</a>' : '') +
+        '</div>'
+      ) : "";
+      // 全件が重複(既に申込済み)で新規作成が無かった場合は、失敗と誤認させないよう明示する。
+      const alreadyRegistered = !!result.already_registered || (result.entry_count === 0 && !token);
       const card = document.createElement("div");
       card.className = "success-card";
       card.innerHTML =
-        '<h3>申込を受け付けました</h3>' +
+        (alreadyRegistered ? '<h3>この内容はすでに申込済みです</h3>' : '<h3>申込を受け付けました</h3>') +
         '<div style="text-align:center;font-size:13px;color:#14532d;line-height:1.7;">' +
-          'ご登録のメールアドレス宛に控えメールを送信しました。<br>' +
-          'お申込内容をLINE等で関係者と共有する場合は、下記をコピーしてご利用ください。' +
+          (alreadyRegistered
+            ? '同じ内容の申込がすでに登録されています。最初に申込まれた際の<b>申込番号</b>(控えメール)でご確認ください。お心当たりがない場合や修正が必要な場合は大会本部までご連絡ください。'
+            : 'お申込ありがとうございます。下記の申込番号を控えてください。<br>お申込内容をLINE等で関係者と共有する場合は、下記をコピーしてご利用ください。') +
         '</div>' +
+        tokenBlock +
         '<div class="summary-text" id="ttSummaryText">' + escapeHtml(summary) + '</div>' +
         '<button type="button" class="copy-btn" id="ttCopyBtn">クリップボードにコピー (LINE等で共有可)</button>' +
         '<button type="button" class="copy-btn" id="ttNewBtn" ' +
@@ -1206,6 +1245,183 @@ try {
 </html>`;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Phase4: 申込者本人の閲覧ページ (/entry/status?token=…)
+// 申込番号(トークン)で自分の申込内容を確認する(閲覧のみ)。自己完結HTML。
+// データは GET /api/public/applicants/:token から取得し、PII(メール等)は含まない。
+// ─────────────────────────────────────────────────────────────
+function buildApplicantStatusHTML() {
+  return `<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>申込内容の確認 | 釧路卓球協会</title>
+<style>
+  :root{
+    --paper:#f1e9d9; --card:#fffdf8; --ink:#211b15; --ink-2:#6c6153;
+    --red:#c01526; --red-2:#9c0f1c; --line:#e4dccb;
+    --gothic:'Hiragino Sans','BIZ UDPGothic','Yu Gothic UI','Meiryo',system-ui,sans-serif;
+    --mincho:'Hiragino Mincho ProN','Yu Mincho','YuMincho',serif;
+    --ok:#15803d; --ok-bg:#e7f6ec; --warn:#9a6a10; --warn-bg:#f6ebcd; --err:#b91c1c; --err-bg:#fbe8e8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--gothic);
+    font-size:16px;line-height:1.6;padding:24px 14px 60px;}
+  .wrap{max-width:640px;margin:0 auto;}
+  .head{text-align:center;margin-bottom:18px;}
+  .kicker{font-size:11px;letter-spacing:.2em;color:var(--red);font-weight:800;text-transform:uppercase;}
+  h1{font-family:var(--mincho);font-size:26px;margin:6px 0 2px;}
+  .sub{color:var(--ink-2);font-size:13px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:20px;margin-bottom:16px;box-shadow:0 8px 24px -18px rgba(33,27,21,.5);}
+  .lookup{display:flex;gap:8px;flex-wrap:wrap;}
+  .lookup input{flex:1;min-width:180px;padding:12px 14px;border:1.5px solid var(--line);
+    border-radius:9px;font-size:18px;font-family:'SFMono-Regular','Menlo',monospace;letter-spacing:.08em;}
+  .btn{padding:12px 20px;background:var(--red);color:#fff;border:none;border-radius:9px;
+    font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;}
+  .btn:hover{background:var(--red-2)}
+  .ticket-code{font-family:'SFMono-Regular','Menlo',monospace;font-size:22px;font-weight:800;
+    letter-spacing:.1em;text-align:center;color:var(--ink);}
+  .meta{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px;margin-top:6px;}
+  .meta dt{color:var(--ink-2);}
+  .meta dd{margin:0;font-weight:700;}
+  table{width:100%;border-collapse:collapse;margin-top:6px;font-size:14px;}
+  th,td{padding:9px 8px;text-align:left;border-bottom:1px solid var(--line);}
+  th{font-size:11px;letter-spacing:.08em;color:var(--ink-2);text-transform:uppercase;}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;}
+  .badge{display:inline-block;padding:2px 9px;border-radius:10px;font-size:11px;font-weight:800;}
+  .b-ok{background:var(--ok-bg);color:var(--ok);}
+  .b-warn{background:var(--warn-bg);color:var(--warn);}
+  .b-err{background:var(--err-bg);color:var(--err);}
+  .total{display:flex;justify-content:space-between;align-items:baseline;
+    margin-top:12px;padding-top:12px;border-top:2px solid var(--ink);}
+  .total b{font-size:24px;font-family:var(--mincho);}
+  .note{font-size:12.5px;color:var(--ink-2);line-height:1.8;}
+  .msg{padding:14px;border-radius:9px;text-align:center;font-size:14px;}
+  .msg.err{background:var(--err-bg);color:var(--err);}
+  .hidden{display:none;}
+  a.home{color:var(--red);font-weight:700;text-decoration:none;font-size:13px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="kicker">釧路卓球協会</div>
+    <h1>申込内容の確認</h1>
+    <div class="sub">申込番号を入力すると、お申込の内容と状態を確認できます（閲覧のみ）。</div>
+  </div>
+
+  <div class="card">
+    <form id="lookupForm" class="lookup">
+      <input id="tokenInput" type="text" inputmode="latin" autocomplete="off"
+        placeholder="例: ABCD-EFGH-JKLM" aria-label="申込番号" />
+      <button class="btn" type="submit">確認する</button>
+    </form>
+  </div>
+
+  <div id="msg"></div>
+
+  <div id="result" class="hidden">
+    <div class="card">
+      <div class="kicker" style="text-align:center;">申込番号</div>
+      <div class="ticket-code" id="rToken"></div>
+      <dl class="meta">
+        <dt>大会</dt><dd id="rTournament"></dd>
+        <dt>申込団体</dt><dd id="rTeam"></dd>
+        <dt>担当者</dt><dd id="rContact"></dd>
+        <dt>申込日時</dt><dd id="rDate"></dd>
+      </dl>
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>種目</th><th>氏名</th><th>区分</th><th class="num">参加料</th><th>状態</th></tr></thead>
+        <tbody id="rRows"></tbody>
+      </table>
+      <div class="total"><span>合計参加料</span><b id="rTotal"></b></div>
+    </div>
+    <div class="card note">
+      <b>状態について：</b> <span class="badge b-ok">受付済</span> = 受付完了 ／
+      <span class="badge b-warn">確認中</span> = 本部で確認中 ／
+      <span class="badge b-err">無効</span> = 受付対象外。<br>
+      申込内容の<b>修正・取消</b>が必要な場合は、お手数ですが大会本部までご連絡ください
+      （このページからは変更できません）。
+    </div>
+  </div>
+
+  <div style="text-align:center;margin-top:10px;">
+    <a class="home" href="javascript:history.length>1?history.back():window.close()">← 戻る</a>
+  </div>
+</div>
+
+<script>
+  function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c];});}
+  var DIV={general:"一般",middle:"中学生",high:"高校生",student:"中高生"};
+  var CAT={general:"一般",middle:"中学",high:"高校",elementary:"小学",university:"大学",
+    senior:"シニア",junior:"ジュニア",youth:"ユース",large:"ラージ"};
+  function yen(n){return "¥"+(parseInt(n)||0).toLocaleString("ja-JP");}
+  function statusBadge(s){
+    if(s==="rejected")return '<span class="badge b-err">無効</span>';
+    if(s==="pending")return '<span class="badge b-warn">確認中</span>';
+    return '<span class="badge b-ok">受付済</span>';
+  }
+  function divLabel(e){
+    if(e.division&&DIV[e.division])return DIV[e.division];
+    if(e.category&&CAT[e.category])return CAT[e.category];
+    return "—";
+  }
+  function show(id,on){document.getElementById(id).classList[on?"remove":"add"]("hidden");}
+  function setMsg(html){document.getElementById("msg").innerHTML=html?('<div class="card"><div class="msg err">'+html+'</div></div>'):"";}
+
+  function render(d){
+    setMsg("");
+    document.getElementById("rToken").textContent=document.getElementById("tokenInput").value.trim().toUpperCase();
+    document.getElementById("rTournament").textContent=(d.tournament&&d.tournament.name||"")+(d.tournament&&d.tournament.date?(" ("+d.tournament.date+")"):"");
+    document.getElementById("rTeam").textContent=d.team_name||"—";
+    document.getElementById("rContact").textContent=d.contact_name||"—";
+    document.getElementById("rDate").textContent=d.created_at||"—";
+    var rows=(d.entries||[]).map(function(e){
+      var who=esc(e.name||"");
+      if(e.is_doubles&&e.partner_name)who+=" / "+esc(e.partner_name);
+      if(e.team_members&&e.team_members.length)who+='<br><span style="font-size:12px;color:#6c6153">'+esc(e.team_members.join("、"))+'</span>';
+      return '<tr><td>'+esc(e.event)+'</td><td>'+who+'</td><td>'+esc(divLabel(e))+
+        '</td><td class="num">'+yen(e.fee)+'</td><td>'+statusBadge(e.status)+'</td></tr>';
+    }).join("");
+    document.getElementById("rRows").innerHTML=rows||'<tr><td colspan="5" style="color:#6c6153">エントリーがありません</td></tr>';
+    document.getElementById("rTotal").textContent=yen(d.total_amount);
+    show("result",true);
+  }
+
+  function lookup(token){
+    token=String(token||"").trim();
+    if(!token){setMsg("申込番号を入力してください。");return;}
+    show("result",false);
+    setMsg("");
+    fetch("/api/public/applicants/"+encodeURIComponent(token))
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+      .then(function(x){
+        if(!x.ok||x.j.error){setMsg(esc(x.j.error||"申込が見つかりませんでした。番号をご確認ください。"));return;}
+        render(x.j);
+      })
+      .catch(function(){setMsg("通信エラーが発生しました。時間をおいて再度お試しください。");});
+  }
+
+  document.getElementById("lookupForm").addEventListener("submit",function(e){
+    e.preventDefault();lookup(document.getElementById("tokenInput").value);
+  });
+  // URL の ?token= があれば自動で照会
+  (function(){
+    var m=location.search.match(/[?&]token=([^&]+)/);
+    if(m){var tok=decodeURIComponent(m[1]);document.getElementById("tokenInput").value=tok;lookup(tok);}
+  })();
+</script>
+</body>
+</html>`;
+}
+
 module.exports = {
   buildEntryFormHTML,
+  buildApplicantStatusHTML,
 };

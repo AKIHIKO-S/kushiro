@@ -969,8 +969,10 @@ function buildApplicantsXlsx(tournament, entrants, opts) {
       e.is_doubles ? (e.partner_name || "") : "",
       e.is_doubles ? (e.partner_team || "") : "",
       STATUS[e.status] || e.status || "",
-      String(e.created_at || e.applied_at || "").slice(0, 16),
-      e.note || "",
+      String(e.applied_at || e.created_at || "").slice(0, 16),
+      // Phase4: 連絡先は構造化列(contact_*)へ移行。旧データは note にフォールバック。
+      [[e.contact_name, e.contact_email, e.contact_tel].filter(Boolean).join(" / "), e.note]
+        .filter(Boolean).join(" | "),
     ]);
   });
   const ws = XLSX.utils.aoa_to_sheet(rows);

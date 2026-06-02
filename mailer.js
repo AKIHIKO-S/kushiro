@@ -147,11 +147,26 @@ async function sendConfirmationEmail(opts) {
   const contactName = formData.contact_name || "";
   const contactTel = formData.contact_tel || "";
   const teamName = formData.team_name || "";
-  // #26: 参加料・合計はサーバ側で event_config から再計算 (クライアント値は信用しない)。
-  const feeCalc = authoritativeFees(tournament, formData.entries);
-  const feeEntries = feeCalc.entries;
-  const total = feeCalc.total;
+  // #26: 参加料・合計はサーバ側で算出 (クライアント値は信用しない)。
+  // Phase4: 実際に作成された申込(created_entries, 権威料金)があればそれを使う。
+  // spam/重複で落ちた行を含む生の formData.entries で再計算すると、控えメールの明細・合計が
+  // 台帳(entry_submissions.total)とズレるため(Phase4 review #3/#4)。
+  let feeEntries, total;
+  if (result && Array.isArray(result.created_entries)) {
+    feeEntries = result.created_entries;
+    total = (result.total_amount != null)
+      ? result.total_amount
+      : feeEntries.reduce((s, e) => s + (parseInt(e.fee, 10) || 0), 0);
+  } else {
+    const feeCalc = authoritativeFees(tournament, formData.entries);
+    feeEntries = feeCalc.entries;
+    total = feeCalc.total;
+  }
   const note = formData.note || "";
+  // Phase4: 申込番号(トークン) + 本人確認ページのURL。本人が後から申込内容を閲覧できる。
+  const token = (result && result.applicant_token) || "";
+  const statusUrl = (token && opts.appOrigin)
+    ? `${opts.appOrigin}/entry/status?token=${encodeURIComponent(token)}` : "";
 
   const subject = `【${tournName}】申込を受け付けました`;
 
@@ -160,6 +175,11 @@ async function sendConfirmationEmail(opts) {
     ``,
     `この度は ${tournName} へお申込みいただきありがとうございます。`,
     `下記の内容で承りました。`,
+    ``,
+    token ? `─────────────────────` : "",
+    token ? `■ 申込番号: ${token}` : "",
+    token ? `  この番号で申込内容を確認できます。大切に保管してください。` : "",
+    statusUrl ? `  確認ページ: ${statusUrl}` : "",
     ``,
     `─────────────────────`,
     `■ 大会`,
@@ -208,6 +228,13 @@ async function sendConfirmationEmail(opts) {
     この度は <strong>${esc(tournName)}</strong> へお申込みいただきありがとうございます。<br>
     下記の内容で承りました。
   </p>
+
+  ${token ? `<div style="margin:18px 0;padding:16px;border:2px dashed #b91c1c;border-radius:10px;text-align:center;background:#fffdf8;">
+    <div style="font-size:11px;letter-spacing:2px;color:#b91c1c;font-weight:bold;">申込番号</div>
+    <div style="font-size:24px;font-weight:bold;letter-spacing:2px;font-family:monospace;margin:4px 0;">${esc(token)}</div>
+    <div style="font-size:12px;color:#78716c;">この番号で申込内容を確認できます。大切に保管してください。</div>
+    ${statusUrl ? `<div style="margin-top:10px;"><a href="${esc(statusUrl)}" style="display:inline-block;padding:9px 18px;background:#b91c1c;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold;font-size:13px;">申込内容を確認する →</a></div>` : ""}
+  </div>` : ""}
 
   <h2 style="font-size:14px;border-left:4px solid #b91c1c;padding-left:8px;margin:24px 0 12px;">大会情報</h2>
   <table style="font-size:14px;line-height:1.8;">
@@ -265,8 +292,10 @@ async function sendAdminNotification(opts) {
   if (!ADMIN_EMAIL) return { ok: false, skipped: true, reason: "ADMIN_EMAIL未設定" };
   const transporter = getTransporter();
   const { tournament, formData, result, adminUrl } = opts;
-  // #26: 合計はサーバ側で event_config から再計算 (クライアント値は信用しない)。
-  const total = authoritativeFees(tournament, formData.entries).total;
+  // #26/Phase4: 合計は実際に作成された申込(result.total_amount)を正とする。無ければ event_config 再計算。
+  const total = (result && result.total_amount != null)
+    ? result.total_amount
+    : authoritativeFees(tournament, formData.entries).total;
   const subject = `【新規申込】${tournament.name} - ${formData.team_name || formData.contact_name || ""}`;
   const text = [
     `新規申込が届きました。`,
