@@ -1070,75 +1070,38 @@
  .court-cell.extra::after { content: "+"; position: absolute; top: 2px; right: 4px;
    color: #7c3aed; font-weight: 700; font-size: 12px; }
 
- /* ═══════════ 丹頂ナイト: 管理コンソール(墨＋氷青 / 赤は不可逆専用) ═══════════
-    viewer(白・丹頂レッド)と一目で違う「夜の管制盤」。admin ドキュメント専用なので非干渉。
-    トークンを暗転(ink スケールも半転して生 var(--ink-NNN) 利用箇所も追従)、平時アクセント=氷青、
-    丹頂レッドは取消・削除・不可逆操作のみに温存。Pass1: 残る明色は dev で確認し追補。 */
+ /* ═══════════ 丹頂デイ・管制 (白基調・寒色アクセント / admin専用) ═══════════
+    フルダークは可読性が落ちたため白基調へ。viewer(白＋丹頂レッド・編集的)と明確に分けるため、
+    admin は (1)寒色=氷青アクセント (2)濃紺ヘッダ(既存) (3)カードをわずかに沈めた寒色スレート
+    (4)取消/削除/不可逆=丹頂レッド、で「管制している側」を出す。文字は濃色のまま可読性最優先。
+    admin専用<style>なので viewer/他には非干渉。 */
  body{
-   /* ink スケール半転(暗←明) — 生 var(--ink-NNN) 利用のテキスト/面を追従させる */
-   --ink-0:#0b0f14; --ink-50:#0b0f14; --ink-100:#141a23; --ink-200:#1c2430; --ink-300:#2a3543;
-   --ink-400:#566273; --ink-500:#7d8da0; --ink-600:#9fb0c0; --ink-700:#c2ccd8; --ink-800:#dee5ec;
-   --ink-900:#eef3f8; --ink-950:#f5f9fc;
-   /* セマンティック(明示) */
-   --bg:#0b0f14; --card:#121821; --card-elev:#1a222e; --border:#2a3543; --border-strong:#3a4655;
-   --txt:#eef3f8; --txt-l:#c2ccd8; --sub:#9fb0c0; --sub-l:#7d8da0;
-   --pri:#eef3f8; --pri-l:#c2ccd8; --pri-d:#ffffff; --pri-bg:#1c2430;
-   --kt-accent:#39c2d6; --kt-accent-d:#2aa7bb; --kt-accent-l:#0e2a30;
-   --accent:#39c2d6; --accent-l:#7fe0ef; --accent-bg:#0e2a30;
-   --ok:#34c98a; --ok-bg:#0e2a22; --warn:#f5a524; --warn-bg:#2a210e;
-   --danger:#ff5a4d; --tancho:#c01526;   /* 取消/不可逆 = 丹頂レッド */
-   --surface:#121821; --surface2:#1a222e;
-   --shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 8px 22px rgba(0,0,0,.45);
-   --shadow-lg:0 18px 44px rgba(0,0,0,.55);
-   background:#0b0f14; color:#eef3f8;
+   /* アクセントを氷青(寒色)に — viewer の丹頂レッドと一目で差別化 */
+   --kt-accent:#0e8fa3; --kt-accent-d:#0a6f80; --kt-accent-l:#e6f5f8;
+   --accent:#0e8fa3; --accent-l:#0a6f80; --accent-bg:#e6f5f8;
+   /* 白基調(viewer の純白とわずかに差をつける寒色寄りの白) + カードは少し沈めたスレート */
+   --bg:#f7f9fb;
+   --card:#eef2f7; --card-elev:#f4f7fb;
+   --border:#d6dde6; --border-strong:#c2ccd8;
+   --tancho:#c01526;   /* 取消/不可逆 = 丹頂レッド */
+   background:#f7f9fb;
  }
- body{ background-color:#0b0f14;
-   background-image:linear-gradient(rgba(255,255,255,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.022) 1px,transparent 1px);
-   background-size:28px 28px; }
 
- /* ヘッダ(計器盤バー) */
- .admin-hero{ background:#0b0f14; border-bottom:1px solid #2a3543; }
- .admin-badge{ background:transparent; color:var(--accent); border:1px solid var(--accent); }
- .admin-actions .btn[style]{ background:#1a222e!important; color:#c2ccd8!important; border:1px solid #2a3543!important; }
- .settings-icon{ color:#c2ccd8; }
-
- /* タブ */
- .tabs{ background:#0b0f14; border-bottom:1px solid #2a3543; }
- .tab{ color:#9fb0c0; }
- .tab.active{ color:var(--accent); }
- .tab.active::after,.tab.active{ border-color:var(--accent); }
-
- /* 主要サーフェス(ベタ書き明色を暗面へ) */
+ /* 主要サーフェス(ベタ書き #fff を少し沈めた寒色スレートへ=「管制パネル」感) */
  .t-card, .pdb-acc, .pdb-acc-head, .pdb-acc-body, .pdb-card, .player-row, .tournament-row,
  .match-form, .match-list-item, .autoc-list, .op-progress-top, .op-stat, .op-tools-body,
- .es-stat, .ach-item, .row-avatar, .ev-progress, .card{ background:var(--surface); border-color:var(--border); color:var(--txt); }
- .pdb-acc-head:hover, .player-row:hover, .tournament-row:hover, .match-list-item:hover, .es-chip:hover, .table-chip:hover{ background:var(--surface2); }
- .es-chip, .table-chip, .table-chips, .autoc-item{ background:var(--surface2); border-color:var(--border); color:var(--txt); }
- .table-chip.busy{ background:rgba(255,90,77,.14); color:#ff8c82; border-color:rgba(255,90,77,.5); }
- .table-chip.selected{ background:var(--accent); color:#06222a; border-color:var(--accent); }
- .table-chip.extra{ background:rgba(124,58,237,.22); color:#c4b5fd; border-color:#7c3aed; }
- .court-cell.extra{ background:rgba(124,58,237,.14); border-color:#7c3aed; }
+ .es-stat, .ach-item, .ev-progress, .card, .modal-box{ background:#eef2f7; border-color:var(--border); }
+ .pdb-acc-head:hover, .player-row:hover, .tournament-row:hover, .match-list-item:hover{ background:#e6ebf2; }
+ .es-chip, .table-chip, .table-chips, .autoc-item{ background:#f4f7fb; border-color:var(--border); }
+ .autoc-item:hover, .es-chip:hover, .table-chip:hover{ background:#e6ebf2; }
 
- /* 入力 */
- input, select, textarea, .input{ background:#0e131a; color:#eef3f8; border-color:#2a3543; }
- input::placeholder, textarea::placeholder{ color:#7d8da0; }
- input:focus, select:focus, textarea:focus, .input:focus{ border-color:var(--accent); outline:none; }
+ /* ヘッダ(濃紺=管理モードの目印・既存のまま) / ADMINバッジ・アクティブタブを氷青に */
+ .admin-badge{ background:var(--accent); color:#fff; }
+ .tab.active{ color:var(--accent); }
 
- /* モーダル */
- .modal-bg{ background:rgba(2,4,8,.66); }
- .modal-box{ background:var(--surface); border:1px solid var(--border); color:var(--txt); }
- .modal-head, .modal-foot{ border-color:var(--border); }
-
- /* ボタン: 既定=暗面/氷青hover、確定=緑、危険(取消/削除/不可逆)=丹頂レッド */
- .btn{ background:var(--surface2); color:var(--txt); border:1px solid var(--border); }
- .btn:hover{ border-color:var(--accent); }
- .btn-ok, .btn-primary{ background:#34c98a; color:#06140d; border-color:#34c98a; }
- .btn-danger{ background:transparent; color:#ff7a70; border:1px solid var(--tancho); }
+ /* 危険操作(取消/削除/不可逆)= 丹頂レッド */
+ .btn-danger{ background:transparent; color:var(--tancho); border:1px solid var(--tancho); }
  .btn-danger:hover{ background:var(--tancho); color:#fff; }
-
- /* バッジ/ステータス(進行管理の5状態は色を維持しつつ暗地で発光) */
- .badge{ background:var(--surface2); color:var(--txt-l); }
- /* 大会カードの状態アクセントは既存色のまま(緑/橙/青/灰) */
 </style>
 </head>
 <body>
