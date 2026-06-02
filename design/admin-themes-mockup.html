@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理画面 デザイン方向性 比較モック (3案)</title>
+<style>
+  /* ───── admin(管理コンソール) デザイン方向性 比較モック ─────
+     viewer(白・丹頂レッド・ゴシック・編集的)と一目で違う「夜の管制盤」3案を
+     代表画面(進行管理: 台割タイル/呼べる対戦/操作)に当てて切替比較。
+     上のボタンで ①釧路ナイトベース ②藍図(Blueprint) ③丹頂ナイト を切替。 */
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --font-body:'Hiragino Sans','BIZ UDPGothic','Yu Gothic UI','Meiryo',system-ui,sans-serif;
+    --font-mono:'SFMono-Regular','SF Mono',Menlo,Consolas,'Roboto Mono',monospace;
+  }
+  html{font-size:14px}
+  body{font-family:var(--font-body);background:#1a1a1a;color:#fff;line-height:1.45;
+    font-feature-settings:'tnum' 1;-webkit-font-smoothing:antialiased}
+
+  /* ── 切替バー(モック用・テーマ外) ── */
+  .switch{position:sticky;top:0;z-index:100;background:#000;border-bottom:1px solid #333;
+    display:flex;gap:8px;align-items:center;padding:10px 14px;flex-wrap:wrap}
+  .switch .lbl{font-size:11px;letter-spacing:.2em;color:#888;font-weight:800;margin-right:6px}
+  .switch button{font-family:var(--font-mono);font-size:12px;font-weight:700;cursor:pointer;
+    padding:8px 14px;border-radius:6px;border:1px solid #444;background:#161616;color:#bbb}
+  .switch button.on{background:#fff;color:#000;border-color:#fff}
+  .switch .note{margin-left:auto;font-size:11px;color:#777}
+
+  /* ════ レイアウト(テーマ非依存・変数で着色) ════ */
+  .admin{display:flex;min-height:88vh;background:var(--bg);color:var(--ink)}
+  .rail{width:60px;flex:0 0 60px;background:var(--rail-bg);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:14px}
+  .rail .mark{width:26px;height:26px;border-radius:50%;background:var(--accent2);
+    box-shadow:0 0 0 3px var(--rail-bg),0 0 0 4px var(--accent2)}
+  .rail .ico{width:34px;height:34px;border-radius:8px;display:grid;place-items:center;
+    font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--ink2);border:1px solid transparent}
+  .rail .ico.on{color:var(--ink);border-color:var(--line);background:var(--surface);position:relative}
+  .rail .ico.on::before{content:"";position:absolute;left:-12px;top:6px;bottom:6px;width:2px;background:var(--accent2);border-radius:2px}
+  .rail .led{margin-top:auto;width:9px;height:9px;border-radius:50%;background:var(--st-table);
+    box-shadow:0 0 6px var(--st-table)}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+
+  /* ステータスバー */
+  .sbar{height:42px;flex:0 0 42px;background:var(--surface2);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:14px;padding:0 14px;font-family:var(--font-mono);font-size:12px;color:var(--ink2)}
+  .sbar .ops{color:var(--ink);font-weight:700;letter-spacing:.08em}
+  .sbar .tn{color:var(--ink);font-family:var(--font-body);font-weight:700;letter-spacing:.02em}
+  .sbar .right{margin-left:auto;display:flex;align-items:center;gap:14px}
+  .sbar .live{display:inline-flex;align-items:center;gap:6px;color:var(--st-table)}
+  .sbar .live .d{width:8px;height:8px;border-radius:50%;background:var(--st-table);animation:pulse 1.4s infinite}
+  .sbar .clock{color:var(--ink);letter-spacing:.05em}
+  .sbar .pill{font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.1em;
+    padding:3px 9px;border-radius:5px;border:1px solid var(--accent2);color:var(--accent2)}
+
+  /* コンテンツ(方眼盤面) */
+  .content{flex:1;padding:18px 18px 40px;background-color:var(--bg);
+    background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+    background-size:24px 24px}
+  .sechead{display:flex;align-items:baseline;gap:10px;margin:6px 0 12px}
+  .seccode{font-family:var(--font-mono);font-size:11px;color:var(--ink2);letter-spacing:.1em}
+  .sectitle{font-size:17px;font-weight:700;letter-spacing:.04em;display:flex;align-items:center;gap:9px}
+  .sectitle::before{content:"";width:3px;height:16px;background:var(--accent2);border-radius:2px}
+  .sub{font-family:var(--font-mono);font-size:10.5px;color:var(--ink2);letter-spacing:.12em;margin:18px 0 8px;text-transform:uppercase}
+
+  /* 台割タイル */
+  .courts{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:11px}
+  .court{background:var(--surface);border:1px solid var(--line);border-top:2px solid var(--st,var(--line));
+    border-radius:var(--radius);padding:11px 12px 12px;position:relative;box-shadow:var(--card-sh)}
+  .court .top{display:flex;justify-content:space-between;align-items:flex-start}
+  .court .no{font-family:var(--font-mono);font-size:30px;font-weight:700;line-height:.9;color:var(--ink)}
+  .court .no small{font-size:11px;color:var(--ink2);font-weight:700}
+  .court .st{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:10px;
+    font-weight:700;letter-spacing:.08em;padding:3px 8px;border-radius:5px;
+    background:color-mix(in srgb,var(--st) 15%,transparent);color:var(--st);border:1px solid color-mix(in srgb,var(--st) 40%,transparent)}
+  .court .st .d{width:7px;height:7px;border-radius:50%;background:var(--st)}
+  .court.live .st .d{animation:pulse 1.4s infinite}
+  .court .mt{margin-top:10px;font-size:13px;font-weight:700;color:var(--ink);line-height:1.4}
+  .court .mt .vs{color:var(--ink2);font-weight:400;font-size:11px;margin:0 4px}
+  .court .sc{font-family:var(--font-mono);font-weight:700;color:var(--ink);font-size:15px;margin-top:3px}
+  .court .ev{font-size:10.5px;color:var(--ink2);margin-top:2px}
+  .court.s-call{box-shadow:0 0 0 1px var(--st) inset,var(--card-sh)}
+
+  /* 呼べる対戦リスト */
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    overflow:hidden;box-shadow:var(--card-sh);margin-top:4px}
+  .crow{display:grid;grid-template-columns:34px 1fr auto;gap:12px;align-items:center;
+    padding:10px 12px;border-bottom:1px solid var(--line);position:relative}
+  .crow:last-child{border-bottom:none}
+  .crow.call::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--st-call)}
+  .crow.done{opacity:.5}
+  .crow .ord{font-family:var(--font-mono);font-size:15px;font-weight:700;color:var(--st-call);text-align:center}
+  .crow.done .ord{color:var(--st-done)}
+  .crow .who{font-size:13px;font-weight:700;color:var(--ink)}
+  .crow .who .e{font-size:10.5px;color:var(--ink2);font-weight:400}
+  .crow .act{display:flex;gap:7px}
+
+  /* ボタン */
+  .btn{font-family:var(--font-body);font-size:12.5px;font-weight:700;cursor:pointer;
+    padding:7px 13px;border-radius:var(--radius);border:1px solid var(--line);background:var(--surface2);color:var(--ink)}
+  .btn:hover{border-color:var(--accent2)}
+  .btn.go{background:var(--st-table);color:#06140d;border-color:var(--st-table)}
+  .btn.call{background:var(--st-call);color:#1a1206;border-color:var(--st-call)}
+  .btn.danger{background:transparent;color:var(--st-warn);border-color:var(--st-warn)}
+  .btn.danger:hover{background:color-mix(in srgb,var(--st-warn) 16%,transparent)}
+  .btnrow{display:flex;gap:9px;margin-top:14px;flex-wrap:wrap;align-items:center}
+  .btnrow .hint{font-size:11px;color:var(--ink2)}
+
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  /* ════════ テーマ① 釧路ナイトベース(墨の計器盤) ════════ */
+  .admin.t-night{
+    --bg:#0b0e14;--surface:#11151f;--surface2:#171c28;--ink:#e6ebf2;--ink2:#9aa6b8;--line:#28303f;
+    --rail-bg:#0b0e14;--accent:#e23a4e;--accent2:#3fb6c9;--radius:6px;--grid:#161d2b;
+    --card-sh:inset 0 1px 0 rgba(255,255,255,.04);
+    --st-wait:#5b8def;--st-call:#f5a524;--st-table:#1fbf75;--st-done:#6b7689;--st-warn:#ff4d5e;
+  }
+  /* ════════ テーマ② 藍図 Blueprint(紺の製図台) ════════ */
+  .admin.t-blue{
+    --bg:#0b1a2e;--surface:#10243d;--surface2:#16304f;--ink:#dbe7f2;--ink2:#8aa6c2;--line:#214066;
+    --rail-bg:#0b1a2e;--accent:#e23a2e;--accent2:#3aa0d8;--radius:2px;--grid:#ffffff10;
+    --card-sh:none;
+    --st-wait:#5b7ea6;--st-call:#f5a623;--st-table:#2fbf71;--st-done:#3d5a80;--st-warn:#e23a2e;
+  }
+  .admin.t-blue .content{background-image:
+    linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px),
+    linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
+    background-size:24px 24px,24px 24px,120px 120px,120px 120px}
+  .admin.t-blue .court,.admin.t-blue .panel{position:relative}
+  .admin.t-blue .court::before,.admin.t-blue .court::after{content:"";position:absolute;width:9px;height:9px;border:1px solid var(--accent2);opacity:.5}
+  .admin.t-blue .court::before{left:-1px;top:-1px;border-right:none;border-bottom:none}
+  .admin.t-blue .court::after{right:-1px;bottom:-1px;border-left:none;border-top:none}
+  .admin.t-blue .sectitle::before{background:var(--accent)}  /* 製図の赤い一点 */
+  /* ════════ テーマ③ 丹頂ナイト(墨＋氷青/赤は不可逆専用) ════════ */
+  .admin.t-tancho{
+    --bg:#0b0f14;--surface:#121821;--surface2:#1a222e;--ink:#eef3f8;--ink2:#9fb0c0;--line:#2a3543;
+    --rail-bg:#121821;--accent:#39c2d6;--accent2:#39c2d6;--radius:6px;--grid:#ffffff08;
+    --card-sh:0 1px 0 rgba(255,255,255,.03) inset;
+    --st-wait:#7d8da0;--st-call:#39c2d6;--st-table:#f5a524;--st-done:#34c98a;--st-warn:#ff5a4d;
+  }
+  .admin.t-tancho .rail .mark{background:#c01526;box-shadow:0 0 0 3px var(--rail-bg),0 0 0 4px #fff}
+  .admin.t-tancho .btn.danger{--st-warn:#c01526;color:#ff7a70;border-color:#c01526}
+</style>
+</head>
+<body>
+
+<div class="switch">
+  <span class="lbl">ADMIN テーマ</span>
+  <button class="on" data-t="t-night">① 釧路ナイトベース</button>
+  <button data-t="t-blue">② 藍図 Blueprint</button>
+  <button data-t="t-tancho">③ 丹頂ナイト</button>
+  <span class="note">同じ進行管理画面に3案を当てて比較 / viewerは白・丹頂レッド</span>
+</div>
+
+<div class="admin t-night" id="admin">
+  <!-- 左サイドレール -->
+  <div class="rail">
+    <div class="mark" title="丹頂マーク"></div>
+    <div class="ico on">進行</div>
+    <div class="ico">名簿</div>
+    <div class="ico">申込</div>
+    <div class="ico">結果</div>
+    <div class="led" title="SSE接続中"></div>
+  </div>
+  <div class="main">
+    <!-- 上部ステータスバー -->
+    <div class="sbar">
+      <span class="ops">KTTA OPS // 管制</span>
+      <span class="tn">第40回 釧路選手権</span>
+      <span class="right">
+        <span class="live"><span class="d"></span>LIVE</span>
+        <span class="clock" id="clk">--:--:--</span>
+        <span class="pill">ADMIN</span>
+      </span>
+    </div>
+    <!-- コンテンツ: 進行管理 -->
+    <div class="content">
+      <div class="sechead"><span class="seccode">02 /</span><span class="sectitle">進行管理 — COURT CONTROL</span></div>
+
+      <div class="courts">
+        <div class="court s-table live" style="--st:var(--st-table)">
+          <div class="top"><span class="no">3<small> 台</small></span><span class="st"><span class="d"></span>進行中</span></div>
+          <div class="mt">山田 太郎<span class="vs">vs</span>佐藤 翔</div>
+          <div class="sc">2 - 1</div><div class="ev">男子S 一般 ・ 準決勝</div>
+        </div>
+        <div class="court s-call" style="--st:var(--st-call)">
+          <div class="top"><span class="no">5<small> 台</small></span><span class="st"><span class="d"></span>呼出可</span></div>
+          <div class="mt">渡辺 拓海<span class="vs">vs</span>田中 大輔</div>
+          <div class="sc">— ・ —</div><div class="ev">男子S 高校 ・ 2回戦</div>
+        </div>
+        <div class="court s-wait" style="--st:var(--st-wait)">
+          <div class="top"><span class="no">6<small> 台</small></span><span class="st"><span class="d"></span>待機</span></div>
+          <div class="mt">鈴木 葵<span class="vs">vs</span>小林 美羽</div>
+          <div class="sc">— ・ —</div><div class="ev">女子S 一般 ・ 1回戦</div>
+        </div>
+        <div class="court s-warn live" style="--st:var(--st-warn)">
+          <div class="top"><span class="no">7<small> 台</small></span><span class="st"><span class="d"></span>未着 ⚠</span></div>
+          <div class="mt">中村 陽葵<span class="vs">vs</span>(呼出2回)</div>
+          <div class="sc">— ・ —</div><div class="ev">女子S 中学 ・ 呼出後3分</div>
+        </div>
+        <div class="court s-done" style="--st:var(--st-done)">
+          <div class="top"><span class="no">1<small> 台</small></span><span class="st"><span class="d"></span>完了</span></div>
+          <div class="mt">五十嵐 健太<span class="vs">def</span>山本 颯太</div>
+          <div class="sc">3 - 0</div><div class="ev">男子S 一般 ・ 2回戦</div>
+        </div>
+        <div class="court s-done" style="--st:var(--st-done)">
+          <div class="top"><span class="no">2<small> 台</small></span><span class="st"><span class="d"></span>完了</span></div>
+          <div class="mt">高橋 美咲<span class="vs">def</span>伊藤 彩</div>
+          <div class="sc">3 - 1</div><div class="ev">女子S 高校 ・ 2回戦</div>
+        </div>
+      </div>
+
+      <div class="sub">呼べる対戦 — CALLABLE</div>
+      <div class="panel">
+        <div class="crow call"><span class="ord">1</span><span class="who">渡辺 拓海 vs 田中 大輔<div class="e">男子シングルス 高校 ・ 2回戦</div></span>
+          <span class="act"><button class="btn call">台へ呼出</button></span></div>
+        <div class="crow call"><span class="ord">2</span><span class="who">鈴木 葵 vs 小林 美羽<div class="e">女子シングルス 一般 ・ 1回戦</div></span>
+          <span class="act"><button class="btn call">台へ呼出</button></span></div>
+        <div class="crow done"><span class="ord">✓</span><span class="who">五十嵐 健太 vs 山本 颯太<div class="e">記録済 ・ 3-0</div></span>
+          <span class="act"><button class="btn">結果修正</button></span></div>
+      </div>
+
+      <div class="btnrow">
+        <button class="btn go">結果入力</button>
+        <button class="btn">コートから戻す</button>
+        <button class="btn danger">結果を取消(不可逆)</button>
+        <span class="hint">※ 確定系=緑 / 取消・危険=赤(丹頂レッド) という色の役割</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // テーマ切替
+  var admin=document.getElementById("admin");
+  document.querySelectorAll(".switch button").forEach(function(b){
+    b.onclick=function(){
+      admin.className="admin "+b.dataset.t;
+      document.querySelectorAll(".switch button").forEach(x=>x.classList.toggle("on",x===b));
+    };
+  });
+  // ライブ時計(mono)
+  function tick(){var d=new Date();var p=n=>String(n).padStart(2,"0");
+    document.getElementById("clk").textContent=p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());}
+  tick();setInterval(tick,1000);
+</script>
+</body>
+</html>
