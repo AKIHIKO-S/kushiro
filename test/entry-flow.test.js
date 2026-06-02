@@ -121,6 +121,36 @@ test("抽選番号(autoAssignDrawNumbers)も却下を除外して付与 (Phase2)
   assert.ok(!numbered.includes("C 子"), "却下には番号を振らない");
 });
 
+test("方式A: 種目名から性別・カテゴリを自動推定する", () => {
+  const t = openTournament();
+  db.createTeamEntry(t.id, { team_name: "T", contact_name: "x", contact_email: "x@y.jp", entries: [
+    { event: "女子シングルス", type: "singles", name: "A 子", team: "T" },
+    { event: "高校男子ダブルス", type: "doubles", name1: "B 一", name2: "C 二", team: "T" },
+    { event: "混合ダブルス", type: "doubles", name1: "D 男", name2: "E 女", team: "T" },
+    { event: "中学女子シングルス", type: "singles", name: "F 子", team: "T" },
+  ] });
+  const es = db.getEntries(t.id);
+  const g = (ev) => es.find((e) => e.entry_event === ev);
+  assert.strictEqual(g("女子シングルス").gender, "female");
+  assert.strictEqual(g("高校男子ダブルス").gender, "male");
+  assert.strictEqual(g("高校男子ダブルス").category, "high");
+  assert.strictEqual(g("混合ダブルス").gender, "mixed");
+  assert.strictEqual(g("中学女子シングルス").gender, "female");
+  assert.strictEqual(g("中学女子シングルス").category, "middle");
+});
+
+test("申込締切は JST 基準で判定 (過去=拒否/未来=許可)", () => {
+  const t = db.createTournament({ name: "締切検証", date: "2027-01-01" });
+  db.updateEntrySettings(t.id, { entries_open: 1, entry_deadline: "2000-01-01" });
+  const past = db.createTeamEntry(t.id, { team_name: "T", contact_name: "x", contact_email: "x@y.jp",
+    entries: [singlesEntry("甲 一")] });
+  assert.ok(past.error && /締切/.test(past.error), "過去締切は拒否");
+  db.updateEntrySettings(t.id, { entries_open: 1, entry_deadline: "2099-12-31" });
+  const future = db.createTeamEntry(t.id, { team_name: "T", contact_name: "x", contact_email: "x@y.jp",
+    entries: [singlesEntry("乙 二")] });
+  assert.ok(future.ok, "未来締切は許可");
+});
+
 test("statusフィルタで絞り込める", () => {
   const t = openTournament();
   db.createTeamEntry(t.id, { team_name: "T", contact_name: "x", contact_email: "x@y.jp",

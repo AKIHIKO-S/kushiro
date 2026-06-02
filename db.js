@@ -4330,7 +4330,7 @@ function createEntry(tournamentId, data) {
   // 申込締切チェック（オプション）
   if (!t.entries_open) return { error: "現在この大会は申込を受け付けていません" };
   if (t.entry_deadline) {
-    const today = new Date().toISOString().split("T")[0];
+    const today = _todayJST();   // JST基準 (UTC比較だと締切日付近で誤判定 / #JST締切)
     if (today > t.entry_deadline) {
       return { error: `申込締切（${t.entry_deadline}）を過ぎています` };
     }
@@ -4438,6 +4438,36 @@ function looksLikeSpamText(s) {
   return false;
 }
 
+// 締切判定用の「今日」を JST(日本時間)で返す (#JST締切)。UTC比較だと最大9時間ずれて
+// 締切日付近で誤って締切扱い/受付扱いになるため、UTC+9 の日付(YYYY-MM-DD)で比較する。
+function _todayJST() {
+  return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+// 方式A: 種目名から性別・カテゴリを自動推定する (フォームに入力欄を増やさない)。
+// 明示値(g/c)があればそれを優先。判定できなければ既定(male/general)。
+function inferGenderCategory(eventName, g, c) {
+  const n = String(eventName || "");
+  let gender = g || "";
+  if (!gender) {
+    if (/混合|ミックス|mix/i.test(n)) gender = "mixed";
+    else if (/女子|女性|女/.test(n)) gender = "female";
+    else if (/男子|男性|男/.test(n)) gender = "male";
+  }
+  let category = c || "";
+  if (!category) {
+    if (/高校|高等学校/.test(n)) category = "high";
+    else if (/中学/.test(n)) category = "middle";
+    else if (/小学/.test(n)) category = "elementary";
+    else if (/大学/.test(n)) category = "university";
+    else if (/シニア|高齢|年代別|ベテラン/.test(n)) category = "senior";
+    else if (/ジュニア/.test(n)) category = "junior";
+    else if (/カデット|ホープス|カブ|バンビ|ユース/.test(n)) category = "youth";
+    else if (/ラージ/.test(n)) category = "large";
+  }
+  return { gender: gender || "male", category: category || "general" };
+}
+
 function createTeamEntry(tournamentId, formData) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
@@ -4445,7 +4475,7 @@ function createTeamEntry(tournamentId, formData) {
   // 申込受付チェック
   if (!t.entries_open) return { error: "現在この大会は申込を受け付けていません" };
   if (t.entry_deadline) {
-    const today = new Date().toISOString().split("T")[0];
+    const today = _todayJST();   // JST基準 (UTC比較だと締切日付近で誤判定 / #JST締切)
     if (today > t.entry_deadline) {
       return { error: `申込締切（${t.entry_deadline}）を過ぎています` };
     }
@@ -4508,6 +4538,9 @@ function createTeamEntry(tournamentId, formData) {
       Array.isArray(ent.members) ? ent.members.join(" ") : ""].filter(Boolean).join(" ");
     if (looksLikeSpamText(screenText)) { spamSkipped++; continue; }
 
+    // 方式A: フォームは性別/カテゴリを集めないので、種目名から自動推定する (集計の男女別/区分が崩れない)。
+    const gc = inferGenderCategory(evName, ent.gender, ent.category);
+
     if (type === "team") {
       // 団体戦: 1チーム=1 entrant。members は note に保持
       const tn = String(ent.team_name || formData.team_name || "").trim();
@@ -4518,8 +4551,8 @@ function createTeamEntry(tournamentId, formData) {
         event: evName,
         name: tn || (members[0] || ""),
         team: tn,
-        category: ent.category || "general",
-        gender: ent.gender || "",
+        category: gc.category,
+        gender: gc.gender,
         status,
         note: [
           `[団体] メンバー: ${members.join("、")}`,
@@ -4543,8 +4576,8 @@ function createTeamEntry(tournamentId, formData) {
         partner_name: n2,
         partner_team: team2,
         is_doubles: true,
-        category: ent.category || "general",
-        gender: ent.gender || "",
+        category: gc.category,
+        gender: gc.gender,
         status,
         note: [contactInfo, noteBase].filter(Boolean).join(" | "),
       });
@@ -4565,8 +4598,8 @@ function createTeamEntry(tournamentId, formData) {
         event: evName,
         name,
         team,
-        category: ent.category || "general",
-        gender: ent.gender || "",
+        category: gc.category,
+        gender: gc.gender,
         status,
         note: [contactInfo, noteBase].filter(Boolean).join(" | "),
       });

@@ -770,27 +770,30 @@ function gatherFormData() {
   EVENTS.forEach((ev, idx) => {
     const container = document.getElementById("members_" + idx);
     if (!container) return;
-    Array.from(container.children).forEach((row, ri) => {
-      const inputs = row.querySelectorAll("input");
+    // ★ DOM上の各行を「行スコープのセレクタ」で読む (recalcTotal と同じ方式)。
+    //   旧実装は現在のDOM位置(ri)で input 名を組み立てていたため、途中行を削除すると
+    //   名前(=追加時のindex)とズレて以降の選手が送信から欠落していた。行内の input を
+    //   index非依存で拾うことでデータ欠落を解消し、表示合計と送信内容を常に一致させる。
+    Array.from(container.children).forEach((row) => {
+      const val = (sel) => { const el = row.querySelector(sel); return el ? (el.value || "") : ""; };
       const obj = { event: ev.name, type: ev.type || "singles", fee: ev.fee || 0 };
       if (ev.type === "team") {
-        obj.team_name = (row.querySelector("input[name^='ev" + idx + "_team" + ri + "_name']") || {}).value || "";
+        obj.team_name = val('input[name*="_team"][name$="_name"]');
         obj.members = [];
-        for (let i = 0; i < (ev.per_team || 6); i++) {
-          const v = (row.querySelector("input[name='ev" + idx + "_team" + ri + "_m" + i + "']") || {}).value;
-          if (v && v.trim()) obj.members.push(v.trim());
-        }
+        row.querySelectorAll('input[name*="_m"]').forEach((inp) => {
+          const v = (inp.value || "").trim(); if (v) obj.members.push(v);
+        });
         if (!obj.team_name && obj.members.length === 0) return;
       } else if (ev.type === "doubles") {
-        obj.name1 = (row.querySelector("input[name^='ev" + idx + "_pair" + ri + "_n1']") || {}).value || "";
-        obj.name2 = (row.querySelector("input[name^='ev" + idx + "_pair" + ri + "_n2']") || {}).value || "";
-        obj.team1 = (row.querySelector("input[name^='ev" + idx + "_pair" + ri + "_t1']") || {}).value || "";
-        obj.team2 = (row.querySelector("input[name^='ev" + idx + "_pair" + ri + "_t2']") || {}).value || "";
+        obj.name1 = val('input[name*="_n1"]');
+        obj.name2 = val('input[name*="_n2"]');
+        obj.team1 = val('input[name*="_t1"]');
+        obj.team2 = val('input[name*="_t2"]');
         obj.team = obj.team1; // 後方互換
         if (!obj.name1 && !obj.name2) return;
       } else {
-        obj.name = (row.querySelector("input[name^='ev" + idx + "_p" + ri + "_name']") || {}).value || "";
-        obj.team = (row.querySelector("input[name^='ev" + idx + "_p" + ri + "_team']") || {}).value || "";
+        obj.name = val('input[name*="_name"]');
+        obj.team = val('input[name*="_team"]');
         if (!obj.name) return;
       }
       data.entries.push(obj);
@@ -901,6 +904,23 @@ function showConfirmModal(data) {
   });
 }
 
+// 内容から安定した冪等キーを作る (同一内容の再送=同キー=サーバーで1回だけ登録。内容変更時は別キー)。
+function ttHash(str) {
+  var h = 5381;
+  for (var i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+function ttOpId(data) {
+  var sig = JSON.stringify({
+    t: data.team_name || "", e: data.contact_email || "", n: data.contact_name || "",
+    x: (data.entries || []).map(function (it) {
+      return [it.event, it.type, it.name || "", it.name1 || "", it.name2 || "",
+        it.team_name || "", (it.members || []).join(",")];
+    }),
+  });
+  return "entry-" + TOURNAMENT_ID + "-" + ttHash(sig);
+}
+
 async function submitForm(e) {
   e.preventDefault();
   const data = gatherFormData();
@@ -924,7 +944,7 @@ async function submitForm(e) {
     // ブラウザからのクロスオリジン送信(応答がCORSで読めず誤エラーになる問題)を回避。
     const resp = await fetch(SUBMIT_URL, {
       method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      headers: { "Content-Type": "text/plain;charset=utf-8", "X-Op-Id": ttOpId(data) },
       body: JSON.stringify(data),
       signal: controller ? controller.signal : undefined,
     });
