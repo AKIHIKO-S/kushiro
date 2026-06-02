@@ -163,7 +163,8 @@ sqlite.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_submissions_tournament ON entry_submissions(tournament_id);
   CREATE INDEX IF NOT EXISTS idx_submissions_token ON entry_submissions(token_hash);
-  CREATE INDEX IF NOT EXISTS idx_submissions_opid ON entry_submissions(tournament_id, op_id);
+  -- idx_submissions_opid(op_id列を使う索引)は、既存DBでは op_id を ALTER で足した後でないと
+  -- 「no such column: op_id」で失敗するため、ここではなく移行ブロックで ALTER の直後に作成する。
 
   -- 申込番号トークン → 申込原本(submission) の対応表。1申込に複数トークンを持てる
   -- (部分再送で併合した際、旧トークンと新トークンの両方が同じ submission を指す)。
@@ -438,12 +439,16 @@ try {
   // 混合ダブルス等で相方の性別を別途保持(集計の男女別が崩れないように)。
   addECol("partner_gender", "TEXT DEFAULT ''");
   // Phase4残: 既存 entry_submissions に op_id 列を追加(コールド再送の replay 判定用)。
+  // op_id を使う索引は、列が存在することを保証してからここで作る(新規DB/既存DBの双方で安全)。
   try {
     const scols = sqlite.prepare("PRAGMA table_info(entry_submissions)").all();
     if (scols.length && !scols.find(c => c.name === "op_id")) {
       sqlite.exec("ALTER TABLE entry_submissions ADD COLUMN op_id TEXT DEFAULT ''");
     }
-  } catch (e) { /* entry_submissions 未作成の初回起動は CREATE TABLE 側で op_id 込み */ }
+    if (scols.length) {
+      sqlite.exec("CREATE INDEX IF NOT EXISTS idx_submissions_opid ON entry_submissions(tournament_id, op_id)");
+    }
+  } catch (e) { console.error("entry_submissions op_id migration error:", e.message); }
 } catch (e) { console.error("migration error:", e.message); }
 
 // ── 追加インデックス (#23) ──────────────────────────────
