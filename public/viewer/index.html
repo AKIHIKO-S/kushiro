@@ -741,13 +741,28 @@
    --shadow-lg:0 14px 34px -18px rgba(20,16,12,.22);
    background:#ffffff;
  }
- /* 緑(ティール)ヘッダー → 白の丹頂ヘッダー(下端に墨の罫) */
- .hero{ background:#ffffff; color:var(--txt); border-bottom:2px solid var(--ink-900);
-   box-shadow:0 1px 0 rgba(20,16,12,.05); }
- .hero-title{ color:var(--txt); }
- .hero-sub{ color:var(--sub); opacity:1; }
- .live-indicator{ background:var(--accent-bg); border:1px solid #f3c9cd; color:var(--accent-l); }
- .live-dot{ background:var(--accent); box-shadow:0 0 0 2px rgba(192,21,38,.20); }
+ /* 緑(ティール)ヘッダー → 幣舞橋の夕景ヘッダー(本体は白基調のまま) */
+ .hero{ position:relative; overflow:hidden; color:#fff; border-bottom:none;
+   padding:14px 0 30px;
+   background:linear-gradient(180deg,#2a1742 0%,#6b2a5c 34%,#b5414f 56%,#e8743b 76%,#f6a23c 92%,#ffce6b 100%);
+   box-shadow:0 2px 14px rgba(40,16,40,.28); }
+ .hero .sun{ position:absolute; right:18%; top:8px; width:54px; height:54px; border-radius:50%;
+   background:radial-gradient(circle,#fff6d8 0%,#ffd472 42%,#ffae44 62%,rgba(255,150,60,0) 74%);
+   box-shadow:0 0 46px 16px rgba(255,170,70,.5); pointer-events:none; z-index:0;
+   animation:sunGlow 7s ease-in-out infinite; }
+ @keyframes sunGlow{0%,100%{opacity:.9}50%{opacity:1}}
+ .hero .skyline{ position:absolute; left:0; right:0; bottom:-1px; width:100%; height:38px;
+   display:block; color:#241326; pointer-events:none; z-index:1; }
+ .hero .crane{ position:absolute; left:16%; top:12px; width:34px; color:#2a1530; z-index:1; opacity:.9;
+   animation:heroDrift 26s linear infinite; }
+ .hero .crane .hd{ fill:var(--tancho,#c01526); }
+ @keyframes heroDrift{from{transform:translateX(-10px)}to{transform:translateX(22px)}}
+ .hero-inner{ position:relative; z-index:2; }
+ .hero-title{ color:#fff; text-shadow:0 1px 10px rgba(40,12,30,.5); }
+ .hero-sub{ color:rgba(255,255,255,.92); opacity:1; text-shadow:0 1px 8px rgba(40,12,30,.5); }
+ .live-indicator{ background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.45); color:#fff; }
+ .live-dot{ background:#fff; box-shadow:0 0 0 2px rgba(255,255,255,.3); }
+ @media(prefers-reduced-motion:reduce){ .hero .sun,.hero .crane{animation:none} }
  /* カードを少しソフトに(選手DBのトーンへ) */
  .container .card{ border-radius:var(--radius-lg); box-shadow:var(--shadow); border-color:var(--border); }
  /* タブのアクティブ下線などは --accent 経由で自動的に丹頂レッドへ */
@@ -755,10 +770,27 @@
 </head>
 <body>
 
-<!-- KTTA Platform ヒーロー -->
+<!-- KTTA Platform ヒーロー(幣舞橋の夕景) -->
 <div class="hero">
+ <span class="sun" aria-hidden="true"></span>
+ <!-- 舞う丹頂(頭=丹頂レッド) -->
+ <svg class="crane" viewBox="0 0 60 26" aria-hidden="true">
+   <path fill="currentColor" d="M0 16 Q14 2 28 14 Q40 3 54 16 L40 20 Q30 14 26 22 Q22 14 12 20 Z"/>
+   <circle class="hd" cx="54" cy="16" r="2.4"/>
+ </svg>
+ <!-- 幣舞橋シルエット(アーチ＋四季の像の柱) -->
+ <svg class="skyline" viewBox="0 0 1000 60" preserveAspectRatio="none" aria-hidden="true">
+   <path fill="currentColor" d="M0 30 L1000 30 L1000 36 L0 36 Z"/>
+   <path fill="currentColor" d="M0 36 Q70 60 140 36 Q210 60 280 36 Q350 60 420 36 Q490 60 560 36 Q630 60 700 36 Q770 60 840 36 Q910 60 980 36 L1000 36 L1000 60 L0 60 Z"/>
+   <g fill="currentColor">
+     <rect x="246" y="16" width="7" height="14"/><ellipse cx="249.5" cy="12" rx="5" ry="8"/>
+     <rect x="446" y="16" width="7" height="14"/><ellipse cx="449.5" cy="12" rx="5" ry="8"/>
+     <rect x="606" y="16" width="7" height="14"/><ellipse cx="609.5" cy="12" rx="5" ry="8"/>
+     <rect x="786" y="16" width="7" height="14"/><ellipse cx="789.5" cy="12" rx="5" ry="8"/>
+   </g>
+ </svg>
  <div class="hero-inner">
- <a class="ktta-logo" href="/viewer">
+ <a class="ktta-logo ktta-logo--inverse" href="/viewer">
    <span class="ktta-logo-mark" aria-hidden="true"></span>
    <span class="ktta-logo-text">
      <span class="ktta-logo-name">KTTA Platform</span>
