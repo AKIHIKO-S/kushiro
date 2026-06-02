@@ -628,6 +628,91 @@
  #tab-coach details.card summary { color: #14322c; }
  #tab-coach details.card .font-bold { color: #1c2230 !important; }
  #tab-coach .pdb-push, #tab-coach .badge { color: #14322c; }
+
+ /* ═══════════ 丹頂エディトリアル: 選手DB(白・ゴシック / viewer scoped) ═══════════
+    申込フォームと同じ世界観(白基調・丹頂レッドのアクセント・ゴシック・編集的)を
+    選手データベース(#tab-search)と選手プロフィール(#tab-player)へ適用。
+    #tab-* で詳細度を上げて共有CSS(common.css)を上書き、admin・他タブには影響させない。 */
+ #tab-search, #tab-player{
+   --tc-ink:#191917; --tc-ink2:#5c5c63; --tc-ink3:#9a9aa2;
+   --tc-line:#e9e9ec; --tc-line2:#f1f1f3; --tc-red:#c01526; --tc-redbg:#fdecee;
+   --tc-amber:#9a6a10; --tc-amberbg:#fbf2dc; --tc-green:#1a7a45; --tc-greenbg:#e8f6ee;
+   --tc-sh:0 10px 30px -16px rgba(20,16,12,.22); --tc-sh-h:0 16px 38px -16px rgba(192,21,38,.28);
+   font-family:'Hiragino Sans','BIZ UDPGothic','Yu Gothic UI','Yu Gothic','Meiryo',system-ui,sans-serif;
+   font-variant-numeric:tabular-nums;
+ }
+ /* 選手名鑑マストヘッド */
+ .pdb-masthead{padding:18px 2px 14px;border-bottom:2px solid var(--tc-ink);margin-bottom:16px}
+ .pdb-masthead .k{font-size:11px;letter-spacing:.4em;color:var(--tc-red);font-weight:800}
+ .pdb-masthead h2{font-size:27px;font-weight:800;letter-spacing:.02em;line-height:1.1;margin:4px 0 2px;display:flex;align-items:center;gap:10px}
+ .pdb-masthead .crane{width:12px;height:12px;border-radius:50%;background:var(--tc-red);box-shadow:0 0 0 3px #fff,0 0 0 4px var(--tc-red);flex:0 0 auto}
+ .pdb-masthead .s{font-size:12px;color:var(--tc-ink2)}
+
+ /* 検索バー */
+ #searchBar{background:#fff;border-bottom:1px solid var(--tc-line)}
+ #searchBar .search-input{border:1.5px solid var(--tc-line);border-radius:12px}
+ #searchBar .search-input:focus{border-color:var(--tc-red);outline:none}
+
+ /* カード一覧 */
+ #tab-search .player-list{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+ #tab-search .pdb-card{background:#fff;border:1px solid var(--tc-line);border-radius:16px;padding:15px 16px;
+   box-shadow:var(--tc-sh);gap:13px;align-items:flex-start}
+ #tab-search .pdb-card:hover{transform:translateY(-3px);box-shadow:var(--tc-sh-h)}
+ #tab-search .pdb-card .pdb-avatar,
+ #tab-search .pdb-card.male .pdb-avatar,
+ #tab-search .pdb-card.female .pdb-avatar{background:#f3f1ee;color:var(--tc-ink);border:1px solid var(--tc-line);font-weight:800}
+ #tab-search .pdb-card .pdb-name{font-size:21px;font-weight:800;color:var(--tc-ink);letter-spacing:.01em;line-height:1.2}
+ #tab-search .pdb-card .pdb-furi{font-size:11px;color:var(--tc-ink3);letter-spacing:.12em}
+ #tab-search .pdb-card .pdb-meta{color:var(--tc-ink2);font-size:12px;gap:6px;align-items:center}
+ #tab-search .pdb-cat{background:var(--tc-amberbg);color:var(--tc-amber);border-radius:6px;font-weight:800}
+ #tab-search .pdb-stats .pdb-stat{border-radius:7px;font-weight:800}
+ #tab-search .pdb-stat.app{background:var(--tc-line2);color:var(--tc-ink2)}
+ #tab-search .pdb-stat.win{background:var(--tc-greenbg);color:var(--tc-green)}
+ #tab-search .pdb-stat.loss{background:var(--tc-redbg);color:var(--tc-red)}
+ #tab-search .pdb-stat.medal{background:var(--tc-amberbg);color:var(--tc-amber)}
+ #tab-search .pdb-winrate-bar{background:var(--tc-line)}
+ #tab-search .pdb-winrate-bar>span{background:var(--tc-green)}
+ #tab-search #searchStatus{color:var(--tc-ink3)}
+
+ /* ── プロフィール: 通算勝率ヒーロー(緑ベタ→白カード+丹頂赤帯) ── */
+ #tab-player .psum{background:#fff!important;color:var(--tc-ink)!important;border:1px solid var(--tc-line);
+   border-left:5px solid var(--tc-red);border-radius:16px;box-shadow:var(--tc-sh);padding:20px 22px}
+ #tab-player .psum-rate-v{color:var(--tc-ink);font-size:48px}
+ #tab-player .psum-rate-k,#tab-player .psum-rec{color:var(--tc-ink2);opacity:1}
+ #tab-player .psum-rec b{color:var(--tc-ink)}
+ #tab-player .psum-wl{background:var(--tc-line)}
+ #tab-player .psum-wl .w{background:var(--tc-green)} #tab-player .psum-wl .l{background:var(--tc-red);opacity:.85}
+ #tab-player .psum-kv-i b{color:var(--tc-ink)} #tab-player .psum-kv-i span{color:var(--tc-ink3);opacity:1}
+ @media(min-width:560px){#tab-player .psum-kv{border-left:1px solid var(--tc-line)}}
+
+ /* KPI / タイル */
+ #tab-player .pstat-tile{background:#fff;border:1px solid var(--tc-line);border-radius:13px;box-shadow:var(--tc-sh)}
+ #tab-player .pstat-v{color:var(--tc-ink);font-weight:800}
+ #tab-player .pstat-l{color:var(--tc-ink2);font-weight:800}
+ #tab-player .pstat-s{color:var(--tc-ink3)}
+ #tab-player .pstat-cmp-a{color:var(--tc-ink3)}
+ #tab-player .pstat-cmp.up .pstat-cmp-d{color:var(--tc-green)}
+ #tab-player .pstat-cmp.down .pstat-cmp-d{color:var(--tc-red)}
+
+ /* 直近フォーム */
+ #tab-player .pform-dot{width:30px;height:30px;font-size:12px;font-weight:900;color:#fff}
+ #tab-player .pform-dot.win{background:var(--tc-green)} #tab-player .pform-dot.lose{background:var(--tc-red)}
+ #tab-player .pform-label{color:var(--tc-ink2);font-weight:800}
+
+ /* 折りたたみ(詳細スタッツ・内訳) */
+ #tab-player .pmore{background:#fff;border:1px solid var(--tc-line);border-radius:14px;box-shadow:var(--tc-sh)}
+ #tab-player .pmore-sum{font-weight:800;color:var(--tc-ink)}
+ #tab-player .pmore-sum::after{color:var(--tc-red)}
+
+ /* 内訳: ゲームカウント分布 / 勝率行 / 見出し */
+ #tab-player .pdist-chip.w{background:var(--tc-greenbg);color:#15633a;border-color:#cde9d8}
+ #tab-player .pdist-chip.l{background:var(--tc-redbg);color:#9c0f1c;border-color:#f3d3d6}
+ #tab-player .pdist-label.w{color:var(--tc-green)} #tab-player .pdist-label.l{color:var(--tc-red)}
+ #tab-player .pstat-bar i.hi{background:var(--tc-green)}
+ #tab-player .pstat-rp.hi{color:var(--tc-green)}
+ #tab-player .section-sub{color:var(--tc-ink2);font-weight:800;display:flex;align-items:center;gap:8px}
+ #tab-player .section-sub::before{content:"";width:3px;height:13px;background:var(--tc-red);border-radius:2px;display:inline-block}
+ #tab-player .preach-chip{font-weight:800}
 </style>
 </head>
 <body>
@@ -691,6 +776,11 @@
 
  <!-- 選手データベース (検索のみ) -->
  <div class="tab-panel hidden" id="tab-search">
+ <div class="pdb-masthead">
+   <div class="k">KUSHIRO TABLE TENNIS · 選手名鑑</div>
+   <h2><span class="crane"></span>選手名鑑</h2>
+   <div class="s">釧路卓球協会 登録選手データベース</div>
+ </div>
  <div id="searchStatus" class="text-sub text-sm mb-2" style="padding:0 4px"></div>
  <div id="playerList" class="player-list"></div>
  </div>
