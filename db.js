@@ -438,6 +438,9 @@ try {
   addECol("submission_id", "TEXT DEFAULT ''");
   // 混合ダブルス等で相方の性別を別途保持(集計の男女別が崩れないように)。
   addECol("partner_gender", "TEXT DEFAULT ''");
+  // スーパーシード(登場ラウンド): 上位選手の予選免除。1=1回戦から(既定), R=R回戦から登場。
+  // 標準配置の生成時に 2^(entry_round-1) ラウンドぶん BYE 上がりにする。
+  addECol("entry_round", "INTEGER DEFAULT 1");
   // Phase4残: 既存 entry_submissions に op_id 列を追加(コールド再送の replay 判定用)。
   // op_id を使う索引は、列が存在することを保証してからここで作る(新規DB/既存DBの双方で安全)。
   try {
@@ -2583,6 +2586,35 @@ function bracketPositions(size) {
   return arr;
 }
 
+// ── スーパーシード対応: 重み付きシード配置 ──────────────
+// entries = シード強い順 [{p, w}]。w = 2^(entry_round-1) = そのシードが消費するリーフ数
+// (= BYE段差)。登場ラウンドR の選手は (R-1) ラウンドぶん BYE で繰り上がり、R回戦から登場する。
+// 標準シードで上下に振り分けつつ、各半分の「重み容量」を尊重する。区画を単独で専有できる
+// スーパーシードは、その区画の先頭リーフに置き残りをBYE(null)にする → 既存の autoAdvanceByes が
+// 多段BYEを自動進行させ、R回戦の相手(反対側の予選サブブラケット勝者)と当たる。
+// ※全 w=1 のときは bracketPositions と完全一致する(既存の標準配置を壊さない)。
+function buildSeededLeaves(entries, size) {
+  const leaves = new Array(size).fill(null);
+  function place(ents, lo, span) {
+    if (span === 1) { if (ents[0]) leaves[lo] = ents[0].p; return; }
+    if (!ents.length) return;
+    if (ents.length === 1 && ents[0].w >= span) { leaves[lo] = ents[0].p; return; } // 単独=区画専有(残りBYE)
+    const half = span / 2;
+    const top = [], bot = []; let wt = 0, wb = 0;
+    ents.forEach((e, i) => {
+      let side = ((i % 4) === 0 || (i % 4) === 3) ? 0 : 1; // 標準スネーク: top,bot,bot,top,...
+      const fits = (s) => (s === 0 ? wt + e.w <= half : wb + e.w <= half);
+      if (!fits(side)) side = 1 - side;                    // 容量超過なら逆へ
+      if (!fits(side)) side = (wt <= wb) ? 0 : 1;          // 保険(通常起きない)
+      if (side === 0) { top.push(e); wt += e.w; } else { bot.push(e); wb += e.w; }
+    });
+    place(top, lo, half);
+    place(bot, lo + half, half);
+  }
+  place(entries, 0, size);
+  return leaves;
+}
+
 // ラウンド名生成 (卓球協会慣習)
 // ・残り 2人  = 決勝
 // ・残り 4人  = 準決勝
@@ -2770,6 +2802,26 @@ function generateBracket(tournamentId, event, options) {
   } else {
     bracketSize = Math.pow(2, Math.ceil(Math.log2(N)));
   }
+
+  // ── スーパーシード(登場ラウンド): entrant.entry_round>1 は (entry_round-1) ラウンドBYE上がり ──
+  // 標準配置(非as_drawn)のときのみ有効。各シードの重み = 2^(entry_round-1) を消費リーフ数として
+  // 重み付きシード配置を行い、上位シードを予選免除でR回戦から登場させる。
+  const entryRoundOf = (p) => Math.max(1, parseInt(p.entry_round) || 1);
+  let superLeaves = null;
+  if (!asDrawn && sorted.some(p => entryRoundOf(p) > 1)) {
+    const weighted = sorted.map(p => ({ p, w: Math.pow(2, entryRoundOf(p) - 1) }));
+    const totalW = weighted.reduce((s, e) => s + e.w, 0);
+    bracketSize = Math.pow(2, Math.ceil(Math.log2(Math.max(2, totalW))));
+    const maxR = Math.max(...sorted.map(entryRoundOf));
+    if (Math.pow(2, maxR - 1) > bracketSize / 2) {
+      return {
+        error: "登場ラウンドが大きすぎます(選手数に対しブラケットが不足)。登場ラウンドを下げるか選手を増やしてください。",
+        max_entry_round: maxR, bracket_size: bracketSize,
+      };
+    }
+    superLeaves = buildSeededLeaves(weighted, bracketSize);
+  }
+
   totalRounds = Math.log2(bracketSize);
   const positions = bracketPositions(bracketSize);
 
@@ -2791,6 +2843,10 @@ function generateBracket(tournamentId, event, options) {
       // 相対スロット i が player1、i+1 が player2 (上→下の並びそのまま)
       p1 = playerByDrawNo[i] || null;
       p2 = playerByDrawNo[i + 1] || null;
+    } else if (superLeaves) {
+      // スーパーシード: 重み付き配置のリーフ列をそのまま使う(BYE区画で多段繰り上げ)
+      p1 = superLeaves[i] || null;
+      p2 = superLeaves[i + 1] || null;
     } else {
       p1 = playerBySeed[positions[i]] || null;
       p2 = playerBySeed[positions[i + 1]] || null;
@@ -5058,6 +5114,16 @@ function setEntrantSeed(entrantId, seed) {
   return { ok: true, id: entrantId, seed: parseInt(seed) || 0 };
 }
 
+// スーパーシード: 登場ラウンド(entry_round)を設定。1=1回戦から(既定)、R=R回戦から登場。
+// 標準配置生成時に 2^(entry_round-1) ラウンドぶん予選免除(BYE上がり)になる。
+function setEntrantEntryRound(entrantId, entryRound) {
+  const e = entrantStmts.get.get(entrantId);
+  if (!e) return { error: "申込が見つかりません" };
+  const r = Math.max(1, Math.min(10, parseInt(entryRound) || 1));
+  sqlite.prepare("UPDATE entrants SET entry_round=? WHERE id=?").run(r, entrantId);
+  return { ok: true, id: entrantId, entry_round: r };
+}
+
 // ── Phase4: データ品質 (種目名と gender/category の不整合・ふりがな欠落・氏名空 を検出) ──
 // 自動推定や手入力のズレを本部が一覧で確認し、推定値で一括/個別修正できるようにする。
 function findEntrantDataIssues(tournamentId) {
@@ -6496,7 +6562,7 @@ module.exports = {
   createManualMatch, getPlayerMatchesForEdit,
   // 申込
   createEntry, createTeamEntry, getEntries,
-  setEntrantStatus, setEntrantSeed,
+  setEntrantStatus, setEntrantSeed, setEntrantEntryRound,
   // Phase4: 申込者本人の閲覧トークン + データ品質
   getSubmissionByToken, findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,
   updateEntrySettings, getOpenTournaments,

@@ -184,3 +184,59 @@ test("2人ちょうど: 1試合(決勝のみ)・BYEなし", () => {
   assert.strictEqual(ms.length, 1, "1試合");
   assert.strictEqual(ms[0].player1_name !== "BYE" && ms[0].player2_name !== "BYE", true, "両者実選手");
 });
+
+// ── スーパーシード(登場ラウンド/予選免除) ──
+// ある選手の「初の実戦ラウンド」= BYE不戦勝(walkover)でない、相手がBYEでない試合の最小 round。
+// (予選免除のシードは手前のラウンドに BYE 上がりの walkover 試合として現れるため、それは除く)
+function firstRoundOf(t, name) {
+  const ms = evMatches(t).filter(m =>
+    (m.player1_name === name || m.player2_name === name) &&
+    !m.is_walkover && m.player1_name !== "BYE" && m.player2_name !== "BYE");
+  return ms.length ? Math.min(...ms.map(m => m.bracket_round)) : -1;
+}
+
+test("スーパーシード: entry_round=3 の選手は3回戦から登場し、手前はBYE上がり", () => {
+  const t = setup();
+  const ents = addSeeded(t, 16);
+  // 第1シードを「3回戦から登場」(=2ラウンドBYE上がり)に設定
+  const top = ents.find(e => /選手001/.test(e.name));
+  db.setEntrantEntryRound(top.id, 3);
+  const r = db.generateBracket(t.id, EV, {});
+  assert.ok(r.success, "生成成功: " + JSON.stringify(r).slice(0, 120));
+  // 第1シードの初戦は3回戦
+  assert.strictEqual(firstRoundOf(t, "選手001"), 3, "entry_round=3 の選手は3回戦から");
+  // 不変条件は維持(総試合数=size-1、next_match鎖、BYE自動進行)
+  const ms = evMatches(t);
+  const size = ms.filter(m => m.bracket_round === 1).length * 2;
+  assert.strictEqual(ms.length, size - 1, "総試合数 = size-1");
+  // 実選手16人がちょうど登場(重複なし・幻の選手なし)
+  const names = new Set();
+  ms.forEach(m => [m.player1_name, m.player2_name].forEach(n => { if (n && n !== "BYE") names.add(n); }));
+  assert.strictEqual(names.size, 16, "実選手16人がブラケットに登場");
+});
+
+test("スーパーシード: 複数(top2を4回戦から)でも各自が指定ラウンドから登場", () => {
+  const t = setup();
+  const ents = addSeeded(t, 24);
+  ents.filter(e => /選手00[12]/.test(e.name)).forEach(e => db.setEntrantEntryRound(e.id, 4));
+  const r = db.generateBracket(t.id, EV, {});
+  assert.ok(r.success, "生成成功: " + JSON.stringify(r).slice(0, 120));
+  assert.strictEqual(firstRoundOf(t, "選手001"), 4, "第1シードは4回戦から");
+  assert.strictEqual(firstRoundOf(t, "選手002"), 4, "第2シードは4回戦から");
+  // 第1と第2は別の山(決勝まで当たらない): 4回戦の別 bracket_pos に居る
+  const r4 = evMatches(t).filter(m => m.bracket_round === 4);
+  const pos1 = r4.find(m => m.player1_name === "選手001" || m.player2_name === "選手001")?.bracket_pos;
+  const pos2 = r4.find(m => m.player1_name === "選手002" || m.player2_name === "選手002")?.bracket_pos;
+  assert.ok(pos1 != null && pos2 != null && pos1 !== pos2, "top2は4回戦で別の試合(別の山)");
+});
+
+test("スーパーシード未指定なら標準配置と完全一致(非破壊)", () => {
+  // entry_round 既定(=1)のみなら従来の標準シード配置とラウンド構成が変わらない
+  for (const N of [8, 16, 32]) {
+    const t = setup();
+    addSeeded(t, N);
+    db.generateBracket(t.id, EV, {});
+    assert.strictEqual(firstRoundOf(t, "選手001"), 1, `N=${N}: 既定は全員1回戦から`);
+    assertBracket(t, N);
+  }
+});

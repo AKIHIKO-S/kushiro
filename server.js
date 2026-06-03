@@ -2952,6 +2952,15 @@ app.put("/api/tournaments/:id/entries/:pid/seed", requireAdmin, (req, res) => {
   res.json(r);
 });
 
+// スーパーシード: 登場ラウンド(予選免除)を設定。1=1回戦から(既定), R=R回戦から登場。
+// 標準配置の生成時に 2^(entry_round-1) ラウンドぶん BYE 上がりになる。
+app.put("/api/tournaments/:id/entries/:pid/entry-round", requireAdmin, (req, res) => {
+  const { entry_round } = req.body || {};
+  const r = db.setEntrantEntryRound(req.params.pid, entry_round);
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
+});
+
 // ── Phase4: データ品質(種目名と gender/category の不整合・ふりがな欠落 を検出/修正) ──
 app.get("/api/tournaments/:id/entry-issues", requireAdmin, (req, res) => {
   res.json(db.findEntrantDataIssues(req.params.id));
