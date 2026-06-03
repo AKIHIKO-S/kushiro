@@ -1926,6 +1926,8 @@ const _opsFpStmt = sqlite.prepare(
           COALESCE(SUM(call_count_p1 + call_count_p2),0) AS calls,
           COALESCE(SUM(CASE WHEN result_source='referee' THEN 1 ELSE 0 END),0) AS unconf,
           COALESCE(SUM(CASE WHEN pending_result != '' THEN 1 ELSE 0 END),0) AS pend,
+          COALESCE(SUM(winner_sets + loser_sets),0) AS ssum,
+          COALESCE(SUM(LENGTH(tie_results)),0) AS trlen,
           COALESCE(MAX(finished_at),'') AS f
      FROM matches WHERE tournament_id = ?`
 );
@@ -1933,8 +1935,9 @@ function getOpsFingerprint(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { v: "0", status: null, error: true };
   const r = _opsFpStmt.get(tournamentId);
-  // unconf/pend(承認待ち件数) も含め、審判報告や本部の承認操作で表示が即時更新されるように
-  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.pend}.${r.f}`, status: t.status };
+  // unconf/pend(承認待ち件数)・ssum/trlen(団体リーグのセット/得点訂正=tie_results変化) も含め、
+  // 審判報告・承認・結果訂正で viewer の順位表が即時更新されるように。
+  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.pend}.${r.ssum}.${r.trlen}.${r.f}`, status: t.status };
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3050,11 +3053,14 @@ function summarizeTie(tieResults) {
 }
 
 // 率(取得/失)の降順比較。a が上位なら負、b が上位なら正(Array.sort 準拠)。0除算を安全に扱う。
+// 規約: 失0 かつ 取得>0 = ∞(最上位)。失0 かつ 取得0 = 0-0(データ無し=最下位)。∞同士・0-0同士は同率(0)。
+// これにより「未消化(0-0)チームが実際に戦って負けたチームより上位」「∞同士が同率にならない」を防ぐ。
 function cmpRateDesc(aw, al, bw, bl) {
-  if (al === 0 && bl === 0) return bw - aw;   // 両者無失なら取得多い順
-  if (al === 0) return -1;                     // a が無失(率∞)→ a 上位
-  if (bl === 0) return 1;                      // b が無失 → b 上位
-  return (bw * al) - (aw * bl);                // bw/bl - aw/al の符号(降順)
+  const aInf = al === 0, bInf = bl === 0;
+  if (aInf && bInf) return (bw > 0 ? 1 : 0) - (aw > 0 ? 1 : 0); // ∞>0-0、∞同士・0-0同士は同率
+  if (aInf) return aw > 0 ? -1 : 1;            // a が失0: 取得>0なら∞=上位、0-0なら下位
+  if (bInf) return bw > 0 ? 1 : -1;            // b が失0: 取得>0なら∞=上位、0-0なら下位
+  return (bw * al) - (aw * bl);                // 双方失あり: bw/bl - aw/al の符号(降順)
 }
 
 // 円卓法で総当たりの巡(round)を生成。各巡は [home,away] ペアの配列。奇数はBYE。
@@ -3101,9 +3107,8 @@ function generateTeamLeague(tournamentId, event, opts = {}) {
 
   const nameOf = (t) => t.display_name || t.team || t.name || "?";
   const txn = sqlite.transaction(() => {
-    if (opts.regenerate) {
-      sqlite.prepare("DELETE FROM matches WHERE tournament_id=? AND event=? AND league_block!=''").run(tournamentId, event);
-    }
+    // リーグ生成は常に「置換」(冪等)。regenerate 未指定でDB直叩きしても重複挿入しない。
+    sqlite.prepare("DELETE FROM matches WHERE tournament_id=? AND event=? AND league_block!=''").run(tournamentId, event);
     let created = 0;
     Object.keys(byBlock).sort().forEach(block => {
       const blockTeams = byBlock[block];
@@ -3166,32 +3171,38 @@ function computeLeagueStandings(tournamentId, event, block) {
       t1.played++; t2.played++;
       t1.sets_won += sum.home_sets; t1.sets_lost += sum.away_sets; t1.pts_won += sum.home_pts; t1.pts_lost += sum.away_pts;
       t2.sets_won += sum.away_sets; t2.sets_lost += sum.home_sets; t2.pts_won += sum.away_pts; t2.pts_lost += sum.home_pts;
-      const homeWon = sum.winner === "home" || (!!m.winner_name && m.winner_name === m.player1_name && m.winner_name !== m.player2_name);
-      const awayWon = sum.winner === "away" || (!!m.winner_name && m.winner_name === m.player2_name && m.winner_name !== m.player1_name);
+      // 勝敗は団体スコア(個別試合の勝ち数)を正とする。内訳が無い直接スコア入力のみ winner_name にフォールバック。
+      // これで偶数フォーマットの引き分け(2-2)が draws として正しく集計され、editMatch等での winner_name 単独書換とも齟齬しない。
+      const hasTie = sum.slots.length > 0;
+      const homeWon = hasTie ? (sum.home_wins > sum.away_wins) : (!!m.winner_name && m.winner_name === m.player1_name && m.winner_name !== m.player2_name);
+      const awayWon = hasTie ? (sum.away_wins > sum.home_wins) : (!!m.winner_name && m.winner_name === m.player2_name && m.winner_name !== m.player1_name);
       if (homeWon && !awayWon) { t1.wins++; t2.losses++; }
       else if (awayWon && !homeWon) { t2.wins++; t1.losses++; }
       else { t1.draws++; t2.draws++; }
     });
+    // 率は「失0」のとき算出不能(∞ or データ無し) → null。表示は星取表側が生カウントから ∞/— を出し分ける。
+    const rateOf = (won, lost) => lost === 0 ? null : +(won / lost).toFixed(3);
     const arr = Object.values(teams).map(t => ({
       ...t,
       set_diff: t.sets_won - t.sets_lost, pts_diff: t.pts_won - t.pts_lost,
-      set_rate: t.sets_lost === 0 ? (t.sets_won === 0 ? 0 : null) : +(t.sets_won / t.sets_lost).toFixed(3),
-      pts_rate: t.pts_lost === 0 ? (t.pts_won === 0 ? 0 : null) : +(t.pts_won / t.pts_lost).toFixed(3),
+      // null=データ無し(0-0/未消化)。Infinity=失0かつ取得>0(JSONでは大きな数)。表示は星取表側で整える。
+      set_rate: rateOf(t.sets_won, t.sets_lost), pts_rate: rateOf(t.pts_won, t.pts_lost),
     }));
     arr.sort((a, b) =>
       (b.wins - a.wins) ||
       cmpRateDesc(a.sets_won, a.sets_lost, b.sets_won, b.sets_lost) ||
       cmpRateDesc(a.pts_won, a.pts_lost, b.pts_won, b.pts_lost) ||
       String(a.team_name).localeCompare(String(b.team_name), "ja"));
-    // 順位付け: 勝敗数・セット率・得点率がすべて同じなら同順位+抽選フラグ
-    const sameRank = (x, y) => (x.wins === y.wins) &&
+    // 同順位: 勝敗数・セット率・得点率がすべて同じ。抽選フラグは「両者とも1試合以上消化」のときだけ付ける
+    // (未消化 0-0 同士に「順位は抽選」と公開表示してしまうのを防ぐ)。
+    const sameKey = (x, y) => (x.wins === y.wins) &&
       cmpRateDesc(x.sets_won, x.sets_lost, y.sets_won, y.sets_lost) === 0 &&
       cmpRateDesc(x.pts_won, x.pts_lost, y.pts_won, y.pts_lost) === 0;
     let rank = 0;
-    arr.forEach((t, i) => {
-      if (i === 0 || !sameRank(t, arr[i - 1])) rank = i + 1;
-      t.rank = rank;
-      t.tiebreak = (i > 0 && sameRank(t, arr[i - 1])) || (i < arr.length - 1 && sameRank(t, arr[i + 1])) ? "抽選" : "";
+    arr.forEach((t, i) => { if (i === 0 || !sameKey(t, arr[i - 1])) rank = i + 1; t.rank = rank; });
+    arr.forEach((t) => {
+      const grp = arr.filter(x => x.rank === t.rank);
+      t.tiebreak = (grp.length > 1 && grp.every(x => x.played > 0)) ? "抽選" : "";
     });
     result[bk] = arr;
   });
@@ -3207,13 +3218,23 @@ function getLeagueMatchResults(tournamentId, event, block) {
     .all(...args).map(m => {
       const done = m.status === "completed" && !m.is_walkover;
       const sum = done ? summarizeTie(_parseTieResults(m.tie_results)) : null;
-      const p1won = done && !!m.winner_name && m.winner_name === m.player1_name && m.winner_name !== m.player2_name;
-      const winner = done ? ((sum.winner === "home" || p1won) ? "p1" : (sum.winner === "away" || (!!m.winner_name && m.winner_name === m.player2_name)) ? "p2" : "") : "";
+      const hasTie = !!(sum && sum.slots.length);
+      // 内訳があれば team score を正に、無ければ(直接スコア入力)winner_sets/loser_sets をフォールバック。
+      let p1w = sum ? sum.home_wins : 0, p2w = sum ? sum.away_wins : 0, winner = "";
+      if (done) {
+        if (hasTie) winner = p1w > p2w ? "p1" : p2w > p1w ? "p2" : "";
+        else { // 直接スコア入力: 内訳なし。winner_name と winner_sets/loser_sets から復元
+          const p1Win = !!m.winner_name && m.winner_name === m.player1_name && m.winner_name !== m.player2_name;
+          winner = p1Win ? "p1" : (!!m.winner_name && m.winner_name === m.player2_name) ? "p2" : "";
+          const hi = Math.max(m.winner_sets || 0, m.loser_sets || 0), lo = Math.min(m.winner_sets || 0, m.loser_sets || 0);
+          if (winner === "p1") { p1w = hi; p2w = lo; } else if (winner === "p2") { p1w = lo; p2w = hi; }
+        }
+      }
       return {
         id: m.id, block: m.league_block, round: m.league_round, label: m.match_label, status: m.status, done,
         p1_id: m.player1_entrant_id, p1_name: m.player1_name, p2_id: m.player2_entrant_id, p2_name: m.player2_name,
-        winner, team_score: done ? (Math.max(sum.home_wins, sum.away_wins) + "-" + Math.min(sum.home_wins, sum.away_wins)) : "",
-        p1_wins: sum ? sum.home_wins : 0, p2_wins: sum ? sum.away_wins : 0,
+        winner, team_score: done ? (Math.max(p1w, p2w) + "-" + Math.min(p1w, p2w)) : "",
+        p1_wins: p1w, p2_wins: p2w,
         p1_sets: sum ? sum.home_sets : 0, p2_sets: sum ? sum.away_sets : 0,
         p1_pts: sum ? sum.home_pts : 0, p2_pts: sum ? sum.away_pts : 0,
         tie_results: sum ? sum.slots : [],

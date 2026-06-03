@@ -1004,7 +1004,8 @@
       const won = mm.winner === (rowIsP1 ? "p1" : "p2");
       return { txt: (won ? "○" : "●") + rw + "-" + cw, cls: won ? "lg-win" : "lg-lose" };
     };
-    const fmtRate = (r) => r == null ? "∞" : (Math.round(r * 100) / 100).toFixed(2);
+    // 率の表示は生カウントから出し分け: 失0かつ取得>0=∞、0-0(データ無し/未消化)=—、それ以外=比。
+    const fmtRate = (won, lost) => lost === 0 ? (won === 0 ? "—" : "∞") : (Math.round((won / lost) * 100) / 100).toFixed(2);
     const wrap = h("div", { className: "lg-block" });
     if (blockLabel) wrap.appendChild(h("div", { className: "lg-block-title" }, (opts.titlePrefix || "予選リーグ ") + blockLabel + "ブロック"));
     const tbl = h("table", { className: "lg-table" });
@@ -1023,8 +1024,8 @@
         tr.appendChild(h("td", { className: "lg-cell " + cell.cls }, cell.txt));
       });
       tr.appendChild(h("td", { className: "lg-wl" }, t.wins + "-" + t.losses + (t.draws ? "-" + t.draws : "")));
-      tr.appendChild(h("td", { title: "取得" + t.sets_won + " / 失" + t.sets_lost }, fmtRate(t.set_rate)));
-      tr.appendChild(h("td", { title: "取得" + t.pts_won + " / 失" + t.pts_lost }, fmtRate(t.pts_rate)));
+      tr.appendChild(h("td", { title: "取得" + t.sets_won + " / 失" + t.sets_lost }, fmtRate(t.sets_won, t.sets_lost)));
+      tr.appendChild(h("td", { title: "取得" + t.pts_won + " / 失" + t.pts_lost }, fmtRate(t.pts_won, t.pts_lost)));
       tb.appendChild(tr);
     });
     tbl.appendChild(tb);

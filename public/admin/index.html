@@ -7380,6 +7380,9 @@ const O = {
 
  // ── 勝敗反転 (ワンクリック) ──
  async swapWinner(m) {
+ // 団体戦(tie)は勝敗反転だけだと内訳(ゲーム得点)が失われセット率/得点率が壊れる。専用修正へ誘導。
+ const teamEvSw = O._teamEventCfg(m);
+ if (teamEvSw) return O.openTeamResultInput(m, teamEvSw, { correct: true });
  if (!confirm(`勝者を「${m.loser_name || "BYE"}」に反転します。\n` +
               `現在の勝者「${m.winner_name}」は敗者になり、` +
               `次の試合への進出も切り替わります。\n` +
@@ -8312,8 +8315,8 @@ const O = {
  let winnerSlot, ws, ls, tie_results;
  if (mode === "slots") {
  const summary = TT.summarizeTie(slotsForSummary());
- // 勝者が決まった slot を保存。ゲーム得点 or 不戦勝(3-0)由来のセット数を常に含める(セット率算出用)。
- tie_results = summary.slots.filter(s => s.winner).map(s => {
+ // 勝者が決まった slot、またはゲーム得点が入力された slot を保存(セット率/得点率の母数欠落を防ぐ)。
+ tie_results = summary.slots.filter(s => s.winner || (Array.isArray(s.games) && s.games.length)).map(s => {
    const o = { slot: s.slot, type: s.type, winner: s.winner, home_sets: s.home_sets, away_sets: s.away_sets, score: s.home_sets + "-" + s.away_sets };
    if (Array.isArray(s.games) && s.games.length) o.games = s.games;
    if (s.walkover) o.walkover = true;
