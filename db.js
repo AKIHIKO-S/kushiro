@@ -3616,27 +3616,18 @@ function getPlayerKeysInMatch(match, ctx) {
     const k = buildPlayerKey(name, team);
     if (k) keys.push(k);
   };
-  // player1 とその entrant 経由のパートナー
-  const ent1 = match.player1_entrant_id ? entrantStmts.get.get(match.player1_entrant_id) : null;
-  if (ent1) {
-    // surname を優先 (苗字のみ doubles 登録対応)
-    add(ent1.surname || ent1.name, ent1.team);
-    if (ent1.partner_name || ent1.partner_surname) {
-      add(ent1.partner_surname || ent1.partner_name, ent1.partner_team || ent1.team);
-    }
-  } else {
-    add(match.player1_name, match.player1_team);
-  }
-  // player2
-  const ent2 = match.player2_entrant_id ? entrantStmts.get.get(match.player2_entrant_id) : null;
-  if (ent2) {
-    add(ent2.surname || ent2.name, ent2.team);
-    if (ent2.partner_name || ent2.partner_surname) {
-      add(ent2.partner_surname || ent2.partner_name, ent2.partner_team || ent2.team);
-    }
-  } else {
-    add(match.player2_name, match.player2_team);
-  }
+  // entrant を人物キー群へ展開。団体(team_members あり)はチーム名を人物キーにせず
+  // 各メンバーを個人キーにする(チーム名が同名シングルス選手と衝突して偽陽性ロックになるのを防ぎ、
+  // 実メンバーの掛け持ちを正しくロックする)。
+  const addEnt = (ent, fbName, fbTeam) => {
+    if (!ent) { add(fbName, fbTeam); return; }
+    const members = entrantMembers(ent);
+    if (members && members.length) { members.forEach(mn => add(mn, ent.team)); return; }
+    add(ent.surname || ent.name, ent.team); // surname優先(苗字のみdoubles登録対応)
+    if (ent.partner_name || ent.partner_surname) add(ent.partner_surname || ent.partner_name, ent.partner_team || ent.team);
+  };
+  addEnt(match.player1_entrant_id ? entrantStmts.get.get(match.player1_entrant_id) : null, match.player1_name, match.player1_team);
+  addEnt(match.player2_entrant_id ? entrantStmts.get.get(match.player2_entrant_id) : null, match.player2_name, match.player2_team);
   if (ctx && ctx.matchKeys) ctx.matchKeys.set(match.id, keys);
   return keys;
 }
