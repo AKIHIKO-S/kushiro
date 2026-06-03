@@ -2523,9 +2523,13 @@ function slimPublicState(st) {
     blocks: m.blocks, is_blocked: m.is_blocked,
   }));
   return {
-    tournament: sanitizeTournamentPublic(st.tournament), tables: st.tables, on_table: st.on_table,
+    // on_table / recent_finished は callable と違いフル row が素通しだった(viewer未使用の
+    // next_match_id/referee_id/rating_delta/sets_json 等を全観客へ毎回配布)。publicMatch(P3の射影)で
+    // 内部列を落とす。1得点変化×200観客の差が大きい。elapsed_min/pending(算出済)は publicMatch が保持。
+    tournament: sanitizeTournamentPublic(st.tournament), tables: st.tables,
+    on_table: (st.on_table || []).map(publicMatch),
     callable: slimCall, waiting: st.waiting,
-    recent_finished: (st.recent_finished || []).slice(0, 12),
+    recent_finished: (st.recent_finished || []).slice(0, 12).map(publicMatch),
     finished_count: st.finished_count,
     event_stats: st.event_stats, total_matches: st.total_matches, progress: st.progress,
   };
