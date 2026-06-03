@@ -3292,7 +3292,14 @@ const publicDir = path.join(__dirname, "public");
 // 更新したJS/CSS/HTMLが必ず反映されるよう「都度再検証」(no-cache=ETagで304判定・キャッシュ自体は許可)。
 // これを付けないとブラウザのヒューリスティックキャッシュで古い common.js 等が使われ、
 // 進行管理の確定ボタンが無反応になる等の事故が起きるため。
-const staticOpts = { setHeaders: (res) => res.setHeader("Cache-Control", "no-cache") };
+// 版付与(?v=)されたリクエストは内容が確定しているので長期 immutable キャッシュ可。版が無い直アクセスは
+// 従来どおり no-cache(毎回再検証)で安全側。これで「?v= 版busting × no-cache」の相殺を解消し、会場200台が
+// common.js/css/アイコンを毎回再検証する往復を消す(ASSET_VER はデプロイ毎に変わるので古コード固着なし)。
+function cacheMw(req, res, next) { res._ktVersioned = (req.query && req.query.v != null); next(); }
+const staticOpts = {
+  setHeaders: (res) => res.setHeader("Cache-Control",
+    res._ktVersioned ? "public, max-age=31536000, immutable" : "no-cache"),
+};
 
 // ── アセットのキャッシュ破棄 ───────────────────────────────────────
 // デプロイ(サーバ再起動)ごとに変わるバージョンを、index HTML 内の /shared/*.js,css
@@ -3303,7 +3310,9 @@ function _serveVersionedHtml(file) {
   return (req, res) => {
     fs.readFile(file, "utf8", (err, html) => {
       if (err) return res.status(404).type("html").send("<h1>not found</h1>");
-      const out = html.replace(/(\/shared\/[A-Za-z0-9_.\-]+\.(?:js|css))(\?v=[^"']*)?/g, `$1?v=${ASSET_VER}`);
+      // js/css に加え、ほぼ不変のアイコン(svg/png/webp)・サブディレクトリ(/shared/assets/...)も版付与し
+      // immutable 化に乗せる(毎回再検証の往復を消す)。href/src の ?v= 既存分は付け替える。
+      const out = html.replace(/(\/shared\/[A-Za-z0-9_.\-/]+\.(?:js|css|svg|png|webp))(\?v=[^"']*)?/g, `$1?v=${ASSET_VER}`);
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.setHeader("Cache-Control", "no-cache");
       res.send(out);
@@ -3316,11 +3325,11 @@ app.get(["/viewer/live", "/viewer/live/", "/viewer/live/index.html"], _serveVers
 app.get(["/widget", "/widget/", "/widget/index.html"], _serveVersionedHtml(path.join(publicDir, "widget", "index.html")));
 app.get(["/ref", "/ref/", "/ref/index.html"], _serveVersionedHtml(path.join(publicDir, "ref", "index.html"))); // 審判結果入力 (限定トークン)
 
-app.use("/shared", express.static(path.join(publicDir, "shared"), staticOpts));
-app.use("/admin", express.static(path.join(publicDir, "admin"), staticOpts));
-app.use("/viewer", express.static(path.join(publicDir, "viewer"), staticOpts));
-app.use("/widget", express.static(path.join(publicDir, "widget"), staticOpts)); // Jimdo/STUDIO 埋込ウィジェット
-app.use("/ref", express.static(path.join(publicDir, "ref"), staticOpts)); // 審判結果入力ページ
+app.use("/shared", cacheMw, express.static(path.join(publicDir, "shared"), staticOpts));
+app.use("/admin", cacheMw, express.static(path.join(publicDir, "admin"), staticOpts));
+app.use("/viewer", cacheMw, express.static(path.join(publicDir, "viewer"), staticOpts));
+app.use("/widget", cacheMw, express.static(path.join(publicDir, "widget"), staticOpts)); // Jimdo/STUDIO 埋込ウィジェット
+app.use("/ref", cacheMw, express.static(path.join(publicDir, "ref"), staticOpts)); // 審判結果入力ページ
 
 // 運用マニュアル (Markdown)
 for (const docName of ["OPERATIONS.md", "RENDER_DEPLOY.md", "UPDATE_WORKFLOW.md", "HOSTING.md",
