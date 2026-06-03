@@ -5086,6 +5086,7 @@ function getEntries(tournamentId, statusFilter) {
     team_members: entrantMembers(e),            // Phase4: 団体メンバー(構造化)
     entry_event: e.event,
     seed: e.seed,
+    entry_round: e.entry_round || 1,            // スーパーシード: 登場ラウンド(1=1回戦から)
     entry_status: e.status || "confirmed",
     applied_at: e.applied_at || e.created_at,   // Phase4: 申込日時(無ければ作成日時)
     contact_name: e.contact_name || "",         // Phase4: 連絡先(admin閲覧用)

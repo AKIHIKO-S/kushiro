@@ -4557,6 +4557,7 @@ const A = {
    tbl.appendChild(h("thead", {}, h("tr", {},
      h("th", {}, "状態"), h("th", {}, "氏名"), h("th", {}, "所属"), h("th", {}, "連絡先"),
      h("th", {}, "区分"), h("th", {}, "種目"), h("th", {}, "シード"),
+     h("th", { title: "登場ラウンド(スーパーシード): 1=1回戦から / R=R回戦から登場(予選免除)" }, "登場R"),
      h("th", {}, "申込日"), h("th", {}, "操作"))));
    const tbody = h("tbody", {});
    rows.forEach(e => {
@@ -4583,6 +4584,12 @@ const A = {
          onChange: async (ev) => { try {
            await api.put(`/api/tournaments/${t.id}/entries/${e.id}/seed`, { seed: parseInt(ev.target.value) || 0 });
            toast("シード更新", "ok"); } catch (err) { toast("失敗", "err"); } } })),
+       h("td", {}, h("input", { type: "number", className: "input-sm", style: { width: "50px" },
+         min: 1, max: 10, value: e.entry_round || 1,
+         title: "登場ラウンド(スーパーシード): 1=1回戦から / R=R回戦から登場(予選免除)。標準配置の生成時に反映。",
+         onChange: async (ev) => { try {
+           await api.put(`/api/tournaments/${t.id}/entries/${e.id}/entry-round`, { entry_round: parseInt(ev.target.value) || 1 });
+           toast("登場ラウンド更新", "ok"); } catch (err) { toast("失敗", "err"); } } })),
        h("td", { className: "text-xs text-sub" }, e.applied_at ? String(e.applied_at).split(" ")[0] : "—"),
        h("td", { className: "flex gap-1" },
          status !== "confirmed" ? h("button", { className: "btn btn-sm btn-ok", onClick: () => setStatus(e, "confirmed") }, "承認") : null,
