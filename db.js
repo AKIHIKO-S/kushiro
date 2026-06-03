@@ -3395,6 +3395,60 @@ function getDrawLog(tournamentId, event) {
   return rows;
 }
 
+// Excelラウンドトリップ取込: buildBracketXlsx の _import データ(手修正後)から、entrantを消さず
+// 『位置だけ』差分でブラケットを再構成する(出力→手修正→取込で正本化のループを閉じる)。
+//   rows = [{event,bracket_pos,slot(1|2),entrant_id,name,team,bye}]。
+//   解決順: entrant_id → 氏名+所属 → 氏名。見つからない選手があれば中止(勝手に作らない)。
+//   opts: { force?, preview? }。preview=true は解決状況だけ返しDBを書かない。
+function importBracketRoundtrip(tournamentId, rows, opts) {
+  opts = opts || {};
+  if (!Array.isArray(rows) || !rows.length) return { error: "取込データが空です(_importシートが見つかりません)" };
+  const byEvent = {};
+  for (const r of rows) { const ev = String(r.event || "").trim(); if (ev) (byEvent[ev] = byEvent[ev] || []).push(r); }
+  const events = Object.keys(byEvent);
+  if (!events.length) return { error: "取込データに event 列がありません" };
+
+  const results = [];
+  for (const event of events) {
+    const evRows = byEvent[event];
+    const ents = entrantStmts.listByEvent.all(tournamentId, event);
+    const byId = new Map(); ents.forEach(e => byId.set(String(e.id), e));
+    const byName = new Map(); const byNameTeam = new Map();
+    ents.forEach(e => {
+      const nm = normalizeName(e.display_name || e.name);
+      byName.set(nm, byName.has(nm) ? null : e);                 // 同名複数は null(曖昧)
+      byNameTeam.set(nm + "|" + normalizeName(e.team), e);
+    });
+    let maxPos = 0; evRows.forEach(r => { maxPos = Math.max(maxPos, parseInt(r.bracket_pos) || 0); });
+    const size = (maxPos + 1) * 2;
+    if (!(size >= 2) || size > 2048 || !Number.isInteger(Math.log2(size))) { results.push({ event, error: "枠数が不正です(" + size + ")" }); continue; }
+    const leaves = new Array(size).fill(null);
+    const unresolved = []; const usedIds = new Set(); let placed = 0, byes = 0, dupErr = null;
+    for (const r of evRows) {
+      const pos = parseInt(r.bracket_pos) || 0;
+      const idx = pos * 2 + ((parseInt(r.slot) === 2) ? 1 : 0);
+      if (idx < 0 || idx >= size) continue;
+      const isBye = String(r.bye) === "1" || r.bye === 1 || r.bye === true || (!r.entrant_id && !String(r.name || "").trim());
+      if (isBye) { byes++; continue; }
+      let e = null;
+      if (r.entrant_id && byId.has(String(r.entrant_id))) e = byId.get(String(r.entrant_id));
+      if (!e) { const k = normalizeName(r.name) + "|" + normalizeName(r.team); if (byNameTeam.has(k)) e = byNameTeam.get(k); }
+      if (!e) { const n = byName.get(normalizeName(r.name)); if (n) e = n; }
+      if (!e) { unresolved.push(r.name || ("位置" + idx)); continue; }
+      if (usedIds.has(e.id)) { dupErr = (e.display_name || e.name); break; }
+      leaves[idx] = e; usedIds.add(e.id); placed++;
+    }
+    if (dupErr) { results.push({ event, error: "同じ選手が複数の枠に指定されています: " + dupErr }); continue; }
+    if (unresolved.length) { results.push({ event, error: "取込先の選手が見つかりません(先に申込管理で登録/承認を): " + unresolved.slice(0, 8).join("・") + (unresolved.length > 8 ? " ほか" : ""), unresolved: unresolved.length }); continue; }
+    if (placed < 2) { results.push({ event, error: "配置できた選手が2人未満です" }); continue; }
+    if (opts.preview) { results.push({ event, preview: true, placed, byes, bracket_size: size }); continue; }
+    const r = generateBracket(tournamentId, event, { regenerate: true, force: !!opts.force, fixedLeaves: leaves });
+    if (r && r.error) { results.push({ event, error: r.error, needs_force: r.needs_force }); continue; }
+    results.push({ event, success: true, placed, byes, bracket_size: size });
+  }
+  return { ok: results.every(r => r.success || r.preview), results };
+}
+
 // ════════════════════════════════════════════════════════════════════
 // 団体リーグ(総当たり) — round-robin 生成 + 順位算出(勝敗数→セット率→得点率)
 // ════════════════════════════════════════════════════════════════════
@@ -7267,7 +7321,7 @@ module.exports = {
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
   generateBracket, drawSingleBracket, computeDrawLeaves, bracketPositions,
-  checkDrawReadiness, undoDraw, getDrawLog,
+  checkDrawReadiness, undoDraw, getDrawLog, importBracketRoundtrip,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   generateTeamLeague, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,

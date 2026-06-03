@@ -81,7 +81,8 @@ test("両山: opts.event で1種目に絞れる", () => {
   db.drawSingleBracket(t.id, EV2, { draw_seed: 3 });
   const buf = reports.buildBracketXlsx(t, db.getMatchesByTournament(t.id), db.getEntrants(t.id), { event: EV2 });
   const { names } = readSheet(buf);
-  assert.deepStrictEqual(names, [EV2.slice(0, 30)], "EV2のみのシート: " + names.join(","));
+  // _import(取込用機械可読シート)は除いて評価
+  assert.deepStrictEqual(names.filter(n => n !== "_import"), [EV2.slice(0, 30)], "EV2のみのシート: " + names.join(","));
 });
 
 test("両山: 決勝完了で中央に優勝者", () => {

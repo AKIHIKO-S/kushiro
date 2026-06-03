@@ -1040,6 +1040,7 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
     return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
   }
 
+  const importRows = [];   // ラウンドトリップ取込用(機械可読): [event,bracket_pos,slot,entrant_id,seed,name,team,bye]
   events.forEach(eventName => {
     const list = byEvent.get(eventName);
     const round1 = list.filter(m => m.bracket_round === 1).sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0));
@@ -1147,6 +1148,15 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
         placeLeaf(m, 1, 2 * rq, "R");
         placeLeaf(m, 2, 2 * rq + 1, "R");
       }
+      // 取込用の正準位置(canonical leaf): global slot = 2*bracket_pos + (slot-1)。L/Rは表示の都合のみ。
+      [1, 2].forEach(sk => {
+        const nm = sk === 1 ? (m.player1_name || "") : (m.player2_name || "");
+        const tm = sk === 1 ? (m.player1_team || "") : (m.player2_team || "");
+        const eid = sk === 1 ? m.player1_entrant_id : m.player2_entrant_id;
+        const bye = (!nm || nm === "BYE") ? 1 : 0;
+        const seed = (eid != null && seedByEntrant.has(eid)) ? seedByEntrant.get(eid) : "";
+        importRows.push([eventName, p, sk, eid || "", seed, bye ? "" : nm, bye ? "" : tm, bye]);
+      });
     });
 
     // ── 各ラウンドの横線・縦線・勝者名 ──
@@ -1199,6 +1209,18 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
     ws["!pageSetup"] = { orientation: "landscape", paperSize: 9, fitToWidth: 1, fitToHeight: 0 };
     XLSX.utils.book_append_sheet(wb, ws, (eventName || "表").slice(0, 30));
   });
+
+  // ラウンドトリップ取込用シート(_import): 手修正後に再取込して『位置だけ』差分更新するための
+  // 機械可読データ。視覚チャート(各種目シート)は人間用に残す。編集は禁止(編集はチャート側で)。
+  if (importRows.length) {
+    const imp = [
+      ["__KTTA_BRACKET_IMPORT__", "v1", "このシートは取込用データです。編集しないでください(組合せの手修正はトーナメント表シートで)。"],
+      ["event", "bracket_pos", "slot", "entrant_id", "seed", "name", "team", "bye"],
+    ].concat(importRows);
+    const impWs = XLSX.utils.aoa_to_sheet(imp);
+    impWs["!cols"] = [{ wch: 16 }, { wch: 10 }, { wch: 5 }, { wch: 16 }, { wch: 5 }, { wch: 14 }, { wch: 11 }, { wch: 4 }];
+    XLSX.utils.book_append_sheet(wb, impWs, "_import");
+  }
 
   if (!wb.SheetNames.length) {
     const ws = XLSX.utils.aoa_to_sheet([[tournament.name || "トーナメント表"], [""], ["有効なブラケットがありません。"]]);

@@ -7240,6 +7240,9 @@ const O = {
    h("button", { className: "btn btn-sm", style: { background: "#1f6f3f", color: "#fff" },
      title: "両山トーナメント表(左右対向・中央決勝)をExcelで出力。手修正・印刷用。",
      onClick: () => A.downloadAuthedFile(`/api/tournaments/${O.tournamentId}/bracket/export.xlsx?event=${encodeURIComponent(sel)}`, `トーナメント表_${sel}.xlsx`) }, "📋 表をExcel出力"),
+   h("button", { className: "btn btn-sm", style: { background: "#0f766e", color: "#fff" },
+     title: "出力したExcelを手修正して取込み、組合せを正本化(選手データ・結果は保持・位置だけ差分更新)。",
+     onClick: () => O.importBracketXlsx(sel) }, "📥 Excel取込で反映"),
    h("span", { className: "text-xs text-sub" },
      "1回戦: ドラッグで入替 / クリックで編集 ・ 各対戦の ✕ で削除"),
  );
@@ -8296,6 +8299,37 @@ const O = {
    h("button", { className: "btn btn-ghost", title: "両山トーナメント表をExcelで出力", onClick: () => A.downloadAuthedFile(`/api/tournaments/${tid}/bracket/export.xlsx?event=${encodeURIComponent(event)}`, `トーナメント表_${event}.xlsx`) }, "📋 Excel出力"),
    h("button", { className: "btn", style: { background: "#b45309", color: "#fff" }, onClick: doUndo }, "直前の抽選を取消"));
  openModal("抽選ドロー（" + event + "）", body, foot);
+ },
+
+ // ── Excelラウンドトリップ取込: 出力した表を手修正→再取込して『位置だけ』正本化(選手/結果は保持) ──
+ async importBracketXlsx(event) {
+ if (!api.adminKey) return toast("管理キーが必要です（管理設定で入力）", "err");
+ const tid = O.tournamentId;
+ const inp = document.createElement("input");
+ inp.type = "file"; inp.accept = ".xlsx";
+ inp.onchange = async () => {
+   const f = inp.files && inp.files[0]; if (!f) return;
+   const post = async (qs, extra) => {
+     const fd = new FormData(); fd.append("file", f);
+     if (extra) Object.keys(extra).forEach(k => fd.append(k, extra[k]));
+     const resp = await fetch(`/api/tournaments/${tid}/bracket/import-xlsx${qs || ""}`, { method: "POST", headers: { "X-Admin-Key": api.adminKey }, body: fd });
+     return resp.json().catch(() => ({ error: "応答が不正です" }));
+   };
+   const summOf = (r) => (r.results || []).map(x => x.error ? `${x.event}: ✕ ${x.error}` : `${x.event}: ${x.placed}名配置 / BYE${x.byes}`).join("\n");
+   const pv = await post("?dry_run=1");
+   if (pv.error) return toast(pv.error, "err");
+   if (!pv.ok) return alert("取込できません:\n\n" + summOf(pv));
+   if (!confirm("このExcelの組合せでブラケットを更新します(選手データ・結果リンクは保持)。\n\n" + summOf(pv) + "\n\nよろしいですか？")) return;
+   let r = await post("", {});
+   if (r.results && r.results.some(x => x.needs_force)) {
+     if (!confirm("⚠ 結果入力済みの試合があります。消して上書きしますか？")) return;
+     r = await post("", { force: "1" });
+   }
+   if (r.error || (r.results || []).some(x => x.error)) return toast("取込失敗: " + (r.error || ((r.results || []).find(x => x.error) || {}).error || ""), "err");
+   toast("Excelの組合せを反映しました", "ok");
+   if (O._vbReload) O._vbReload(); if (O.reload) O.reload();
+ };
+ inp.click();
  },
 
  // ── 釧路リーグ: 部別(division)振り分け(前回順位→昇降格提案→手動調整→生成) ──

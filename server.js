@@ -2014,6 +2014,37 @@ function _sendBracketXlsx(req, res) {
 app.get("/api/tournaments/:id/bracket/export.xlsx", requireAdmin, _sendBracketXlsx);
 app.get("/api/public/tournaments/:id/bracket/export.xlsx", _sendBracketXlsx);
 
+// Excelラウンドトリップ取込: export.xlsx を手修正→再取込して『位置だけ』正本化する(往復ループを閉じる)。
+// _import シート(機械可読)を読み、entrantを消さず差分でブラケットを再構成。dry_run=1でプレビュー・force=1で結果上書き。
+app.post("/api/tournaments/:id/bracket/import-xlsx", requireAdmin, upload.single("file"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "ファイルが添付されていません" });
+  const filePath = req.file.path;
+  try {
+    const XLSX = require("xlsx");
+    const wb = XLSX.readFile(filePath);
+    const sheet = wb.Sheets["_import"];
+    if (!sheet) return res.status(400).json({ error: "このExcelには取込用データ(_importシート)がありません。システムが出力したトーナメント表Excelをそのまま使ってください。" });
+    const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false });
+    if (String((aoa[0] || [])[0]) !== "__KTTA_BRACKET_IMPORT__") return res.status(400).json({ error: "_importシートの形式が不正です。" });
+    const header = aoa[1] || [];
+    const ci = (n) => header.indexOf(n);
+    const cEvent = ci("event"), cPos = ci("bracket_pos"), cSlot = ci("slot"), cEid = ci("entrant_id"), cName = ci("name"), cTeam = ci("team"), cBye = ci("bye");
+    const rows = aoa.slice(2).filter(r => r && r.length).map(r => ({
+      event: r[cEvent], bracket_pos: r[cPos], slot: r[cSlot], entrant_id: r[cEid], name: r[cName], team: r[cTeam], bye: r[cBye],
+    }));
+    const preview = req.query.dry_run === "1" || req.body?.dry_run === "1" || req.body?.dry_run === "true";
+    const force = req.body?.force === "1" || req.body?.force === "true" || req.body?.force === true;
+    const r = db.importBracketRoundtrip(req.params.id, rows, { force, preview });
+    if (r.error) return res.status(400).json(r);
+    return res.json(r);
+  } catch (e) {
+    console.error("bracket import-xlsx error:", e);
+    return res.status(500).json({ error: "取込失敗: " + e.message });
+  } finally {
+    try { fs.unlinkSync(filePath); } catch (x) {}
+  }
+});
+
 // ─── 領収書 一括 HTML 出力 (印刷で PDF 化、モーダル表示用) ───
 app.get("/api/tournaments/:id/receipts.html", requireAdmin, (req, res) => {
   try {
