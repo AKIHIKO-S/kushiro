@@ -137,6 +137,10 @@ function buildAggregation(tournament, entrants, fees) {
       partner_name: e.partner_name || "",
       partner_team: e.partner_team || e.team,
       is_doubles: !!e.is_doubles,
+      // 申込時の確定課金額(区分=中高生の学割を反映)。集計表・領収書はこの per-member fee を合算し、
+      // 確認メール(authoritativeFees の fee_student)と一致させる。未設定(旧データ)は breakdownOf が
+      // バケット単価 F へフォールバック。
+      fee: (e.fee != null ? (parseInt(e.fee, 10) || 0) : null),
     });
     if (!byTeam.has(records[0].team)) byTeam.set(records[0].team, []);
     byTeam.get(records[0].team).push(records[0]);
@@ -215,11 +219,9 @@ function buildAggregationXlsx(tournament, entrants, opts) {
   sortedTeams(teams)
     .forEach(([teamName, members]) => {
       const cnt = countByKindGender(members);
-      const sum =
-        cnt.team_male * F.team_male + cnt.team_female * F.team_female +
-        cnt.doubles_male * F.doubles_male + cnt.doubles_female * F.doubles_female +
-        cnt.mixed_male * F.mixed_male + cnt.mixed_female * F.mixed_female +
-        cnt.singles_male * F.singles_male + cnt.singles_female * F.singles_female;
+      // 合計は per-member の m.fee(学割反映)を合算する。従来の cnt×F だと学割が消え、領収書・確認メールと
+      // 食い違っていた(同一バケットに一般/中高生が混在すると先勝ち単価で過大計上)。表示の人数列は cnt のまま。
+      const { sum } = breakdownOf(members, F);
       aggRows.push([
         idx++, teamName,
         cnt.team_male || 0, cnt.team_female || 0,
