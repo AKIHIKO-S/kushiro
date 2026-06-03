@@ -465,6 +465,19 @@ function buildEntryFormHTML(tournament, events, opts) {
   .submit-btn:hover { transform: translateY(-2px); filter: brightness(1.05); box-shadow: 0 14px 30px -10px rgba(192,21,38,.7); }
   .submit-btn:active { transform: translateY(0); }
   .submit-btn:disabled { background: #b9ad9c; cursor: not-allowed; transform: none; box-shadow: none; filter: none; }
+  /* 送信中: グレーアウトでなく赤を保ち、回転スピナーを表示(処理中であることを明確に) */
+  .submit-btn.is-sending, .submit-btn.is-sending:disabled {
+    background: linear-gradient(var(--red), var(--red-2)); color: #fff;
+    cursor: progress; opacity: .92; box-shadow: 0 10px 24px -10px rgba(192,21,38,.6); filter: none;
+  }
+  .btn-spinner {
+    display: inline-block; box-sizing: border-box;
+    width: 1.25em; height: 1.25em; vertical-align: -0.2em;
+    border: 2.6px solid currentColor; border-right-color: transparent; border-radius: 50%;
+    animation: ttSpin .7s linear infinite;
+  }
+  @keyframes ttSpin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .btn-spinner { animation-duration: 1.6s; } }
 
   .notice {
     background: var(--card-2);
@@ -1087,7 +1100,9 @@ async function submitForm(e) {
 
   const btn = document.getElementById("submitBtn");
   btn.disabled = true;
-  btn.textContent = "送信中...";
+  btn.classList.add("is-sending");
+  // 「送信中...」テキストの代わりに回転スピナーを表示
+  btn.innerHTML = '<span class="btn-spinner" role="status" aria-label="送信中"></span>';
 
   // 通信タイムアウト (25秒) — 圏外/不安定回線でボタンが「送信中…」のまま固まるのを防ぐ
   const controller = (typeof AbortController !== "undefined") ? new AbortController() : null;
@@ -1190,7 +1205,8 @@ async function submitForm(e) {
       "err");
   } finally {
     btn.disabled = false;
-    btn.textContent = "申込内容を送信";
+    btn.classList.remove("is-sending");
+    btn.textContent = "申込内容を送信";   // innerHTML(スピナー)も textContent で上書きされ復元される
   }
   return false;
 }
