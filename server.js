@@ -1414,6 +1414,25 @@ app.post("/api/tournaments/:id/bracket/generate", requireAdmin, (req, res) => {
   if (r?.error) return res.status(400).json(r);
   res.json(r);
 });
+// 団体リーグ(総当たり)を生成。body: { event, num_blocks?, assignments?, regenerate? }
+app.post("/api/tournaments/:id/league/generate", requireAdmin, (req, res) => {
+  const event = req.body?.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.generateTeamLeague(req.params.id, event, {
+    num_blocks: req.body?.num_blocks,
+    assignments: req.body?.assignments || null,
+    regenerate: req.body?.regenerate !== false,
+  });
+  if (r?.error) return res.status(400).json(r);
+  res.json(r);
+});
+// 団体リーグの順位表(公開・PIIなし)。?event=&block= 。block 省略で全ブロック。
+app.get("/api/public/tournaments/:id/standings", (req, res) => {
+  const event = req.query.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  res.json({ event, block: req.query.block || null,
+    standings: db.computeLeagueStandings(req.params.id, event, req.query.block || undefined) });
+});
 app.put("/api/entrants/:id", requireAdmin, (req, res) => {
   const e = db.updateEntrant(req.params.id, req.body || {});
   if (!e) return res.status(404).json({ error: "エントリーが見つかりません" });

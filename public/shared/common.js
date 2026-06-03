@@ -942,11 +942,35 @@
     });
     return { home, away };
   }
+  // tie の各個別試合(slots)から、セット数・得点・勝敗を導出(db.summarizeTie と同ロジック)。
+  // games([[home,away]…] 各セット得点)優先 → home_sets/away_sets → score:"a-b" → winner のみ。
+  // 団体リーグの セット率・得点率 を算出する土台。
+  function summarizeTie(slots) {
+    const arr = Array.isArray(slots) ? slots : [];
+    let hw = 0, aw = 0, hs = 0, as = 0, hp = 0, ap = 0;
+    const out = arr.map(s => {
+      let sh = 0, sa = 0, ph = 0, pa = 0;
+      const games = Array.isArray(s.games) ? s.games.filter(g => Array.isArray(g) && g.length === 2) : [];
+      if (games.length) {
+        games.forEach(g => { const h = parseInt(g[0]) || 0, a = parseInt(g[1]) || 0; ph += h; pa += a; if (h > a) sh++; else if (a > h) sa++; });
+      } else if (s.home_sets != null || s.away_sets != null) {
+        sh = parseInt(s.home_sets) || 0; sa = parseInt(s.away_sets) || 0;
+      } else if (typeof s.score === "string" && /^\d+\s*[-－]\s*\d+$/.test(s.score)) {
+        const p = s.score.split(/[-－]/); sh = parseInt(p[0]) || 0; sa = parseInt(p[1]) || 0;
+      }
+      let w = (s.winner === "home" || s.winner === "away") ? s.winner : (sh > sa ? "home" : sa > sh ? "away" : "");
+      if (w === "home") hw++; else if (w === "away") aw++;
+      hs += sh; as += sa; hp += ph; ap += pa;
+      return Object.assign({}, s, { home_sets: sh, away_sets: sa, home_pts: ph, away_pts: pa, winner: w });
+    });
+    return { slots: out, home_wins: hw, away_wins: aw, home_sets: hs, away_sets: as, home_pts: hp, away_pts: ap,
+      winner: hw > aw ? "home" : aw > hw ? "away" : "" };
+  }
 
   // Export
   global.TT = {
     GENDERS, CATS, EV_TYPES, ROUNDS, PLACES,
-    parseTieFormat, tieScore,
+    parseTieFormat, tieScore, summarizeTie,
     h, esc, clear, api, toast, showLoading, hideLoading,
     ratingLabel, ratingBadge,
     lookupFurigana, parsePaste,
