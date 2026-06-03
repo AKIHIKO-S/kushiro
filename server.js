@@ -1831,7 +1831,7 @@ app.post("/api/entrants/:id/resolve-branch", requireAdmin, (req, res) => {
 });
 
 // ─── 集計表 Excel 出力 ───
-app.get("/api/tournaments/:id/aggregation.xlsx", (req, res) => {
+app.get("/api/tournaments/:id/aggregation.xlsx", requireAdmin, (req, res) => {
   try {
     const tournament = db.getTournament(req.params.id);
     if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
@@ -1860,7 +1860,7 @@ app.get("/api/tournaments/:id/aggregation.xlsx", (req, res) => {
 });
 
 // ─── 領収書 一括 Excel 出力 (1団体=1シート) ───
-app.get("/api/tournaments/:id/receipts.xlsx", (req, res) => {
+app.get("/api/tournaments/:id/receipts.xlsx", requireAdmin, (req, res) => {
   try {
     const tournament = db.getTournament(req.params.id);
     if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
@@ -1892,7 +1892,7 @@ app.get("/api/tournaments/:id/receipts.xlsx", (req, res) => {
 });
 
 // ─── 対戦票 (審判用記録票) 一括 Excel 出力 ───
-app.get("/api/tournaments/:id/match-cards.xlsx", (req, res) => {
+app.get("/api/tournaments/:id/match-cards.xlsx", requireAdmin, (req, res) => {
   try {
     const tournament = db.getTournament(req.params.id);
     if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
@@ -1921,7 +1921,7 @@ app.get("/api/tournaments/:id/match-cards.xlsx", (req, res) => {
 });
 
 // ─── 領収書 一括 HTML 出力 (印刷で PDF 化、モーダル表示用) ───
-app.get("/api/tournaments/:id/receipts.html", (req, res) => {
+app.get("/api/tournaments/:id/receipts.html", requireAdmin, (req, res) => {
   try {
     const tournament = db.getTournament(req.params.id);
     if (!tournament) return res.status(404).send("<h1>大会が見つかりません</h1>");
@@ -1987,7 +1987,7 @@ app.get("/api/tournaments/:id/receipts.html", (req, res) => {
 });
 
 // ─── 領収書 一覧 JSON (モーダル内表示用) ───
-app.get("/api/tournaments/:id/receipts.json", (req, res) => {
+app.get("/api/tournaments/:id/receipts.json", requireAdmin, (req, res) => {
   try {
     const tournament = db.getTournament(req.params.id);
     if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });

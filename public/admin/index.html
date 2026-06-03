@@ -4218,25 +4218,8 @@ const A = {
  if (!tour || !tour.matches || !tour.matches.length) {
    return toast("試合データがありません。先にトーナメント表を取込んでください。", "err");
  }
- // HEAD 疎通確認
- const head = await fetch(`/api/tournaments/${t.id}/match-cards.xlsx`, { method: "HEAD" });
- if (!head.ok) {
-   return toast("対戦票生成失敗: HTTP " + head.status, "err");
- }
- const ct = head.headers.get("content-type") || "";
- if (!ct.includes("spreadsheet") && !ct.includes("excel")) {
-   return toast("不正なレスポンス: " + ct, "err");
- }
- const url = `/api/tournaments/${t.id}/match-cards.xlsx`;
- const filename = `対戦票_${t.name || "tournament"}.xlsx`;
- const a = document.createElement("a");
- a.href = url;
- a.download = filename;
- a.rel = "noopener";
- document.body.appendChild(a);
- a.click();
- setTimeout(() => a.remove(), 500);
- toast("対戦票をダウンロードしました (種目別シート)", "ok");
+ // 管理キー付き fetch → Blob DL(requireAdmin のためヘッダ必須)
+ return A.downloadAuthedFile(`/api/tournaments/${t.id}/match-cards.xlsx`, `対戦票_${t.name || "tournament"}.xlsx`);
  } catch (e) {
  toast("ダウンロード失敗: " + e.message, "err");
  }
@@ -4250,44 +4233,16 @@ const A = {
  if (!stats || !Object.keys(stats).length) {
  return toast("出場選手が未登録です。先に取込を行ってください。", "err");
  }
- // ② HEAD で確実にエンドポイント疎通確認
- const head = await fetch(`/api/tournaments/${t.id}/aggregation.xlsx`, { method: "HEAD" });
- if (!head.ok) {
- return toast("集計表生成失敗: HTTP " + head.status, "err");
- }
- const ct = head.headers.get("content-type") || "";
- if (!ct.includes("spreadsheet") && !ct.includes("excel")) {
- return toast("不正なレスポンス: " + ct, "err");
- }
- // ③ ブラウザネイティブの直接ダウンロード (Blob 経由ではなく <a href download>)
- // バイナリを JS で触らないことでファイル破損を完全に防ぐ
- const url = `/api/tournaments/${t.id}/aggregation.xlsx`;
- const filename = `集計表_${t.name || "tournament"}.xlsx`;
- const a = document.createElement("a");
- a.href = url;
- a.download = filename;
- a.rel = "noopener";
- document.body.appendChild(a);
- a.click();
- setTimeout(() => a.remove(), 500);
- toast("集計表をダウンロードしました", "ok");
+ // ② 管理キー付き fetch → Blob DL(requireAdmin のためヘッダ必須)
+ return A.downloadAuthedFile(`/api/tournaments/${t.id}/aggregation.xlsx`, `集計表_${t.name || "tournament"}.xlsx`);
  } catch (e) {
  toast("ダウンロード失敗: " + e.message, "err");
  }
  },
  // ── 申込一覧 Excel ダウンロード (申込台帳・Googleスプレッドシート代替) ──
  async downloadApplicantsXlsx(t) {
- try {
- const head = await fetch(`/api/tournaments/${t.id}/applicants.xlsx`, { method: "HEAD" });
- if (!head.ok) return toast(head.status === 400 ? "申込がまだありません" : "申込一覧生成失敗: HTTP " + head.status, "err");
- const url = `/api/tournaments/${t.id}/applicants.xlsx`;
- const filename = `申込一覧_${t.name || "tournament"}.xlsx`;
- const a = document.createElement("a");
- a.href = url; a.download = filename; a.rel = "noopener";
- document.body.appendChild(a); a.click();
- setTimeout(() => a.remove(), 500);
- toast("申込一覧をダウンロードしました", "ok");
- } catch (e) { toast("ダウンロード失敗: " + e.message, "err"); }
+ // 管理キー付き fetch → Blob DL(requireAdmin のためヘッダ必須)
+ return A.downloadAuthedFile(`/api/tournaments/${t.id}/applicants.xlsx`, `申込一覧_${t.name || "tournament"}.xlsx`);
  },
 
  // ── 領収書 一括出力ダイアログ ──
@@ -4373,33 +4328,8 @@ const A = {
 
  // Excel 領収書 ダウンロード (堅牢: バイナリを JS で触らない直接DL)
  async downloadReceiptsXlsx(t) {
- try {
- const head = await fetch(`/api/tournaments/${t.id}/receipts.xlsx`, { method: "HEAD" });
- if (!head.ok) {
- // 出場選手なしなど 400 系の場合は内容を取得して表示
- if (head.status === 400 || head.status === 404) {
- const resp = await fetch(`/api/tournaments/${t.id}/receipts.xlsx`);
- try { const j = await resp.json(); return toast(j.error || "失敗", "err"); }
- catch { return toast("失敗 (HTTP " + head.status + ")", "err"); }
- }
- return toast("領収書生成失敗: HTTP " + head.status, "err");
- }
- const ct = head.headers.get("content-type") || "";
- if (!ct.includes("spreadsheet") && !ct.includes("excel")) {
- return toast("不正なレスポンス: " + ct, "err");
- }
- // ブラウザネイティブDL (バイナリ破損なし)
- const a = document.createElement("a");
- a.href = `/api/tournaments/${t.id}/receipts.xlsx`;
- a.download = `領収書_${t.name || "tournament"}.xlsx`;
- a.rel = "noopener";
- document.body.appendChild(a);
- a.click();
- setTimeout(() => a.remove(), 500);
- toast("領収書 Excel をダウンロードしました", "ok");
- } catch (e) {
- toast("ダウンロード失敗: " + e.message, "err");
- }
+ // 管理キー付き fetch → Blob DL(requireAdmin のためヘッダ必須)
+ return A.downloadAuthedFile(`/api/tournaments/${t.id}/receipts.xlsx`, `領収書_${t.name || "tournament"}.xlsx`);
  },
 
  // 領収書HTMLのURLを組み立て (個別発行=team / 連番開始=start_no) #272
@@ -4446,6 +4376,26 @@ const A = {
  }
  },
 
+ // 管理者限定のファイル帳票(xlsx等=PII含む)を、管理キー付き fetch → Blob でダウンロード。
+ // 直 a.href=URL だと X-Admin-Key が送れず requireAdmin(401)で落ちるため。
+ async downloadAuthedFile(url, filename) {
+ if (!api.adminKey) return toast("管理キーが必要です（管理設定で入力してください）", "err");
+ try {
+ const resp = await fetch(url, { headers: { "X-Admin-Key": api.adminKey } });
+ if (!resp.ok) {
+ let msg = "HTTP " + resp.status + (resp.status === 401 || resp.status === 503 ? " (管理キーを確認してください)" : "");
+ try { const j = await resp.json(); if (j && j.error) msg = j.error; } catch (e) {}
+ return toast("生成失敗: " + msg, "err");
+ }
+ const blob = await resp.blob();
+ const u = URL.createObjectURL(blob);
+ const a = document.createElement("a"); a.href = u; a.download = filename; a.rel = "noopener";
+ document.body.appendChild(a); a.click();
+ setTimeout(() => { a.remove(); URL.revokeObjectURL(u); }, 1000);
+ toast("ダウンロードしました", "ok");
+ } catch (e) { toast("失敗: " + e.message, "err"); }
+ },
+
  // 管理者限定の HTML 帳票(名簿/受付=PII含む)を、管理キー付き fetch + Blob URL で別ウィンドウに開く。
  // 直 window.open(URL) だと X-Admin-Key が送れず requireAdmin で弾かれるため。
  async openAuthedHtmlWindow(url, filename) {
@@ -4468,10 +4418,11 @@ const A = {
 
  // 別ウィンドウで HTML 領収書を開く (確実な方法)。team 指定で1団体のみ #272
  async openReceiptsHtmlWindow(t, team) {
- // window.open + fetch + Blob URL で確実に開く (navigation 介入を回避)
+ // window.open + fetch + Blob URL で確実に開く (navigation 介入を回避)。requireAdmin のため管理キー必須。
+ if (!api.adminKey) return toast("管理キーが必要です（管理設定で入力してください）", "err");
  try {
- const resp = await fetch(A._receiptsUrl(t, team));
- if (!resp.ok) return toast("取得失敗: " + resp.status, "err");
+ const resp = await fetch(A._receiptsUrl(t, team), { headers: { "X-Admin-Key": api.adminKey } });
+ if (!resp.ok) return toast("取得失敗: HTTP " + resp.status + (resp.status === 401 || resp.status === 503 ? " (管理キーを確認)" : ""), "err");
  const html = await resp.text();
  if (!html || html.length < 100) return toast("空のレスポンス", "err");
  const blob = new Blob([html], { type: "text/html; charset=utf-8" });

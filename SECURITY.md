@@ -65,7 +65,11 @@ server {
 ## 監査履歴
 
 2026-06 多エージェント敵対的監査(6次元×独立検証)で確定3件を修正:
-- **[High]** roster/reception 帳票の認可漏れ(PII露出) → `requireAdmin` 付与・admin UI はキー付きfetchで開く。
+- **[High]** 帳票群の認可漏れ(PII/金額露出): roster/reception に加え、追加点検で **receipts.xlsx/html/json
+  (氏名+参加料)・aggregation.xlsx(集計)・match-cards.xlsx(対戦組)** も `requireAdmin` 欠落と判明 → 全8帳票に
+  `requireAdmin` を付与。admin UI は直 `window.open(URL)`/`a.href` を廃し、管理キー付き fetch→Blob で
+  開く/DLする `openAuthedHtmlWindow`/`downloadAuthedFile` に統一(従来 applicants.xlsx は ADMIN_KEY 設定時に
+  DLが壊れていたが本修正で解消)。`entry-form.html`(埋込申込フォーム)のみ意図的に公開。
 - **[High]** ブラケット生成の seed 無制限による配列爆発/OOM(DoS) → 枠数上限2048・seedクランプ・回帰テスト。
 - **[Low]** 監督コード最短4文字 → 8文字に統一(生成器と同等エントロピー)。
 
