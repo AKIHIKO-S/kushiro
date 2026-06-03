@@ -3015,6 +3015,17 @@ app.put("/api/tournaments/:id/entries/:pid/entry-round", requireAdmin, (req, res
 app.get("/api/tournaments/:id/entry-issues", requireAdmin, (req, res) => {
   res.json(db.findEntrantDataIssues(req.params.id));
 });
+// PII 削除依頼対応: 申込原本と紐づく entrants の連絡先を匿名化(構造は残す)。閲覧トークンも失効。
+app.delete("/api/submissions/:id/pii", requireAdmin, (req, res) => {
+  const r = db.deleteSubmissionPII(req.params.id, { revoke_tokens: true });
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
+});
+// 保持期間超過の申込原本PIIを手動で一括匿名化(?days=N)。env PII_RETENTION_DAYS 既定。
+app.post("/api/admin/purge-submission-pii", requireAdmin, (req, res) => {
+  const days = req.query.days || req.body?.days || process.env.PII_RETENTION_DAYS;
+  res.json(db.purgeOldSubmissionPII(days));
+});
 app.post("/api/tournaments/:id/entries/:pid/fix", requireAdmin, (req, res) => {
   const r = db.fixEntrant(req.params.pid, req.body || {});
   if (r.error) return res.status(400).json(r);
@@ -3283,6 +3294,14 @@ const server = app.listen(PORT, () => {
   console.log(`   管理画面:  http://localhost:${PORT}/admin`);
   console.log(`   API:       http://localhost:${PORT}/api/health`);
   if (ADMIN_KEY) console.log(`   ADMIN_KEY: 設定あり（管理API保護）`);
+  // PII 保持期間: env PII_RETENTION_DAYS 指定時のみ、大会終了からN日超過の申込原本連絡先を起動時に匿名化。
+  // 既定(未設定)は無効=既存挙動を変えない(自動データ破壊を避けるオプトイン)。
+  if (process.env.PII_RETENTION_DAYS) {
+    try {
+      const r = db.purgeOldSubmissionPII(process.env.PII_RETENTION_DAYS);
+      if (r && r.ok) console.log(`   PII purge: ${r.purged}件匿名化(${r.retention_days}日超過 / 〜${r.cutoff})`);
+    } catch (e) { console.error("[PII purge] 失敗:", e.message); }
+  }
   console.log("");
 });
 // 耐性: HTTPタイムアウト(keep-alive延長/slow-loris遮断) + graceful shutdown。

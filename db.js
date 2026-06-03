@@ -4891,6 +4891,48 @@ function _submissionByToken(token) {
 // 申込者本人がトークンで自分の申込を閲覧する(閲覧のみ)。連絡先メール等の生PIIは返さない。
 // 閲覧する申込内容は submission_id に紐づく entrants を「生で」引くため、部分再送で
 // 後から併合された種目も(同じトークンで)常に全件表示される (Phase4残: 併合)。
+// ── 申込PIIの保持・削除 ──
+// 申込原本(entry_submissions)とそれが作った entrants の連絡先(氏名/メール/電話)を匿名化する。
+// 構造(件数・トークン・集計)は残しつつ生PIIだけ消す。削除依頼(本人/保護者)対応・保持期間超過の purge に使う。
+function deleteSubmissionPII(submissionId, opts = {}) {
+  const sub = sqlite.prepare("SELECT * FROM entry_submissions WHERE id=?").get(submissionId);
+  if (!sub) return { error: "申込原本が見つかりません" };
+  const txn = sqlite.transaction(() => {
+    sqlite.prepare("UPDATE entry_submissions SET contact_name='', contact_email='', contact_tel='' WHERE id=?").run(submissionId);
+    // 原本JSON(payload_json)から連絡先を除去
+    let pj = null; try { pj = JSON.parse(sub.payload_json || "null"); } catch (e) {}
+    if (pj && typeof pj === "object") {
+      ["contact", "contact_info", "contact_name", "contact_email", "contact_tel", "email", "tel", "phone"].forEach(k => { delete pj[k]; });
+      sqlite.prepare("UPDATE entry_submissions SET payload_json=? WHERE id=?").run(JSON.stringify(pj), submissionId);
+    } else if (sub.payload_json) {
+      sqlite.prepare("UPDATE entry_submissions SET payload_json='' WHERE id=?").run(submissionId);
+    }
+    // 紐づく entrants の連絡先列を匿名化(submission_id と原本 entrant_ids の両経路で漏れなく)
+    sqlite.prepare("UPDATE entrants SET contact_name='', contact_email='', contact_tel='' WHERE submission_id=?").run(submissionId);
+    let ids = []; try { ids = JSON.parse(sub.entrant_ids || "[]"); } catch (e) {}
+    if (Array.isArray(ids)) { const u = sqlite.prepare("UPDATE entrants SET contact_name='', contact_email='', contact_tel='' WHERE id=?"); ids.forEach(id => id && u.run(id)); }
+    // 閲覧トークン: 明示削除時のみ失効(purge では閲覧導線は残り、中身が匿名化されるだけ)
+    if (opts.revoke_tokens) sqlite.prepare("DELETE FROM submission_tokens WHERE submission_id=?").run(submissionId);
+  });
+  txn();
+  return { ok: true, id: submissionId, anonymized: true };
+}
+
+// 大会日が retentionDays より前の大会の申込原本PIIを一括匿名化(起動時 env PII_RETENTION_DAYS で有効化 / 手動)。
+function purgeOldSubmissionPII(retentionDays) {
+  const days = parseInt(retentionDays);
+  if (!(days > 0)) return { skipped: true, reason: "retentionDays 未指定/0" };
+  const cutoff = sqlite.prepare("SELECT date('now','localtime',?) AS c").get("-" + days + " days").c;
+  const subs = sqlite.prepare(`
+    SELECT s.id FROM entry_submissions s JOIN tournaments t ON t.id = s.tournament_id
+    WHERE t.date != '' AND t.date < ?
+      AND (s.contact_email != '' OR s.contact_tel != '' OR s.contact_name != '' OR s.payload_json LIKE '%contact%')
+  `).all(cutoff);
+  let n = 0;
+  subs.forEach(r => { if (deleteSubmissionPII(r.id).ok) n++; });
+  return { ok: true, purged: n, cutoff, retention_days: days };
+}
+
 function getSubmissionByToken(token) {
   if (!token) return { error: "申込番号を入力してください" };
   const sub = _submissionByToken(token);
@@ -6901,7 +6943,8 @@ module.exports = {
   createEntry, createTeamEntry, getEntries,
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound,
   // Phase4: 申込者本人の閲覧トークン + データ品質
-  getSubmissionByToken, findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,
+  getSubmissionByToken, deleteSubmissionPII, purgeOldSubmissionPII,
+  findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,
   updateEntrySettings, getOpenTournaments,
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,

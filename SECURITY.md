@@ -17,6 +17,19 @@
 - 公開順位表(団体リーグ)の `tie_results` は必要フィールドのみ射影し個人名を漏らさない。
 - 出力は `lib/text.js` で escape、CSP・`X-Robots-Tag: noindex`。アップロードは xlsx/csv/pdf/画像のみ(SVG除外)・20MB。
 
+## PII の保持・削除（申込連絡先）
+
+申込原本(`entry_submissions`)とそれが作る `entrants` は連絡先(氏名/メール/電話。**未成年=保護者連絡先含む**)を
+保持する。生PIIが無期限累積しないよう、以下を備える(構造・件数・集計・トークンは残し、連絡先だけ匿名化):
+
+- **削除依頼(本人/保護者)対応**: `DELETE /api/submissions/:id/pii`(requireAdmin) → 当該申込の連絡先列・
+  `payload_json` の連絡先・紐づく entrants の連絡先を匿名化し、閲覧トークンを失効。`db.deleteSubmissionPII`。
+- **保持期間 purge**: `/etc/ktta.env` に **`PII_RETENTION_DAYS=N`**(例 90)を設定すると、起動時に「大会日が
+  N日より前」の申込原本の連絡先を自動匿名化(`db.purgeOldSubmissionPII`)。**未設定(既定)は無効=自動破壊しない
+  オプトイン**。手動実行は `POST /api/admin/purge-submission-pii?days=N`。
+- **方針**: 大会レコード自体は選手DB公開のため保持するが、終了大会の連絡先は保持期間で匿名化する。削除依頼は
+  上記APIで個別対応。トークンはログ/URLに出さない運用とする。
+
 ## レート制限・資源上限（アプリ層）
 
 | 経路 | 上限 | env |
