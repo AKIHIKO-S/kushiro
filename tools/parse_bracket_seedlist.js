@@ -15,6 +15,7 @@
  */
 'use strict';
 const XLSX = require('xlsx');
+const fs = require('fs');
 
 // 宣言上の !ref はアップロード側が巨大値(A1:XFD1048576 等)を仕込め、そのまま二重ループすると
 // 数百億セルの空走査でイベントループが固まる (#8 DoS)。実際に値を持つセルの範囲にクランプする。
@@ -98,33 +99,38 @@ function cleanTeam(s) {
 // 戦略: seed番号(整数)セルをアンカーにし、左ブロックは [seed, 氏名, 所属, 地区]、
 //       右ブロックは [地区, 氏名, 所属, seed] という並びを「向き判定」で読む。
 //       これにより (所属)カッコ有り(男子)・無し(女子)・地区列の有無 を統一的に扱える。
-function extractSheet(ws) {
+function extractSheet(ws, band) {
   if (!ws || !ws['!ref']) return [];
   const R = safeRange(ws);
+  const rS = band ? Math.max(R.s.r, band.rStart) : R.s.r;   // セクション分割時の行帯
+  const rE = band ? Math.min(R.e.r, band.rEnd) : R.e.r;
   const cand = [];
   const seenName = new Set(); // 氏名セル座標の重複防止
-  for (let r = R.s.r; r <= R.e.r; r++) {
+  for (let r = rS; r <= rE; r++) {
     for (let c = R.s.c; c <= R.e.c; c++) {
       const s = cellStr(ws, r, c);
       if (!isIntStr(s)) continue;
       const seed = parseInt(s, 10);
       if (seed < 1 || seed > 600) continue; // seed番号の妥当範囲
-      // 向き判定: 右隣が氏名 → 左ブロック / そうでなく2つ左が氏名 → 右ブロック
+      // 向き判定: 右隣が氏名 → 左ブロック / 左側が氏名 → 右ブロック(鏡像)。
+      // 右ブロックの氏名位置はレイアウトで c-2 と c-3 の両方があり得る(会長杯=seed@U,氏名@R=c-3)。
+      // 固定オフセットだと右ブロックを丸ごと取りこぼすため、c-2→c-3 を順に探す。
       const rName = cellStr(ws, r, c + 1);
-      const lName = cellStr(ws, r, c - 2);
       let nameCol, name, team, region;
       if (looksLikeName(rName)) {
         nameCol = c + 1; name = rName;
         team = cleanTeam(cellStr(ws, r, c + 2));
         const reg = cellStr(ws, r, c + 3);
         region = isRegionToken(reg) ? reg : '';
-      } else if (looksLikeName(lName)) {
-        nameCol = c - 2; name = lName;
-        team = cleanTeam(cellStr(ws, r, c - 1));
-        const reg = cellStr(ws, r, c - 3);
-        region = isRegionToken(reg) ? reg : '';
       } else {
-        continue; // seed番号でない(スコア/年号など)
+        let lc = -1;
+        if (looksLikeName(cellStr(ws, r, c - 2))) lc = c - 2;
+        else if (looksLikeName(cellStr(ws, r, c - 3))) lc = c - 3;
+        if (lc < 0) continue; // seed番号でない(スコア/年号など)
+        nameCol = lc; name = cellStr(ws, r, lc);
+        team = cleanTeam(cellStr(ws, r, c - 1));
+        const reg = cellStr(ws, r, lc - 1);
+        region = isRegionToken(reg) ? reg : '';
       }
       const key = r + ':' + nameCol;
       if (seenName.has(key)) continue;
@@ -132,23 +138,41 @@ function extractSheet(ws) {
       cand.push({ seed, name, team, region, _r: r, _c: nameCol, _seedCol: c });
     }
   }
-  // 1回戦(リーフ)の seed番号列は連番が密に縦に並ぶ。勝ち上がりの位置番号など
-  // 孤立した整数は誤検出になるため、seed番号列ごとに件数を数え、密な列のみ採用する。
+  // 1回戦(リーフ)の seed番号列は連番が密に縦に並ぶ。孤立整数(勝ち上がり位置)を除くため
+  // 件数3以上の列のみ採用する。
   const byCol = {};
   cand.forEach(p => { (byCol[p._seedCol] = byCol[p._seedCol] || []).push(p); });
-  const out = [];
-  Object.keys(byCol).forEach(col => {
-    const arr = byCol[col];
-    if (arr.length >= 3) out.push(...arr); // リーフ seed 列のみ(孤立整数を除外)
+  const dense = Object.keys(byCol).map(Number).filter(c => byCol[c].length >= 3).sort((a, b) => a - b);
+  if (!dense.length) return [];
+  const picked = [];
+  dense.forEach(c => picked.push(...byCol[c]));
+
+  // --- 氏名(正規化)で distinct 統合(過大カウント=二重計上の撲滅) ---
+  // 同一シートに同居する「検算名簿/クラブ別ロスター」(全選手を別順で再掲する第2系統)や、
+  // 罫線都合で同名が2行に出る複製行、左右ブロックの再掲を、氏名の同一性で畳む。
+  // ※seed値ベースの系統判定は「年代別など各ブロックが番号を1から振り直す」構成と区別できず
+  //   ブロックを丸ごと落とすため不可。氏名同一性が唯一頑健な信号。
+  // ※所属(team)はロスターとブラケットで表記が揺れる(「（ドングリ）」vs「釧友会」, 略称差)ため
+  //   キーに含めない。氏名のみを「空白/全角空白を除去」して比較する。
+  // 残す代表は「最も左の seed列」のもの: ロスターは常にブラケットの右側に付帯するため、
+  // 最左列=ブラケット本体側の組番号(ドロー位置)・所属を保持できる。
+  const nkey = (x) => String(x || '').replace(/[\s　・,，.．]/g, '');
+  const byName = {};
+  picked.forEach(p => {
+    const k = nkey(p.name);
+    const cur = byName[k];
+    if (!cur || p._seedCol < cur._seedCol) byName[k] = p;
   });
-  return out;
+  return Object.values(byName);
 }
 
 // ダブルス用抽出: seed番号アンカーから「ペア(2名)」を組み立てる。
 //  男子=横並び [seed, 氏名1, 氏名2, (所属), 地区] / 女子=縦並び [seed, 氏名1, 所属1] + 次行 [氏名2, 所属2]
-function extractDoubles(ws) {
+function extractDoubles(ws, band) {
   if (!ws || !ws['!ref']) return [];
   const R = safeRange(ws);
+  const rS = band ? Math.max(R.s.r, band.rStart) : R.s.r;
+  const rE = band ? Math.min(R.e.r, band.rEnd) : R.e.r;
   const cand = [];
   const seenName = new Set();
   const mkTeam = (t1, t2) => {
@@ -156,7 +180,7 @@ function extractDoubles(ws) {
     if (t1 && t2 && t1 !== t2) return t1 + ' / ' + t2;
     return t1 || t2 || '';
   };
-  for (let r = R.s.r; r <= R.e.r; r++) {
+  for (let r = rS; r <= rE; r++) {
     for (let c = R.s.c; c <= R.e.c; c++) {
       const s = cellStr(ws, r, c);
       if (!isIntStr(s)) continue;
@@ -237,9 +261,10 @@ function extractDoubles(ws) {
 // 種目名・形式の推定
 function guessFormat(sheetName, players, fmtHint) {
   if (fmtHint) return fmtHint;
-  const sn = sheetName || '';
-  if (/団体/.test(sn)) return 'team';
-  if (/ダブルス|複|ペア|ミックス/.test(sn)) return 'doubles';
+  // 末尾/先頭の注記【重複管理】(重複の「複」が doubles に誤マッチする)を除去してから判定
+  const sn = stripAnnot(sheetName || '');
+  if (/団体|チーム.?カップ|団体戦/.test(sn)) return 'team';
+  if (/ダブルス|ペア|ミックス|混合/.test(sn)) return 'doubles';
   // 氏名に "/" "・" が多ければダブルス
   const pair = players.filter(p => /[\/・]/.test(p.name)).length;
   if (players.length && pair / players.length > 0.5) return 'doubles';
@@ -252,46 +277,104 @@ function guessGender(sheetName) {
   return '';
 }
 
-// シート名がブラケットでない(審判/集計/メモ)場合に弾く
+// 1シートに複数種目が縦積みされる場合(例「混合ダブルス・男子ダブルス」=混合D+男子D、
+// 会長杯「一般女子」=一般女子団体+一般女子シングルス)を、左方の「クリーンな種目見出し」で
+// 行帯に分割する。ブロック見出し(「男子シングルスＡブロック」)やラウンド見出しは除外し、
+// なごやか亭の単一ブラケット(複数ブロックが連番)を誤分割しない。
+const EVENT_HEADER = /^[○●◯◎\s]*((一般|中学生?|高校生?|小学生?|シニア|レディース|オープン|ジュニア|男子|女子|混合|ミックス|団体)[\s・]*)+(シングルス|ダブルス|団体|チーム戦?|戦)?\s*$/;
+function isEventHeaderCell(s) {
+  if (!s || s.length > 16) return false;
+  if (/ブロック|予選|決勝|準決|準々|回戦|ベスト|審判|名簿|一覧|得点|主催|主管|協賛|会場|[Ａ-ＺA-Z]\s*$/.test(s)) return false;
+  // 「シングルス/ダブルス/団体」で終わる、または「○男子団体」のような明確な種目見出しのみ
+  if (!/(シングルス|ダブルス|団体|チーム)/.test(s)) return false;
+  return EVENT_HEADER.test(s);
+}
+function sheetSections(ws) {
+  const R = safeRange(ws);
+  const heads = [];
+  for (let r = R.s.r; r <= R.e.r; r++) {
+    for (let c = R.s.c; c <= Math.min(R.e.c, R.s.c + 4); c++) {
+      const s = cellStr(ws, r, c);
+      if (!s) continue;
+      if (isEventHeaderCell(s)) { heads.push({ r, name: s.replace(/^[○●◯◎\s]+/, '').trim() }); break; }
+    }
+  }
+  if (heads.length < 2) return null; // 単一種目シートは分割しない
+  return heads.map((h, i) => ({
+    name: h.name,
+    rStart: h.r,
+    rEnd: (i + 1 < heads.length ? heads[i + 1].r - 1 : R.e.r),
+  }));
+}
+
+// シート名の注記【重複管理】(検算)(控)等を除去して基底名を得る。
+// 重複の「複」が doubles 誤判定を誘発するため format 判定前に剥がす。
+// 注記を含む括弧グループ全体を剥がす(例「(重複管理入)」「【重複管理】」「(検算用)」)。
+const ANNOT_RE = /[【［(\[（][^】］)\]）]*(重複管理|重複|検算|管理用|控|確認用|チェック|記録用)[^】］)\]）]*[】］)\]）]/g;
+function stripAnnot(name) { return String(name || '').replace(ANNOT_RE, '').replace(/\s+/g, ' ').trim(); }
+function baseSheetName(name) { return stripAnnot(name).replace(/\s+/g, ''); }
+
+// シート名がブラケットでない(審判/集計/メモ)場合に弾く。
+// 注意: 「重複管理」はここで一律除外しない。ニッタク杯は『男子シングルス【重複管理】』が
+//       唯一の種目シート(本物)である一方、なごやか亭は『【重複管理】男子シングルス』と
+//       クリーンな『男子シングルス』が併存する。後者だけを除外する判定は parseSeedList 側で
+//       「同じ基底名のクリーンシートが在るか」で行う(skipDupSheet)。
 function isNoiseSheet(name) {
-  return /審判|集計|メモ|Sheet\d*|データ|一覧表|名簿管理|重複管理/i.test(name || '');
+  return /審判|集計|メモ|^Sheet\d*$|名簿管理|参加者一覧|エントリー?一覧/i.test(stripAnnot(name));
 }
 
 // メイン: ワークブック → 種目ごとの seed-list
 function parseSeedList(filePath, opts = {}) {
+  // PDF/非xlsx を渡されたら XLSX.readFile が不可解なエラーで落ちるため、先頭バイトで明示弾き
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const head = Buffer.alloc(8); fs.readSync(fd, head, 0, 8, 0); fs.closeSync(fd);
+    if (head.slice(0, 4).toString('latin1') === '%PDF') {
+      throw new Error('PDF入力です。Excel(.xlsx)用パーサです。PDFは parse_pdf_bracket.js を使用してください: ' + filePath);
+    }
+  } catch (e) { if (/PDF入力です/.test(e.message)) throw e; /* それ以外の読み取り失敗は readFile に委ねる */ }
+
   const wb = XLSX.readFile(filePath, { cellText: true, cellDates: false });
   const events = [];
   const sheetNames = opts.sheet ? [opts.sheet] : wb.SheetNames;
-  for (const sn of sheetNames) {
-    if (!opts.sheet && isNoiseSheet(sn)) continue;
-    const ws = wb.Sheets[sn];
-    // 種目形式をシート名から先に判定し、ダブルスは専用抽出(ペア結合)を使う
-    const fmt = guessFormat(sn, [], opts.formatHint);
-    let players = (fmt === 'doubles') ? extractDoubles(ws) : extractSheet(ws);
-    if (players.length < 2) continue; // ブラケットでない
-    // seed が取れた選手は seed 順、取れない選手は出現順(行→列)で後ろに
+  // 「重複管理/検算」シートは、同じ基底名のクリーンなシートが別に在る場合のみ除外する。
+  const cleanBases = new Set();
+  wb.SheetNames.forEach(n => { if (!/重複管理|検算|確認用|チェック/.test(n) && !isNoiseSheet(n)) cleanBases.add(baseSheetName(n)); });
+  const skipDupSheet = (n) => /重複管理|検算|確認用|チェック/.test(n) && cleanBases.has(baseSheetName(n));
+  // 1イベント分の seed-list を組み立てる(行帯 band 指定可)。失敗時は null。
+  function buildEvent(ws, eventName, fmt, band) {
+    const players = (fmt === 'doubles') ? extractDoubles(ws, band) : extractSheet(ws, band);
+    if (players.length < 2) return null; // ブラケットでない
     const withSeed = players.filter(p => p.seed != null).sort((x, y) => x.seed - y.seed);
-    const noSeed = players.filter(p => p.seed == null)
-      .sort((x, y) => (x._r - y._r) || (x._c - y._c));
-    // seed の重複/欠落をならし、最終的に 1..N の連番を振り直す(取込形式に合わせる)
-    const ordered = withSeed.concat(noSeed);
-    const gender = guessGender(sn);
+    const noSeed = players.filter(p => p.seed == null).sort((x, y) => (x._r - y._r) || (x._c - y._c));
+    const ordered = withSeed.concat(noSeed); // seed順 → 取れない者は出現順で後ろ。最後に1..Nを振り直す
+    const gender = guessGender(eventName);
     const playersOut = ordered.map((p, i) => {
       const rec = { name: p.name, team: p.team || '', seed: i + 1 };
-      // ダブルス相方を分離して伝播 → importer が2名を個別DB連携できる
       if (p.partner_name) { rec.partner_name = p.partner_name; rec.partner_team = p.team || ''; rec.is_doubles = true; }
       if (p.region) rec.region = p.region;
       if (gender) rec.gender = gender;
       rec.category = 'general';
       return rec;
     });
-    events.push({
-      event: (opts.eventHint && opts.sheet) ? opts.eventHint : sn.trim(),
-      format: fmt,
-      regenerate: true,
-      players: playersOut,
-      _rawSeedCount: withSeed.length,
-    });
+    return { event: eventName, format: fmt, regenerate: true, players: playersOut, _rawSeedCount: withSeed.length };
+  }
+
+  for (const sn of sheetNames) {
+    if (!opts.sheet && (isNoiseSheet(sn) || skipDupSheet(sn))) continue;
+    const ws = wb.Sheets[sn];
+    // シート内に複数種目が縦積みなら見出しで行帯分割、なければシート全体を1種目として扱う
+    const sections = opts.sheet ? null : sheetSections(ws);
+    if (sections) {
+      for (const sec of sections) {
+        const ev = buildEvent(ws, sec.name, guessFormat(sec.name, [], opts.formatHint), { rStart: sec.rStart, rEnd: sec.rEnd });
+        if (ev) events.push(ev);
+      }
+    } else {
+      const name = (opts.eventHint && opts.sheet) ? opts.eventHint : stripAnnot(sn);
+      const ev = buildEvent(ws, name, guessFormat(sn, [], opts.formatHint), null);
+      if (ev) events.push(ev);
+    }
   }
   return { format: 'tabletennis-seed-list-v1', source: 'bracket_excel', events };
 }
@@ -301,7 +384,8 @@ module.exports = { parseSeedList, extractSheet, looksLikeName, isRegionToken };
 if (require.main === module) {
   const f = process.argv[2];
   const out = parseSeedList(f, { sheet: process.argv[3] || null });
+  if (!out.events.length) console.log('(イベントなし: ブラケットを検出できませんでした)');
   out.events.forEach(e =>
     console.log(`[${e.event}] fmt=${e.format} players=${e.players.length} (seeded=${e._rawSeedCount})`));
-  if (process.argv[4] === '--dump') console.log(JSON.stringify(out.events[0].players.slice(0, 10), null, 1));
+  if (process.argv[4] === '--dump' && out.events[0]) console.log(JSON.stringify(out.events[0].players.slice(0, 10), null, 1));
 }
