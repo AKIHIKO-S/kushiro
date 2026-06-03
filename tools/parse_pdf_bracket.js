@@ -407,21 +407,68 @@ function extractTeamPlayers(items, classification, eventName) {
 }
 
 // ─── ページ単位処理 ───────────────────────
+// 種目名(少年男子/一般女子 等)をページ内の見出しトークンから検出
+function detectEventName(items) {
+  for (const it of items) {
+    const s = it.str.replace(/\s+/g, '');
+    if (s.length <= 8 &&
+      /^(少年|一般|中学生?|高校生?|小学生?|シニア|レディース)?(男子|女子|混合|ミックス)(シングルス|ダブルス|団体)?$/.test(s)) {
+      return s;
+    }
+  }
+  return null;
+}
+
+// ─── 行ベースのシングルス抽出(規則的な組合せ表に強い) ───
+// 各行 = 「seed 氏名 (所属)」(左)  +  任意で「氏名 (所属) seed」(右)。
+// pdftotext 同様の規則性を pdfjs の y近接行グループ化 + 正規表現で安定抽出する。
+// 学校名を選手化する誤りや男女未分割を避け、取りこぼしを最小化する。
+function extractSinglesByRows(pageItems, eventName) {
+  // y近接(<=11px)で1行に。所属が氏名の上下に段差で置かれる wrap(例「(ワンスター/TTC)」)も
+  // 同一行に畳めて取りこぼさない値。これ以上(>=18)に広げると隣の行と混ざるため 11 が最適。
+  const rows = yBand(pageItems, 11);
+  const players = [];
+  const seen = new Set();
+  const ROW_RE = /^(\d{1,3})\s+(.+?)\s*[（(]([^)）]+)[)）](?:\s+(.+?)\s*[（(]([^)）]+)[)）]\s*(\d{1,3}))?\s*$/;
+  const add = (seed, name, team) => {
+    const nm = normalizeName(name);
+    if (!seed || !nm || !looksLikeName(nm)) return;
+    const sd = parseInt(seed, 10);
+    const key = sd + ':' + nm;
+    if (seen.has(key)) return; seen.add(key);
+    players.push({ seed: sd, name: nm, team: String(team || '').trim() });
+  };
+  for (const row of rows) {
+    let s = row.items.map(it => it.str).join(' ').replace(/\s+/g, ' ').trim();
+    // 所属カッコ内の分かち書き("釧 路 北 陽" → "釧路北陽")を詰める
+    s = s.replace(/[（(]\s*([^（()）]*?)\s*[)）]/g, (m, inner) => '(' + inner.replace(/\s+/g, '') + ')');
+    const m = ROW_RE.exec(s);
+    if (!m) continue;
+    add(m[1], m[2], m[3]);          // 左ブロック
+    if (m[4]) add(m[6], m[4], m[5]); // 右ブロック(任意)
+  }
+  return players;
+}
+
 function parsePage(items, formatHint, eventHint) {
   if (!items.length) return null;
   const pageWidth = items[0].pageWidth;
 
-  // セクションヘッダー検出 (任意)
-  const sectionEventName = detectSectionHeader(items);
-  const eventName = sectionEventName || eventHint || '不明';
+  // 種目名: 「少年男子/一般女子」等の見出し → セクションヘッダー → ヒント の順
+  const eventName = detectEventName(items) || detectSectionHeader(items) || eventHint || '不明';
+  const fmt = detectFormat(eventName, formatHint);
 
-  // 位置番号を 2 クラスタに分類
+  // シングルスは規則的行レイアウトに強い行ベース抽出を優先(学校名混入/男女未分割を回避)
+  if (fmt === 'singles') {
+    const rowPlayers = extractSinglesByRows(items, eventName);
+    if (rowPlayers.length >= 4) return { eventName, fmt, players: rowPlayers };
+  }
+
+  // フォールバック: 位置番号クラスタ方式(従来)
   const classification = classifyPositions(items, pageWidth);
   if (!classification) {
     return { error: 'position numbers not found', eventName };
   }
-
-  const fmt = detectFormat(eventName, formatHint);
   let players;
   if (fmt === 'team') players = extractTeamPlayers(items, classification, eventName);
   else if (fmt === 'doubles') players = extractDoublesPlayers(items, classification, eventName);
