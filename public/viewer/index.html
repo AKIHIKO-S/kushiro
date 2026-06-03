@@ -739,6 +739,8 @@
    --shadow-sm:0 1px 2px rgba(20,16,12,.05);
    --shadow:0 2px 10px -5px rgba(20,16,12,.14);
    --shadow-lg:0 14px 34px -18px rgba(20,16,12,.22);
+   /* 団体リーグ星取表(TT.leagueTableEl)を丹頂トンマナに */
+   --lg-win:#1a7a45; --lg-lose:#c01526; --lg-head:#faf7f5; --lg-line:#ece7e3; --lg-self:#f3efeb; --lg-bg:#ffffff;
    background:#ffffff;
  }
  /* 緑(ティール)ヘッダー → 白の丹頂ヘッダー(下端に墨の罫) */
@@ -1126,6 +1128,13 @@ const V = {
    h("span", { className: "mr-acc-count" }, ms.length + "試合"));
  const bodyEl = h("div", { className: "mr-acc-body" });
 
+ // 団体リーグ(総当たり)なら順位表(星取表)を先頭に。観客に分かりやすく順位/セット率/得点率を提示。
+ if (ms.some(m => m.round === "予選リーグ" || m.league_block)) {
+   const stWrap = h("div", { className: "lg-standings" });
+   bodyEl.appendChild(stWrap);
+   V._loadStandings(t.id, event, stWrap);
+ }
+
  // ラウンドごと (round_order 昇順)
  const byRound = {};
  ms.forEach(m => { const r = m.round || "その他"; (byRound[r] = byRound[r] || []).push(m); });
@@ -1139,6 +1148,21 @@ const V = {
  acc.appendChild(head); acc.appendChild(bodyEl);
  el.appendChild(acc);
  });
+ },
+
+ // 団体リーグの順位表(星取表)を非同期で読込んで描画。未生成/エラーなら何も出さない。
+ async _loadStandings(tid, event, wrap) {
+ try {
+   const sd = await api.get(`/api/public/tournaments/${tid}/standings?event=${encodeURIComponent(event)}`);
+   const blocks = sd && sd.standings;
+   const has = blocks && (Array.isArray(blocks) ? blocks.length : Object.keys(blocks).length);
+   if (!has) { wrap.remove(); return; }
+   const byBlock = Array.isArray(blocks) ? { "": blocks } : blocks;
+   clear(wrap);
+   wrap.appendChild(h("div", { className: "mr-round-label" }, "順位表"));
+   Object.keys(byBlock).sort().forEach(bk =>
+     wrap.appendChild(TT.leagueTableEl(bk, byBlock[bk], (sd.matches || []).filter(m => m.block === bk))));
+ } catch (e) { wrap.remove(); }
  },
 
  // 大会結果: 横並び「○勝者 — スコア — 敗者×」(どっちが勝ったか明快)
