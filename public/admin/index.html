@@ -8221,7 +8221,7 @@ const O = {
  const slotState = fmt.slots.map((s) => {
    const ex = existing.find(e => e && e.slot === s.key) || {};
    const gamesStr = Array.isArray(ex.games) ? ex.games.map(g => g[0] + "-" + g[1]).join(" ") : "";
-   return { slot: s.key, type: s.type, label: s.label, winner: ex.winner || "", gamesStr };
+   return { slot: s.key, type: s.type, label: s.label, winner: ex.winner || "", gamesStr, wo: !!ex.walkover };
  });
  let mode = fmt.slots.length ? "slots" : "score";   // slots: 試合ごと / score: チームスコア直接
  let hScore = 0, aScore = 0;
@@ -8231,6 +8231,9 @@ const O = {
    .map(tok => { const mm = /^(\d{1,2})\s*[-－:]\s*(\d{1,2})$/.exec(tok); return mm ? [parseInt(mm[1]), parseInt(mm[2])] : null; }).filter(Boolean);
  // games があればそれを正に、無ければ手動 winner を使って各 slot を集計用に整形
  const slotsForSummary = () => slotState.map(st => {
+   // 不戦勝(人数不足等): 勝者側を 3-0(セット)で記録。ゲーム得点は無し→得点率は実戦のみで算出。
+   if (st.wo && st.winner) return { slot: st.slot, type: st.type, winner: st.winner, walkover: true,
+     home_sets: st.winner === "home" ? 3 : 0, away_sets: st.winner === "home" ? 0 : 3 };
    const games = parseGames(st.gamesStr);
    return { slot: st.slot, type: st.type, winner: games.length ? "" : st.winner, games };
  });
@@ -8258,22 +8261,30 @@ const O = {
  h("span", { className: "text-xs text-sub", style: { marginLeft: "8px" } },
  `${fmt.threshold}勝で確定` + (decided ? " ✓" : ""))));
  slotState.forEach((st, i) => {
- const ss = summary.slots[i] || {};                 // 集計後(ゲーム得点から導出されたセット/勝者)
- const gderived = parseGames(st.gamesStr).length > 0;
- const effWin = gderived ? ss.winner : st.winner;   // ゲーム得点優先
+ const ss = summary.slots[i] || {};                 // 集計後(ゲーム得点/不戦勝から導出されたセット/勝者)
+ const gderived = !st.wo && parseGames(st.gamesStr).length > 0;
+ const lockWin = gderived;                           // ゲーム得点入力時は勝者ボタンを固定
+ const effWin = gderived ? ss.winner : st.winner;
+ const toggleWin = (side) => { if (lockWin) return; st.winner = st.winner === side ? "" : side; render(); };
  container.appendChild(h("div", { style: { padding: "6px 0", borderBottom: "1px solid var(--line,#eee)" } },
  h("div", { className: "flex gap-1", style: { alignItems: "center", flexWrap: "wrap" } },
- h("span", { style: { width: "48px", fontWeight: 700, fontSize: "13px" } }, st.label),
- h("button", { className: "btn btn-sm" + (effWin === "home" ? " btn-ok" : " btn-ghost"), style: { flex: "1", minWidth: "64px" },
- onClick: () => { if (gderived) return; st.winner = st.winner === "home" ? "" : "home"; render(); } }, home),
- h("button", { className: "btn btn-sm" + (effWin === "away" ? " btn-ok" : " btn-ghost"), style: { flex: "1", minWidth: "64px" },
- onClick: () => { if (gderived) return; st.winner = st.winner === "away" ? "" : "away"; render(); } }, away)),
- h("div", { className: "flex gap-1", style: { alignItems: "center", marginTop: "4px" } },
- h("input", { className: "input", type: "text", placeholder: "ゲーム得点 例 11-9 11-7 9-11", value: st.gamesStr,
- style: { flex: "1", padding: "5px 7px", fontSize: "12px" },
- onInput: (e) => { st.gamesStr = e.target.value; }, onChange: () => render() }),
- gderived ? h("span", { className: "text-xs", style: { fontWeight: 700, minWidth: "56px", textAlign: "right" } },
- `${ss.home_sets}-${ss.away_sets}` + (ss.winner ? (ss.winner === "home" ? " ◀" : " ▶") : "")) : null)));
+ h("span", { style: { width: "44px", fontWeight: 700, fontSize: "13px" } }, st.label),
+ h("button", { className: "btn btn-sm" + (effWin === "home" ? " btn-ok" : " btn-ghost"), style: { flex: "1", minWidth: "60px" },
+ onClick: () => toggleWin("home") }, home),
+ h("button", { className: "btn btn-sm" + (effWin === "away" ? " btn-ok" : " btn-ghost"), style: { flex: "1", minWidth: "60px" },
+ onClick: () => toggleWin("away") }, away),
+ h("button", { className: "btn btn-sm" + (st.wo ? " btn-warn" : " btn-ghost"), style: { minWidth: "78px" },
+ title: "この個別試合を不戦勝(3-0)にする。先に勝つ側を選んでから押してください。",
+ onClick: () => { st.wo = !st.wo; if (st.wo) { st.gamesStr = ""; if (!st.winner) toast("先に勝つチームを選んでください", "warn"); } render(); } }, st.wo ? "不戦勝 ✓" : "不戦勝3-0")),
+ st.wo
+ ? h("div", { className: "text-xs", style: { marginTop: "4px", fontWeight: 700, color: "#92400e" } },
+   "不戦勝 3-0" + (st.winner ? "（" + (st.winner === "home" ? home : away) + " の勝ち）" : "（勝つチーム未選択）"))
+ : h("div", { className: "flex gap-1", style: { alignItems: "center", marginTop: "4px" } },
+   h("input", { className: "input", type: "text", placeholder: "ゲーム得点 例 11-9 11-7 9-11", value: st.gamesStr,
+   style: { flex: "1", padding: "5px 7px", fontSize: "12px" },
+   onInput: (e) => { st.gamesStr = e.target.value; }, onChange: () => render() }),
+   gderived ? h("span", { className: "text-xs", style: { fontWeight: 700, minWidth: "56px", textAlign: "right" } },
+   `${ss.home_sets}-${ss.away_sets}` + (ss.winner ? (ss.winner === "home" ? " ◀" : " ▶") : "")) : null)));
  });
  container.appendChild(h("div", { className: "score-hint" },
  isLeague
@@ -8301,10 +8312,11 @@ const O = {
  let winnerSlot, ws, ls, tie_results;
  if (mode === "slots") {
  const summary = TT.summarizeTie(slotsForSummary());
- // 勝者が決まった slot のみ保存(ゲーム得点があれば games/home_sets/away_sets も含む)
+ // 勝者が決まった slot を保存。ゲーム得点 or 不戦勝(3-0)由来のセット数を常に含める(セット率算出用)。
  tie_results = summary.slots.filter(s => s.winner).map(s => {
-   const o = { slot: s.slot, type: s.type, winner: s.winner };
-   if (Array.isArray(s.games) && s.games.length) { o.games = s.games; o.home_sets = s.home_sets; o.away_sets = s.away_sets; o.score = s.home_sets + "-" + s.away_sets; }
+   const o = { slot: s.slot, type: s.type, winner: s.winner, home_sets: s.home_sets, away_sets: s.away_sets, score: s.home_sets + "-" + s.away_sets };
+   if (Array.isArray(s.games) && s.games.length) o.games = s.games;
+   if (s.walkover) o.walkover = true;
    return o;
  });
  if (summary.home_wins === summary.away_wins) return toast("勝敗が決していません(各試合の勝者かゲーム得点を入力)", "err");
