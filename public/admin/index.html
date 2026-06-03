@@ -7402,6 +7402,9 @@ const O = {
 
  // ── 結果修正 (セットスコア・勝者選択) ──
  async openCorrectResult(m) {
+ // 団体戦(tie)の訂正は専用モーダル(個別試合のゲーム得点を保持して /correct へ)。
+ const teamEv = O._teamEventCfg(m);
+ if (teamEv) return O.openTeamResultInput(m, teamEv, { correct: true });
  const p1Won = m.winner_name === m.player1_name;
  // 既存セット (winner-perspective を player1-perspective に正規化)
  const setsP1 = (m.sets || []).map(s => {
@@ -8208,11 +8211,18 @@ const O = {
  // ── 団体戦(tie)の結果入力 ──
  // 各個別試合の勝者(home/away)を入力 → チームスコアを集計。フォーマット未設定なら直接スコア入力。
  // winner_slot + winner_sets/loser_sets(=勝った試合数) + tie_results(内訳) を通常 /finish に送る。
- openTeamResultInput(m, ev) {
+ openTeamResultInput(m, ev, opts) {
+ opts = opts || {};
+ const isCorrect = !!opts.correct;          // 完了済みの訂正(=/correct へ送る・既存値を復元)
  const home = m.player1_name || "ホーム", away = m.player2_name || "アウェイ";
  const fmt = TT.parseTieFormat(ev && ev.tie_format);
  const isLeague = !!(m.league_block);   // リーグ戦はセット率/得点率のためゲーム得点入力を推奨
- const slotState = fmt.slots.map(s => ({ slot: s.key, type: s.type, label: s.label, winner: "", gamesStr: "" }));
+ const existing = Array.isArray(m.tie_results) ? m.tie_results : [];   // 訂正時の既存内訳を復元
+ const slotState = fmt.slots.map((s) => {
+   const ex = existing.find(e => e && e.slot === s.key) || {};
+   const gamesStr = Array.isArray(ex.games) ? ex.games.map(g => g[0] + "-" + g[1]).join(" ") : "";
+   return { slot: s.key, type: s.type, label: s.label, winner: ex.winner || "", gamesStr };
+ });
  let mode = fmt.slots.length ? "slots" : "score";   // slots: 試合ごと / score: チームスコア直接
  let hScore = 0, aScore = 0;
  const container = h("div", {});
@@ -8306,18 +8316,18 @@ const O = {
  if (hScore === aScore) return toast("チームスコアが同じです。勝ちチームを決めてください", "err");
  winnerSlot = hScore > aScore ? 1 : 2; ws = Math.max(hScore, aScore); ls = Math.min(hScore, aScore); tie_results = [];
  }
- const r = await api.opSend("POST", `/api/matches/${m.id}/finish`,
+ const r = await api.opSend("POST", `/api/matches/${m.id}/${isCorrect ? "correct" : "finish"}`,
  { winner_slot: winnerSlot, sets: [], winner_sets: ws, loser_sets: ls, tie_results }, { tag: m.id });
  if (r.queued) { document.querySelector(".modal-bg")?.remove();
  return toast("オフライン: 結果を保存しました(接続復帰後に自動送信)", "warn"); }
- if (r.error) return toast(r.error, "err");
- toast(`団体戦の結果を記録: ${r.winner_name} ${r.winner_sets}-${r.loser_sets}`, "ok");
+ if (r.error) return toast(r.error + (r.next_match_label ? "\n次の試合: " + r.next_match_label : ""), "err");
+ toast(`団体戦の結果を${isCorrect ? "修正" : "記録"}: ${r.winner_name} ${r.winner_sets}-${r.loser_sets}`, "ok");
  document.querySelector(".modal-bg")?.remove();
  O.reload();
  };
  const foot = h("div", { className: "flex gap-2", style: { width: "100%", justifyContent: "flex-end" } },
- h("button", { className: "btn btn-ok", onClick: submit }, "団体戦の結果を確定"));
- openModal("団体戦 結果入力", container, foot);
+ h("button", { className: "btn btn-ok", onClick: submit }, isCorrect ? "団体戦の結果を修正" : "団体戦の結果を確定"));
+ openModal(isCorrect ? "団体戦 結果修正" : "団体戦 結果入力", container, foot);
  },
 
  // ── 結果入力 ──
