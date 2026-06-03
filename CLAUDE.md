@@ -54,7 +54,8 @@ standalone/  オフライン単機運用ラッパ (start.command/.bat)
   - **プロセス化(Tier1)**: `checkDrawReadiness`(事前ポカヨケ)→`opts.preview`(dry_run・DB非書込)→確定で `draw_log` に一次記録(誰=drawn_by/種/名簿snapshot+hash/leaves hash、引き直しは superseded 連鎖で全試行保持)→`undoDraw`(抽選専用Undo・op_log非依存)。確定APIは `drawn_by` 必須(単一ADMIN_KEY対策の最小の説明責任)。
   - **Excel往復**: `reports.buildBracketXlsx` は機械可読の隠し `_import` シートを併設し、`db.importBracketRoundtrip`(`POST /bracket/import-xlsx`)が手修正後の表を entrant 非消失・位置差分で正本化(往復ループを閉じる)。
   - **オフライン縮退**: 抽選→Excel経路は外部依存ゼロ=standalone単機で名簿→抽選→Excelまで完結(`test/offline-draw.test.js` がネット遮断下で保証)。
-  - API: `POST /bracket/draw`(preview/drawn_by) `GET /bracket/draw-readiness` `POST /bracket/undo-draw` `GET /bracket/draw-log` `GET /bracket/export.xlsx` `POST /bracket/import-xlsx`。回帰: `draw-audit`/`bracket-xlsx`/`bracket-roundtrip`/`offline-draw`。
+  - **信頼性/正確性(Tier2)**: `getBracketDrawDiff`(確定封印 leaves_hash と現配置を突合し抽選後の手修正を可視化=「原配置からN件」)。ダブルスは所属を**集合**(team+partner_team)で分散判定(`_clubsOverlap`、共有1つでも衝突。単打は[team]の1要素で従来等価)、Excelはペアを上下2段+所属併記。`suggestSeeds`(Elo rating+`achievements`→根拠付きシード候補、自動確定せず人手採否)+ `seed_source/reason/set_by/set_at` 記録(`setEntrantSeed(id,seed,{source,reason,by})`)。
+  - API: `POST /bracket/draw`(preview/drawn_by) `GET /bracket/draw-readiness` `POST /bracket/undo-draw` `GET /bracket/draw-log` `GET /bracket/draw-diff` `GET /bracket/export.xlsx` `POST /bracket/import-xlsx` `GET /seed-suggestions` `POST /seed-suggestions/apply`。回帰: `draw-audit`/`bracket-xlsx`/`bracket-roundtrip`/`offline-draw`/`draw-doubles`/`seed-suggest`。
 - `finishMatchInternal(matchId, data)` (~2761): 勝者判定→冪等ガード→セット集計→**Eloは両者IDありかつ非BYEのときのみ更新**(`calcElo` K=32, 基準1500, db.js:527)→`advanceWinnerInline`で次戦へ。
 - `correctResult` (~2891): 確定済み結果の修正。勝者反転→次戦クリア→再進出を1トランザクション。
 - 優先度ロック: 種目優先(団体>混合>ダブルス>シングルス)/審判担当中/対戦中で呼出を拒否、`force`で強制。
