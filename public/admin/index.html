@@ -2978,7 +2978,7 @@ const A = {
    `if(!d||d.__ktta_entry_form!==true||d.id!==T)return;\n` +
    `var f=document.querySelector('iframe[data-ktta-entry="'+T+'"]');if(!f)return;\n` +
    `if(d.scrollIntoView){try{f.scrollIntoView({behavior:"smooth",block:"start"});}catch(_){}return;}\n` +
-   `if(typeof d.height==="number"&&d.height>200){f.style.height=(d.height+24)+"px";}});})();\n` +
+   `if(typeof d.height==="number"&&d.height>200){var nh=d.height+"px";if(f.style.height!==nh)f.style.height=nh;}});})();\n` +
    `<\/script>`;
  if (platform === "jimdo") {
    // Jimdo: HTTPS iframe (Jimdo の HTML埋込ウィジェットで動作)

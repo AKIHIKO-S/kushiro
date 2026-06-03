@@ -1232,14 +1232,18 @@ function ttScrollTop() {
     }
   } catch (_) {}
 }
+var __ttLastH = 0;
 function ttPostHeight() {
   try {
     if (window.parent === window) return; // 埋込でない(単独表示)なら不要
-    var h = Math.max(
-      document.body ? document.body.scrollHeight : 0,
-      document.documentElement ? document.documentElement.scrollHeight : 0
-    );
-    if (h > 0) window.parent.postMessage(
+    // ★コンテンツ(body)の高さだけを測る。documentElement.scrollHeight は親が iframe を伸ばすと
+    //   それに追従して「最低でも iframe 高」になり、ResizeObserver/親の高さ加算と無限ループ(縦に伸び続ける)
+    //   を起こすため使わない。body は min-height 等を持たず内容高そのものなので追従しない。
+    var h = document.body ? document.body.scrollHeight : 0;
+    if (h <= 0) return;
+    if (Math.abs(h - __ttLastH) < 2) return; // 変化なし(±1px)なら送らない=フィードバックループ遮断
+    __ttLastH = h;
+    window.parent.postMessage(
       { __ktta_entry_form: true, id: TOURNAMENT_ID, height: h }, "*");
   } catch (_) {}
 }
