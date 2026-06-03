@@ -8202,53 +8202,100 @@ const O = {
  // ── 抽選ドロー(個人戦): シード固定＋非シードのランダム抽選(同一所属/地区を分散) ──
  // for_mac.xls のマクロ(KUJI2)の本質を移植。シードは申込管理で指定した番号順に標準位置へ固定し、
  // 残りを抽選。同じ draw_seed で同じ並びを再現できる。結果は既存ブラケットとして凍結→手修正/Excel可。
+ // ── 抽選ウィザード(個人戦): 事前検査→分散→プレビュー(dry_run)→実施者名→確定/出力/取消 ──
  async openDrawBracket(event) {
  const ev = (O._eventConfig() || []).find(c => c && c.name === event);
  if (ev && ev.type === "team") return toast("団体種目は「リーグ生成」を使ってください", "err");
- const cnt = ((O.state && O.state.event_stats && O.state.event_stats[event]) || {}).entrants;
- let sep = "team";
+ const tid = O.tournamentId;
+ let sep = "team", lastSeed = null, lastPreview = null;
+ let rdy = null;
+ try { rdy = await api.get(`/api/tournaments/${tid}/bracket/draw-readiness?event=${encodeURIComponent(event)}`); } catch (e) {}
+
  const sepDefs = [["team", "同一所属(クラブ)を散らす"], ["region", "地区で散らす"], ["none", "完全ランダム"]];
  const sepBtns = h("div", { className: "flex gap-1", style: { flexWrap: "wrap" } });
  const renderSep = () => { clear(sepBtns); sepDefs.forEach(([v, l]) => sepBtns.appendChild(
    h("button", { className: "btn btn-sm" + (sep === v ? "" : " btn-ghost"), onClick: () => { sep = v; renderSep(); } }, l))); };
  renderSep();
- const seedInput = h("input", { className: "input", type: "number", placeholder: "空欄=毎回ランダム", style: { maxWidth: "180px" } });
- const info = h("div", { className: "text-xs", style: { marginTop: "10px", minHeight: "18px" } });
- const run = async (fresh) => {
-   if (fresh) seedInput.value = "";
-   const body = { event, separate_by: sep };
-   const sd = parseInt(seedInput.value); if (Number.isFinite(sd)) body.draw_seed = sd;
-   if (fresh) body.force = true;  // 引き直し: 結果があっても作り直す確認は needs_force で行う
-   let r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/draw`, body);
-   if (r && r.needs_force) {
-     if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して抽選し直しますか？")) return;
-     body.force = true;
-     r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/draw`, body);
-   }
-   if (!r || r.error) return toast((r && r.error) || "抽選に失敗", "err");
-   toast(`抽選完了: ${r.bracket_size}枠 / シード${r.seeded_count}名 / BYE${r.bye_count}`, "ok");
-   clear(info);
-   const sepLbl = { team: "同一所属を分散", region: "地区を分散", none: "完全ランダム" }[r.separate_by] || r.separate_by;
-   info.appendChild(h("div", { style: { fontWeight: 700 } }, `この並びの種(draw_seed): ${r.draw_seed} ・ ${sepLbl}`));
-   info.appendChild(h("div", { className: "text-sub" }, "同じ種を入れて「抽選実行」すると同じ並びを再現できます。"));
-   (r.warnings || []).forEach(w => info.appendChild(h("div", { style: { color: "#c01526" } }, "⚠ " + w)));
-   seedInput.value = r.draw_seed;
-   if (O._vbReload) O._vbReload();
-   if (O.reload) O.reload();
+ const seedInput = h("input", { className: "input", type: "number", placeholder: "空欄=ランダム", style: { maxWidth: "130px" } });
+ const drawnBy = h("input", { className: "input", placeholder: "実施者名(記録用・必須)", style: { maxWidth: "200px" } });
+ const previewBox = h("div", { style: { marginTop: "10px" } });
+
+ const issuesBox = h("div", { style: { margin: "6px 0" } });
+ if (rdy) {
+   (rdy.issues || []).forEach(i => issuesBox.appendChild(h("div", {
+     style: { color: i.level === "block" ? "#c01526" : "#b45309", fontSize: "12px", fontWeight: i.level === "block" ? 700 : 500 } },
+     (i.level === "block" ? "⛔ " : "⚠ ") + i.msg)));
+   if (!(rdy.issues || []).length) issuesBox.appendChild(h("div", { style: { color: "#1a7a45", fontSize: "12px" } },
+     `✓ 抽選OK: 承認${rdy.confirmed}名 / 枠${rdy.bracket_size} / BYE${rdy.bye_count} / シード${rdy.seeded}`));
+ }
+
+ const renderPreview = (r) => {
+   clear(previewBox);
+   previewBox.appendChild(h("div", { style: { fontWeight: 700, marginBottom: "4px" } },
+     `プレビュー: ${r.bracket_size}枠 / シード${r.seeded_count} / BYE${r.bye_count}` + (r.r1_same_club ? ` / ⚠1回戦同所属${r.r1_same_club}` : "")));
+   (r.warnings || []).forEach(w => previewBox.appendChild(h("div", { style: { color: "#c01526", fontSize: "12px" } }, "⚠ " + w)));
+   const nm = (c) => c.bye ? "（BYE）" : (c.name + (c.seed ? ` [${c.seed}]` : "") + (c.team ? ` ・${c.team}` : ""));
+   const tb = h("tbody", {});
+   r.pairs.forEach(p => tb.appendChild(h("tr", {},
+     h("td", { style: { textAlign: "right", color: "#94a3b8", padding: "1px 6px" } }, (p.pos + 1) + "."),
+     h("td", { style: { padding: "1px 6px" } }, nm(p.p1)),
+     h("td", { style: { color: "#94a3b8" } }, "vs"),
+     h("td", { style: { padding: "1px 6px" } }, nm(p.p2)))));
+   const tbl = h("table", { style: { fontSize: "12px", width: "100%" } }); tbl.appendChild(tb);
+   previewBox.appendChild(h("div", { style: { maxHeight: "38vh", overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: "6px", padding: "4px" } }, tbl));
+   previewBox.appendChild(h("div", { className: "text-sub", style: { fontSize: "11px", marginTop: "4px" } }, `記録用ID(draw_seed): ${r.draw_seed} ・ 同じIDで同じ並びを再現`));
  };
+
+ const doPreview = async (fresh) => {
+   if (fresh) seedInput.value = "";
+   const body = { event, separate_by: sep, preview: true };
+   const sd = parseInt(seedInput.value); if (Number.isFinite(sd)) body.draw_seed = sd;
+   const r = await api.post(`/api/tournaments/${tid}/bracket/draw`, body);
+   if (!r || r.error) return toast((r && r.error) || "プレビュー失敗", "err");
+   lastPreview = r; lastSeed = r.draw_seed; seedInput.value = r.draw_seed; renderPreview(r);
+ };
+ const doConfirm = async () => {
+   if (!lastPreview) return toast("先に『抽選してみる』を押してプレビューしてください", "err");
+   const by = drawnBy.value.trim();
+   if (!by) { drawnBy.focus(); return toast("実施者名を入力してください(抽選の記録用)", "err"); }
+   const body = { event, separate_by: sep, draw_seed: lastSeed, drawn_by: by };
+   let r = await api.post(`/api/tournaments/${tid}/bracket/draw`, body);
+   if (r && r.needs_force) {
+     if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して確定しますか？")) return;
+     body.force = true; r = await api.post(`/api/tournaments/${tid}/bracket/draw`, body);
+   }
+   if (!r || r.error) return toast((r && r.error) || "確定に失敗", "err");
+   toast(`確定: ${r.bracket_size}枠 / 記録ID ${r.draw_seed}`, "ok");
+   document.querySelector(".modal-bg")?.remove();
+   if (O._vbReload) O._vbReload(); if (O.reload) O.reload();
+ };
+ const doUndo = async () => {
+   if (!confirm("直前の抽選を取り消し、抽選前のブラケットに戻します。よろしいですか？")) return;
+   const r = await api.post(`/api/tournaments/${tid}/bracket/undo-draw`, { event });
+   if (!r || r.error) return toast((r && r.error) || "取り消せません", "err");
+   toast("直前の抽選を取り消しました", "ok");
+   document.querySelector(".modal-bg")?.remove();
+   if (O._vbReload) O._vbReload(); if (O.reload) O.reload();
+ };
+
  const body = h("div", {},
-   h("div", { className: "text-sm", style: { marginBottom: "8px" } },
-     `「${event}」をシード固定＋ランダム抽選でトーナメント表を作ります。` + (cnt ? `登録: 約${cnt}名。` : "") +
-     "シードは申込管理で指定したシード番号順に標準位置へ固定し、残りを抽選します。BYEは上位シードに付きます。"),
-   h("div", { className: "text-xs", style: { fontWeight: 700, margin: "4px 0" } }, "非シードの分散方法"),
+   h("div", { className: "text-sm", style: { marginBottom: "4px" } },
+     `「${event}」をシード固定＋ランダム抽選で組みます。シードは申込管理の番号順に標準位置へ固定し、残りを抽選(BYEは上位シードへ)。`),
+   issuesBox,
+   h("div", { className: "text-xs", style: { fontWeight: 700, margin: "8px 0 2px" } }, "① 非シードの分散方法"),
    sepBtns,
+   h("div", { className: "flex gap-2", style: { alignItems: "center", marginTop: "8px", flexWrap: "wrap" } },
+     h("button", { className: "btn btn-sm btn-ok", onClick: () => doPreview(false) }, "② 抽選してみる(確定しない)"),
+     h("button", { className: "btn btn-sm btn-ghost", onClick: () => doPreview(true) }, "引き直す"),
+     h("span", { className: "text-xs text-sub" }, "種:"), seedInput),
+   previewBox,
    h("div", { className: "flex gap-2", style: { alignItems: "center", marginTop: "10px", flexWrap: "wrap" } },
-     h("span", { className: "text-xs" }, "抽選の種(任意):"), seedInput),
-   info);
- openModal("抽選ドロー（" + event + "）", body,
-   h("div", { className: "flex gap-2" },
-     h("button", { className: "btn btn-ok", onClick: () => run(false) }, "抽選実行"),
-     h("button", { className: "btn", title: "新しいランダムで引き直す", onClick: () => run(true) }, "引き直す")));
+     h("span", { className: "text-xs", style: { fontWeight: 700 } }, "③ 実施者名:"), drawnBy));
+ const foot = h("div", { className: "flex gap-2", style: { flexWrap: "wrap" } },
+   h("button", { className: "btn btn-ok", onClick: doConfirm }, "④ この並びで確定"),
+   h("button", { className: "btn btn-ghost", title: "両山トーナメント表をExcelで出力", onClick: () => A.downloadAuthedFile(`/api/tournaments/${tid}/bracket/export.xlsx?event=${encodeURIComponent(event)}`, `トーナメント表_${event}.xlsx`) }, "📋 Excel出力"),
+   h("button", { className: "btn", style: { background: "#b45309", color: "#fff" }, onClick: doUndo }, "直前の抽選を取消"));
+ openModal("抽選ドロー（" + event + "）", body, foot);
  },
 
  // ── 釧路リーグ: 部別(division)振り分け(前回順位→昇降格提案→手動調整→生成) ──

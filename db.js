@@ -221,6 +221,32 @@ sqlite.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_oplog_t ON op_log(tournament_id, id);
 
+  -- 抽選ドローの一次記録(監査証跡)。誰が・いつ・どの種(draw_seed)・どの名簿(snapshot/hash)で
+  -- 引いたかを残し、抗議に反証可能・再現可能にする。引き直しは superseded で連鎖し全試行を保持。
+  -- before_state で抽選直前のブラケットを保存し『抽選を取り消す』(undoDraw)を可能にする。
+  CREATE TABLE IF NOT EXISTS draw_log (
+    id TEXT PRIMARY KEY,
+    tournament_id TEXT NOT NULL,
+    event TEXT NOT NULL DEFAULT '',
+    draw_seed INTEGER,
+    separate_by TEXT DEFAULT '',
+    algo_version TEXT DEFAULT '',
+    bracket_size INTEGER DEFAULT 0,
+    seeded_count INTEGER DEFAULT 0,
+    entrant_count INTEGER DEFAULT 0,
+    entrants_snapshot TEXT DEFAULT '',   -- 抽選時点の名簿 [{id,name,team,region,seed}]
+    entrants_hash TEXT DEFAULT '',       -- 名簿スナップショットの SHA-256
+    leaves_json TEXT DEFAULT '',         -- 確定リーフ順 [entrant_id|null]
+    leaves_hash TEXT DEFAULT '',         -- 確定配置の SHA-256(封印=後の手修正検知に使える)
+    warnings TEXT DEFAULT '',            -- JSON
+    drawn_by TEXT DEFAULT '',            -- 実施者名(自己申告。単一ADMIN_KEYで個人識別できないため)
+    before_state TEXT DEFAULT '',        -- 抽選直前のブラケット(undoDraw 用): {matches:[...], entrants:[{id,bracket_number,bracket_side}]}
+    status TEXT DEFAULT 'committed',     -- committed / superseded / undone
+    superseded_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_drawlog_te ON draw_log(tournament_id, event, id);
+
   -- 監督・顧問アカウント (#285)。Admin が個別コードを発行。マイ選手は上限まで登録。
   CREATE TABLE IF NOT EXISTS coach_accounts (
     id TEXT PRIMARY KEY,
@@ -3207,8 +3233,45 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   return { leaves, warnings };
 }
 
-// 種目の出場者を抽選し、結果でブラケットを生成(凍結)する。
-// opts: { draw_seed?(整数), separate_by?('team'|'region'|'none'), force? }
+const DRAW_ALGO_VERSION = "1";   // computeDrawLeaves のアルゴリズム版数(再現/検証の固定キー)
+function _sha256(s) { return crypto.createHash("sha256").update(String(s)).digest("hex"); }
+function _drawEntrantSnapshot(ents) {
+  return ents.map(e => ({ id: e.id, name: e.display_name || e.name, team: e.team || "", region: e.region || "", seed: parseInt(e.seed) || 0 }));
+}
+
+// 抽選の事前検査(プリフライト・ポカヨケ)。抽選後・印刷直前に発覚→全やり直しを防ぐ。
+// 返り値 { ok, issues:[{level:'block'|'warn', code, msg}], confirmed, bracket_size, bye_count, seeded }
+function checkDrawReadiness(tournamentId, event) {
+  if (!event) return { ok: false, issues: [{ level: "block", code: "no_event", msg: "種目が必要です" }] };
+  const all = entrantStmts.listByEvent.all(tournamentId, event);
+  const confirmed = all.filter(e => (e.status || "confirmed") === "confirmed");
+  const issues = [];
+  if (confirmed.length < 2) issues.push({ level: "block", code: "too_few", msg: `承認済みの出場者が${confirmed.length}人です(2人以上必要)` });
+  const pending = all.filter(e => (e.status || "confirmed") !== "confirmed" && (e.status || "") !== "rejected");
+  if (pending.length) issues.push({ level: "warn", code: "pending", msg: `承認待ちが${pending.length}件あります(このままだと抽選対象外)。先に承認するか確認してください` });
+  const size = Math.pow(2, Math.ceil(Math.log2(Math.max(2, confirmed.length))));
+  const seedMap = {};
+  confirmed.forEach(e => { const s = parseInt(e.seed) || 0; if (s >= 1) (seedMap[s] = seedMap[s] || []).push(e); });
+  const dups = Object.keys(seedMap).filter(s => seedMap[s].length > 1);
+  if (dups.length) issues.push({ level: "block", code: "seed_dup", msg: `シード番号が重複しています: ${dups.join("・")}` });
+  const over = confirmed.filter(e => (parseInt(e.seed) || 0) > size);
+  if (over.length) issues.push({ level: "warn", code: "seed_over", msg: `枠数(${size})を超えるシード番号があります(抽選に回されます)` });
+  const seedNonConf = all.filter(e => (parseInt(e.seed) || 0) >= 1 && (e.status || "confirmed") !== "confirmed");
+  if (seedNonConf.length) issues.push({ level: "warn", code: "seed_unconfirmed", msg: `未承認なのにシードが付いた選手が${seedNonConf.length}件あります` });
+  // スーパーシード(登場ラウンド)の枠数会計: 2^(entry_round-1) の総重み・最大免除ラウンドが枠を超えないか
+  if (confirmed.some(e => (parseInt(e.entry_round) || 1) > 1)) {
+    const totalW = confirmed.reduce((s, e) => s + Math.pow(2, Math.max(1, parseInt(e.entry_round) || 1) - 1), 0);
+    const sizeW = Math.pow(2, Math.ceil(Math.log2(Math.max(2, totalW))));
+    const maxR = Math.max(1, ...confirmed.map(e => Math.max(1, parseInt(e.entry_round) || 1)));
+    if (Math.pow(2, maxR - 1) > sizeW / 2) issues.push({ level: "block", code: "entry_round_overflow", msg: "登場ラウンド(スーパーシード)が選手数に対し大きすぎます。登場ラウンドを下げてください" });
+  }
+  return { ok: !issues.some(i => i.level === "block"), issues, confirmed: confirmed.length, bracket_size: size, bye_count: size - confirmed.length, seeded: Object.keys(seedMap).length };
+}
+
+// 種目の出場者を抽選する。opts:
+//   { draw_seed?, separate_by?('team'|'region'|'none'), force?, preview?, drawn_by? }
+//   preview=true: DBを一切書かずに組合せを返す(確定前プレビュー=dry_run)。
+//   それ以外: generateBracket で凍結し、draw_log に一次記録を残す(監査・取消用)。
 function drawSingleBracket(tournamentId, event, opts) {
   opts = opts || {};
   if (!event) return { error: "event(種目)が必要です" };
@@ -3234,18 +3297,102 @@ function drawSingleBracket(tournamentId, event, opts) {
   const rng = mulberry32(drawSeed);
   const sep = opts.separate_by === "region" ? "region" : opts.separate_by === "none" ? "none" : "team";
   const { leaves, warnings } = computeDrawLeaves(entrants, size, rng, { separateBy: sep });
+  const seededCount = entrants.filter(e => (parseInt(e.seed) || 0) >= 1).length;
+  const byeCount = size - entrants.length;
 
-  // 確定リーフを generateBracket で凍結(破壊的再生成ガード・BYE自動進行・番号付与を流用)。
-  const r = generateBracket(tournamentId, event, {
-    regenerate: true, force: !!opts.force, fixedLeaves: leaves,
-  });
+  // 残存R1同所属(分離不能時のみ>0)
+  let r1SameClub = 0;
+  for (let i = 0; i < size; i += 2) {
+    const a = leaves[i], b = leaves[i + 1];
+    if (a && b && (a.team || "") && (a.team || "") === (b.team || "")) r1SameClub++;
+  }
+  const cell = (e) => e ? { name: e.display_name || e.name, team: e.team || "", seed: (parseInt(e.seed) || 0) || null }
+    : { bye: true };
+  const meta = {
+    draw_seed: drawSeed, separate_by: sep, warnings, seeded_count: seededCount,
+    bracket_size: size, bye_count: byeCount, r1_same_club: r1SameClub, algo_version: DRAW_ALGO_VERSION,
+  };
+
+  // ── 確定前プレビュー(dry_run): DBを書かず組合せだけ返す ──
+  if (opts.preview) {
+    const pairs = [];
+    const byes = [];
+    for (let i = 0; i < size; i += 2) {
+      const a = leaves[i], b = leaves[i + 1];
+      pairs.push({ pos: i / 2, p1: cell(a), p2: cell(b) });
+      if (a && !b) byes.push(a.display_name || a.name);
+      if (b && !a) byes.push(b.display_name || b.name);
+    }
+    return Object.assign({ preview: true, pairs, byes }, meta);
+  }
+
+  // ── 確定: 抽選直前の状態を退避 → 凍結 → draw_log に一次記録 ──
+  const before = {
+    matches: sqlite.prepare("SELECT * FROM matches WHERE tournament_id=? AND event=?").all(tournamentId, event),
+    entrants: sqlite.prepare("SELECT id, bracket_number, bracket_side FROM entrants WHERE tournament_id=? AND event=?").all(tournamentId, event),
+  };
+  const r = generateBracket(tournamentId, event, { regenerate: true, force: !!opts.force, fixedLeaves: leaves });
   if (r && r.error) return r;
-  return Object.assign({}, r, {
-    draw_seed: drawSeed,
-    separate_by: sep,
-    warnings,
-    seeded_count: entrants.filter(e => (parseInt(e.seed) || 0) >= 1).length,
+
+  const drawId = uid();
+  const snap = _drawEntrantSnapshot(entrants);
+  const leafIds = leaves.map(e => (e ? e.id : null));
+  try {
+    const tx = sqlite.transaction(() => {
+      sqlite.prepare("UPDATE draw_log SET status='superseded', superseded_by=? WHERE tournament_id=? AND event=? AND status='committed'")
+        .run(drawId, tournamentId, event);
+      sqlite.prepare(
+        `INSERT INTO draw_log (id, tournament_id, event, draw_seed, separate_by, algo_version, bracket_size,
+           seeded_count, entrant_count, entrants_snapshot, entrants_hash, leaves_json, leaves_hash, warnings,
+           drawn_by, before_state, status)
+         VALUES (@id,@tid,@event,@seed,@sep,@algo,@size,@seeded,@ecount,@snap,@ehash,@leaves,@lhash,@warn,@by,@before,'committed')`
+      ).run({
+        id: drawId, tid: tournamentId, event, seed: drawSeed, sep, algo: DRAW_ALGO_VERSION, size,
+        seeded: seededCount, ecount: entrants.length,
+        snap: JSON.stringify(snap), ehash: _sha256(JSON.stringify(snap)),
+        leaves: JSON.stringify(leafIds), lhash: _sha256(JSON.stringify(leafIds)),
+        warn: JSON.stringify(warnings), by: String(opts.drawn_by || ""), before: JSON.stringify(before),
+      });
+    });
+    tx();
+  } catch (e) { console.error("draw_log write error:", e.message); }
+
+  return Object.assign({}, r, meta, { draw_log_id: drawId });
+}
+
+// 直前の抽選を取り消し、抽選直前のブラケットへ戻す(抽選専用Undo。op_log/finish系には触れない)。
+function undoDraw(tournamentId, event) {
+  const row = sqlite.prepare(
+    "SELECT * FROM draw_log WHERE tournament_id=? AND event=? AND status='committed' ORDER BY id DESC LIMIT 1"
+  ).get(tournamentId, event);
+  if (!row) return { error: "取り消せる抽選がありません" };
+  let before = {};
+  try { before = JSON.parse(row.before_state || "{}"); } catch (e) {}
+  const tx = sqlite.transaction(() => {
+    sqlite.prepare("DELETE FROM matches WHERE tournament_id=? AND event=?").run(tournamentId, event);
+    for (const m of (before.matches || [])) {
+      const cols = Object.keys(m);
+      sqlite.prepare(`INSERT INTO matches (${cols.map(c => `"${c}"`).join(",")}) VALUES (${cols.map(c => "@" + c).join(",")})`).run(m);
+    }
+    for (const e of (before.entrants || [])) {
+      entrantStmts.setBracketNumber.run(e.bracket_number || 0, e.bracket_side || "", e.id);
+    }
+    sqlite.prepare("UPDATE draw_log SET status='undone' WHERE id=?").run(row.id);
+    // この抽選が上書きした直前の抽選を committed に戻す(連鎖の整合)
+    sqlite.prepare("UPDATE draw_log SET status='committed', superseded_by='' WHERE superseded_by=?").run(row.id);
   });
+  tx();
+  return { ok: true, restored_matches: (before.matches || []).length, draw_log_id: row.id };
+}
+
+// 種目の抽選履歴(監査用。PIIは最小=名簿スナップショットは含めず件数とメタのみ)。
+function getDrawLog(tournamentId, event) {
+  const rows = sqlite.prepare(
+    `SELECT id, event, draw_seed, separate_by, algo_version, bracket_size, seeded_count, entrant_count,
+            entrants_hash, leaves_hash, drawn_by, status, superseded_by, created_at
+     FROM draw_log WHERE tournament_id=?` + (event ? " AND event=?" : "") + " ORDER BY id DESC LIMIT 50"
+  ).all(...(event ? [tournamentId, event] : [tournamentId]));
+  return rows;
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -7120,6 +7267,7 @@ module.exports = {
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
   generateBracket, drawSingleBracket, computeDrawLeaves, bracketPositions,
+  checkDrawReadiness, undoDraw, getDrawLog,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   generateTeamLeague, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,

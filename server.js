@@ -1421,18 +1421,44 @@ app.post("/api/tournaments/:id/bracket/generate", requireAdmin, (req, res) => {
   res.json(r);
 });
 // 抽選ドロー: シードを標準位置に固定 + 非シードをランダム抽選(同一所属/地区を分散) → ブラケット凍結。
-// body: { event, draw_seed?(整数), separate_by?('team'|'region'|'none'), force? }
+// body: { event, draw_seed?, separate_by?('team'|'region'|'none'), force?, preview?, drawn_by? }
+//   preview=1(query/body): DBを書かず組合せだけ返す(確定前dry_run)。
+//   確定(preview無し)は実施者名 drawn_by 必須(単一ADMIN_KEYで個人識別できないため最小の説明責任)。
 // 同じ draw_seed を指定すれば同一結果を再現できる(検証・引き直し用)。結果入力済みは force ガード。
 app.post("/api/tournaments/:id/bracket/draw", requireAdmin, (req, res) => {
   const event = req.body?.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
+  const preview = req.query.preview === "1" || req.body?.preview === true || req.body?.preview === 1;
+  if (!preview && !String(req.body?.drawn_by || "").trim()) {
+    return res.status(400).json({ error: "実施者名(drawn_by)が必要です(抽選の記録用)", needs_drawn_by: true });
+  }
   const r = db.drawSingleBracket(req.params.id, event, {
     draw_seed: req.body?.draw_seed,
     separate_by: req.body?.separate_by,
     force: !!req.body?.force,
+    preview,
+    drawn_by: req.body?.drawn_by,
   });
   if (r?.error) return res.status(400).json(r);
   res.json(r);
+});
+// 抽選の事前検査(プリフライト・ポカヨケ)。?event=種目名
+app.get("/api/tournaments/:id/bracket/draw-readiness", requireAdmin, (req, res) => {
+  const event = req.query.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  res.json(db.checkDrawReadiness(req.params.id, event));
+});
+// 直前の抽選を取り消し、抽選直前のブラケットへ戻す。body: { event }
+app.post("/api/tournaments/:id/bracket/undo-draw", requireAdmin, (req, res) => {
+  const event = req.body?.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.undoDraw(req.params.id, event);
+  if (r?.error) return res.status(400).json(r);
+  res.json(r);
+});
+// 抽選履歴(監査用・件数とメタのみ)。?event=種目名(省略可)
+app.get("/api/tournaments/:id/bracket/draw-log", requireAdmin, (req, res) => {
+  res.json(db.getDrawLog(req.params.id, req.query.event || ""));
 });
 // 団体リーグ(総当たり)を生成。body: { event, num_blocks?, assignments?, regenerate?, force? }
 app.post("/api/tournaments/:id/league/generate", requireAdmin, (req, res) => {
