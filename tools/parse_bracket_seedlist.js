@@ -95,12 +95,32 @@ function cleanTeam(s) {
   return t;
 }
 
+// 団体戦のリーフ=チーム名らしさ。氏名と違い英数字/カタカナのみ(infinity, Rball, MPC＋, AMATAKUB,
+// TEAM大和B 等)も許容する。種目見出し/審判/ラウンド語や数字単独・記号のみは除外。
+const TEAM_HEADER_WORD = /(ダブルス|シングルス|チームカップ|^団体$|相互審判|^審判|初戦|決勝|準決|準々|回戦|ベスト|主催|主管|協賛|得点|会場|組合せ|組み合わせ)/;
+function looksLikeTeamName(s) {
+  if (!s) return false;
+  if (s.length < 1 || s.length > 30) return false;
+  if (isIntStr(s)) return false;
+  if (/^[\d\/\-:.\s（）()・,，]+$/.test(s)) return false;       // 数字/記号のみ
+  if (/\d/.test(s) && /[年月日時]/.test(s)) return false;        // 日付
+  if (TEAM_HEADER_WORD.test(s)) return false;                    // 種目/審判/ラウンド見出し
+  if (isRegionToken(s)) return false;
+  if (!/[A-Za-z0-9぀-ヿ一-鿿＋]/.test(s)) return false;          // 何らかの文字を含む
+  // 「姓 名」の個人名(空白区切り2語・各1-4字・チーム接尾辞なし)は団体リーフでなくメンバー名。
+  // 団体ブラケットの右ブロックで名簿の個人名が紛れ込むのを防ぐ。
+  if (/^[一-鿿ぁ-んァ-ヶ]{1,4}[\s　]+[一-鿿ぁ-んァ-ヶ]{1,5}$/.test(s) &&
+      !/中|校|クラブ|会|連合|倶楽部|TT|Club|チーム|ジオ/.test(s)) return false;
+  return true;
+}
+
 // 1シートから選手候補を抽出。
 // 戦略: seed番号(整数)セルをアンカーにし、左ブロックは [seed, 氏名, 所属, 地区]、
 //       右ブロックは [地区, 氏名, 所属, seed] という並びを「向き判定」で読む。
 //       これにより (所属)カッコ有り(男子)・無し(女子)・地区列の有無 を統一的に扱える。
-function extractSheet(ws, band) {
+function extractSheet(ws, band, nameTest) {
   if (!ws || !ws['!ref']) return [];
+  const isName = nameTest || looksLikeName;   // 団体戦は looksLikeTeamName を注入(英数字チーム名許容)
   const R = safeRange(ws);
   const rS = band ? Math.max(R.s.r, band.rStart) : R.s.r;   // セクション分割時の行帯
   const rE = band ? Math.min(R.e.r, band.rEnd) : R.e.r;
@@ -117,15 +137,15 @@ function extractSheet(ws, band) {
       // 固定オフセットだと右ブロックを丸ごと取りこぼすため、c-2→c-3 を順に探す。
       const rName = cellStr(ws, r, c + 1);
       let nameCol, name, team, region;
-      if (looksLikeName(rName)) {
+      if (isName(rName)) {
         nameCol = c + 1; name = rName;
         team = cleanTeam(cellStr(ws, r, c + 2));
         const reg = cellStr(ws, r, c + 3);
         region = isRegionToken(reg) ? reg : '';
       } else {
         let lc = -1;
-        if (looksLikeName(cellStr(ws, r, c - 2))) lc = c - 2;
-        else if (looksLikeName(cellStr(ws, r, c - 3))) lc = c - 3;
+        if (isName(cellStr(ws, r, c - 2))) lc = c - 2;
+        else if (isName(cellStr(ws, r, c - 3))) lc = c - 3;
         if (lc < 0) continue; // seed番号でない(スコア/年号など)
         nameCol = lc; name = cellStr(ws, r, lc);
         team = cleanTeam(cellStr(ws, r, c - 1));
@@ -343,7 +363,9 @@ function parseSeedList(filePath, opts = {}) {
   const skipDupSheet = (n) => /重複管理|検算|確認用|チェック/.test(n) && cleanBases.has(baseSheetName(n));
   // 1イベント分の seed-list を組み立てる(行帯 band 指定可)。失敗時は null。
   function buildEvent(ws, eventName, fmt, band) {
-    const players = (fmt === 'doubles') ? extractDoubles(ws, band) : extractSheet(ws, band);
+    const players = (fmt === 'doubles') ? extractDoubles(ws, band)
+      : (fmt === 'team') ? extractSheet(ws, band, looksLikeTeamName)
+        : extractSheet(ws, band);
     if (players.length < 2) return null; // ブラケットでない
     const withSeed = players.filter(p => p.seed != null).sort((x, y) => x.seed - y.seed);
     const noSeed = players.filter(p => p.seed == null).sort((x, y) => (x._r - y._r) || (x._c - y._c));
