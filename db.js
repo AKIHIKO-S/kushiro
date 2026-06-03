@@ -475,6 +475,12 @@ try {
   // スーパーシード(登場ラウンド): 上位選手の予選免除。1=1回戦から(既定), R=R回戦から登場。
   // 標準配置の生成時に 2^(entry_round-1) ラウンドぶん BYE 上がりにする。
   addECol("entry_round", "INTEGER DEFAULT 1");
+  // シード根拠の記録(説明責任): 誰が・何を根拠に・いつシードを付けたか。
+  // source 例: 'manual'(手動) / 'auto:blend'(Elo+成績の自動提案) / 'region_rep' / 'recommend'。
+  addECol("seed_source", "TEXT DEFAULT ''");
+  addECol("seed_reason", "TEXT DEFAULT ''");
+  addECol("seed_set_by", "TEXT DEFAULT ''");
+  addECol("seed_set_at", "TEXT DEFAULT ''");
   // Phase4残: 既存 entry_submissions に op_id 列を追加(コールド再送の replay 判定用)。
   // op_id を使う索引は、列が存在することを保証してからここで作る(新規DB/既存DBの双方で安全)。
   try {
@@ -5913,13 +5919,62 @@ function setEntrantStatus(entrantId, status) {
   return { ok: true, id: entrantId, status };
 }
 
-function setEntrantSeed(entrantId, seed) {
+function setEntrantSeed(entrantId, seed, opts) {
   const e = entrantStmts.get.get(entrantId);
   if (!e) return { error: "申込が見つかりません" };
   // 組番号は 0..9999 にクランプ(巨大値での bracketSize 爆発・打ち間違いを抑止。0=未設定)。
   const sd = Math.max(0, Math.min(9999, parseInt(seed) || 0));
   entrantStmts.setSeedById.run(sd, entrantId);
+  // シード根拠を記録(説明責任)。opts 未指定なら 'manual' として最小限残す。
+  if (opts) {
+    sqlite.prepare(
+      "UPDATE entrants SET seed_source=?, seed_reason=?, seed_set_by=?, seed_set_at=datetime('now','localtime') WHERE id=?"
+    ).run(String(opts.source || "manual"), String(opts.reason || ""), String(opts.by || ""), entrantId);
+  }
   return { ok: true, id: entrantId, seed: sd };
+}
+
+// シード自動提案: confirmed entrants を選手DB(Elo rating + 過去成績 achievements)に照合し、
+// 客観スコア順にシード候補を提案する。自動確定はせず、運営が根拠を見て人手で採否を決める前提。
+// by: 'elo' | 'achievements' | 'blend'(既定)。
+function suggestSeeds(tournamentId, event, opts) {
+  opts = opts || {};
+  const by = opts.by === "elo" ? "elo" : opts.by === "achievements" ? "achievements" : "blend";
+  const nowYear = new Date().getFullYear();
+  const achStmt = sqlite.prepare("SELECT place, year FROM achievements WHERE player_id=?");
+  const achScoreOf = (pid) => {
+    let s = 0;
+    for (const a of achStmt.all(pid)) {
+      const w = a.place === 1 ? 150 : a.place === 2 ? 80 : a.place === 3 ? 40 : a.place <= 8 ? 15 : 0;
+      const decay = Math.max(0, 1 - 0.25 * Math.max(0, nowYear - (parseInt(a.year) || nowYear)));
+      s += w * decay;
+    }
+    return Math.round(s);
+  };
+  const entrants = entrantStmts.listByEvent.all(tournamentId, event)
+    .filter(e => (e.status || "confirmed") === "confirmed");
+  const rows = entrants.map(e => {
+    const p = findPlayerByName(e.name || e.display_name, e.team);
+    const rating = p ? (parseInt(p.rating) || 1500) : null;
+    const ach = p ? achScoreOf(p.id) : 0;
+    let score = null;
+    if (p) {
+      if (by === "elo") score = rating;
+      else if (by === "achievements") score = ach;
+      else score = rating + ach;          // blend
+    }
+    const basis = p
+      ? [`R${rating}`, ach > 0 ? `成績${ach}pt` : ""].filter(Boolean).join("・")
+      : "選手DB未照合";
+    return { entrant_id: e.id, name: e.display_name || e.name, team: e.team || "", player_id: p ? p.id : null,
+      rating, ach_score: ach, score, basis };
+  });
+  // 照合できた(score!=null)ものをスコア降順 → suggested_seed 1.. を付与。未照合は seed 0(末尾)。
+  const matched = rows.filter(r => r.score != null).sort((a, b) => b.score - a.score);
+  matched.forEach((r, i) => { r.suggested_seed = i + 1; });
+  rows.filter(r => r.score == null).forEach(r => { r.suggested_seed = 0; });
+  const ordered = matched.concat(rows.filter(r => r.score == null));
+  return { by, event, count: rows.length, matched: matched.length, suggestions: ordered };
 }
 
 // スーパーシード: 登場ラウンド(entry_round)を設定。1=1回戦から(既定)、R=R回戦から登場。
@@ -7389,7 +7444,7 @@ module.exports = {
   createManualMatch, getPlayerMatchesForEdit,
   // 申込
   createEntry, createTeamEntry, getEntries,
-  setEntrantStatus, setEntrantSeed, setEntrantEntryRound,
+  setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
   getSubmissionByToken, deleteSubmissionPII, purgeOldSubmissionPII,
   findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,

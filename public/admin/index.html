@@ -7220,6 +7220,9 @@ const O = {
 
  const toolbar = h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", margin: "8px 0" } },
    h("button", { className: "btn btn-sm btn-ok", onClick: () => O.openAddMatch(sel) }, "＋ 対戦を追加"),
+   h("button", { className: "btn btn-sm", style: { background: "#a16207", color: "#fff" },
+     title: "シードを選手DB(Elo+過去成績)から客観スコア順に提案。根拠を見て人手で採否・順位を決めて一括設定。抽選の前に。",
+     onClick: () => O.openSeedSuggest(sel) }, "🏅 シード提案"),
    h("button", { className: "btn btn-sm", style: { background: "#1a7a45", color: "#fff" },
      title: "個人戦をシード固定＋ランダム抽選でトーナメント表を作成。シードは申込管理で指定した番号順に標準位置へ固定し、残りを抽選(同一所属を分散)。",
      onClick: () => O.openDrawBracket(sel) }, "🎲 抽選ドロー"),
@@ -8338,6 +8341,72 @@ const O = {
    if (O._vbReload) O._vbReload(); if (O.reload) O.reload();
  };
  inp.click();
+ },
+
+ // ── シード自動提案: 選手DB(Elo+過去成績)から客観スコア順に提案→人手で採否・順位を調整して一括set ──
+ async openSeedSuggest(event) {
+ const ev = (O._eventConfig() || []).find(c => c && c.name === event);
+ if (ev && ev.type === "team") return toast("団体種目は対象外です", "err");
+ const tid = O.tournamentId;
+ let by = "blend", data = null;
+ const state = {};   // entrant_id -> seed
+ const tableWrap = h("div", { style: { maxHeight: "44vh", overflowY: "auto", marginTop: "8px" } });
+ const byBtns = h("div", { className: "flex gap-1" });
+ const nSeedInput = h("input", { type: "number", className: "input", style: { width: "64px" }, value: "8", min: 0, max: 64 });
+ const setBy = h("input", { className: "input", placeholder: "実施者名", style: { maxWidth: "160px" } });
+ const applyTopN = () => {
+   const n = Math.max(0, parseInt(nSeedInput.value) || 0);
+   (data.suggestions || []).forEach(s => { state[s.entrant_id] = (s.suggested_seed >= 1 && s.suggested_seed <= n) ? s.suggested_seed : 0; });
+ };
+ const render = () => {
+   clear(tableWrap);
+   if (!data) { tableWrap.appendChild(h("div", { className: "text-sub", style: { padding: "10px" } }, "読込中…")); return; }
+   tableWrap.appendChild(h("div", { className: "text-xs", style: { marginBottom: "6px" } },
+     `選手DB照合: ${data.matched}/${data.count}名(未照合は提案対象外)。根拠を見て採否・順位を人手で調整してください。`));
+   const tbl = h("table", { className: "tbl", style: { fontSize: "12px", width: "100%" } });
+   tbl.appendChild(h("thead", {}, h("tr", {}, h("th", {}, "提案"), h("th", {}, "シード"), h("th", {}, "氏名"), h("th", {}, "所属"), h("th", {}, "R"), h("th", {}, "成績"), h("th", {}, "根拠"))));
+   const tb = h("tbody", {});
+   (data.suggestions || []).forEach((s, i) => tb.appendChild(h("tr", {},
+     h("td", { style: { color: "#94a3b8" } }, s.score != null ? (i + 1) : "—"),
+     h("td", {}, h("input", { type: "number", className: "input-sm", style: { width: "54px" }, value: String(state[s.entrant_id] || 0), min: 0, max: 64,
+       onChange: (e) => { state[s.entrant_id] = Math.max(0, parseInt(e.target.value) || 0); } })),
+     h("td", { className: "font-bold" }, s.name),
+     h("td", {}, s.team || ""),
+     h("td", {}, s.rating != null ? String(s.rating) : "—"),
+     h("td", {}, s.ach_score > 0 ? (s.ach_score + "pt") : "—"),
+     h("td", { className: "text-sub" }, s.basis))));
+   tbl.appendChild(tb); tableWrap.appendChild(tbl);
+ };
+ const load = async () => {
+   data = await api.get(`/api/tournaments/${tid}/seed-suggestions?event=${encodeURIComponent(event)}&by=${by}`);
+   if (!data || data.error) { data = null; return toast((data && data.error) || "取得失敗", "err"); }
+   applyTopN(); render();
+ };
+ const renderBy = () => { clear(byBtns); [["blend", "Elo＋成績"], ["elo", "Eloのみ"], ["achievements", "成績のみ"]].forEach(([v, l]) =>
+   byBtns.appendChild(h("button", { className: "btn btn-sm" + (by === v ? "" : " btn-ghost"), onClick: () => { by = v; renderBy(); load(); } }, l))); };
+ renderBy();
+ const apply = async () => {
+   const assignments = Object.keys(state).map(eid => ({ entrant_id: eid, seed: state[eid],
+     reason: ((data.suggestions || []).find(s => s.entrant_id === eid) || {}).basis || "" })).filter(a => a.seed >= 1);
+   if (!assignments.length) return toast("シードを1人以上設定してください", "err");
+   if (!setBy.value.trim()) { setBy.focus(); return toast("実施者名を入力してください", "err"); }
+   const r = await api.post(`/api/tournaments/${tid}/seed-suggestions/apply`, { assignments, by, set_by: setBy.value.trim() });
+   if (!r || r.error) return toast((r && r.error) || "適用失敗", "err");
+   toast(`シードを${r.applied}件設定しました`, "ok");
+   document.querySelector(".modal-bg")?.remove();
+   if (O.reload) O.reload();
+ };
+ const body = h("div", {},
+   h("div", { className: "text-sm" }, `「${event}」のシードを選手DB(Elo＋過去成績)から提案します。自動確定はしません(人手で採否・順位を決定)。`),
+   h("div", { className: "flex gap-2", style: { alignItems: "center", marginTop: "6px", flexWrap: "wrap" } },
+     h("span", { className: "text-xs" }, "根拠:"), byBtns,
+     h("span", { className: "text-xs" }, "シード数:"), nSeedInput,
+     h("button", { className: "btn btn-sm btn-ghost", onClick: () => { applyTopN(); render(); } }, "上位に反映")),
+   tableWrap,
+   h("div", { className: "flex gap-2", style: { alignItems: "center", marginTop: "8px" } },
+     h("span", { className: "text-xs", style: { fontWeight: 700 } }, "実施者名:"), setBy));
+ openModal("🏅 シード自動提案（" + event + "）", body, h("button", { className: "btn btn-ok", onClick: apply }, "この内容でシードを設定"));
+ load();
  },
 
  // ── 釧路リーグ: 部別(division)振り分け(前回順位→昇降格提案→手動調整→生成) ──

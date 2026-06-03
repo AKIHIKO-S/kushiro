@@ -1466,6 +1466,26 @@ app.get("/api/tournaments/:id/bracket/draw-diff", requireAdmin, (req, res) => {
   if (!event) return res.status(400).json({ error: "event が必要です" });
   res.json(db.getBracketDrawDiff(req.params.id, event));
 });
+// シード自動提案(Elo rating + 過去成績 achievements → 客観スコア順の候補)。?event=&by=blend|elo|achievements
+app.get("/api/tournaments/:id/seed-suggestions", requireAdmin, (req, res) => {
+  const event = req.query.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  res.json(db.suggestSeeds(req.params.id, event, { by: req.query.by }));
+});
+// 提案を人手確認のうえ一括適用(自動確定はしない)。body: { assignments:[{entrant_id,seed,reason}], by, set_by }
+app.post("/api/tournaments/:id/seed-suggestions/apply", requireAdmin, (req, res) => {
+  const assignments = req.body?.assignments;
+  if (!Array.isArray(assignments)) return res.status(400).json({ error: "assignments が必要です" });
+  const source = "auto:" + (req.body?.by || "blend");
+  const setBy = String(req.body?.set_by || "").trim();
+  let applied = 0;
+  for (const a of assignments) {
+    if (!a || !a.entrant_id) continue;
+    db.setEntrantSeed(a.entrant_id, a.seed, { source, reason: a.reason || "", by: setBy });
+    applied++;
+  }
+  res.json({ ok: true, applied });
+});
 // 団体リーグ(総当たり)を生成。body: { event, num_blocks?, assignments?, regenerate?, force? }
 app.post("/api/tournaments/:id/league/generate", requireAdmin, (req, res) => {
   const event = req.body?.event;
