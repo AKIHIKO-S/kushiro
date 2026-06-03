@@ -49,7 +49,12 @@ standalone/  オフライン単機運用ラッパ (start.command/.bat)
 ## コア進行ロジック (db.js) — 触るとき要注意
 
 - `generateBracket(tid, event, opts)` (~2429): seed昇順→furigana順、2の累乗にBYE埋め、標準シード配置 or `as_drawn`(取込番号維持)。BYEは即完了→`autoAdvanceByes`で連鎖進行。`opts.fixedLeaves`(リーフ配列)を渡すと配置ロジックを全て飛ばしてその並びを round1 に固定する(抽選ドローが使う。seed=シードランクは非破壊)。
-- `drawSingleBracket(tid, event, opts)` + `computeDrawLeaves(entrants,size,rng,opts)`: **抽選ドロー**(個人戦)。for_mac.xls マクロ(KUJI2)の本質を縮約=①シードを標準位置に固定 ②非シードを seedable RNG(`lib/rng.js` mulberry32)でシャッフル→**大所属先(most-constrained-first)**で分散スコア(`_drawConflictScore`)最小の空き枠へ配置(同点はRNG一様) ③**R1同所属の swap修復**(種・BYE不動、別所属同士の入替で1回戦の同一所属/地区対戦を分離可能なら0件に) ④`generateBracket({fixedLeaves})`で凍結。BYEは標準位置のランク>Nの枠=上位シードに付与。`draw_seed`を返し**同種=同配置を再現**。`opts.separate_by`='team'(既定)|'region'|'none'。回帰: `test/bracket-draw.test.js`(不均衡だが分離可能な分布もR1同所属0件を断定)。API `POST /bracket/draw`。
+- `drawSingleBracket(tid, event, opts)` + `computeDrawLeaves(entrants,size,rng,opts)`: **抽選ドロー**(個人戦)。for_mac.xls マクロ(KUJI2)の本質を縮約=①シードを標準位置に固定 ②非シードを seedable RNG(`lib/rng.js` mulberry32)でシャッフル→**大所属先(most-constrained-first)**で分散スコア(`_drawConflictScore`)最小の空き枠へ配置(同点はRNG一様) ③**R1同所属の swap修復**(種・BYE不動、別所属同士の入替で1回戦の同一所属/地区対戦を分離可能なら0件に) ④`generateBracket({fixedLeaves})`で凍結。BYEは標準位置のランク>Nの枠=上位シードに付与。`draw_seed`を返し**同種=同配置を再現**。`opts.separate_by`='team'(既定)|'region'|'none'。回帰: `test/bracket-draw.test.js`(不均衡だが分離可能な分布もR1同所属0件を断定)。
+  - **再現性の前提**: 抽選入力は `id` で決定的整列してから渡す(listByEvent の seed,surname は同姓・seed同値で物理順依存=再現が崩れるため)。
+  - **プロセス化(Tier1)**: `checkDrawReadiness`(事前ポカヨケ)→`opts.preview`(dry_run・DB非書込)→確定で `draw_log` に一次記録(誰=drawn_by/種/名簿snapshot+hash/leaves hash、引き直しは superseded 連鎖で全試行保持)→`undoDraw`(抽選専用Undo・op_log非依存)。確定APIは `drawn_by` 必須(単一ADMIN_KEY対策の最小の説明責任)。
+  - **Excel往復**: `reports.buildBracketXlsx` は機械可読の隠し `_import` シートを併設し、`db.importBracketRoundtrip`(`POST /bracket/import-xlsx`)が手修正後の表を entrant 非消失・位置差分で正本化(往復ループを閉じる)。
+  - **オフライン縮退**: 抽選→Excel経路は外部依存ゼロ=standalone単機で名簿→抽選→Excelまで完結(`test/offline-draw.test.js` がネット遮断下で保証)。
+  - API: `POST /bracket/draw`(preview/drawn_by) `GET /bracket/draw-readiness` `POST /bracket/undo-draw` `GET /bracket/draw-log` `GET /bracket/export.xlsx` `POST /bracket/import-xlsx`。回帰: `draw-audit`/`bracket-xlsx`/`bracket-roundtrip`/`offline-draw`。
 - `finishMatchInternal(matchId, data)` (~2761): 勝者判定→冪等ガード→セット集計→**Eloは両者IDありかつ非BYEのときのみ更新**(`calcElo` K=32, 基準1500, db.js:527)→`advanceWinnerInline`で次戦へ。
 - `correctResult` (~2891): 確定済み結果の修正。勝者反転→次戦クリア→再進出を1トランザクション。
 - 優先度ロック: 種目優先(団体>混合>ダブルス>シングルス)/審判担当中/対戦中で呼出を拒否、`force`で強制。
