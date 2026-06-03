@@ -3214,8 +3214,13 @@ function drawSingleBracket(tournamentId, event, opts) {
   if (!event) return { error: "event(種目)が必要です" };
 
   // 承認済(confirmed)の出場者のみを抽選対象にする(generateBracket と同方針)。
+  // ★再現性の前提保証: 抽選入力は安定キー(id)で決定的にソートしてから渡す。
+  //   listByEvent の ORDER BY は seed,surname で、同姓・seed同値(=0)だと SQLite の物理行順に
+  //   依存し『同じ draw_seed でも並びが変わる』(=再現性が静かに破綻)。非シードは入力配列順を
+  //   種に基づきシャッフルするため、入力順が一意に定まっていないと再現できない。idで全順序化する。
   const entrants = entrantStmts.listByEvent.all(tournamentId, event)
-    .filter(e => (e.status || "confirmed") === "confirmed");
+    .filter(e => (e.status || "confirmed") === "confirmed")
+    .sort((a, b) => (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0));
   if (entrants.length < 2) {
     return { error: "承認済みの出場選手が2人未満です。申込管理で承認してから抽選してください。", count: entrants.length };
   }

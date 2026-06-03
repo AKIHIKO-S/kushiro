@@ -116,6 +116,34 @@ test("分散より配置可能性を優先(所属が偏っても全員配置)", 
   assert.strictEqual(new Set(leaves.filter(Boolean).map(e => e.id)).size, 16, "重複なし");
 });
 
+test("再現性の土台: id整列すれば入力の物理順に依存せず同一配置", () => {
+  // 旧バグ: listByEvent は ORDER BY seed,surname。同姓・seed=0 だと SQLite 物理順に依存し、
+  // 同じ draw_seed でも並びが変わりうる(=『同種=同並び』が静かに破綻)。drawSingleBracket は
+  // id で全順序化してから抽選するため物理順非依存になる。それを純関数レベルで証明する。
+  const base = [];
+  for (let i = 1; i <= 8; i++) base.push({ id: "e" + i, display_name: "佐藤 " + i, seed: 0, team: "ク" + (i % 3) });
+  const byId = (arr) => [...arr].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+  const idsOf = (arr) => db.computeDrawLeaves(byId(arr), 8, mulberry32(99), { separateBy: "team" }).leaves.map(e => (e ? e.id : null));
+  const order1 = idsOf(base);
+  const order2 = idsOf([...base].reverse());   // 別の物理順を模す
+  assert.deepStrictEqual(order2, order1, "id整列後は入力順に依存せず同一");
+});
+
+test("再現性: 同姓・seed=0だらけでも同じ draw_seed で同一配置(物理順非依存)", () => {
+  const t = db.createTournament({ name: "同姓再現" + (++_seq), date: "2027-03-03" });
+  db.updateEntrySettings(t.id, { entries_open: 1, event_config: [{ name: EV, type: "singles", fee: 0 }] });
+  const entries = [];
+  for (let i = 1; i <= 8; i++) entries.push({ event: EV, type: "singles", name: "佐藤 " + i, team: "ク" + (i % 3) });
+  db.createTeamEntry(t.id, { team_name: "X", contact_name: "x", contact_email: "x@y.jp", entries });
+  db.drawSingleBracket(t.id, EV, { draw_seed: 99 });
+  const s1 = db.getMatchesByTournament(t.id).filter(m => m.event === EV && m.bracket_round === 1)
+    .sort((a, b) => a.bracket_pos - b.bracket_pos).map(m => [m.player1_name, m.player2_name]);
+  db.drawSingleBracket(t.id, EV, { draw_seed: 99, force: true });
+  const s2 = db.getMatchesByTournament(t.id).filter(m => m.event === EV && m.bracket_round === 1)
+    .sort((a, b) => a.bracket_pos - b.bracket_pos).map(m => [m.player1_name, m.player2_name]);
+  assert.deepStrictEqual(s2, s1, "同姓だらけでも同種=同配置");
+});
+
 test("draw_seed 再現性: 同じ種なら完全一致・違えば変わる", () => {
   const list = ents(24, (i) => (i <= 6 ? i : 0), (i) => "C" + (i % 5));
   const idsOf = (seed) => db.computeDrawLeaves(list, 32, mulberry32(seed), { separateBy: "team" })
