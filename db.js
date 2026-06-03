@@ -3286,6 +3286,53 @@ function getLeagueMatchResults(tournamentId, event, block) {
     });
 }
 
+// ════════════════════════════════════════════════════════════════════
+// 釧路リーグ — 部別(division)の昇降格振り分け提案(前回大会の各部順位→今回の部)
+// ════════════════════════════════════════════════════════════════════
+// 前回大会の団体リーグ各部(league_block=部番号)の順位から、今回の部を提案する。
+// ルール: 1..promote_top位 → 1つ上の部(昇格)、relegate_from位以上 → 1つ下の部(降格)、その間 → 残留。
+// 前回チーム名で今回エントラントを正規化照合。前回結果が無いチームは status:"new"(提案なし=運営が手動指定)。
+// ※提案はあくまで素のルール値。退会・新規・定員(5〜6)の調整は運営が UI 上で手動で行う前提。
+function computePromotionSuggestion(prevTournamentId, prevEvent, currentEntrants, opts = {}) {
+  const promoteTop = parseInt(opts.promote_top) || 2;
+  const relegateFrom = parseInt(opts.relegate_from) || 4;
+  const norm = (s) => String(s || "").replace(/[\s　・,，.．]/g, "").toLowerCase();
+  const prevStandings = computeLeagueStandings(prevTournamentId, prevEvent); // {block: [teams]}
+  const prevByName = {};
+  let maxDiv = 1;
+  Object.entries(prevStandings || {}).forEach(([block, teams]) => {
+    const div = parseInt(block);
+    if (!Number.isFinite(div) || div < 1) return; // 部番号(数値)でないブロックは対象外
+    maxDiv = Math.max(maxDiv, div);
+    (teams || []).forEach(t => { prevByName[norm(t.team_name)] = { division: div, rank: t.rank, played: t.played }; });
+  });
+  const suggestions = (currentEntrants || []).map(e => {
+    const name = e.team || e.name || "";
+    const prev = prevByName[norm(name)];
+    if (!prev || !prev.division) {
+      return { entrant_id: e.id, team_name: name, status: "new",
+        prev_division: null, prev_rank: null, suggested_division: null, move: null };
+    }
+    let sd = prev.division, move = "stay";
+    if (prev.rank <= promoteTop && prev.division > 1) { sd = prev.division - 1; move = "promote"; }
+    else if (prev.rank >= relegateFrom) { sd = Math.min(maxDiv, prev.division + 1); move = (sd > prev.division ? "relegate" : "stay"); }
+    return { entrant_id: e.id, team_name: name, status: "returning",
+      prev_division: prev.division, prev_rank: prev.rank, suggested_division: String(sd), move };
+  });
+  // 前回参加で今回エントリが見当たらないチーム(退会の可能性)= 部の空き要因として参考提示
+  const currentNames = new Set((currentEntrants || []).map(e => norm(e.team || e.name)));
+  const missing = Object.entries(prevByName)
+    .filter(([k]) => !currentNames.has(k))
+    .map(([, v]) => v);
+  return {
+    max_division: maxDiv, promote_top: promoteTop, relegate_from: relegateFrom,
+    suggestions,
+    missing_count: missing.length,
+    returning_count: suggestions.filter(s => s.status === "returning").length,
+    new_count: suggestions.filter(s => s.status === "new").length,
+  };
+}
+
 // 次の試合へ勝者をセット（次の試合の player1 or player2 を埋める）
 function advanceWinnerInline(nextMatchId, slot, player) {
   const nm = stmts.getMatch.get(nextMatchId);
@@ -6829,7 +6876,7 @@ module.exports = {
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
   generateBracket, autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
-  generateTeamLeague, computeLeagueStandings, getLeagueMatchResults, summarizeTie,
+  generateTeamLeague, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
   setCallCount, bumpCallCount,
   getPlayerRefereeLock, getPlayerPlayingLock,

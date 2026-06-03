@@ -254,3 +254,41 @@ test("walkover(対戦まるごと不戦勝)はセット率/得点率の集計か
   assert.strictEqual(A.pts_won, 29, "A vs B の得点のみ(11+11+7=29)");
   assert.strictEqual(A.wins, 1, "walkover も勝敗には数えない方針なら... A vs B の1勝");
 });
+
+test("釧路リーグ: 前回順位から昇降格を提案(1-2位昇格/3位残留/4位降格/新規new/最上位最下位クランプ)", () => {
+  // 前回大会: 2部制。1部=[A,B,C,D], 2部=[E,F,G,H]。各部で総当たり→強い順に順位確定。
+  const prev = db.createTournament({ name: "前回", date: "2027-01-01" });
+  db.updateEntrySettings(prev.id, { entries_open: 1, event_config: [{ name: EV, type: "team", fee: 0, tie_format: "S,S,D" }] });
+  const d1 = ["A", "B", "C", "D"], d2 = ["E", "F", "G", "H"];
+  [...d1, ...d2].forEach((nm, i) => db.createEntrant({ tournament_id: prev.id, event: EV, name: nm, team: nm, seed: i + 1, status: "confirmed" }));
+  const pe = db.getEntrants(prev.id, EV), pid = (nm) => pe.find(e => e.team === nm).id;
+  const assignments = {}; d1.forEach(nm => assignments[pid(nm)] = "1"); d2.forEach(nm => assignments[pid(nm)] = "2");
+  db.generateTeamLeague(prev.id, EV, { assignments });
+  const str = { A: 4, B: 3, C: 2, D: 1, E: 4, F: 3, G: 2, H: 1 };
+  db.getMatchesByTournament(prev.id).filter(m => m.league_block).forEach(m => {
+    const strong = str[m.player1_name] > str[m.player2_name] ? m.player1_name : m.player2_name;
+    recAB(m, strong, [[true, [[11, 2]]], [true, [[11, 3]]], [true, [[11, 4]]]]); // 強い方が3-0
+  });
+  assert.deepStrictEqual(db.computeLeagueStandings(prev.id, EV, "1").map(s => s.team_name), ["A", "B", "C", "D"], "1部 A>B>C>D");
+  assert.deepStrictEqual(db.computeLeagueStandings(prev.id, EV, "2").map(s => s.team_name), ["E", "F", "G", "H"], "2部 E>F>G>H");
+
+  // 今回大会: 同チーム + 新規 I
+  const cur = db.createTournament({ name: "今回", date: "2027-02-01" });
+  db.updateEntrySettings(cur.id, { entries_open: 1, event_config: [{ name: EV, type: "team", fee: 0, tie_format: "S,S,D" }] });
+  [...d1, ...d2, "I"].forEach((nm, i) => db.createEntrant({ tournament_id: cur.id, event: EV, name: nm, team: nm, seed: i + 1, status: "confirmed" }));
+  const sug = db.computePromotionSuggestion(prev.id, EV, db.getEntrants(cur.id, EV));
+  const bt = {}; sug.suggestions.forEach(s => bt[s.team_name] = s);
+  assert.strictEqual(sug.max_division, 2, "前回は2部制");
+  assert.strictEqual(bt["A"].suggested_division, "1", "1部1位→残留(最上位クランプ)");
+  assert.strictEqual(bt["B"].suggested_division, "1", "1部2位→残留(最上位)");
+  assert.strictEqual(bt["C"].suggested_division, "1", "1部3位→残留");
+  assert.strictEqual(bt["D"].suggested_division, "2", "1部4位→降格");
+  assert.strictEqual(bt["E"].suggested_division, "1", "2部1位→昇格");
+  assert.strictEqual(bt["F"].suggested_division, "1", "2部2位→昇格");
+  assert.strictEqual(bt["G"].suggested_division, "2", "2部3位→残留");
+  assert.strictEqual(bt["H"].suggested_division, "2", "2部4位→降格(最下位クランプで残留)");
+  assert.strictEqual(bt["I"].status, "new", "新規はnew");
+  assert.strictEqual(bt["I"].suggested_division, null, "新規は提案なし");
+  assert.strictEqual(sug.new_count, 1, "新規1");
+  assert.strictEqual(sug.returning_count, 8, "復帰8");
+});

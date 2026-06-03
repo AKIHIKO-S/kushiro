@@ -1433,6 +1433,28 @@ app.post("/api/tournaments/:id/league/generate", requireAdmin, (req, res) => {
   if (r?.error) return res.status(400).json(r);
   res.json(r);
 });
+// 釧路リーグ: 前回大会の各部順位から今回の部を提案(運営限定)。
+// ?prev=<前回大会id>&prev_event=<前回の団体種目名>&event=<今回の団体種目名>&promote_top=&relegate_from=
+app.get("/api/tournaments/:id/league/promotion-suggest", requireAdmin, (req, res) => {
+  const event = req.query.event;
+  const prev = req.query.prev;
+  const prevEvent = req.query.prev_event || event;
+  if (!event) return res.status(400).json({ error: "event(今回の団体種目)が必要です" });
+  if (!prev) return res.status(400).json({ error: "prev(前回大会id)が必要です" });
+  const currentEntrants = db.getEntrants(req.params.id, event) || [];
+  const r = db.computePromotionSuggestion(prev, prevEvent, currentEntrants,
+    { promote_top: req.query.promote_top, relegate_from: req.query.relegate_from });
+  res.json({ event, prev, prev_event: prevEvent, ...r });
+});
+// 過去の団体リーグ大会一覧(前回大会の選択用・運営限定)。当大会自身は除外。
+app.get("/api/tournaments/:id/league/previous-candidates", requireAdmin, (req, res) => {
+  const cur = req.params.id;
+  const list = (db.getTournaments() || [])
+    .filter(t => t.id !== cur)
+    .map(t => ({ id: t.id, name: t.name, date: t.date }))
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  res.json(list);
+});
 // 団体リーグの順位表+対戦結果(公開・PIIなし)。?event=&block= 。block 省略で全ブロック。
 app.get("/api/public/tournaments/:id/standings", (req, res) => {
   const event = req.query.event;
