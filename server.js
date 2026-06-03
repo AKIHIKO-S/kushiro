@@ -1426,12 +1426,14 @@ app.post("/api/tournaments/:id/league/generate", requireAdmin, (req, res) => {
   if (r?.error) return res.status(400).json(r);
   res.json(r);
 });
-// 団体リーグの順位表(公開・PIIなし)。?event=&block= 。block 省略で全ブロック。
+// 団体リーグの順位表+対戦結果(公開・PIIなし)。?event=&block= 。block 省略で全ブロック。
 app.get("/api/public/tournaments/:id/standings", (req, res) => {
   const event = req.query.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
-  res.json({ event, block: req.query.block || null,
-    standings: db.computeLeagueStandings(req.params.id, event, req.query.block || undefined) });
+  const block = req.query.block || undefined;
+  res.json({ event, block: block || null,
+    standings: db.computeLeagueStandings(req.params.id, event, block),
+    matches: db.getLeagueMatchResults(req.params.id, event, block) });
 });
 app.put("/api/entrants/:id", requireAdmin, (req, res) => {
   const e = db.updateEntrant(req.params.id, req.body || {});

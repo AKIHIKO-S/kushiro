@@ -3198,6 +3198,29 @@ function computeLeagueStandings(tournamentId, event, block) {
   return block ? (result[block] || []) : result;
 }
 
+// 団体リーグの対戦結果一覧(星取表/交差表の描画用)。完了対戦は home/away のセット・得点・勝敗を含む。
+function getLeagueMatchResults(tournamentId, event, block) {
+  const where = block ? "tournament_id=? AND event=? AND league_block=?"
+    : "tournament_id=? AND event=? AND league_block!=''";
+  const args = block ? [tournamentId, event, block] : [tournamentId, event];
+  return sqlite.prepare(`SELECT * FROM matches WHERE ${where} ORDER BY league_block, league_round, bracket_pos`)
+    .all(...args).map(m => {
+      const done = m.status === "completed" && !m.is_walkover;
+      const sum = done ? summarizeTie(_parseTieResults(m.tie_results)) : null;
+      const p1won = done && !!m.winner_name && m.winner_name === m.player1_name && m.winner_name !== m.player2_name;
+      const winner = done ? ((sum.winner === "home" || p1won) ? "p1" : (sum.winner === "away" || (!!m.winner_name && m.winner_name === m.player2_name)) ? "p2" : "") : "";
+      return {
+        id: m.id, block: m.league_block, round: m.league_round, label: m.match_label, status: m.status, done,
+        p1_id: m.player1_entrant_id, p1_name: m.player1_name, p2_id: m.player2_entrant_id, p2_name: m.player2_name,
+        winner, team_score: done ? (Math.max(sum.home_wins, sum.away_wins) + "-" + Math.min(sum.home_wins, sum.away_wins)) : "",
+        p1_wins: sum ? sum.home_wins : 0, p2_wins: sum ? sum.away_wins : 0,
+        p1_sets: sum ? sum.home_sets : 0, p2_sets: sum ? sum.away_sets : 0,
+        p1_pts: sum ? sum.home_pts : 0, p2_pts: sum ? sum.away_pts : 0,
+        tie_results: sum ? sum.slots : [],
+      };
+    });
+}
+
 // 次の試合へ勝者をセット（次の試合の player1 or player2 を埋める）
 function advanceWinnerInline(nextMatchId, slot, player) {
   const nm = stmts.getMatch.get(nextMatchId);
@@ -6739,7 +6762,7 @@ module.exports = {
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
   generateBracket, autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
-  generateTeamLeague, computeLeagueStandings, summarizeTie,
+  generateTeamLeague, computeLeagueStandings, getLeagueMatchResults, summarizeTie,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
   setCallCount, bumpCallCount,
   getPlayerRefereeLock, getPlayerPlayingLock,

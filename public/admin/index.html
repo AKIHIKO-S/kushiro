@@ -7194,6 +7194,23 @@ const O = {
 
  const load = async () => {
    area.innerHTML = "読込中…";
+   // 団体リーグ(総当たり)なら星取表(順位＋交差表)を描画
+   const evCfg = (O._eventConfig() || []).find(c => c && c.name === sel);
+   if (evCfg && evCfg.type === "team") {
+     try {
+       const sd = await api.get(`/api/public/tournaments/${O.tournamentId}/standings?event=` + encodeURIComponent(sel));
+       const blocks = sd && sd.standings;
+       const has = blocks && (Array.isArray(blocks) ? blocks.length : Object.keys(blocks).length);
+       if (has) {
+         area.innerHTML = "";
+         const byBlock = Array.isArray(blocks) ? { "": blocks } : blocks;
+         Object.keys(byBlock).sort().forEach(bk => {
+           area.appendChild(TT.leagueTableEl(bk, byBlock[bk], (sd.matches || []).filter(m => m.block === bk)));
+         });
+         applyZoom(); lastSig = sigOf(); return;
+       }
+     } catch (e) { /* リーグ未生成ならブラケット描画にフォールバック */ }
+   }
    try {
      const bdata = await api.get(`/api/tournaments/${O.tournamentId}/bracket/export?event=` +
        encodeURIComponent(sel));
@@ -7228,6 +7245,9 @@ const O = {
 
  const toolbar = h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", margin: "8px 0" } },
    h("button", { className: "btn btn-sm btn-ok", onClick: () => O.openAddMatch(sel) }, "＋ 対戦を追加"),
+   h("button", { className: "btn btn-sm", style: { background: "#0e8fa3", color: "#fff" },
+     title: "団体種目を総当たり(リーグ)で生成。各ブロックで全チームが対戦し、勝敗→セット率→得点率で順位。",
+     onClick: () => O.openLeagueGen(sel) }, "リーグ生成"),
    h("div", { className: "flex", style: { alignItems: "center", gap: "2px" } },
      h("button", { className: "btn btn-sm btn-ghost", title: "縮小",
        onClick: () => { zoom = Math.max(0.4, Math.round((zoom - 0.1) * 10) / 10); applyZoom(); } }, "−"),
@@ -8167,16 +8187,43 @@ const O = {
  return /団体|チーム/.test((m && m.event) || "") ? { name: m.event, type: "team", tie_format: "" } : null;
  },
 
+ // ── 団体リーグ(総当たり)を生成 ──
+ async openLeagueGen(event) {
+ const ev = (O._eventConfig() || []).find(c => c && c.name === event);
+ if (!ev || ev.type !== "team") return toast("団体種目を選んでから「リーグ生成」を押してください", "err");
+ const teamCnt = ((O.state && O.state.event_stats && O.state.event_stats[event]) || {}).entrants;
+ const nbStr = prompt(
+   "「" + event + "」を総当たりリーグで生成します。\nブロック数を入力してください(1=全チームで1リーグ。複数なら各ブロックで総当たり)。" +
+   (teamCnt ? "\n登録チーム数: 約" + teamCnt : ""), "1");
+ if (nbStr == null) return;
+ const num_blocks = Math.max(1, parseInt(nbStr) || 1);
+ if (!confirm("リーグを生成します。既存のこの種目のリーグ対戦は作り直されます。よろしいですか？")) return;
+ const r = await api.post(`/api/tournaments/${O.tournamentId}/league/generate`, { event, num_blocks, regenerate: true });
+ if (r.error) return toast(r.error, "err");
+ toast(`リーグ生成: ${r.blocks}ブロック・${r.total_matches}対戦`, "ok");
+ if (O._vbReload) O._vbReload();
+ if (O.reload) O.reload();
+ },
+
  // ── 団体戦(tie)の結果入力 ──
  // 各個別試合の勝者(home/away)を入力 → チームスコアを集計。フォーマット未設定なら直接スコア入力。
  // winner_slot + winner_sets/loser_sets(=勝った試合数) + tie_results(内訳) を通常 /finish に送る。
  openTeamResultInput(m, ev) {
  const home = m.player1_name || "ホーム", away = m.player2_name || "アウェイ";
  const fmt = TT.parseTieFormat(ev && ev.tie_format);
- const slotState = fmt.slots.map(s => ({ slot: s.key, type: s.type, label: s.label, winner: "", score: "" }));
+ const isLeague = !!(m.league_block);   // リーグ戦はセット率/得点率のためゲーム得点入力を推奨
+ const slotState = fmt.slots.map(s => ({ slot: s.key, type: s.type, label: s.label, winner: "", gamesStr: "" }));
  let mode = fmt.slots.length ? "slots" : "score";   // slots: 試合ごと / score: チームスコア直接
  let hScore = 0, aScore = 0;
  const container = h("div", {});
+ // "11-9 11-7 9-11" → [[11,9],[11,7],[9,11]] (区切りは空白/カンマ/読点)
+ const parseGames = (str) => String(str || "").split(/[\s,、，]+/).filter(Boolean)
+   .map(tok => { const mm = /^(\d{1,2})\s*[-－:]\s*(\d{1,2})$/.exec(tok); return mm ? [parseInt(mm[1]), parseInt(mm[2])] : null; }).filter(Boolean);
+ // games があればそれを正に、無ければ手動 winner を使って各 slot を集計用に整形
+ const slotsForSummary = () => slotState.map(st => {
+   const games = parseGames(st.gamesStr);
+   return { slot: st.slot, type: st.type, winner: games.length ? "" : st.winner, games };
+ });
 
  const render = () => {
  clear(container);
@@ -8193,25 +8240,35 @@ const O = {
  h("span", {}, home), h("span", { className: "text-sub", style: { fontSize: "12px" } }, "団体戦"), h("span", {}, away)));
 
  if (mode === "slots") {
- const sc = TT.tieScore(slotState);
+ const summary = TT.summarizeTie(slotsForSummary());
+ const sc = { home: summary.home_wins, away: summary.away_wins };
  const decided = sc.home >= fmt.threshold || sc.away >= fmt.threshold;
  container.appendChild(h("div", { style: { textAlign: "center", margin: "2px 0 10px" } },
  h("span", { style: { fontSize: "26px", fontWeight: 800 } }, `${sc.home} - ${sc.away}`),
  h("span", { className: "text-xs text-sub", style: { marginLeft: "8px" } },
  `${fmt.threshold}勝で確定` + (decided ? " ✓" : ""))));
- slotState.forEach(st => {
- container.appendChild(h("div", { className: "flex gap-1", style: { alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--line,#eee)", flexWrap: "wrap" } },
- h("span", { style: { width: "52px", fontWeight: 700, fontSize: "13px" } }, st.label),
- h("button", { className: "btn btn-sm" + (st.winner === "home" ? " btn-ok" : " btn-ghost"), style: { flex: "1", minWidth: "70px" },
- onClick: () => { st.winner = st.winner === "home" ? "" : "home"; render(); } }, home),
- h("button", { className: "btn btn-sm" + (st.winner === "away" ? " btn-ok" : " btn-ghost"), style: { flex: "1", minWidth: "70px" },
- onClick: () => { st.winner = st.winner === "away" ? "" : "away"; render(); } }, away),
- h("input", { className: "input", type: "text", placeholder: "点(任意)", value: st.score,
- style: { width: "80px", padding: "5px 7px", fontSize: "12px" },
- onInput: (e) => { st.score = e.target.value; } })));
+ slotState.forEach((st, i) => {
+ const ss = summary.slots[i] || {};                 // 集計後(ゲーム得点から導出されたセット/勝者)
+ const gderived = parseGames(st.gamesStr).length > 0;
+ const effWin = gderived ? ss.winner : st.winner;   // ゲーム得点優先
+ container.appendChild(h("div", { style: { padding: "6px 0", borderBottom: "1px solid var(--line,#eee)" } },
+ h("div", { className: "flex gap-1", style: { alignItems: "center", flexWrap: "wrap" } },
+ h("span", { style: { width: "48px", fontWeight: 700, fontSize: "13px" } }, st.label),
+ h("button", { className: "btn btn-sm" + (effWin === "home" ? " btn-ok" : " btn-ghost"), style: { flex: "1", minWidth: "64px" },
+ onClick: () => { if (gderived) return; st.winner = st.winner === "home" ? "" : "home"; render(); } }, home),
+ h("button", { className: "btn btn-sm" + (effWin === "away" ? " btn-ok" : " btn-ghost"), style: { flex: "1", minWidth: "64px" },
+ onClick: () => { if (gderived) return; st.winner = st.winner === "away" ? "" : "away"; render(); } }, away)),
+ h("div", { className: "flex gap-1", style: { alignItems: "center", marginTop: "4px" } },
+ h("input", { className: "input", type: "text", placeholder: "ゲーム得点 例 11-9 11-7 9-11", value: st.gamesStr,
+ style: { flex: "1", padding: "5px 7px", fontSize: "12px" },
+ onInput: (e) => { st.gamesStr = e.target.value; }, onChange: () => render() }),
+ gderived ? h("span", { className: "text-xs", style: { fontWeight: 700, minWidth: "56px", textAlign: "right" } },
+ `${ss.home_sets}-${ss.away_sets}` + (ss.winner ? (ss.winner === "home" ? " ◀" : " ▶") : "")) : null)));
  });
  container.appendChild(h("div", { className: "score-hint" },
- "各試合の勝ったチームを選んでください(点数は任意)。過半数で団体勝利。"));
+ isLeague
+ ? "各試合のゲーム得点(例「11-9 11-7 9-11」)を入力 → セット率・得点率を自動算出。得点未入力なら勝者ボタンのみでも可(セット率/得点率は対象外)。"
+ : "各試合の勝ったチームを選択。ゲーム得点を入れるとセット数・得点も記録されます。過半数で団体勝利。"));
  } else {
  const sideEl = (idSuf, name, val, sideNo) => h("div", { className: "score-side", id: "tside" + sideNo },
  h("div", { className: "score-name" }, name),
@@ -8233,10 +8290,16 @@ const O = {
  const submit = async () => {
  let winnerSlot, ws, ls, tie_results;
  if (mode === "slots") {
- tie_results = slotState.filter(s => s.winner).map(s => ({ slot: s.slot, type: s.type, winner: s.winner, score: s.score || "" }));
- const sc = TT.tieScore(slotState);
- if (sc.home === sc.away) return toast("勝敗が決していません(各試合の勝者を入力)", "err");
- winnerSlot = sc.home > sc.away ? 1 : 2; ws = Math.max(sc.home, sc.away); ls = Math.min(sc.home, sc.away);
+ const summary = TT.summarizeTie(slotsForSummary());
+ // 勝者が決まった slot のみ保存(ゲーム得点があれば games/home_sets/away_sets も含む)
+ tie_results = summary.slots.filter(s => s.winner).map(s => {
+   const o = { slot: s.slot, type: s.type, winner: s.winner };
+   if (Array.isArray(s.games) && s.games.length) { o.games = s.games; o.home_sets = s.home_sets; o.away_sets = s.away_sets; o.score = s.home_sets + "-" + s.away_sets; }
+   return o;
+ });
+ if (summary.home_wins === summary.away_wins) return toast("勝敗が決していません(各試合の勝者かゲーム得点を入力)", "err");
+ winnerSlot = summary.home_wins > summary.away_wins ? 1 : 2;
+ ws = Math.max(summary.home_wins, summary.away_wins); ls = Math.min(summary.home_wins, summary.away_wins);
  } else {
  hScore = parseInt(document.getElementById("tHome")?.value) || 0;
  aScore = parseInt(document.getElementById("tAway")?.value) || 0;

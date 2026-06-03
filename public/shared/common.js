@@ -967,10 +967,77 @@
       winner: hw > aw ? "home" : aw > hw ? "away" : "" };
   }
 
+  // 団体リーグの星取表(交差表)CSSを1度だけ注入。色は CSS 変数でテーマ可(viewer=丹頂/admin=寒色)。
+  function ensureLeagueCSS() {
+    if (typeof document === "undefined" || document.getElementById("tt-league-css")) return;
+    const st = document.createElement("style");
+    st.id = "tt-league-css";
+    st.textContent =
+      ".lg-block{margin:10px 0}.lg-block-title{font-weight:800;font-size:14px;margin:6px 0;letter-spacing:.04em}" +
+      ".lg-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}" +
+      ".lg-table{border-collapse:collapse;font-size:13px;min-width:100%;background:var(--lg-bg,#fff)}" +
+      ".lg-table th,.lg-table td{border:1px solid var(--lg-line,#e5e7eb);padding:5px 8px;text-align:center;white-space:nowrap}" +
+      ".lg-table thead th{background:var(--lg-head,#f1f5f9);font-weight:700;font-size:12px}" +
+      ".lg-table .lg-team{text-align:left;font-weight:700;max-width:160px;overflow:hidden;text-overflow:ellipsis}" +
+      ".lg-table .lg-rank{font-weight:800;background:var(--lg-head,#f1f5f9)}" +
+      ".lg-table .lg-self{background:var(--lg-self,#e5e7eb);color:#9ca3af}" +
+      ".lg-table .lg-win{color:var(--lg-win,#15803d);font-weight:800}" +
+      ".lg-table .lg-lose{color:var(--lg-lose,#b91c1c)}" +
+      ".lg-table .lg-pending{color:#cbd5e1}.lg-table .lg-wl{font-weight:800}" +
+      ".lg-note{margin-top:5px}";
+    document.head.appendChild(st);
+  }
+  // 1ブロック分の「星取表＋順位(勝敗/セット率/得点率)」要素を生成。観客にも分かる交差表。
+  // standings: その block の順位配列, matches: そのblockの対戦結果(getLeagueMatchResults相当)。
+  function leagueTableEl(blockLabel, standings, matches, opts) {
+    ensureLeagueCSS();
+    opts = opts || {};
+    const teams = (standings || []).slice();
+    const byPair = {};
+    (matches || []).forEach(mm => { byPair[mm.p1_id + "|" + mm.p2_id] = mm; });
+    const cellFor = (rowId, colId) => {
+      let mm = byPair[rowId + "|" + colId], rowIsP1 = true;
+      if (!mm) { mm = byPair[colId + "|" + rowId]; rowIsP1 = false; }
+      if (!mm) return { txt: "", cls: "lg-empty" };
+      if (!mm.done) return { txt: "・", cls: "lg-pending" };
+      const rw = rowIsP1 ? mm.p1_wins : mm.p2_wins, cw = rowIsP1 ? mm.p2_wins : mm.p1_wins;
+      const won = mm.winner === (rowIsP1 ? "p1" : "p2");
+      return { txt: (won ? "○" : "●") + rw + "-" + cw, cls: won ? "lg-win" : "lg-lose" };
+    };
+    const fmtRate = (r) => r == null ? "∞" : (Math.round(r * 100) / 100).toFixed(2);
+    const wrap = h("div", { className: "lg-block" });
+    if (blockLabel) wrap.appendChild(h("div", { className: "lg-block-title" }, (opts.titlePrefix || "予選リーグ ") + blockLabel + "ブロック"));
+    const tbl = h("table", { className: "lg-table" });
+    const hd = h("tr", {}, h("th", {}, "順"), h("th", { className: "lg-team" }, "チーム"));
+    teams.forEach((t, i) => hd.appendChild(h("th", { title: t.team_name }, String(i + 1))));
+    hd.appendChild(h("th", {}, "勝-敗")); hd.appendChild(h("th", {}, "セット率")); hd.appendChild(h("th", {}, "得点率"));
+    tbl.appendChild(h("thead", {}, hd));
+    const tb = h("tbody", {});
+    teams.forEach((t, ri) => {
+      const tr = h("tr", {},
+        h("td", { className: "lg-rank" }, String(t.rank) + (t.tiebreak ? "*" : "")),
+        h("td", { className: "lg-team", title: t.team_name }, (ri + 1) + ". " + t.team_name));
+      teams.forEach((c, ci) => {
+        if (ci === ri) { tr.appendChild(h("td", { className: "lg-self" }, "—")); return; }
+        const cell = cellFor(t.entrant_id, c.entrant_id);
+        tr.appendChild(h("td", { className: "lg-cell " + cell.cls }, cell.txt));
+      });
+      tr.appendChild(h("td", { className: "lg-wl" }, t.wins + "-" + t.losses + (t.draws ? "-" + t.draws : "")));
+      tr.appendChild(h("td", { title: "取得" + t.sets_won + " / 失" + t.sets_lost }, fmtRate(t.set_rate)));
+      tr.appendChild(h("td", { title: "取得" + t.pts_won + " / 失" + t.pts_lost }, fmtRate(t.pts_rate)));
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    wrap.appendChild(h("div", { className: "lg-scroll" }, tbl));
+    wrap.appendChild(h("div", { className: "lg-note text-xs text-sub" },
+      "○/●＝勝敗、数字＝取得試合数。" + (teams.some(t => t.tiebreak) ? " ＊＝勝敗・セット率・得点率が同率(順位は抽選)。" : "")));
+    return wrap;
+  }
+
   // Export
   global.TT = {
     GENDERS, CATS, EV_TYPES, ROUNDS, PLACES,
-    parseTieFormat, tieScore, summarizeTie,
+    parseTieFormat, tieScore, summarizeTie, leagueTableEl,
     h, esc, clear, api, toast, showLoading, hideLoading,
     ratingLabel, ratingBadge,
     lookupFurigana, parsePaste,
