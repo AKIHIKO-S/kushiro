@@ -397,9 +397,16 @@ try {
   // 団体戦の追加台 (2台同時使用): カンマ区切り "5,6" 等
   addMCol("extra_tables", "TEXT DEFAULT ''");
   // 団体戦(tie)の内訳: この対戦を構成する各個別試合の結果(JSON配列)。
-  // 例 [{slot:"S1",type:"S",winner:"home",home:"…",away:"…",score:"3-1"}, …]。
-  // チームスコアは winner_sets/loser_sets(=勝った試合数)を流用。個人戦では空。
+  // 例 [{slot:"S1",type:"S",winner:"home",home:"…",away:"…",score:"3-1",
+  //     games:[[11,9],[11,7],[9,11],[11,5]],home_sets:3,away_sets:1,home_pts:42,away_pts:34}, …]。
+  // games(各ゲームの[home,away]得点)から home_sets/away_sets/home_pts/away_pts を導出し、
+  // 団体リーグの「セット率・得点率」を自動算出する。チームスコアは winner_sets/loser_sets を流用。
   addMCol("tie_results", "TEXT DEFAULT ''");
+  // 団体リーグ(総当たり)のブロック識別子。'' = ノックアウト/個人戦, 'A'/'B'/… = そのブロックの
+  // 総当たり対戦。リーグ戦は next_match_id を持たず、順位は finished な対戦から算出する。
+  addMCol("league_block", "TEXT DEFAULT ''");
+  // リーグ戦の総当たり巡目(表示順用, 1始まり)。
+  addMCol("league_round", "INTEGER DEFAULT 0");
   // 再コール回数 (1=初回,2=再コール1回目=注意,3=再コール2回目=警告,4+ = 最終警告)
   addMCol("call_count", "INTEGER DEFAULT 0");  // 互換用 (累計)
   addMCol("call_count_p1", "INTEGER DEFAULT 0");  // 選手1の再コール回数
@@ -3005,6 +3012,190 @@ function generateBracket(tournamentId, event, options) {
     player_count: N,
     bye_count: bracketSize - N,
   };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 団体リーグ(総当たり) — round-robin 生成 + 順位算出(勝敗数→セット率→得点率)
+// ════════════════════════════════════════════════════════════════════
+
+// tie_results(個別試合の配列)から各試合のセット数・得点と tie 全体の集計を導出する。
+// games([[home,away],…] 各セットの得点)があればそれを正とし、無ければ home_sets/away_sets、
+// さらに無ければ score:"a-b" をパース、最後に winner のみ(セット/得点0)。すべて後方互換。
+function summarizeTie(tieResults) {
+  const arr = Array.isArray(tieResults) ? tieResults : [];
+  let homeWins = 0, awayWins = 0, homeSets = 0, awaySets = 0, homePts = 0, awayPts = 0;
+  const slots = arr.map(s => {
+    let hs = 0, as = 0, hp = 0, ap = 0;
+    const games = Array.isArray(s.games) ? s.games.filter(g => Array.isArray(g) && g.length === 2) : [];
+    if (games.length) {
+      games.forEach(([h, a]) => {
+        h = parseInt(h) || 0; a = parseInt(a) || 0; hp += h; ap += a;
+        if (h > a) hs++; else if (a > h) as++;
+      });
+    } else if (s.home_sets != null || s.away_sets != null) {
+      hs = parseInt(s.home_sets) || 0; as = parseInt(s.away_sets) || 0;
+    } else if (typeof s.score === "string" && /^\d+\s*[-－]\s*\d+$/.test(s.score)) {
+      const p = s.score.split(/[-－]/).map(x => parseInt(x) || 0); hs = p[0]; as = p[1];
+    }
+    let w = (s.winner === "home" || s.winner === "away") ? s.winner : (hs > as ? "home" : as > hs ? "away" : "");
+    if (w === "home") homeWins++; else if (w === "away") awayWins++;
+    homeSets += hs; awaySets += as; homePts += hp; awayPts += ap;
+    return { ...s, home_sets: hs, away_sets: as, home_pts: hp, away_pts: ap, winner: w };
+  });
+  return {
+    slots, home_wins: homeWins, away_wins: awayWins,
+    home_sets: homeSets, away_sets: awaySets, home_pts: homePts, away_pts: awayPts,
+    winner: homeWins > awayWins ? "home" : awayWins > homeWins ? "away" : "",
+  };
+}
+
+// 率(取得/失)の降順比較。a が上位なら負、b が上位なら正(Array.sort 準拠)。0除算を安全に扱う。
+function cmpRateDesc(aw, al, bw, bl) {
+  if (al === 0 && bl === 0) return bw - aw;   // 両者無失なら取得多い順
+  if (al === 0) return -1;                     // a が無失(率∞)→ a 上位
+  if (bl === 0) return 1;                      // b が無失 → b 上位
+  return (bw * al) - (aw * bl);                // bw/bl - aw/al の符号(降順)
+}
+
+// 円卓法で総当たりの巡(round)を生成。各巡は [home,away] ペアの配列。奇数はBYE。
+function roundRobinRounds(teams) {
+  const arr = teams.slice();
+  if (arr.length % 2 === 1) arr.push(null); // BYE枠
+  const n = arr.length, rounds = [];
+  for (let r = 0; r < n - 1; r++) {
+    const pairs = [];
+    for (let i = 0; i < n / 2; i++) {
+      const a = arr[i], b = arr[n - 1 - i];
+      if (a && b) pairs.push(r % 2 === 0 ? [a, b] : [b, a]); // home/away を巡ごとに入替え
+    }
+    rounds.push(pairs);
+    arr.splice(1, 0, arr.pop()); // 先頭固定で回転
+  }
+  return rounds;
+}
+
+// 団体リーグ(総当たり)を生成。opts: { num_blocks, assignments:{entrantId:block}, regenerate }
+function generateTeamLeague(tournamentId, event, opts = {}) {
+  let teams = entrantStmts.listByEvent.all(tournamentId, event);
+  if (!opts.include_all_status) teams = teams.filter(e => (e.status || "confirmed") === "confirmed");
+  if (teams.length < 2) return { error: "リーグには2チーム以上必要です", count: teams.length };
+  teams.sort((a, b) => ((a.seed || 9999) - (b.seed || 9999)) ||
+    (a.furigana || a.team || a.name || "").localeCompare(b.furigana || b.team || b.name || "", "ja"));
+
+  // ブロック割当: 明示(assignments)優先、無ければ num_blocks にシードをスネーク分配
+  const LABELS = "ABCDEFGHIJKLMNOP".split("");
+  const assign = {};
+  if (opts.assignments && Object.keys(opts.assignments).length) {
+    teams.forEach(t => { assign[t.id] = String(opts.assignments[t.id] || "A").toUpperCase(); });
+  } else {
+    const nb = Math.max(1, Math.min(16, parseInt(opts.num_blocks) || 1));
+    teams.forEach((t, i) => {
+      const cycle = Math.floor(i / nb), pos = i % nb;
+      assign[t.id] = LABELS[(cycle % 2 === 0) ? pos : (nb - 1 - pos)]; // スネークでシードを分散
+    });
+  }
+  const byBlock = {};
+  teams.forEach(t => { const b = assign[t.id] || "A"; (byBlock[b] = byBlock[b] || []).push(t); });
+  const thin = Object.entries(byBlock).filter(([, ts]) => ts.length < 2).map(([b]) => b);
+  if (thin.length) return { error: "各ブロックに2チーム以上必要です(不足ブロック: " + thin.join(",") + ")" };
+
+  const nameOf = (t) => t.display_name || t.team || t.name || "?";
+  const txn = sqlite.transaction(() => {
+    if (opts.regenerate) {
+      sqlite.prepare("DELETE FROM matches WHERE tournament_id=? AND event=? AND league_block!=''").run(tournamentId, event);
+    }
+    let created = 0;
+    Object.keys(byBlock).sort().forEach(block => {
+      const blockTeams = byBlock[block];
+      blockTeams.forEach(t => sqlite.prepare("UPDATE entrants SET block=? WHERE id=?").run(block, t.id));
+      roundRobinRounds(blockTeams).forEach((pairs, ri) => {
+        pairs.forEach((pair, pi) => {
+          const [home, away] = pair;
+          const id = uid();
+          opStmts.insertFullMatch.run({
+            id, tournament_id: tournamentId, event: event || "",
+            round: "予選リーグ", round_order: getRoundOrder("予選リーグ"),
+            match_no: created + 1, match_label: block + "-" + (ri + 1) + "-" + (pi + 1),
+            winner_id: null, loser_id: null, winner_name: "", loser_name: "", winner_team: "", loser_team: "",
+            sets_json: "[]", winner_sets: 0, loser_sets: 0, played_at: "", note: "",
+            status: "pending", table_no: 0, referee_id: null, referee_name: "",
+            player1_id: null, player2_id: null,
+            player1_name: nameOf(home), player2_name: nameOf(away),
+            player1_team: home.team || "", player2_team: away.team || "",
+            next_match_id: null, next_slot: 1, called_at: "", started_at: "", finished_at: "",
+            bracket_pos: pi, bracket_round: 0,
+            player1_entrant_id: home.id, player2_entrant_id: away.id,
+          });
+          sqlite.prepare("UPDATE matches SET league_block=?, league_round=? WHERE id=?").run(block, ri + 1, id);
+          created++;
+        });
+      });
+    });
+    return created;
+  });
+  const created = txn();
+  return { success: true, event, blocks: Object.keys(byBlock).length, total_matches: created, teams: teams.length };
+}
+
+// 団体リーグの順位を算出(派生・読取専用。matches を集計するだけで行は変更しない)。
+// 順位: 勝敗数(勝った対戦数) → セット率(Σ取得/Σ失セット) → 得点率(Σ取得/Σ失点) → 同率は抽選フラグ。
+// block 省略時は全ブロックを返す(blocks:{A:[…],B:[…]})。
+function computeLeagueStandings(tournamentId, event, block) {
+  const blocksStmt = block
+    ? sqlite.prepare("SELECT DISTINCT league_block AS b FROM matches WHERE tournament_id=? AND event=? AND league_block=?")
+    : sqlite.prepare("SELECT DISTINCT league_block AS b FROM matches WHERE tournament_id=? AND event=? AND league_block!=''");
+  const blockRows = block ? blocksStmt.all(tournamentId, event, block) : blocksStmt.all(tournamentId, event);
+  const result = {};
+  blockRows.map(r => r.b).filter(Boolean).sort().forEach(bk => {
+    const teams = {};
+    const ensure = (eid, name) => {
+      const key = eid || ("name:" + name);
+      if (!teams[key]) teams[key] = { entrant_id: eid || null, team_name: name || "?",
+        wins: 0, losses: 0, draws: 0, played: 0, sets_won: 0, sets_lost: 0, pts_won: 0, pts_lost: 0 };
+      return teams[key];
+    };
+    // ブロック所属チームを先に登録(未消化でも順位表に出す)
+    sqlite.prepare("SELECT id, team, name FROM entrants WHERE tournament_id=? AND event=? AND block=?")
+      .all(tournamentId, event, bk).forEach(e => ensure(e.id, e.team || e.name));
+    const matches = sqlite.prepare(`SELECT * FROM matches WHERE tournament_id=? AND event=? AND league_block=?
+      AND status='completed' AND COALESCE(is_walkover,0)=0`).all(tournamentId, event, bk);
+    matches.forEach(m => {
+      const sum = summarizeTie(_parseTieResults(m.tie_results));
+      const t1 = ensure(m.player1_entrant_id, m.player1_name);
+      const t2 = ensure(m.player2_entrant_id, m.player2_name);
+      t1.played++; t2.played++;
+      t1.sets_won += sum.home_sets; t1.sets_lost += sum.away_sets; t1.pts_won += sum.home_pts; t1.pts_lost += sum.away_pts;
+      t2.sets_won += sum.away_sets; t2.sets_lost += sum.home_sets; t2.pts_won += sum.away_pts; t2.pts_lost += sum.home_pts;
+      const homeWon = sum.winner === "home" || (!!m.winner_name && m.winner_name === m.player1_name && m.winner_name !== m.player2_name);
+      const awayWon = sum.winner === "away" || (!!m.winner_name && m.winner_name === m.player2_name && m.winner_name !== m.player1_name);
+      if (homeWon && !awayWon) { t1.wins++; t2.losses++; }
+      else if (awayWon && !homeWon) { t2.wins++; t1.losses++; }
+      else { t1.draws++; t2.draws++; }
+    });
+    const arr = Object.values(teams).map(t => ({
+      ...t,
+      set_diff: t.sets_won - t.sets_lost, pts_diff: t.pts_won - t.pts_lost,
+      set_rate: t.sets_lost === 0 ? (t.sets_won === 0 ? 0 : null) : +(t.sets_won / t.sets_lost).toFixed(3),
+      pts_rate: t.pts_lost === 0 ? (t.pts_won === 0 ? 0 : null) : +(t.pts_won / t.pts_lost).toFixed(3),
+    }));
+    arr.sort((a, b) =>
+      (b.wins - a.wins) ||
+      cmpRateDesc(a.sets_won, a.sets_lost, b.sets_won, b.sets_lost) ||
+      cmpRateDesc(a.pts_won, a.pts_lost, b.pts_won, b.pts_lost) ||
+      String(a.team_name).localeCompare(String(b.team_name), "ja"));
+    // 順位付け: 勝敗数・セット率・得点率がすべて同じなら同順位+抽選フラグ
+    const sameRank = (x, y) => (x.wins === y.wins) &&
+      cmpRateDesc(x.sets_won, x.sets_lost, y.sets_won, y.sets_lost) === 0 &&
+      cmpRateDesc(x.pts_won, x.pts_lost, y.pts_won, y.pts_lost) === 0;
+    let rank = 0;
+    arr.forEach((t, i) => {
+      if (i === 0 || !sameRank(t, arr[i - 1])) rank = i + 1;
+      t.rank = rank;
+      t.tiebreak = (i > 0 && sameRank(t, arr[i - 1])) || (i < arr.length - 1 && sameRank(t, arr[i + 1])) ? "抽選" : "";
+    });
+    result[bk] = arr;
+  });
+  return block ? (result[block] || []) : result;
 }
 
 // 次の試合へ勝者をセット（次の試合の player1 or player2 を埋める）
@@ -6548,6 +6739,7 @@ module.exports = {
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
   generateBracket, autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
+  generateTeamLeague, computeLeagueStandings, summarizeTie,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
   setCallCount, bumpCallCount,
   getPlayerRefereeLock, getPlayerPlayingLock,
