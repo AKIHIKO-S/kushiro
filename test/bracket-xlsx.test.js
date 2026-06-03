@@ -100,6 +100,19 @@ test("両山: 決勝完了で中央に優勝者", () => {
   assert.ok(Object.values(vals).some(v => String(v).startsWith("優勝:")), "優勝表記がある: " + allText(vals).slice(0, 200));
 });
 
+test("印刷: 余白(page margins)が設定され大小どちらも有効な表を生成する", () => {
+  // 列幅/フォント/スケールの規模連動は書き出すが XLSX.read では !cols 等が戻らないため、
+  // ここでは round-trip する !margins と、大小いずれもクラッシュせず種目シートが出ることを確認する。
+  for (const n of [8, 64]) {
+    const t = setup(n, 0);
+    const buf = reports.buildBracketXlsx(t, db.getMatchesByTournament(t.id), db.getEntrants(t.id), { event: EV });
+    const wb = XLSX.read(buf, { type: "buffer" });
+    const ws = wb.Sheets[EV.slice(0, 30)];
+    assert.ok(ws, "N=" + n + ": 種目シート");
+    assert.ok(ws["!margins"] && ws["!margins"].left != null, "N=" + n + ": 余白設定");
+  }
+});
+
 test("両山: ブラケットが無い種目は案内シート(クラッシュしない)", () => {
   const t = db.createTournament({ name: "空", date: "2027-05-05" });
   const buf = reports.buildBracketXlsx(t, [], [], {});

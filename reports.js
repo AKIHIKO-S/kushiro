@@ -1094,8 +1094,13 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
       cell.s.border = Object.assign({}, cell.s.border, edges);
       ws[addr] = cell;
     }
-    const centerStyle = { alignment: { horizontal: "center", vertical: "center", wrapText: true }, font: { sz: 10 } };
-    const nameStyle = { alignment: { horizontal: "left", vertical: "center", wrapText: true }, font: { sz: 10 } };
+    // 掲示物として読めるよう、規模に応じてフォントと列幅を縮め(物理的に小さくして印刷の収まりを改善)、
+    // 氏名/所属は shrinkToFit で枠内に収める。等幅寄りの Meiryo(環境に無ければ既定にフォールバック)。
+    // ※ Excel の印刷スケール(!pageSetup)は SheetJS が書き出せないため、内容自体を縮める方針。
+    const FONT = "Meiryo";
+    const nfsz = S <= 32 ? 10 : S <= 64 ? 9 : 8;       // 本文フォント(規模連動)
+    const centerStyle = { alignment: { horizontal: "center", vertical: "center", wrapText: true, shrinkToFit: true }, font: { sz: nfsz, name: FONT } };
+    const nameStyle = { alignment: { horizontal: "left", vertical: "center", wrapText: true, shrinkToFit: true }, font: { sz: nfsz, name: FONT } };
 
     // ── ヘッダ ──
     put(0, L_NAME, tournament.name || "", { font: { bold: true, sz: 14 } });
@@ -1194,19 +1199,28 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
       border(finalAnchor, CENTER, { bottom: thick });
     }
 
-    // ── 列幅 ──
+    // ── 列幅(規模連動で圧縮: 大きいドローほど狭く) ──
+    const wName = S <= 32 ? 14 : S <= 64 ? 11 : 9;
+    const wTeam = S <= 32 ? 11 : S <= 64 ? 9 : 7;
+    const wAdv = S <= 32 ? 11 : S <= 64 ? 9 : 7;
     const cols = [];
-    cols[L_NUM] = { wch: 4 }; cols[L_NAME] = { wch: 14 }; cols[L_TEAM] = { wch: 11 }; cols[L_SEED] = { wch: 4 };
-    for (let r = 1; r <= sideRounds; r++) cols[LADV(r)] = { wch: 11 };
-    cols[CENTER] = { wch: 13 };
-    for (let r = 1; r <= sideRounds; r++) cols[RADV(r)] = { wch: 11 };
-    cols[R_SEED] = { wch: 4 }; cols[R_TEAM] = { wch: 11 }; cols[R_NAME] = { wch: 14 }; cols[R_NUM] = { wch: 4 };
-    for (let c = 0; c <= lastCol; c++) if (!cols[c]) cols[c] = { wch: 9 };
+    cols[L_NUM] = { wch: 4 }; cols[L_NAME] = { wch: wName }; cols[L_TEAM] = { wch: wTeam }; cols[L_SEED] = { wch: 4 };
+    for (let r = 1; r <= sideRounds; r++) cols[LADV(r)] = { wch: wAdv };
+    cols[CENTER] = { wch: wName };
+    for (let r = 1; r <= sideRounds; r++) cols[RADV(r)] = { wch: wAdv };
+    cols[R_SEED] = { wch: 4 }; cols[R_TEAM] = { wch: wTeam }; cols[R_NAME] = { wch: wName }; cols[R_NUM] = { wch: 4 };
+    for (let c = 0; c <= lastCol; c++) if (!cols[c]) cols[c] = { wch: 7 };
 
     ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRow + 1, c: lastCol } });
     ws["!cols"] = cols;
     ws["!merges"] = merges;
-    ws["!pageSetup"] = { orientation: "landscape", paperSize: 9, fitToWidth: 1, fitToHeight: 0 };
+    // 印刷の規模連動: 小はA4横、64名級以上はA3横+縮小で掲示物として読めるようにする。
+    //  ※ fitToWidth と scale を併用すると scale が無効化される(SheetJS仕様)ため scale 固定のみ。
+    //    巨大ドロー(S>64)の山別ページ分割は将来拡張。確実な固定レイアウトはPDF/HTML経路で別途。
+    const paperSize = S <= 16 ? 9 : 8;                 // 9=A4, 8=A3
+    const scale = S <= 16 ? 92 : S <= 32 ? 78 : S <= 64 ? 62 : S <= 128 ? 46 : 36;
+    ws["!pageSetup"] = { orientation: "landscape", paperSize, scale, fitToHeight: 0 };
+    ws["!margins"] = { left: 0.3, right: 0.3, top: 0.45, bottom: 0.4, header: 0.2, footer: 0.2 };
     XLSX.utils.book_append_sheet(wb, ws, (eventName || "表").slice(0, 30));
   });
 
