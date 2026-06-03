@@ -4990,6 +4990,10 @@ const A = {
 
  // ── 試合手動編集モーダル (任意フィールドを書き換え) ──
  async openEditMatch(m) {
+ // 団体戦(tie)は汎用編集で勝者を変えると内訳(tie_results)が更新されず、順位表/星取表と恒久矛盾する。
+ // ゲーム得点も保持する専用の結果修正フローへ誘導(swapWinner/openCorrectResult と統一)。
+ const teamEv = (typeof O !== "undefined" && (O._teamEventCfg(m) || (m && m.league_block ? { name: m.event, type: "team", tie_format: "" } : null)));
+ if (teamEv) return O.openTeamResultInput(m, teamEv, { correct: true });
  const allPlayers = await api.get("/api/players?sort=furigana");
 
  function autocompletePicker(idPrefix, currentId, currentName, currentTeam) {

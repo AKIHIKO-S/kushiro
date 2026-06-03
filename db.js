@@ -6246,6 +6246,13 @@ function editMatch(matchId, data) {
         (winnerIsP1 ? m2.player1_entrant_id : m2.player2_entrant_id) || "",
         matchId,
       );
+      // 団体戦(tie)の安全策: 汎用編集で勝者/スコアを変えると内訳(tie_results)が古いまま残り、
+      // 順位表/星取表(tie_results を正とする)と winner_name が恒久矛盾する。内訳をクリアして
+      // 集計を winner_name 基準に一本化する(個別試合のセット/得点は失われるが矛盾を断つ)。
+      // ※正規の運用では団体結果の修正は専用フロー(openTeamResultInput correct)を使うこと。
+      if (m2.tie_results && String(m2.tie_results).length > 2) {
+        sqlite.prepare("UPDATE matches SET tie_results='' WHERE id=?").run(matchId);
+      }
       // 勝者を次戦へ送り込む (#190: 手動編集で結果を入れてもブラケットが進まない不具合を修正)
       // ただし次戦が既に進行中/完了済みなら、スロット上書きで下流を壊すため自動進出はしない
       // (correctResult と同じ安全策。必要時は本部が個別に修正)。
