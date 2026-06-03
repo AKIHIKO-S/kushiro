@@ -163,3 +163,28 @@ test("(e) 静的キャッシュ: ?v=有=immutable / 無=no-cache、HTMLは版注
   assert.match(body, /\/shared\/common\.js\?v=/, "common.js に版注入");
   assert.match(body, /\/shared\/[^"']+\.(?:svg|png)\?v=/, "アイコンにも版注入");
 });
+
+test("(f) 公開 /matches: 内部列を射影で除去・表示列は維持・ETagで304", async () => {
+  const t = await adminPost("/api/tournaments", { name: "proj", date: "2027-01-01" });
+  await adminPut(`/api/tournaments/${t.id}/entry-settings`, { entries_open: 1, event_config: [{ name: "S", type: "singles", fee: 0 }] });
+  for (const nm of ["山田 太郎", "鈴木 一"]) await adminPost(`/api/tournaments/${t.id}/entrants`, { event: "S", name: nm, status: "confirmed" });
+  await adminPost(`/api/tournaments/${t.id}/bracket`, { event: "S", regenerate: true });
+  const list0 = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
+  const m = list0.find(x => x.player1_name && x.player2_name && x.player1_name !== "BYE" && x.player2_name !== "BYE");
+  await adminPost(`/api/matches/${m.id}/finish`, { winner_slot: 1, sets: [[11, 5], [11, 7], [11, 9]], referee_name: "審判花子" });
+  const list = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
+  const row = list.find(x => x.id === m.id);
+  // 内部列は消えている
+  ["referee_id", "pending_result", "winner_rating_delta", "loser_rating_delta", "next_match_id", "sets_json", "tournament_id", "created_at", "call_count"]
+    .forEach(k => assert.ok(!(k in row), `内部列 ${k} が公開 /matches から除去`));
+  // 表示に要る列は残っている(referee_name は viewer が「審判: X」で表示=公開意図)
+  // referee_name は viewer が「審判: X」で表示する公開意図の列なので射影で残す(値は審判割当で入る)。
+  ["referee_name", "sets", "winner_name", "player1_name", "status", "bracket_round"]
+    .forEach(k => assert.ok(k in row, `表示列 ${k} は維持`));
+  // ETag/304: 未変化の再取得は本体0
+  const r1 = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`);
+  const etag = r1.headers.get("etag");
+  assert.ok(etag, "ETag が付く");
+  const r2 = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`, { headers: { "If-None-Match": etag } });
+  assert.strictEqual(r2.status, 304, "未変化は304");
+});

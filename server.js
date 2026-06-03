@@ -488,8 +488,23 @@ app.get("/api/public/tournaments/:id", (req, res) => {
   if (!t) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(sanitizeTournamentPublic(t));
 });
+// 公開 /matches から落とす内部列(進行内部・Elo差分・原文sets_json重複・承認待ち暫定結果)。
+// 軽量化が主目的(数百試合で生320KB級→約▲59%)。表示に要る referee_name(「審判: X」を viewer が表示)・
+// note・整形済 sets・tie_results・相方/bracket_number は残す(viewer未使用列のみ除去=描画を壊さない)。
+const PUBLIC_MATCH_OMIT = new Set([
+  "referee_id", "pending_result",
+  "winner_rating_delta", "loser_rating_delta",
+  "next_match_id", "next_slot",
+  "call_count", "call_count_p1", "call_count_p2", "recall_count", "called_at",
+  "sets_json", "tournament_id", "created_at", "updated_at",
+]);
+function publicMatch(m) { const o = {}; for (const k in m) if (!PUBLIC_MATCH_OMIT.has(k)) o[k] = m[k]; return o; }
 app.get("/api/public/tournaments/:id/matches", (req, res) => {
-  res.json(db.getMatchesByTournament(req.params.id));
+  // 進行フィンガープリントを ETag 化(未変化の再取得は304で本体0=ポーリング軽量化)。
+  const fp = db.getOpsFingerprint(req.params.id);
+  const tag = (fp && fp.v != null ? fp.v : "0") + "|" + (fp && fp.status || "") + "|pm";
+  if (conditional(req, res, tag, "public, max-age=2")) return;
+  res.json(db.getMatchesByTournament(req.params.id).map(publicMatch));
 });
 app.get("/api/public/stats", (req, res) => { res.json(db.getStats()); });
 // 全試合の平均値 (選手プロフィールの相対比較用 #243)。60秒キャッシュ。
