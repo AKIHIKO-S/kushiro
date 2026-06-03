@@ -379,7 +379,27 @@ function parseSeedList(filePath, opts = {}) {
       rec.category = 'general';
       return rec;
     });
-    return { event: eventName, format: fmt, regenerate: true, players: playersOut, _rawSeedCount: withSeed.length };
+    // 品質ゲート: 取込前に人が確認すべき点を notices として可視化(自動補正はしない)。
+    const notices = [];
+    const srcSeeds = withSeed.map(p => p.seed).filter(s => s >= 1);
+    if (srcSeeds.length) {
+      const mn = Math.min(...srcSeeds), mx = Math.max(...srcSeeds), present = new Set(srcSeeds);
+      const gaps = []; for (let s = mn; s <= mx; s++) if (!present.has(s)) gaps.push(s);
+      if (gaps.length) notices.push({ type: 'seed_gap', count: gaps.length,
+        detail: `組番号の欠番 ${gaps.length}件 (取りこぼし/欠場の可能性): ${gaps.slice(0, 20).join(',')}${gaps.length > 20 ? '…' : ''}` });
+    }
+    const nameCount = {};
+    playersOut.forEach(p => { const k = String(p.name || '').replace(/[\s　]/g, ''); if (k) nameCount[k] = (nameCount[k] || 0) + 1; });
+    const dups = Object.entries(nameCount).filter(([, c]) => c > 1);
+    if (dups.length) notices.push({ type: 'dup_name', count: dups.length,
+      detail: `氏名重複 ${dups.length}種 (同一人物の二重 or 同姓同名): ${dups.slice(0, 10).map(([k, c]) => k + '×' + c).join(', ')}` });
+    if (fmt === 'doubles') {
+      const missing = playersOut.filter(p => !p.partner_name).length;
+      if (missing) notices.push({ type: 'pair_missing', count: missing, detail: `相方欠落の可能性 ${missing}組` });
+    }
+    const ev = { event: eventName, format: fmt, regenerate: true, players: playersOut, _rawSeedCount: withSeed.length };
+    if (notices.length) ev.notices = notices;
+    return ev;
   }
 
   for (const sn of sheetNames) {
@@ -410,7 +430,9 @@ if (require.main === module) {
   const f = process.argv[2];
   const out = parseSeedList(f, { sheet: process.argv[3] || null });
   if (!out.events.length) console.log('(イベントなし: ブラケットを検出できませんでした)');
-  out.events.forEach(e =>
-    console.log(`[${e.event}] fmt=${e.format} players=${e.players.length} (seeded=${e._rawSeedCount})`));
+  out.events.forEach(e => {
+    console.log(`[${e.event}] fmt=${e.format} players=${e.players.length} (seeded=${e._rawSeedCount})`);
+    (e.notices || []).forEach(n => console.log(`   ⚠ ${n.detail}`));
+  });
   if (process.argv[4] === '--dump' && out.events[0]) console.log(JSON.stringify(out.events[0].players.slice(0, 10), null, 1));
 }
