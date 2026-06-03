@@ -7220,6 +7220,9 @@ const O = {
 
  const toolbar = h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", margin: "8px 0" } },
    h("button", { className: "btn btn-sm btn-ok", onClick: () => O.openAddMatch(sel) }, "＋ 対戦を追加"),
+   h("button", { className: "btn btn-sm", style: { background: "#1a7a45", color: "#fff" },
+     title: "個人戦をシード固定＋ランダム抽選でトーナメント表を作成。シードは申込管理で指定した番号順に標準位置へ固定し、残りを抽選(同一所属を分散)。",
+     onClick: () => O.openDrawBracket(sel) }, "🎲 抽選ドロー"),
    h("button", { className: "btn btn-sm", style: { background: "#0e8fa3", color: "#fff" },
      title: "団体種目を総当たり(リーグ)で生成。各ブロックで全チームが対戦し、勝敗→セット率→得点率で順位。",
      onClick: () => O.openLeagueGen(sel) }, "リーグ生成"),
@@ -7234,6 +7237,9 @@ const O = {
        onClick: () => { zoom = Math.min(2, Math.round((zoom + 0.1) * 10) / 10); applyZoom(); } }, "＋")),
    h("button", { className: "btn btn-sm", style: { background: "#7c3aed" },
      onClick: () => O.openVisualBracket() }, "全画面・印刷"),
+   h("button", { className: "btn btn-sm", style: { background: "#1f6f3f", color: "#fff" },
+     title: "両山トーナメント表(左右対向・中央決勝)をExcelで出力。手修正・印刷用。",
+     onClick: () => A.downloadAuthedFile(`/api/tournaments/${O.tournamentId}/bracket/export.xlsx?event=${encodeURIComponent(sel)}`, `トーナメント表_${sel}.xlsx`) }, "📋 表をExcel出力"),
    h("span", { className: "text-xs text-sub" },
      "1回戦: ドラッグで入替 / クリックで編集 ・ 各対戦の ✕ で削除"),
  );
@@ -8191,6 +8197,58 @@ const O = {
  toast(`リーグ生成: ${r.blocks}ブロック・${r.total_matches}対戦`, "ok");
  if (O._vbReload) O._vbReload();
  if (O.reload) O.reload();
+ },
+
+ // ── 抽選ドロー(個人戦): シード固定＋非シードのランダム抽選(同一所属/地区を分散) ──
+ // for_mac.xls のマクロ(KUJI2)の本質を移植。シードは申込管理で指定した番号順に標準位置へ固定し、
+ // 残りを抽選。同じ draw_seed で同じ並びを再現できる。結果は既存ブラケットとして凍結→手修正/Excel可。
+ async openDrawBracket(event) {
+ const ev = (O._eventConfig() || []).find(c => c && c.name === event);
+ if (ev && ev.type === "team") return toast("団体種目は「リーグ生成」を使ってください", "err");
+ const cnt = ((O.state && O.state.event_stats && O.state.event_stats[event]) || {}).entrants;
+ let sep = "team";
+ const sepDefs = [["team", "同一所属(クラブ)を散らす"], ["region", "地区で散らす"], ["none", "完全ランダム"]];
+ const sepBtns = h("div", { className: "flex gap-1", style: { flexWrap: "wrap" } });
+ const renderSep = () => { clear(sepBtns); sepDefs.forEach(([v, l]) => sepBtns.appendChild(
+   h("button", { className: "btn btn-sm" + (sep === v ? "" : " btn-ghost"), onClick: () => { sep = v; renderSep(); } }, l))); };
+ renderSep();
+ const seedInput = h("input", { className: "input", type: "number", placeholder: "空欄=毎回ランダム", style: { maxWidth: "180px" } });
+ const info = h("div", { className: "text-xs", style: { marginTop: "10px", minHeight: "18px" } });
+ const run = async (fresh) => {
+   if (fresh) seedInput.value = "";
+   const body = { event, separate_by: sep };
+   const sd = parseInt(seedInput.value); if (Number.isFinite(sd)) body.draw_seed = sd;
+   if (fresh) body.force = true;  // 引き直し: 結果があっても作り直す確認は needs_force で行う
+   let r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/draw`, body);
+   if (r && r.needs_force) {
+     if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して抽選し直しますか？")) return;
+     body.force = true;
+     r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/draw`, body);
+   }
+   if (!r || r.error) return toast((r && r.error) || "抽選に失敗", "err");
+   toast(`抽選完了: ${r.bracket_size}枠 / シード${r.seeded_count}名 / BYE${r.bye_count}`, "ok");
+   clear(info);
+   const sepLbl = { team: "同一所属を分散", region: "地区を分散", none: "完全ランダム" }[r.separate_by] || r.separate_by;
+   info.appendChild(h("div", { style: { fontWeight: 700 } }, `この並びの種(draw_seed): ${r.draw_seed} ・ ${sepLbl}`));
+   info.appendChild(h("div", { className: "text-sub" }, "同じ種を入れて「抽選実行」すると同じ並びを再現できます。"));
+   (r.warnings || []).forEach(w => info.appendChild(h("div", { style: { color: "#c01526" } }, "⚠ " + w)));
+   seedInput.value = r.draw_seed;
+   if (O._vbReload) O._vbReload();
+   if (O.reload) O.reload();
+ };
+ const body = h("div", {},
+   h("div", { className: "text-sm", style: { marginBottom: "8px" } },
+     `「${event}」をシード固定＋ランダム抽選でトーナメント表を作ります。` + (cnt ? `登録: 約${cnt}名。` : "") +
+     "シードは申込管理で指定したシード番号順に標準位置へ固定し、残りを抽選します。BYEは上位シードに付きます。"),
+   h("div", { className: "text-xs", style: { fontWeight: 700, margin: "4px 0" } }, "非シードの分散方法"),
+   sepBtns,
+   h("div", { className: "flex gap-2", style: { alignItems: "center", marginTop: "10px", flexWrap: "wrap" } },
+     h("span", { className: "text-xs" }, "抽選の種(任意):"), seedInput),
+   info);
+ openModal("抽選ドロー（" + event + "）", body,
+   h("div", { className: "flex gap-2" },
+     h("button", { className: "btn btn-ok", onClick: () => run(false) }, "抽選実行"),
+     h("button", { className: "btn", title: "新しいランダムで引き直す", onClick: () => run(true) }, "引き直す")));
  },
 
  // ── 釧路リーグ: 部別(division)振り分け(前回順位→昇降格提案→手動調整→生成) ──

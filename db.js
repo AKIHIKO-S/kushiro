@@ -5,6 +5,7 @@ const Database = require("better-sqlite3");
 const path = require("path");
 const crypto = require("crypto");
 const fs = require("fs");
+const { mulberry32, shuffle, randomSeed } = require("./lib/rng");
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "tournament.db");
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -2747,6 +2748,10 @@ function generateBracket(tournamentId, event, options) {
   // placement: "as_drawn" = 選手番号(通し番号)をそのまま位置に固定配置 (取込表通り)
   //            それ以外 = 標準シード配置 (1 vs N, 2 vs N-1 …)
   const asDrawn = options.placement === "as_drawn";
+  // fixedLeaves: 抽選ドロー(drawSingleBracket)が確定したリーフ配列(各要素=entrant or null=BYE)を
+  // そのまま round1 の並びに固定する。seed(=シードランク, 運営が指定した値)を一切上書きせずに
+  // 任意配置を凍結できる(as_drawn のように seed を組番号へ転用しないので非破壊)。
+  const fixed = (options.fixedLeaves && options.fixedLeaves.length) ? options.fixedLeaves : null;
   const seedOf = (p) => parseInt(p.seed) || 0;
 
   let bracketSize, totalRounds;
@@ -2834,6 +2839,9 @@ function generateBracket(tournamentId, event, options) {
         conflicts: conflicts.length,
       };
     }
+  } else if (fixed) {
+    // 抽選ドローが渡したリーフ配列の長さがそのままブラケット枠数(2の累乗・要検証)。
+    bracketSize = fixed.length;
   } else {
     bracketSize = Math.pow(2, Math.ceil(Math.log2(N)));
   }
@@ -2843,7 +2851,7 @@ function generateBracket(tournamentId, event, options) {
   // 重み付きシード配置を行い、上位シードを予選免除でR回戦から登場させる。
   const entryRoundOf = (p) => Math.max(1, parseInt(p.entry_round) || 1);
   let superLeaves = null;
-  if (!asDrawn && sorted.some(p => entryRoundOf(p) > 1)) {
+  if (!asDrawn && !fixed && sorted.some(p => entryRoundOf(p) > 1)) {
     const weighted = sorted.map(p => ({ p, w: Math.pow(2, entryRoundOf(p) - 1) }));
     const totalW = weighted.reduce((s, e) => s + e.w, 0);
     bracketSize = Math.pow(2, Math.ceil(Math.log2(Math.max(2, totalW))));
@@ -2889,6 +2897,10 @@ function generateBracket(tournamentId, event, options) {
       // 相対スロット i が player1、i+1 が player2 (上→下の並びそのまま)
       p1 = playerByDrawNo[i] || null;
       p2 = playerByDrawNo[i + 1] || null;
+    } else if (fixed) {
+      // 抽選ドローのリーフ配列をそのまま round1 の物理スロットに固定
+      p1 = fixed[i] || null;
+      p2 = fixed[i + 1] || null;
     } else if (superLeaves) {
       // スーパーシード: 重み付き配置のリーフ列をそのまま使う(BYE区画で多段繰り上げ)
       p1 = superLeaves[i] || null;
@@ -3051,6 +3063,184 @@ function generateBracket(tournamentId, event, options) {
     player_count: N,
     bye_count: bracketSize - N,
   };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 抽選ドロー (シード固定 + 非シードのランダム抽選 + 同一所属/地区の分散)
+//   for_mac.xls のマクロ(KUJI2/KUJI5/HAITI)の本質を個人戦向けに縮約した実装。
+//   ① シードを標準シード位置(bracketPositions)に固定
+//   ② 非シードを seedable RNG でシャッフルし、「同じ所属/地区が同じブロックで早く当たらない」
+//      よう分散スコア最小の空き枠へ配置(同点はRNGで一様抽選)
+//   ③ 確定したリーフ配列を generateBracket({fixedLeaves}) で凍結(seed=シードランクは非破壊)
+// ════════════════════════════════════════════════════════════════════
+
+// あるブロック(2,4,8,…サイズ)に同じグループ(所属/地区)が既に居るほど高い「衝突スコア」。
+// 浅い(小さい)ブロックほど重く罰する → まず1回戦同士、次に同1/4・同1/8…の順で散る。
+function _drawConflictScore(leaves, idx, key, size, keyOf) {
+  if (!key) return 0;
+  let s = 0;
+  for (let blk = 2; blk <= size; blk *= 2) {
+    const base = Math.floor(idx / blk) * blk;
+    let same = 0;
+    for (let i = base; i < base + blk; i++) {
+      const o = leaves[i];
+      if (o && keyOf(o) === key) same++;
+    }
+    const weight = blk === 2 ? 16 : blk === 4 ? 8 : blk === 8 ? 4 : blk === 16 ? 2 : 1;
+    s += same * weight;
+    if (blk === size) break;
+  }
+  return s;
+}
+
+// 抽選のリーフ配列(物理スロット 0..size-1 → entrant or null=BYE)を組み立てる純関数。
+// entrants: 出場者(各 {seed, team, region, display_name, id, ...})。size: 2の累乗の枠数。
+// rng: [0,1) を返す関数。opts.separateBy: 'team'(既定) | 'region' | 'none'。
+// 返り値 { leaves, warnings }。テスト容易性のため DB に触れない純粋ロジック。
+function computeDrawLeaves(entrants, size, rng, opts) {
+  opts = opts || {};
+  const sep = opts.separateBy === "region" ? "region" : opts.separateBy === "none" ? "none" : "team";
+  const keyOf = sep === "region" ? (e => String(e.region || "").trim())
+    : sep === "none" ? (() => "")
+    : (e => String(e.team || "").trim());
+  const seedOf = (e) => parseInt(e.seed) || 0;
+  const nameOf = (e) => e && (e.display_name || e.name || e.surname || "?");
+
+  const N = entrants.length;
+  const positions = bracketPositions(size);     // positions[i] = 物理スロット i に入る標準シードのランク
+  const posOfRank = {};                          // ランク → 物理スロット(逆写像)
+  positions.forEach((rank, i) => { posOfRank[rank] = i; });
+
+  const leaves = new Array(size).fill(null);     // null = BYE
+  const warnings = [];
+
+  // BYE枠の確定: 標準シードのランクが参加人数N を超える物理スロット(=ファントム枠)は BYE 固定。
+  // 標準配置では「上位シードの1回戦相手」が最高位ファントムになるので、上位シードに自動でBYEが付く。
+  const byeSlot = new Array(size).fill(false);
+  for (let i = 0; i < size; i++) if (positions[i] > N) byeSlot[i] = true;
+
+  // (A) シード固定: rank 1..size を標準位置へ。範囲外/重複は非シードに格下げして警告。
+  const seeded = entrants.filter(e => seedOf(e) >= 1).sort((a, b) => seedOf(a) - seedOf(b));
+  const demoted = [];
+  for (const e of seeded) {
+    const rank = seedOf(e);
+    const idx = posOfRank[rank];
+    if (idx == null) {
+      warnings.push("シード番号" + rank + "(" + nameOf(e) + ")は枠数" + size + "を超えるため抽選に回しました");
+      demoted.push(e); continue;
+    }
+    if (leaves[idx]) {
+      warnings.push("シード番号" + rank + "が重複(" + nameOf(e) + ")。抽選に回しました");
+      demoted.push(e); continue;
+    }
+    leaves[idx] = e;
+  }
+
+  // (B) 非シード(+格下げシード)を配置。
+  //   配置順は「制約の厳しい所属から先(most-constrained-first)」= 大きい所属を先に置く。
+  //   単純シャッフル順だと、スコア0のユニーク所属がまず空き試合を先食いし、後続の大所属選手が
+  //   『同所属入り試合の相手枠』しか残らず、分離可能でも1回戦同所属対戦が出る(レビュー指摘)。
+  //   大所属を先に散らし、ユニーク(所属なし/単独)を最後に詰めることで回避可能衝突をほぼ消す。
+  const rest = shuffle(entrants.filter(e => seedOf(e) < 1).concat(demoted), rng);
+  const groups = new Map();
+  for (const e of rest) { const k = keyOf(e); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
+  // 所属サイズ降順。空キー(=分散制約なし)は最後。同サイズはシャッフル順を保つ(rng再現性)。
+  const order = [...groups.entries()]
+    .sort((a, b) => (a[0] === "" ? 1 : b[0] === "" ? -1 : (b[1].length - a[1].length)))
+    .reduce((acc, [, arr]) => acc.concat(arr), []);
+  let empty = [];   // BYE固定枠を除いた、非シードを入れられる空きスロット
+  for (let i = 0; i < size; i++) if (!leaves[i] && !byeSlot[i]) empty.push(i);
+  for (const e of order) {
+    if (!empty.length) break; // 念のため(entrants>size は呼び元で弾く)
+    const key = keyOf(e);
+    let pick;
+    if (!key) {
+      pick = empty[Math.floor(rng() * empty.length)];
+    } else {
+      let best = Infinity, ties = [];
+      for (const idx of empty) {
+        const sc = _drawConflictScore(leaves, idx, key, size, keyOf);
+        if (sc < best) { best = sc; ties = [idx]; }
+        else if (sc === best) ties.push(idx);
+      }
+      pick = ties[Math.floor(rng() * ties.length)];
+    }
+    leaves[pick] = e;
+    empty.splice(empty.indexOf(pick), 1);
+  }
+
+  // (C) R1同所属の修復: 貪欲配置で残った「回避可能な1回戦の同一所属対戦」を、非シード同士の
+  //   入替えで解消する(分離可能なら0件にする)。種・BYE枠は不動。1回の入替で新たな衝突を作らない
+  //   ターゲット(相手も提供元ペアも別所属)に限定するため、各入替は衝突を確実に1件ずつ減らす。
+  if (sep !== "none") {
+    const isSeedLeaf = (e) => e && (parseInt(e.seed) || 0) >= 1;
+    const partnerSlot = (s) => (s % 2 === 0 ? s + 1 : s - 1);
+    const r1Conflicts = () => { let n = 0; for (let i = 0; i < size; i += 2) { const a = leaves[i], b = leaves[i + 1]; if (a && b) { const ka = keyOf(a); if (ka && ka === keyOf(b)) n++; } } return n; };
+    let pass = 0, prev = -1;
+    while (pass++ < 12) {
+      const cur = r1Conflicts();
+      if (cur === 0 || cur === prev) break;  // 解消済 or これ以上改善できない
+      prev = cur;
+      for (let i = 0; i < size; i += 2) {
+        const a = leaves[i], b = leaves[i + 1];
+        if (!a || !b) continue;
+        const ka = keyOf(a);
+        if (!ka || ka !== keyOf(b)) continue;     // 同所属R1ペアでなければ対象外
+        // 動かせる側(非シード)を選ぶ。両方シードの同所属は動かせない(稀)。
+        const moverSlot = !isSeedLeaf(b) ? i + 1 : (!isSeedLeaf(a) ? i : -1);
+        if (moverSlot < 0) continue;
+        let swapped = false;
+        for (let j = 0; j < size && !swapped; j++) {
+          if (j === i || j === i + 1) continue;
+          const c = leaves[j];
+          if (!c || isSeedLeaf(c)) continue;       // 入替相手も動かせる非シードに限る
+          if (keyOf(c) === ka) continue;           // 同所属を入れたらペアiが解消しない
+          const jp = leaves[partnerSlot(j)];
+          if (jp && keyOf(jp) === ka) continue;    // 提供元ペアが ka 同士になる
+          // 入替: moverSlot ⇔ j (ペアi=別所属化, 提供元ペアも非衝突)
+          const tmp = leaves[moverSlot]; leaves[moverSlot] = leaves[j]; leaves[j] = tmp;
+          swapped = true;
+        }
+      }
+    }
+  }
+  return { leaves, warnings };
+}
+
+// 種目の出場者を抽選し、結果でブラケットを生成(凍結)する。
+// opts: { draw_seed?(整数), separate_by?('team'|'region'|'none'), force? }
+function drawSingleBracket(tournamentId, event, opts) {
+  opts = opts || {};
+  if (!event) return { error: "event(種目)が必要です" };
+
+  // 承認済(confirmed)の出場者のみを抽選対象にする(generateBracket と同方針)。
+  const entrants = entrantStmts.listByEvent.all(tournamentId, event)
+    .filter(e => (e.status || "confirmed") === "confirmed");
+  if (entrants.length < 2) {
+    return { error: "承認済みの出場選手が2人未満です。申込管理で承認してから抽選してください。", count: entrants.length };
+  }
+  const size = Math.pow(2, Math.ceil(Math.log2(entrants.length)));
+  if (size > 2048) {
+    return { error: "選手数が多すぎます(最大約1024名)。", count: entrants.length };
+  }
+
+  const drawSeed = (opts.draw_seed != null && Number.isFinite(+opts.draw_seed))
+    ? ((+opts.draw_seed) >>> 0) : randomSeed();
+  const rng = mulberry32(drawSeed);
+  const sep = opts.separate_by === "region" ? "region" : opts.separate_by === "none" ? "none" : "team";
+  const { leaves, warnings } = computeDrawLeaves(entrants, size, rng, { separateBy: sep });
+
+  // 確定リーフを generateBracket で凍結(破壊的再生成ガード・BYE自動進行・番号付与を流用)。
+  const r = generateBracket(tournamentId, event, {
+    regenerate: true, force: !!opts.force, fixedLeaves: leaves,
+  });
+  if (r && r.error) return r;
+  return Object.assign({}, r, {
+    draw_seed: drawSeed,
+    separate_by: sep,
+    warnings,
+    seeded_count: entrants.filter(e => (parseInt(e.seed) || 0) >= 1).length,
+  });
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -6924,7 +7114,8 @@ module.exports = {
   exportAllData, importPlayers, getStats, getLastUpdated, getOpsFingerprint,
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
-  generateBracket, autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
+  generateBracket, drawSingleBracket, computeDrawLeaves, bracketPositions,
+  autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   generateTeamLeague, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
   setCallCount, bumpCallCount,

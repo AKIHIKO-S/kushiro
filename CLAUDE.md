@@ -24,7 +24,7 @@ npm run backup   # deploy/backup.sh
 
 ```
 server.js (Express, 3100行) ── db.js (better-sqlite3 DAL, 5700行)
-  ├─ reports.js     集計表/領収書/対戦票 (xlsx) + 監督結果HTML
+  ├─ reports.js     集計表/領収書/対戦票/両山トーナメント表 (xlsx) + 監督結果HTML
   ├─ mailer.js      申込確認・管理者通知メール (nodemailer, 任意)
   ├─ entry_form.js  埋込申込フォームHTML生成 (依存なし単一HTML)
   └─ lib/           text.js(escape) http-cache.js(ETag/304) lifecycle.js(graceful) events.js
@@ -48,7 +48,8 @@ standalone/  オフライン単機運用ラッパ (start.command/.bat)
 
 ## コア進行ロジック (db.js) — 触るとき要注意
 
-- `generateBracket(tid, event, opts)` (~2429): seed昇順→furigana順、2の累乗にBYE埋め、標準シード配置 or `as_drawn`(取込番号維持)。BYEは即完了→`autoAdvanceByes`で連鎖進行。
+- `generateBracket(tid, event, opts)` (~2429): seed昇順→furigana順、2の累乗にBYE埋め、標準シード配置 or `as_drawn`(取込番号維持)。BYEは即完了→`autoAdvanceByes`で連鎖進行。`opts.fixedLeaves`(リーフ配列)を渡すと配置ロジックを全て飛ばしてその並びを round1 に固定する(抽選ドローが使う。seed=シードランクは非破壊)。
+- `drawSingleBracket(tid, event, opts)` + `computeDrawLeaves(entrants,size,rng,opts)`: **抽選ドロー**(個人戦)。for_mac.xls マクロ(KUJI2)の本質を縮約=①シードを標準位置に固定 ②非シードを seedable RNG(`lib/rng.js` mulberry32)でシャッフル→**大所属先(most-constrained-first)**で分散スコア(`_drawConflictScore`)最小の空き枠へ配置(同点はRNG一様) ③**R1同所属の swap修復**(種・BYE不動、別所属同士の入替で1回戦の同一所属/地区対戦を分離可能なら0件に) ④`generateBracket({fixedLeaves})`で凍結。BYEは標準位置のランク>Nの枠=上位シードに付与。`draw_seed`を返し**同種=同配置を再現**。`opts.separate_by`='team'(既定)|'region'|'none'。回帰: `test/bracket-draw.test.js`(不均衡だが分離可能な分布もR1同所属0件を断定)。API `POST /bracket/draw`。
 - `finishMatchInternal(matchId, data)` (~2761): 勝者判定→冪等ガード→セット集計→**Eloは両者IDありかつ非BYEのときのみ更新**(`calcElo` K=32, 基準1500, db.js:527)→`advanceWinnerInline`で次戦へ。
 - `correctResult` (~2891): 確定済み結果の修正。勝者反転→次戦クリア→再進出を1トランザクション。
 - 優先度ロック: 種目優先(団体>混合>ダブルス>シングルス)/審判担当中/対戦中で呼出を拒否、`force`で強制。
@@ -74,3 +75,4 @@ standalone/  オフライン単機運用ラッパ (start.command/.bat)
 - Elo整合性: finish時に適用差分を `matches.winner_rating_delta`/`loser_rating_delta` に保存し、correct/undo/editMatch は `reverseEloForMatch`/`reapplyEloForMatch` で保存差分を厳密に逆算/再適用する(post-rating再計算によるドリフト禁止)。回帰テストは `test/elo-integrity.test.js`。
 - 料金は `tournament.event_config[].fee`(種目別)が正。集計/領収書(reports `feesFromEventConfig`)・確認メール(mailer `authoritativeFees`)はこれを使い、クライアント供給の fee/total は信用しない。
 - 未認証レスポンスは `sanitizeTournamentPublic` で referee_token/passcode/entry_gas_url を除去。クライアントIPは `clientIp(req)`(trust proxy準拠)に集約。
+- **xlsx は2系統**: 読み込み(.xls/.xlsx パーサ)と大半の帳票は `xlsx`(SheetJS CE 0.20.3)。ただし CE は**セル罫線(スタイル)を書き出せない**(有料機能)。罫線が要る**両山トーナメント表だけ** `reports.buildBracketXlsx` 内で `require("xlsx-js-style")`(罫線対応 drop-in fork)を使う。新たに罫線付き xlsx を書くときは同 fork を使うこと(`cell.s.border` + `cellStyles:true`)。

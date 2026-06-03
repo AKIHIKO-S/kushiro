@@ -1420,6 +1420,20 @@ app.post("/api/tournaments/:id/bracket/generate", requireAdmin, (req, res) => {
   if (r?.error) return res.status(400).json(r);
   res.json(r);
 });
+// 抽選ドロー: シードを標準位置に固定 + 非シードをランダム抽選(同一所属/地区を分散) → ブラケット凍結。
+// body: { event, draw_seed?(整数), separate_by?('team'|'region'|'none'), force? }
+// 同じ draw_seed を指定すれば同一結果を再現できる(検証・引き直し用)。結果入力済みは force ガード。
+app.post("/api/tournaments/:id/bracket/draw", requireAdmin, (req, res) => {
+  const event = req.body?.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.drawSingleBracket(req.params.id, event, {
+    draw_seed: req.body?.draw_seed,
+    separate_by: req.body?.separate_by,
+    force: !!req.body?.force,
+  });
+  if (r?.error) return res.status(400).json(r);
+  res.json(r);
+});
 // 団体リーグ(総当たり)を生成。body: { event, num_blocks?, assignments?, regenerate?, force? }
 app.post("/api/tournaments/:id/league/generate", requireAdmin, (req, res) => {
   const event = req.body?.event;
@@ -1943,6 +1957,36 @@ app.get("/api/tournaments/:id/match-cards.xlsx", requireAdmin, (req, res) => {
     res.status(500).json({ error: "対戦票生成失敗: " + e.message });
   }
 });
+
+// ─── トーナメント表(両山)Excel 出力 — 抽選結果を手修正・印刷できる形で書き出す ───
+// ?event=種目名 で1種目に絞れる(未指定=全ブラケット種目を別シートで)。
+// ブラケットは公開閲覧データ(選手名/所属/シード)なので、運営版と公開読取版の両方を用意。
+function _sendBracketXlsx(req, res) {
+  try {
+    const tournament = db.getTournament(req.params.id);
+    if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
+    const matches = (db.getMatchesByTournament(req.params.id) || []).filter(m => m.bracket_round != null);
+    if (!matches.length) {
+      return res.status(400).json({ error: "トーナメント表がありません。先に抽選/生成してください。" });
+    }
+    const entrants = db.getEntrants(req.params.id) || [];
+    const buf = reports.buildBracketXlsx(tournament, matches, entrants, { event: req.query.event || "" });
+    const safeName = (tournament.name || "tournament").replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_");
+    const evPart = req.query.event ? "_" + String(req.query.event).replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_") : "";
+    const filename = encodeURIComponent(`トーナメント表_${safeName}${evPart}.xlsx`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=UTF-8''${filename}`);
+    res.setHeader("Content-Length", Buffer.byteLength(buf));
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.end(buf);
+  } catch (e) {
+    console.error("bracket.xlsx error:", e);
+    res.status(500).json({ error: "トーナメント表生成失敗: " + e.message });
+  }
+}
+app.get("/api/tournaments/:id/bracket/export.xlsx", requireAdmin, _sendBracketXlsx);
+app.get("/api/public/tournaments/:id/bracket/export.xlsx", _sendBracketXlsx);
 
 // ─── 領収書 一括 HTML 出力 (印刷で PDF 化、モーダル表示用) ───
 app.get("/api/tournaments/:id/receipts.html", requireAdmin, (req, res) => {

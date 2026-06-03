@@ -993,6 +993,220 @@ function buildApplicantsXlsx(tournament, entrants, opts) {
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 }
 
+// ═══════════════════════════════════════════════════════
+// トーナメント表(両山)Excel 出力 — for_mac.xls の「トーナメント表/P1」レイアウト踏襲
+//   ・両山(左右対向): 左半分は左→右へ、右半分は右→左へ勝ち上がり、中央が決勝。
+//   ・1選手 = 縦2行(名前/所属/シードを2行結合)。アンカー行を再帰計算してペアを罫線で結ぶ。
+//   ・下罫線 = 勝者の横線、縦罫線 = 上下2試合を結ぶ縦線、「ｂｙｅ」= 不戦勝枠。
+//   ・結果が入っていれば勝者名を各試合の横線セルに記入(空なら手書き用の空欄)。
+//   matches = getMatchesByTournament の行(bracket_round/bracket_pos/player*_name/winner_name/event 等)。
+//   entrants = シード番号・選手番号(bracket_number)引き当て用。opts.event で1種目に絞れる。
+// ═══════════════════════════════════════════════════════
+function buildBracketXlsx(tournament, matches, entrants, opts) {
+  // community版 xlsx(0.20.3)はセル罫線を書き出せない(有料機能)。両山ブラケットの罫線
+  // (勝者横線・縦線)は表の生命線なので、この関数内だけ罫線対応の drop-in fork を使う。
+  // 読み込み(.xls/.xlsx パーサ)や他の帳票は従来どおり 0.20.3 のまま=パーサに影響なし。
+  const XLSX = require("xlsx-js-style");
+  opts = opts || {};
+  tournament = tournament || {};
+  const seedByEntrant = new Map();
+  const numByEntrant = new Map();
+  (entrants || []).forEach(e => {
+    if ((parseInt(e.seed) || 0) >= 1) seedByEntrant.set(e.id, parseInt(e.seed));
+    if ((parseInt(e.bracket_number) || 0) >= 1) numByEntrant.set(e.id, parseInt(e.bracket_number));
+  });
+
+  const wb = XLSX.utils.book_new();
+  const thin = { style: "thin", color: { rgb: "000000" } };
+  const thick = { style: "medium", color: { rgb: "000000" } };
+
+  // event 別に bracket 試合を仕分け(リーグ=bracket_round null は除外)
+  const byEvent = new Map();
+  (matches || []).forEach(m => {
+    if (m.bracket_round == null) return;
+    const key = m.event || "(未分類)";
+    if (!byEvent.has(key)) byEvent.set(key, []);
+    byEvent.get(key).push(m);
+  });
+  let events = Array.from(byEvent.keys());
+  if (opts.event) events = events.filter(e => e === opts.event);
+
+  if (!events.length) {
+    const ws = XLSX.utils.aoa_to_sheet([
+      [tournament.name || "トーナメント表"], [""],
+      ["トーナメント表がありません。先に抽選/生成してください。"],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, "トーナメント表");
+    return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  }
+
+  events.forEach(eventName => {
+    const list = byEvent.get(eventName);
+    const round1 = list.filter(m => m.bracket_round === 1).sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0));
+    if (!round1.length) return;
+    const S = round1.length * 2;
+    const totalRounds = Math.max(1, Math.round(Math.log2(S)));
+    const sideRounds = totalRounds - 1;            // 各山(片側)のラウンド数(決勝を除く)
+    const byRP = {};
+    list.forEach(m => { byRP[m.bracket_round + "_" + m.bracket_pos] = m; });
+
+    const TOP = 4;                                  // ヘッダ行ぶんのオフセット(0始まり行)
+    const leafTop = (localSlot) => TOP + localSlot * 2;
+
+    // 各試合のアンカー行(勝者横線の行)。左右で同一(=両山ミラー)。childLines も返す。
+    const anchorMemo = {};
+    function childLines(r, lq) {
+      if (r === 1) return [TOP + 4 * lq + 1, TOP + 4 * lq + 3];
+      return [anchor(r - 1, 2 * lq), anchor(r - 1, 2 * lq + 1)];
+    }
+    function anchor(r, lq) {
+      const k = r + "_" + lq;
+      if (anchorMemo[k] != null) return anchorMemo[k];
+      const cl = childLines(r, lq);
+      const v = (cl[0] + cl[1]) / 2;
+      anchorMemo[k] = v; return v;
+    }
+
+    // 列レイアウト
+    //  左: 0=組番号 1=選手名 2=所属 3=シード  4..=左ラウンド横線(R1→中央)
+    //  中央: CENTER=決勝/優勝
+    //  右: ..=右ラウンド横線(中央→R1)  右シード/所属/選手名/組番号
+    const L_NUM = 0, L_NAME = 1, L_TEAM = 2, L_SEED = 3;
+    const LADV = (r) => 4 + (r - 1);                       // 左 round r の横線列
+    const CENTER = 4 + sideRounds;
+    const RADV = (r) => CENTER + (sideRounds - r + 1);     // 右 round r の横線列(中央寄りが大きいr)
+    const R_SEED = CENTER + sideRounds + 1, R_TEAM = R_SEED + 1, R_NAME = R_TEAM + 1, R_NUM = R_NAME + 1;
+    const lastCol = R_NUM;
+    const lastRow = leafTop(S / 2 - 1) + 1;                // 最終リーフの下端
+
+    const ws = {};
+    const merges = [];
+    function put(r, c, v, style) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      const cur = ws[addr] || {};
+      ws[addr] = { t: "s", v: v == null ? "" : String(v), s: Object.assign({}, cur.s, style) };
+    }
+    function border(r, c, edges) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      const cell = ws[addr] || { t: "s", v: "" };
+      cell.s = cell.s || {};
+      cell.s.border = Object.assign({}, cell.s.border, edges);
+      ws[addr] = cell;
+    }
+    const centerStyle = { alignment: { horizontal: "center", vertical: "center", wrapText: true }, font: { sz: 10 } };
+    const nameStyle = { alignment: { horizontal: "left", vertical: "center", wrapText: true }, font: { sz: 10 } };
+
+    // ── ヘッダ ──
+    put(0, L_NAME, tournament.name || "", { font: { bold: true, sz: 14 } });
+    put(1, L_NAME, eventName + "  トーナメント表", { font: { bold: true, sz: 12 } });
+    put(0, CENTER, _jaShortDate(tournament.date), centerStyle);
+    put(1, CENTER, tournament.venue || "", centerStyle);
+
+    // ── 選手リーフ配置(round1) ──
+    function placeLeaf(m, slotKey, localSlot, side) {
+      const isP1 = slotKey === 1;
+      const name = isP1 ? (m.player1_name || "") : (m.player2_name || "");
+      const team = isP1 ? (m.player1_team || "") : (m.player2_team || "");
+      const eid = isP1 ? m.player1_entrant_id : m.player2_entrant_id;
+      const top = leafTop(localSlot);
+      const isBye = !name || name === "BYE";
+      const disp = isBye ? "ｂｙｅ" : name;
+      const seed = eid != null ? seedByEntrant.get(eid) : null;
+      const num = eid != null ? numByEntrant.get(eid) : null;
+      if (side === "L") {
+        put(top, L_NUM, num || "", centerStyle);
+        put(top, L_NAME, disp, nameStyle);
+        put(top, L_TEAM, isBye ? "" : team, nameStyle);
+        put(top, L_SEED, seed ? "[" + seed + "]" : "", centerStyle);
+        merges.push({ s: { r: top, c: L_NUM }, e: { r: top + 1, c: L_NUM } });
+        merges.push({ s: { r: top, c: L_NAME }, e: { r: top + 1, c: L_NAME } });
+        merges.push({ s: { r: top, c: L_TEAM }, e: { r: top + 1, c: L_TEAM } });
+        merges.push({ s: { r: top, c: L_SEED }, e: { r: top + 1, c: L_SEED } });
+        // 下罫線(選手レール): 名前〜シード + 横線列左端まで
+        for (let c = L_NAME; c <= L_SEED; c++) border(top + 1, c, { bottom: thin });
+      } else {
+        put(top, R_NUM, num || "", centerStyle);
+        put(top, R_NAME, disp, nameStyle);
+        put(top, R_TEAM, isBye ? "" : team, nameStyle);
+        put(top, R_SEED, seed ? "[" + seed + "]" : "", centerStyle);
+        merges.push({ s: { r: top, c: R_NUM }, e: { r: top + 1, c: R_NUM } });
+        merges.push({ s: { r: top, c: R_NAME }, e: { r: top + 1, c: R_NAME } });
+        merges.push({ s: { r: top, c: R_TEAM }, e: { r: top + 1, c: R_TEAM } });
+        merges.push({ s: { r: top, c: R_SEED }, e: { r: top + 1, c: R_SEED } });
+        for (let c = R_SEED; c <= R_NAME; c++) border(top + 1, c, { bottom: thin });
+      }
+    }
+    const halfR1 = S / 4;   // 左右の境目(round1 の左マッチ数)
+    round1.forEach(m => {
+      const p = m.bracket_pos || 0;
+      if (p < halfR1) {           // 左山
+        placeLeaf(m, 1, 2 * p, "L");
+        placeLeaf(m, 2, 2 * p + 1, "L");
+      } else {                    // 右山
+        const rq = p - halfR1;
+        placeLeaf(m, 1, 2 * rq, "R");
+        placeLeaf(m, 2, 2 * rq + 1, "R");
+      }
+    });
+
+    // ── 各ラウンドの横線・縦線・勝者名 ──
+    function drawMatch(r, localq, side) {
+      const a = anchor(r, localq);
+      const cl = childLines(r, localq);
+      const col = side === "L" ? LADV(r) : RADV(r);
+      // 勝者横線(下罫線)
+      border(a, col, { bottom: thin });
+      // 縦線: 上の子の線+1 〜 下の子の線
+      const vEdge = side === "L" ? { left: thin } : { right: thin };
+      for (let row = cl[0] + 1; row <= cl[1]; row++) border(row, col, vEdge);
+      // 勝者名(結果が入っていれば)
+      const matchPos = side === "L" ? localq : (S / Math.pow(2, r) / 2 + localq);
+      const mm = byRP[r + "_" + matchPos];
+      if (mm && mm.status === "completed" && mm.winner_name && mm.winner_name !== "BYE") {
+        put(a, col, mm.winner_name, side === "L" ? nameStyle : nameStyle);
+        border(a, col, { bottom: thin });
+      }
+    }
+    for (let r = 1; r <= sideRounds; r++) {
+      const leftMatches = S / Math.pow(2, r) / 2;     // この round の片側マッチ数
+      for (let lq = 0; lq < leftMatches; lq++) drawMatch(r, lq, "L");
+      for (let rq = 0; rq < leftMatches; rq++) drawMatch(r, rq, "R");
+    }
+
+    // ── 決勝(中央)+ 優勝 ──
+    const finalMatch = byRP[totalRounds + "_0"];
+    const finalAnchor = sideRounds >= 1 ? anchor(sideRounds, 0) : (TOP + 1);
+    put(0, CENTER, _jaShortDate(tournament.date), centerStyle);
+    put(2, CENTER, "決勝", Object.assign({ font: { bold: true, sz: 11 } }, centerStyle));
+    border(finalAnchor, CENTER, { bottom: thick });
+    if (finalMatch && finalMatch.status === "completed" && finalMatch.winner_name && finalMatch.winner_name !== "BYE") {
+      put(finalAnchor, CENTER, "優勝: " + finalMatch.winner_name, Object.assign({ font: { bold: true, sz: 11 } }, centerStyle));
+      border(finalAnchor, CENTER, { bottom: thick });
+    }
+
+    // ── 列幅 ──
+    const cols = [];
+    cols[L_NUM] = { wch: 4 }; cols[L_NAME] = { wch: 14 }; cols[L_TEAM] = { wch: 11 }; cols[L_SEED] = { wch: 4 };
+    for (let r = 1; r <= sideRounds; r++) cols[LADV(r)] = { wch: 11 };
+    cols[CENTER] = { wch: 13 };
+    for (let r = 1; r <= sideRounds; r++) cols[RADV(r)] = { wch: 11 };
+    cols[R_SEED] = { wch: 4 }; cols[R_TEAM] = { wch: 11 }; cols[R_NAME] = { wch: 14 }; cols[R_NUM] = { wch: 4 };
+    for (let c = 0; c <= lastCol; c++) if (!cols[c]) cols[c] = { wch: 9 };
+
+    ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRow + 1, c: lastCol } });
+    ws["!cols"] = cols;
+    ws["!merges"] = merges;
+    ws["!pageSetup"] = { orientation: "landscape", paperSize: 9, fitToWidth: 1, fitToHeight: 0 };
+    XLSX.utils.book_append_sheet(wb, ws, (eventName || "表").slice(0, 30));
+  });
+
+  if (!wb.SheetNames.length) {
+    const ws = XLSX.utils.aoa_to_sheet([[tournament.name || "トーナメント表"], [""], ["有効なブラケットがありません。"]]);
+    XLSX.utils.book_append_sheet(wb, ws, "トーナメント表");
+  }
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
+}
+
 module.exports = {
   buildAggregationXlsx,
   buildApplicantsXlsx,
@@ -1000,6 +1214,7 @@ module.exports = {
   buildReceiptsXlsx,
   buildReceiptsList,
   buildMatchCardsXlsx,
+  buildBracketXlsx,
   buildCoachResultsHTML,
   classifyEvent, genderOf,
   buildAggregation, feesFromEventConfig,   // テスト用に公開 (#17)
