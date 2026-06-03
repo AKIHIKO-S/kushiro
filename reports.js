@@ -375,7 +375,7 @@ function buildReceiptsHTML(tournament, entrants, opts) {
 <meta charset="UTF-8">
 <title>領収書 ${escapeHtml(tournament.name || "")}</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap');
+  /* 外部フォント@import撤去: BIZ UDPGothic はシステム同梱/Hiragino等で代替(オフライン整合) */
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: 'BIZ UDPGothic', 'Hiragino Mincho ProN', 'Yu Mincho', serif;
@@ -880,7 +880,7 @@ function buildCoachResultsHTML(coach, tournament, roster, matches, opts) {
 <html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>チーム結果まとめ ${escapeHtml(teamName || coach.name || "")}</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap');
+  /* 外部フォント@import撤去: BIZ UDPGothic はシステム同梱/Hiragino等で代替(オフライン整合) */
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'BIZ UDPGothic', sans-serif; background: #eef1f6; color: #1a2233; }
   .toolbar { background: #1e2a4a; color: #fff; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 10; }

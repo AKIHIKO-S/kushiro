@@ -287,8 +287,8 @@ app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com data:",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data:",
     "img-src 'self' data: blob: https://api.qrserver.com",
     "connect-src 'self'",
     "object-src 'none'",
@@ -1249,7 +1249,7 @@ function buildRosterHTML(data) {
 <meta name="robots" content="noindex">
 <title>${_escHtml(t.name)} 名簿</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap');
+  /* 外部フォント@import撤去: BIZ UDPGothic はシステム同梱/Hiragino等で代替(オフライン整合) */
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif;

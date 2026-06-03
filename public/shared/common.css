@@ -2,7 +2,10 @@
    KTTA Platform - Refined Editorial Design System
    モノクロ基調 × ボルドー1色アクセント / 大規模タイポグラフィ
 ═══════════════════════════════════════════════════════ */
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=BIZ+UDPGothic:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* 外部フォント(@import)は撤去: ①初回描画をブロックする外部往復 ②standalone単機オフラインで
+   到達不能=縮退の前提を壊す ③実使用は BIZ UDPGothic/JetBrains Mono のみで、いずれもシステム
+   フォールバック(Hiragino/Yu Gothic/SFMono 等)で成立。Space Grotesk/Manrope はSVGロゴ内のみ
+   (system-ui フォールバックあり)。よって自己ホスト不要で削除し外部依存ゼロにする。 */
 
 *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
 
