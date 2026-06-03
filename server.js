@@ -1460,6 +1460,12 @@ app.post("/api/tournaments/:id/bracket/undo-draw", requireAdmin, (req, res) => {
 app.get("/api/tournaments/:id/bracket/draw-log", requireAdmin, (req, res) => {
   res.json(db.getDrawLog(req.params.id, req.query.event || ""));
 });
+// 確定封印の差分: 抽選確定時の配置から手修正された枠を返す(原配置との突合・可視化)。?event=種目名
+app.get("/api/tournaments/:id/bracket/draw-diff", requireAdmin, (req, res) => {
+  const event = req.query.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  res.json(db.getBracketDrawDiff(req.params.id, event));
+});
 // 団体リーグ(総当たり)を生成。body: { event, num_blocks?, assignments?, regenerate?, force? }
 app.post("/api/tournaments/:id/league/generate", requireAdmin, (req, res) => {
   const event = req.body?.event;
@@ -1996,7 +2002,12 @@ function _sendBracketXlsx(req, res) {
       return res.status(400).json({ error: "トーナメント表がありません。先に抽選/生成してください。" });
     }
     const entrants = db.getEntrants(req.params.id) || [];
-    const buf = reports.buildBracketXlsx(tournament, matches, entrants, { event: req.query.event || "" });
+    let drawMeta = null;
+    if (req.query.event) {
+      const committed = (db.getDrawLog(req.params.id, req.query.event) || []).find(x => x.status === "committed");
+      if (committed) drawMeta = { draw_seed: committed.draw_seed, drawn_by: committed.drawn_by, drawn_at: committed.created_at };
+    }
+    const buf = reports.buildBracketXlsx(tournament, matches, entrants, { event: req.query.event || "", draw_meta: drawMeta });
     const safeName = (tournament.name || "tournament").replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_");
     const evPart = req.query.event ? "_" + String(req.query.event).replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_") : "";
     const filename = encodeURIComponent(`トーナメント表_${safeName}${evPart}.xlsx`);

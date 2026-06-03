@@ -8211,8 +8211,9 @@ const O = {
  if (ev && ev.type === "team") return toast("団体種目は「リーグ生成」を使ってください", "err");
  const tid = O.tournamentId;
  let sep = "team", lastSeed = null, lastPreview = null;
- let rdy = null;
+ let rdy = null, diff = null;
  try { rdy = await api.get(`/api/tournaments/${tid}/bracket/draw-readiness?event=${encodeURIComponent(event)}`); } catch (e) {}
+ try { diff = await api.get(`/api/tournaments/${tid}/bracket/draw-diff?event=${encodeURIComponent(event)}`); } catch (e) {}
 
  const sepDefs = [["team", "同一所属(クラブ)を散らす"], ["region", "地区で散らす"], ["none", "完全ランダム"]];
  const sepBtns = h("div", { className: "flex gap-1", style: { flexWrap: "wrap" } });
@@ -8224,6 +8225,13 @@ const O = {
  const previewBox = h("div", { style: { marginTop: "10px" } });
 
  const issuesBox = h("div", { style: { margin: "6px 0" } });
+ if (diff && diff.has_draw) {
+   issuesBox.appendChild(h("div", {
+     style: { fontSize: "12px", fontWeight: 600, marginBottom: "4px", color: diff.intact ? "#1a7a45" : "#b45309" } },
+     diff.intact
+       ? `✓ 抽選済み(記録ID ${diff.draw_seed}・実施 ${diff.drawn_by || "—"})。原配置のまま。`
+       : `⚠ 抽選済み(記録ID ${diff.draw_seed})。原配置から ${diff.modified}件 手修正されています(${(diff.changes || []).slice(0, 3).map(c => c.original_name + "→" + c.current_name).join("、")}${diff.modified > 3 ? " ほか" : ""})。`));
+ }
  if (rdy) {
    (rdy.issues || []).forEach(i => issuesBox.appendChild(h("div", {
      style: { color: i.level === "block" ? "#c01526" : "#b45309", fontSize: "12px", fontWeight: i.level === "block" ? 700 : 500 } },

@@ -84,6 +84,27 @@ test("undoDraw: 最初の抽選を取り消すとブラケットが消える", (
   assert.strictEqual(evMatchCount(t), 0, "最初の抽選取消でブラケット消滅");
 });
 
+test("確定封印の差分: 抽選直後は原配置のまま・手修正で差分検知", () => {
+  const t = setup(8, 0);
+  db.drawSingleBracket(t.id, EV, { draw_seed: 1, drawn_by: "甲" });
+  let d = db.getBracketDrawDiff(t.id, EV);
+  assert.ok(d.has_draw, "抽選済み");
+  assert.ok(d.intact && d.modified === 0, "直後は原配置のまま");
+  assert.strictEqual(d.drawn_by, "甲", "実施者");
+  // 2スロットを手修正(入替) → 差分2件
+  const r = db.swapBracketSlots(t.id, EV, { pos: 0, slot: 1 }, { pos: 1, slot: 1 });
+  assert.ok(r.success, "入替: " + JSON.stringify(r));
+  d = db.getBracketDrawDiff(t.id, EV);
+  assert.ok(!d.intact && d.modified === 2, "手修正2件検知: " + d.modified);
+  assert.ok(d.changes.length === 2 && d.changes[0].original_name, "差分の内訳がある");
+});
+
+test("確定封印の差分: 未抽選なら has_draw=false", () => {
+  const t = setup(8, 0);
+  const d = db.getBracketDrawDiff(t.id, EV);
+  assert.strictEqual(d.has_draw, false);
+});
+
 test("checkDrawReadiness: ブロック(2人未満/シード重複)と警告(承認待ち)", () => {
   // 2人未満
   const t1 = db.createTournament({ name: "検査1" + (++_seq), date: "2027-04-04" });

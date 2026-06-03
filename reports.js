@@ -1199,6 +1199,13 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
       border(finalAnchor, CENTER, { bottom: thick });
     }
 
+    // ── 抽選メタの刻印(トレーサビリティ: 記録ID・実施者・日時) ──
+    if (opts.draw_meta && opts.draw_meta.draw_seed != null) {
+      const dm = opts.draw_meta;
+      put(lastRow + 1, L_NAME, `抽選 記録ID:${dm.draw_seed}` + (dm.drawn_by ? ` ・実施:${dm.drawn_by}` : "") + (dm.drawn_at ? ` ・${dm.drawn_at}` : ""),
+        { font: { sz: 8, name: "Meiryo", color: { rgb: "64748B" } }, alignment: { horizontal: "left" } });
+    }
+
     // ── 列幅(規模連動で圧縮: 大きいドローほど狭く) ──
     const wName = S <= 32 ? 14 : S <= 64 ? 11 : 9;
     const wTeam = S <= 32 ? 11 : S <= 64 ? 9 : 7;

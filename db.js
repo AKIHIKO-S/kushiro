@@ -3395,6 +3395,43 @@ function getDrawLog(tournamentId, event) {
   return rows;
 }
 
+// 確定封印の検証: 抽選確定時に封印した leaves(draw_log) と、現在のブラケットround1配置を突合し、
+// 抽選後にどの枠が手修正(swap/差替/取込)されたかを返す。「公正に引いた直後に黙って動かす」抜け穴を
+// 隠蔽でなく可視化するのが目的(原配置からの差分を誰でも確認可能に)。読み取りのみ=非破壊。
+function getBracketDrawDiff(tournamentId, event) {
+  const row = sqlite.prepare(
+    "SELECT * FROM draw_log WHERE tournament_id=? AND event=? AND status='committed' ORDER BY id DESC LIMIT 1"
+  ).get(tournamentId, event);
+  if (!row) return { has_draw: false };
+  let sealed = []; try { sealed = JSON.parse(row.leaves_json || "[]"); } catch (e) {}
+  let snap = []; try { snap = JSON.parse(row.entrants_snapshot || "[]"); } catch (e) {}
+  const nameById = new Map(snap.map(s => [String(s.id), s.name]));
+  const size = sealed.length;
+  const current = new Array(size).fill(null), curName = new Array(size).fill("");
+  sqlite.prepare(
+    "SELECT bracket_pos, player1_entrant_id, player2_entrant_id, player1_name, player2_name FROM matches WHERE tournament_id=? AND event=? AND bracket_round=1"
+  ).all(tournamentId, event).forEach(m => {
+    const p = m.bracket_pos || 0;
+    if (2 * p < size) { current[2 * p] = m.player1_entrant_id || null; curName[2 * p] = m.player1_name || ""; }
+    if (2 * p + 1 < size) { current[2 * p + 1] = m.player2_entrant_id || null; curName[2 * p + 1] = m.player2_name || ""; }
+  });
+  const changes = [];
+  for (let i = 0; i < size; i++) {
+    const o = sealed[i] != null ? String(sealed[i]) : null;
+    const c = current[i] != null ? String(current[i]) : null;
+    if (o !== c) changes.push({
+      slot: i, original_name: o ? (nameById.get(o) || "(不明)") : "（BYE）",
+      current_name: c ? (curName[i] || "(不明)") : "（BYE）",
+    });
+  }
+  return {
+    has_draw: true, draw_seed: row.draw_seed, separate_by: row.separate_by, drawn_by: row.drawn_by, drawn_at: row.created_at,
+    bracket_size: size, modified: changes.length, intact: changes.length === 0, changes: changes.slice(0, 60),
+    sealed_hash: String(row.leaves_hash || "").slice(0, 12),
+    current_hash: _sha256(JSON.stringify(current.map(x => x != null ? String(x) : null))).slice(0, 12),
+  };
+}
+
 // Excelラウンドトリップ取込: buildBracketXlsx の _import データ(手修正後)から、entrantを消さず
 // 『位置だけ』差分でブラケットを再構成する(出力→手修正→取込で正本化のループを閉じる)。
 //   rows = [{event,bracket_pos,slot(1|2),entrant_id,name,team,bye}]。
@@ -7321,7 +7358,7 @@ module.exports = {
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
   generateBracket, drawSingleBracket, computeDrawLeaves, bracketPositions,
-  checkDrawReadiness, undoDraw, getDrawLog, importBracketRoundtrip,
+  checkDrawReadiness, undoDraw, getDrawLog, getBracketDrawDiff, importBracketRoundtrip,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   generateTeamLeague, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
