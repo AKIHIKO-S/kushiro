@@ -11,8 +11,14 @@
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
-DB_FILE="${DB_FILE:-$APP_DIR/tabletennis.db}"
-BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
+# DB の場所は backup.sh と同一ロジックで自動判定(ここを取り違えると当日復旧が空振り/誤パス書込で失敗する)。
+# DB_FILE 明示 > DB_PATH(env) > Oracle本番(/var/data) > ローカル(data/) の順。
+if [ -z "${DB_FILE:-}" ]; then
+  if [ -n "${DB_PATH:-}" ] && [ -f "$DB_PATH" ]; then DB_FILE="$DB_PATH"
+  elif [ -f /var/data/tournament.db ]; then DB_FILE="/var/data/tournament.db"
+  else DB_FILE="$APP_DIR/data/tournament.db"; fi
+fi
+BACKUP_DIR="${BACKUP_DIR:-$(dirname "$DB_FILE")/backups}"
 SERVICE_NAME="${SERVICE_NAME:-ktta}"
 
 usage() {
@@ -47,6 +53,9 @@ if [ -z "$STAMP" ]; then
     echo "[ERROR] バックアップファイルがありません ($BACKUP_DIR)"
     exit 1
   fi
+elif [ -f "$STAMP" ]; then
+  # フルパス/.gz ファイルを直接指定(docs の例や別ロケーションから取得したファイルに対応)
+  BACKUP_FILE="$STAMP"
 else
   BACKUP_FILE="$BACKUP_DIR/ktta-$STAMP.db.gz"
   if [ ! -f "$BACKUP_FILE" ]; then

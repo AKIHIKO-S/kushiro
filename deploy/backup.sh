@@ -57,6 +57,24 @@ fi
 SIZE=$(stat -f%z "$BACKUP_FILE" 2>/dev/null || stat -c%s "$BACKUP_FILE" 2>/dev/null || echo "?")
 log "[OK] バックアップ完了: $BACKUP_FILE (${SIZE} bytes)"
 
+# ── オフサイト退避(任意・env で有効化) ──
+# 既定では全バックアップが本機 /var/data に同居し、メディア/VM喪失・誤削除・課金切れで全損する。
+# OFFSITE_CMD を設定すると、バックアップ毎に「<コマンド> <バックアップファイル> <宛先>」を実行して別ロケーション
+# へ1コピー退避する(別アカウント/別リージョン推奨)。転送失敗でも本体バックアップは成功扱い(WARNのみ)。
+#   OCI Object Storage : OFFSITE_CMD='oci os object put -bn ktta-backups --force --file'
+#   S3互換             : OFFSITE_CMD='aws s3 cp'         OFFSITE_DEST='s3://ktta-backups/'
+#   rclone             : OFFSITE_CMD='rclone copy'       OFFSITE_DEST='myremote:ktta-backups'
+if [ -n "${OFFSITE_CMD:-}" ]; then
+  log "オフサイト退避: $OFFSITE_CMD <file> ${OFFSITE_DEST:-}"
+  if eval "$OFFSITE_CMD \"$BACKUP_FILE\" ${OFFSITE_DEST:-}"; then
+    log "[OK] オフサイト退避完了"
+  else
+    log "[WARN] オフサイト退避に失敗(本体バックアップは成功)。OFFSITE_CMD/認証を確認してください。"
+  fi
+else
+  log "[INFO] オフサイト退避 未設定(OFFSITE_CMD)。現在は単一ディスク同居=メディア/VM喪失時に全損リスク。"
+fi
+
 # 30日より古いファイルを削除
 find "$BACKUP_DIR" -name 'ktta-*.db.gz' -type f -mtime +$KEEP_DAYS -delete
 DELETED=$(find "$BACKUP_DIR" -name 'ktta-*.db.gz' -type f -mtime +$KEEP_DAYS | wc -l | tr -d ' ')

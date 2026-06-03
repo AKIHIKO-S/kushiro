@@ -222,17 +222,32 @@ sudo certbot --nginx -d kttatakkyu.example.com
 # crontab -e で設定
 0 2 * * * /opt/ktta/deploy/backup.sh
 ```
-バックアップ先: `/opt/ktta/backups/ktta-YYYYMMDD.db.gz`
+バックアップ先: **`/var/data/backups/ktta-YYYYMMDD-HHMMSS.db.gz`**(本番DBは `/var/data/tournament.db`。
+backup.sh/restore.sh は DB_PATH→/var/data を自動判定する)
 - 30日分自動ローテーション
-- 大会前日は手動で 1回バックアップ推奨
+- 大会前日は手動で 1回バックアップ推奨: `sudo /opt/ktta/deploy/backup.sh`
 
-### 復元
+### ⚠ オフサイト退避 (必須級・全損対策)
+既定では全バックアップが本機 `/var/data` に同居し、VM/ディスク喪失・誤削除で**全損**する。別ロケーションへ
+1コピー退避すること。`/etc/ktta.env` に転送設定を入れ、backup.sh が毎回退避する:
 ```bash
-cd /opt/ktta
-sudo systemctl stop ktta
-gunzip -c backups/ktta-20260711.db.gz > tabletennis.db
-sudo systemctl start ktta
+# 例: OCI Object Storage(別アカウント/別リージョン推奨)
+OFFSITE_CMD='oci os object put -bn ktta-backups --force --file'
+# 例: S3互換   OFFSITE_CMD='aws s3 cp'   OFFSITE_DEST='s3://ktta-backups/'
+# 例: rclone   OFFSITE_CMD='rclone copy' OFFSITE_DEST='myremote:ktta-backups'
 ```
+※ cron 実行は env を継承しないため、`0 2 * * * . /etc/ktta.env; /opt/ktta/deploy/backup.sh` のように
+env を source してから実行する。
+
+### 復元 (restore.sh を使う。パスは自動解決)
+```bash
+sudo /opt/ktta/deploy/restore.sh --list                 # 一覧(/var/data/backups を参照)
+sudo /opt/ktta/deploy/restore.sh 20260711-020001        # タイムスタンプ指定で復元
+sudo /opt/ktta/deploy/restore.sh /path/to/ktta-xxx.db.gz # 別ロケーションから取得したファイルを直接指定
+```
+restore.sh は復元前に現DBを `before-restore-*.db` へ自動退避し、サービス停止→復元→再起動まで行う。
+**重要**: 復旧手順は障害発生時に初めて使うと失敗しがち。**非番時に1回ドライ実行**して `--list` が
+`/var/data/backups` を指し、復元先が `/var/data/tournament.db` になることを確認しておくこと。
 
 ### Google スプレッドシートのバックアップ
 - 月1回: スプレッドシート → ファイル → ダウンロード → Excel 形式

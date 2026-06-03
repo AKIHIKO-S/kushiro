@@ -2641,9 +2641,34 @@ function roundNameForBracket(roundNumber, totalRounds) {
   return `${roundNumber}回戦`;
 }
 
+// 結果入力済み(完了=非walkover、または進行中=on_table)の試合が種目に1件でもあるか。
+// 再生成/取込/削除がこれらを op_log もElo逆算も無く巻き込んで消すのを防ぐガードに使う
+// (BYE自動完了=walkover は結果入力ではないので除外)。
+const _eventResultsStmt = sqlite.prepare(
+  `SELECT COUNT(*) AS n FROM matches WHERE tournament_id=? AND event=?
+     AND (status='on_table' OR (status='completed' AND COALESCE(is_walkover,0)=0))`);
+function eventResultCount(tournamentId, event) {
+  if (!event) return 0;
+  return (_eventResultsStmt.get(tournamentId, event) || {}).n || 0;
+}
+function _destructiveGuard(tournamentId, event, force, what) {
+  const n = eventResultCount(tournamentId, event);
+  if (n > 0 && !force) {
+    return { error: "この種目には結果入力済みの試合が " + n + " 件あります。" + (what || "やり直し") +
+      "すると消えてしまいます。本当に作り直す場合は「強制(force)」を指定してください。",
+      needs_force: true, played_count: n };
+  }
+  return null;
+}
+
 // ── トーナメント生成 (entrants ベース) ──────────
 function generateBracket(tournamentId, event, options) {
   options = options || {};
+  // 破壊的再生成ガード: 結果入力済みの試合がある種目を force 無しで再生成しない(当日の不可逆データ破壊防止)。
+  if (options.regenerate) {
+    const g = _destructiveGuard(tournamentId, event, options.force, "トーナメント表を再生成");
+    if (g) return g;
+  }
   // ① entrants から取得 (entrant_ids 指定時はそれ、なければ event 全件)
   let entrants;
   if (options.entrant_ids && options.entrant_ids.length) {
@@ -3091,8 +3116,11 @@ function roundRobinRounds(teams) {
   return rounds;
 }
 
-// 団体リーグ(総当たり)を生成。opts: { num_blocks, assignments:{entrantId:block}, regenerate }
+// 団体リーグ(総当たり)を生成。opts: { num_blocks, assignments:{entrantId:block}, regenerate, force }
 function generateTeamLeague(tournamentId, event, opts = {}) {
+  // 破壊的再生成ガード: 生成は常にリーグ対戦を置換する。結果入力済みなら force 無しで作り直さない。
+  const g = _destructiveGuard(tournamentId, event, opts.force, "リーグを生成(作り直し)");
+  if (g) return g;
   let teams = entrantStmts.listByEvent.all(tournamentId, event);
   if (!opts.include_all_status) teams = teams.filter(e => (e.status || "confirmed") === "confirmed");
   if (teams.length < 2) return { error: "リーグには2チーム以上必要です", count: teams.length };
@@ -5720,6 +5748,12 @@ function importFromSeedList(tournamentId, data) {
   if (!Array.isArray(data.players) || data.players.length < 2) {
     return { error: "players が2人以上必要です" };
   }
+  // 破壊的取込ガード: 既存 entrants を消し再生成する。結果入力済みの試合があると孤児化/消失するため
+  // force 無しでは止める(取込は通常プレー前=結果0件なので平時は素通り)。
+  if (data.regenerate !== false) {
+    const g = _destructiveGuard(tournamentId, data.event, data.force, "この種目に取り込み");
+    if (g) return g;
+  }
 
   // 既存 entrants 削除 (同 event, regenerate デフォルト true)
   if (data.regenerate !== false) {
@@ -5832,6 +5866,9 @@ function importFromMatches(tournamentId, data) {
   if (!Array.isArray(data.matches) || !data.matches.length) {
     return { error: "matches が必要です" };
   }
+  // 破壊的取込ガード: 既存の event 試合を置換する。結果入力済みなら force 無しで上書きしない。
+  const g = _destructiveGuard(tournamentId, data.event, data.force, "この種目に取り込み");
+  if (g) return g;
 
   // 既存削除（再生成）はトランザクション内(下記 txn 冒頭)で行う。
   // 外で先に消すと、挿入が throw した際に event が試合ゼロのまま残る(復旧不能)。

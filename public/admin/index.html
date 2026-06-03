@@ -8175,7 +8175,11 @@ const O = {
  if (nbStr == null) return;
  const num_blocks = Math.max(1, parseInt(nbStr) || 1);
  if (!confirm("リーグを生成します。既存のこの種目のリーグ対戦は作り直されます。よろしいですか？")) return;
- const r = await api.post(`/api/tournaments/${O.tournamentId}/league/generate`, { event, num_blocks, regenerate: true });
+ let r = await api.post(`/api/tournaments/${O.tournamentId}/league/generate`, { event, num_blocks, regenerate: true });
+ if (r && r.needs_force) {
+   if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
+   r = await api.post(`/api/tournaments/${O.tournamentId}/league/generate`, { event, num_blocks, regenerate: true, force: true });
+ }
  if (r.error) return toast(r.error, "err");
  toast(`リーグ生成: ${r.blocks}ブロック・${r.total_matches}対戦`, "ok");
  if (O._vbReload) O._vbReload();
@@ -9270,9 +9274,11 @@ const O = {
  const ids = Array.from(sel.selectedOptions).map(o => o.value);
  const regen = document.getElementById("bgRegen").checked;
  if (ids.length < 2) return toast("2人以上選択してください", "err");
- const r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, {
- event, player_ids: ids, regenerate: regen
- });
+ let r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event, player_ids: ids, regenerate: regen });
+ if (r && r.needs_force) {
+ if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
+ r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event, player_ids: ids, regenerate: regen, force: true });
+ }
  if (r.error) return toast(r.error, "err");
  toast(`${r.player_count}名 ${r.total_matches}試合生成 (${r.total_rounds}ラウンド)`, "ok");
  document.querySelector(".modal-bg")?.remove();
@@ -10080,11 +10086,12 @@ const EnT = {
  const entrants = EnT.entrants.filter(e => e.event === EnT.filterEvent);
  if (entrants.length < 2) return toast("出場選手が2人未満です", "err");
  if (!confirm(`${EnT.filterEvent} (${entrants.length}名) でブラケット生成しますか？\n既存の対戦は削除されます。`)) return;
- const r = await api.post(`/api/tournaments/${EnT.tournamentId}/bracket`, {
- event: EnT.filterEvent,
- entrant_ids: entrants.map(e => e.id),
- regenerate: true,
- });
+ const body = { event: EnT.filterEvent, entrant_ids: entrants.map(e => e.id), regenerate: true };
+ let r = await api.post(`/api/tournaments/${EnT.tournamentId}/bracket`, body);
+ if (r && r.needs_force) {
+ if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
+ r = await api.post(`/api/tournaments/${EnT.tournamentId}/bracket`, { ...body, force: true });
+ }
  if (r.error) return toast(r.error, "err");
  toast(`${r.total_matches} 試合を生成しました (${r.total_rounds} ラウンド)`, "ok");
  EnT.reload();

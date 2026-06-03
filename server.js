@@ -1415,11 +1415,12 @@ app.post("/api/tournaments/:id/bracket/generate", requireAdmin, (req, res) => {
   const r = db.generateBracket(req.params.id, event, {
     regenerate: req.body?.regenerate !== false,
     entrant_ids: req.body?.entrant_ids || null,
+    force: !!req.body?.force,   // 結果入力済み試合がある種目の再生成ガードを越える(運営が確認の上)
   });
   if (r?.error) return res.status(400).json(r);
   res.json(r);
 });
-// 団体リーグ(総当たり)を生成。body: { event, num_blocks?, assignments?, regenerate? }
+// 団体リーグ(総当たり)を生成。body: { event, num_blocks?, assignments?, regenerate?, force? }
 app.post("/api/tournaments/:id/league/generate", requireAdmin, (req, res) => {
   const event = req.body?.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
@@ -1427,6 +1428,7 @@ app.post("/api/tournaments/:id/league/generate", requireAdmin, (req, res) => {
     num_blocks: req.body?.num_blocks,
     assignments: req.body?.assignments || null,
     regenerate: req.body?.regenerate !== false,
+    force: !!req.body?.force,
   });
   if (r?.error) return res.status(400).json(r);
   res.json(r);
@@ -2311,9 +2313,9 @@ app.get("/api/tournaments/:id/entrants/stats", (req, res) => {
 
 // ═══ 進行管理 (Operations) API ═══════════════════════
 app.post("/api/tournaments/:id/bracket", requireAdmin, (req, res) => {
-  const { event, regenerate, player_ids } = req.body || {};
+  const { event, regenerate, player_ids, force } = req.body || {};
   if (!event) return res.status(400).json({ error: "event が必要です" });
-  const r = db.generateBracket(req.params.id, event, { regenerate, player_ids });
+  const r = db.generateBracket(req.params.id, event, { regenerate, player_ids, force: !!force });
   if (r.error) return res.status(400).json(r);
   res.json(r);
 });
