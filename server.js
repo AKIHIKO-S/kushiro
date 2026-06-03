@@ -460,6 +460,11 @@ const entryRateLimit = rateLimit({ windowMs: 60000, max: 10 });
 // 申込番号の照会(閲覧)は送信(entryRateLimit)とは別カウンタにする。共有すると
 // 同一IP/NATからの照会が申込送信の枠を食い潰し合う(相互DoS)。照会はUI再読込分も見込み緩め。
 const applicantLookupRateLimit = rateLimit({ windowMs: 60000, max: 40 });
+// 検索/全件系(選手検索・横断検索・全試合検索・対戦比較)の per-IP 上限。全観客が常時叩く大会ビュー
+// (matches/standings/live)には掛けず(会場NATで同一IPに多数の観客が居るため)、濫用向きの occasional な
+// 検索系のみを緩く制限する。真の volumetric/分散DDoS はインフラ層(nginx limit_req / Cloudflare)が一次防御。
+const publicSearchRateLimit = rateLimit({ windowMs: 60000, max: parseInt(process.env.PUBLIC_SEARCH_MAX) || 120,
+  message: "検索リクエストが多すぎます。少し待って再試行してください。" });
 
 // robots.txt: 全クローラに索引禁止を明示 (#271 参加者PII保護。X-Robots-Tag と二重)
 app.get("/robots.txt", (req, res) => {
@@ -467,7 +472,7 @@ app.get("/robots.txt", (req, res) => {
 });
 
 // ═══ 公開API（閲覧画面用・認証なし） ═══════════════════
-app.get("/api/public/players", (req, res) => {
+app.get("/api/public/players", publicSearchRateLimit, (req, res) => {
   const { search, gender, category, team, sort } = req.query;
   res.json(db.getPlayers({ search, gender, category, team, sort }));
 });
@@ -495,7 +500,7 @@ app.get("/api/public/stats/match-averages", (req, res) => {
 app.get("/api/public/last-updated", (req, res) => { res.json({ t: db.getLastUpdated() }); });
 
 // ── 試合検索 () ───────────────────────────────
-app.get("/api/public/matches", (req, res) => {
+app.get("/api/public/matches", publicSearchRateLimit, (req, res) => {
   const matches = db.searchMatches(req.query);
   const total = db.countMatchesForSearch(req.query);
   res.json({ total, count: matches.length, matches });
@@ -509,7 +514,7 @@ app.get("/api/public/players/:id/opponents", (req, res) => {
 app.get("/api/public/players/:id/event-stats", (req, res) => {
   res.json(db.getPlayerEventStats(req.params.id));
 });
-app.get("/api/public/head-to-head", (req, res) => {
+app.get("/api/public/head-to-head", publicSearchRateLimit, (req, res) => {
   const { p1, p2 } = req.query;
   if (!p1 || !p2) return res.status(400).json({ error: "p1 と p2 が必要です" });
   res.json(db.getHeadToHead(p1, p2));
@@ -683,7 +688,7 @@ app.post("/api/mail/test", requireAdmin, async (req, res) => {
     res.status(500).json({ error: "送信失敗: " + e.message });
   }
 });
-app.get("/api/public/search", (req, res) => {
+app.get("/api/public/search", publicSearchRateLimit, (req, res) => {
   const { q, limit } = req.query;
   if (!q) return res.json([]);
   const players = db.getPlayers({ search: q });
@@ -1057,15 +1062,15 @@ app.post("/api/tournaments/:id/entrants/auto-number", requireAdmin, (req, res) =
   }
 });
 
-// ── 名簿データ JSON ──
-app.get("/api/tournaments/:id/roster.json", (req, res) => {
+// ── 名簿データ JSON ── (運営者限定: 全参加者の氏名/ふりがな/所属/連絡先を含む内部帳票)
+app.get("/api/tournaments/:id/roster.json", requireAdmin, (req, res) => {
   const data = db.buildRosterData(req.params.id);
   if (!data) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(data);
 });
 
-// ── 名簿 HTML (印刷可・ニッタク杯形式) ──
-app.get("/api/tournaments/:id/roster.html", (req, res) => {
+// ── 名簿 HTML (印刷可・ニッタク杯形式) ── (運営者限定。admin UI は管理キー付き fetch+Blob で開く)
+app.get("/api/tournaments/:id/roster.html", requireAdmin, (req, res) => {
   const data = db.buildRosterData(req.params.id);
   if (!data) return res.status(404).type("html").send("<h1>大会が見つかりません</h1>");
   const html = buildRosterHTML(data);
@@ -1074,10 +1079,10 @@ app.get("/api/tournaments/:id/roster.html", (req, res) => {
   res.send(html);
 });
 
-// ── 受付名簿 HTML (紙の当日受付用・所属別 + 参加料/領収印欄・印刷可) ──
+// ── 受付名簿 HTML (紙の当日受付用・所属別 + 参加料/領収印欄・印刷可) ── (運営者限定)
 // Platform は「名簿 + 請求予定額(種目設定料金)」を出力するのみ。実際の入金・領収の管理は
 // スプレッドシート(GAS)/紙が正 → 会計と二重管理にならず競合しない。
-app.get("/api/tournaments/:id/reception.html", (req, res) => {
+app.get("/api/tournaments/:id/reception.html", requireAdmin, (req, res) => {
   const t = db.getTournament(req.params.id);
   if (!t) return res.status(404).type("html").send("<h1>大会が見つかりません</h1>");
   const entrants = db.getEntrants(req.params.id) || [];

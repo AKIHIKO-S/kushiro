@@ -3895,12 +3895,12 @@ const A = {
  h("button", { className: "btn btn-sm",
  style: { background: "#ccfbf1", color: "#0f766e", borderColor: "#5eead4" },
  title: "支部色分け・男女/種目タブ・ふりがな順・重複ハイライト・A4見開き印刷",
- onClick: () => window.open(`/api/tournaments/${t.id}/roster.html`, "_blank") },
+ onClick: () => A.openAuthedHtmlWindow(`/api/tournaments/${t.id}/roster.html`, "名簿_"+(t.name||"")) },
  "名簿 (印刷・支部色分け)"),
  h("button", { className: "btn btn-sm",
  style: { background: "#dcfce7", color: "#14532d", borderColor: "#86efac" },
  title: "当日受付(紙)用。所属別の名簿＋参加料(請求予定額)＋受付/領収印欄を印刷",
- onClick: () => window.open(`/api/tournaments/${t.id}/reception.html`, "_blank") },
+ onClick: () => A.openAuthedHtmlWindow(`/api/tournaments/${t.id}/reception.html`, "受付名簿_"+(t.name||"")) },
  "受付名簿 (領収金額)"),
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.openEntrantsTab(t.id) }, "詳細編集"),
@@ -4048,7 +4048,7 @@ const A = {
    } catch (e) { toast("失敗: " + e.message, "err"); }
  } }, "実行 (番号を割当)"),
  h("button", { className: "btn btn-ghost",
- onClick: () => window.open(`/api/tournaments/${t.id}/roster.html`, "_blank") },
+ onClick: () => A.openAuthedHtmlWindow(`/api/tournaments/${t.id}/roster.html`, "名簿_"+(t.name||"")) },
  "重複管理表を表示"),
  h("button", { className: "btn btn-ghost",
  onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"),
@@ -4444,6 +4444,26 @@ const A = {
  } catch (e) {
  area.innerHTML = '<div style="padding:20px;color:var(--accent)">エラー: ' + e.message + '</div>';
  }
+ },
+
+ // 管理者限定の HTML 帳票(名簿/受付=PII含む)を、管理キー付き fetch + Blob URL で別ウィンドウに開く。
+ // 直 window.open(URL) だと X-Admin-Key が送れず requireAdmin で弾かれるため。
+ async openAuthedHtmlWindow(url, filename) {
+ if (!api.adminKey) return toast("管理キーが必要です（管理設定で入力してください）", "err");
+ try {
+ const resp = await fetch(url, { headers: { "X-Admin-Key": api.adminKey } });
+ if (!resp.ok) return toast("取得失敗: HTTP " + resp.status + (resp.status === 401 || resp.status === 503 ? " (管理キーを確認してください)" : ""), "err");
+ const html = await resp.text();
+ if (!html || html.length < 50) return toast("空のレスポンス", "err");
+ const blob = new Blob([html], { type: "text/html; charset=utf-8" });
+ const u = URL.createObjectURL(blob);
+ const win = window.open(u, "_blank");
+ if (!win) {
+ const a = document.createElement("a"); a.href = u; a.download = (filename || "report") + ".html";
+ document.body.appendChild(a); a.click(); setTimeout(() => { a.remove(); URL.revokeObjectURL(u); }, 1000);
+ toast("ポップアップがブロックされたためダウンロードしました", "warn");
+ } else { setTimeout(() => URL.revokeObjectURL(u), 30000); }
+ } catch (e) { toast("失敗: " + e.message, "err"); }
  },
 
  // 別ウィンドウで HTML 領収書を開く (確実な方法)。team 指定で1団体のみ #272

@@ -1162,7 +1162,7 @@ function regenerateCoachCode(id) {
 function setCoachCode(id, code) {
   const c = getCoachAccount(id); if (!c) return { error: "アカウントが見つかりません" };
   const norm = String(code || "").trim().toLowerCase();
-  if (!/^[a-z0-9]{4,12}$/.test(norm)) return { error: "コードは英小文字・数字 4〜12文字で入力してください" };
+  if (!/^[a-z0-9]{8,12}$/.test(norm)) return { error: "コードは英小文字・数字 8〜12文字で入力してください" };
   if (_coachCodeInUse(norm, id, null)) return { error: "そのコードは既に使われています" };
   sqlite.prepare("UPDATE coach_accounts SET login_code=? WHERE id=?").run(norm, id);
   return { ok: true, coach: getCoachAccount(id) };
@@ -1215,7 +1215,7 @@ function regenerateCoachMemberCode(memberId) {
 function setCoachMemberCode(memberId, code) {
   const m = getCoachMember(memberId); if (!m) return { error: "メンバーが見つかりません" };
   const norm = String(code || "").trim().toLowerCase();
-  if (!/^[a-z0-9]{4,12}$/.test(norm)) return { error: "コードは英小文字・数字 4〜12文字で入力してください" };
+  if (!/^[a-z0-9]{8,12}$/.test(norm)) return { error: "コードは英小文字・数字 8〜12文字で入力してください" };
   if (_coachCodeInUse(norm, null, memberId)) return { error: "そのコードは既に使われています" };
   sqlite.prepare("UPDATE coach_members SET login_code=? WHERE id=?").run(norm, memberId);
   return { ok: true, member: getCoachMember(memberId) };
@@ -2022,7 +2022,7 @@ function createEntrant(data) {
     id,
     tournament_id: data.tournament_id,
     event: data.event || "",
-    seed: parseInt(data.seed) || 0,
+    seed: Math.max(0, Math.min(9999, parseInt(data.seed) || 0)),  // 巨大組番号でのbracketSize爆発を抑止
     block: data.block || "",
     is_doubles: names.is_doubles,
     display_name: names.display_name,
@@ -2076,7 +2076,7 @@ function updateEntrant(id, data) {
   entrantStmts.update.run({
     id,
     event: data.event !== undefined ? data.event : existing.event,
-    seed: data.seed !== undefined ? parseInt(data.seed) || 0 : existing.seed,
+    seed: data.seed !== undefined ? Math.max(0, Math.min(9999, parseInt(data.seed) || 0)) : existing.seed,
     block: data.block !== undefined ? data.block : (existing.block || ""),
     is_doubles: names.is_doubles,
     display_name: names.display_name,
@@ -2832,6 +2832,17 @@ function generateBracket(tournamentId, event, options) {
     superLeaves = buildSeededLeaves(weighted, bracketSize);
   }
 
+  // DoS/運用事故ガード: 巨大 seed(組番号)や登場ラウンドで bracketSize が爆発すると、
+  // bracketPositions の倍々配列確保と round1 ループ(size/2 件の match生成+巨大トランザクション)で
+  // イベントループ凍結~OOMクラッシュに至る。最大1024名(2048枠=11回戦)で頭打ちにし即時拒否する。
+  const MAX_BRACKET_SIZE = 2048;
+  if (!(bracketSize >= 2) || bracketSize > MAX_BRACKET_SIZE || !Number.isInteger(Math.log2(bracketSize))) {
+    return {
+      error: "ブラケットが大きすぎます(最大" + MAX_BRACKET_SIZE + "枠=約1024名)。組番号(seed)や登場ラウンドが過大でないか確認してください。",
+      bracket_size: bracketSize,
+    };
+  }
+
   totalRounds = Math.log2(bracketSize);
   const positions = bracketPositions(bracketSize);
 
@@ -3237,7 +3248,12 @@ function getLeagueMatchResults(tournamentId, event, block) {
         p1_wins: p1w, p2_wins: p2w,
         p1_sets: sum ? sum.home_sets : 0, p2_sets: sum ? sum.away_sets : 0,
         p1_pts: sum ? sum.home_pts : 0, p2_pts: sum ? sum.away_pts : 0,
-        tie_results: sum ? sum.slots : [],
+        // 公開エンドポイント: 必要なフィールドだけ射影(slotを ...s で素通しせず、将来/旧データに
+        // home_name/away_name 等の個人名が紛れても公開に漏らさない=PII防御)。
+        tie_results: sum ? sum.slots.map(s => ({
+          slot: s.slot, type: s.type, winner: s.winner,
+          home_sets: s.home_sets, away_sets: s.away_sets, walkover: !!s.walkover,
+        })) : [],
       };
     });
 }
@@ -5337,8 +5353,10 @@ function setEntrantStatus(entrantId, status) {
 function setEntrantSeed(entrantId, seed) {
   const e = entrantStmts.get.get(entrantId);
   if (!e) return { error: "申込が見つかりません" };
-  entrantStmts.setSeedById.run(parseInt(seed) || 0, entrantId);
-  return { ok: true, id: entrantId, seed: parseInt(seed) || 0 };
+  // 組番号は 0..9999 にクランプ(巨大値での bracketSize 爆発・打ち間違いを抑止。0=未設定)。
+  const sd = Math.max(0, Math.min(9999, parseInt(seed) || 0));
+  entrantStmts.setSeedById.run(sd, entrantId);
+  return { ok: true, id: entrantId, seed: sd };
 }
 
 // スーパーシード: 登場ラウンド(entry_round)を設定。1=1回戦から(既定)、R=R回戦から登場。
@@ -5720,7 +5738,7 @@ function importFromSeedList(tournamentId, data) {
     const entrantData = {
       tournament_id: tournamentId,
       event: data.event,
-      seed: parseInt(p.seed) || 0,
+      seed: Math.max(0, Math.min(9999, parseInt(p.seed) || 0)),  // 取込seedをクランプ(DoS/誤入力対策)
       block: p.block || "",
       name: p.name,
       surname: p.surname,
