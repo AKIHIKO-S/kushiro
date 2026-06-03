@@ -401,7 +401,10 @@ function parseSeedList(filePath, opts = {}) {
   return { format: 'tabletennis-seed-list-v1', source: 'bracket_excel', events };
 }
 
-module.exports = { parseSeedList, extractSheet, looksLikeName, isRegionToken };
+module.exports = {
+  parseSeedList, extractSheet, extractDoubles, looksLikeName, looksLikeTeamName,
+  isRegionToken, sheetSections, stripAnnot, isNoiseSheet, guessFormat,
+};
 
 if (require.main === module) {
   const f = process.argv[2];
