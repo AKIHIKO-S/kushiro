@@ -3100,17 +3100,22 @@ function generateBracket(tournamentId, event, options) {
 //   ③ 確定したリーフ配列を generateBracket({fixedLeaves}) で凍結(seed=シードランクは非破壊)
 // ════════════════════════════════════════════════════════════════════
 
-// あるブロック(2,4,8,…サイズ)に同じグループ(所属/地区)が既に居るほど高い「衝突スコア」。
+// 所属(クラブ)集合の重なり判定。シングルスは [team] の1要素、ダブルスは [team, partner_team] の
+// 2要素。どれか1つでも共有すれば「同所属」とみなす(別クラブ混成ペアの片方一致も衝突)。
+function _clubsOverlap(xs, ys) { for (const x of xs) if (ys.indexOf(x) >= 0) return true; return false; }
+
+// あるブロック(2,4,8,…サイズ)に所属集合の重なる相手が既に居るほど高い「衝突スコア」。
 // 浅い(小さい)ブロックほど重く罰する → まず1回戦同士、次に同1/4・同1/8…の順で散る。
-function _drawConflictScore(leaves, idx, key, size, keyOf) {
-  if (!key) return 0;
+// clubs = 候補の所属集合(配列)。clubsOf = entrant→所属集合。
+function _drawConflictScore(leaves, idx, clubs, size, clubsOf) {
+  if (!clubs.length) return 0;
   let s = 0;
   for (let blk = 2; blk <= size; blk *= 2) {
     const base = Math.floor(idx / blk) * blk;
     let same = 0;
     for (let i = base; i < base + blk; i++) {
       const o = leaves[i];
-      if (o && keyOf(o) === key) same++;
+      if (o && _clubsOverlap(clubsOf(o), clubs)) same++;
     }
     const weight = blk === 2 ? 16 : blk === 4 ? 8 : blk === 8 ? 4 : blk === 16 ? 2 : 1;
     s += same * weight;
@@ -3126,9 +3131,17 @@ function _drawConflictScore(leaves, idx, key, size, keyOf) {
 function computeDrawLeaves(entrants, size, rng, opts) {
   opts = opts || {};
   const sep = opts.separateBy === "region" ? "region" : opts.separateBy === "none" ? "none" : "team";
-  const keyOf = sep === "region" ? (e => String(e.region || "").trim())
-    : sep === "none" ? (() => "")
-    : (e => String(e.team || "").trim());
+  // 所属集合: region=[地区], none=[], team=シングルス[team]/ダブルス[team,partner_team](重複・空除去)。
+  // ※シングルス(is_doubles無・partner_team無)は [team] の1要素=従来の単一キー挙動と完全に等価。
+  const clubsOf = sep === "region"
+    ? (e => { const r = String(e.region || "").trim(); return r ? [r] : []; })
+    : sep === "none" ? (() => [])
+    : (e => {
+      const a = String(e.team || "").trim();
+      const b = (parseInt(e.is_doubles) || 0) ? String(e.partner_team || "").trim() : "";
+      const out = []; if (a) out.push(a); if (b && b !== a) out.push(b); return out;
+    });
+  const primaryKey = (e) => { const c = clubsOf(e); return c.length ? c.join("") : ""; };  // グループ化(配置順)の代表キー
   const seedOf = (e) => parseInt(e.seed) || 0;
   const nameOf = (e) => e && (e.display_name || e.name || e.surname || "?");
 
@@ -3169,7 +3182,7 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   //   大所属を先に散らし、ユニーク(所属なし/単独)を最後に詰めることで回避可能衝突をほぼ消す。
   const rest = shuffle(entrants.filter(e => seedOf(e) < 1).concat(demoted), rng);
   const groups = new Map();
-  for (const e of rest) { const k = keyOf(e); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
+  for (const e of rest) { const k = primaryKey(e); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
   // 所属サイズ降順。空キー(=分散制約なし)は最後。同サイズはシャッフル順を保つ(rng再現性)。
   const order = [...groups.entries()]
     .sort((a, b) => (a[0] === "" ? 1 : b[0] === "" ? -1 : (b[1].length - a[1].length)))
@@ -3178,14 +3191,14 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   for (let i = 0; i < size; i++) if (!leaves[i] && !byeSlot[i]) empty.push(i);
   for (const e of order) {
     if (!empty.length) break; // 念のため(entrants>size は呼び元で弾く)
-    const key = keyOf(e);
+    const clubs = clubsOf(e);
     let pick;
-    if (!key) {
+    if (!clubs.length) {
       pick = empty[Math.floor(rng() * empty.length)];
     } else {
       let best = Infinity, ties = [];
       for (const idx of empty) {
-        const sc = _drawConflictScore(leaves, idx, key, size, keyOf);
+        const sc = _drawConflictScore(leaves, idx, clubs, size, clubsOf);
         if (sc < best) { best = sc; ties = [idx]; }
         else if (sc === best) ties.push(idx);
       }
@@ -3201,7 +3214,7 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   if (sep !== "none") {
     const isSeedLeaf = (e) => e && (parseInt(e.seed) || 0) >= 1;
     const partnerSlot = (s) => (s % 2 === 0 ? s + 1 : s - 1);
-    const r1Conflicts = () => { let n = 0; for (let i = 0; i < size; i += 2) { const a = leaves[i], b = leaves[i + 1]; if (a && b) { const ka = keyOf(a); if (ka && ka === keyOf(b)) n++; } } return n; };
+    const r1Conflicts = () => { let n = 0; for (let i = 0; i < size; i += 2) { const a = leaves[i], b = leaves[i + 1]; if (a && b) { const ca = clubsOf(a); if (ca.length && _clubsOverlap(ca, clubsOf(b))) n++; } } return n; };
     let pass = 0, prev = -1;
     while (pass++ < 12) {
       const cur = r1Conflicts();
@@ -3210,19 +3223,20 @@ function computeDrawLeaves(entrants, size, rng, opts) {
       for (let i = 0; i < size; i += 2) {
         const a = leaves[i], b = leaves[i + 1];
         if (!a || !b) continue;
-        const ka = keyOf(a);
-        if (!ka || ka !== keyOf(b)) continue;     // 同所属R1ペアでなければ対象外
+        const ka = clubsOf(a);
+        if (!ka.length || !_clubsOverlap(ka, clubsOf(b))) continue;   // 所属が重なるR1ペアでなければ対象外
         // 動かせる側(非シード)を選ぶ。両方シードの同所属は動かせない(稀)。
         const moverSlot = !isSeedLeaf(b) ? i + 1 : (!isSeedLeaf(a) ? i : -1);
         if (moverSlot < 0) continue;
+        const moverClubs = clubsOf(leaves[moverSlot]);
         let swapped = false;
         for (let j = 0; j < size && !swapped; j++) {
           if (j === i || j === i + 1) continue;
           const c = leaves[j];
-          if (!c || isSeedLeaf(c)) continue;       // 入替相手も動かせる非シードに限る
-          if (keyOf(c) === ka) continue;           // 同所属を入れたらペアiが解消しない
+          if (!c || isSeedLeaf(c)) continue;            // 入替相手も動かせる非シードに限る
+          if (_clubsOverlap(clubsOf(c), ka)) continue;  // 所属が重なる相手を入れたらペアiが解消しない
           const jp = leaves[partnerSlot(j)];
-          if (jp && keyOf(jp) === ka) continue;    // 提供元ペアが ka 同士になる
+          if (jp && _clubsOverlap(clubsOf(jp), moverClubs)) continue;  // 提供元ペアが所属重なりになる
           // 入替: moverSlot ⇔ j (ペアi=別所属化, 提供元ペアも非衝突)
           const tmp = leaves[moverSlot]; leaves[moverSlot] = leaves[j]; leaves[j] = tmp;
           swapped = true;
@@ -3230,7 +3244,13 @@ function computeDrawLeaves(entrants, size, rng, opts) {
       }
     }
   }
-  return { leaves, warnings };
+  // 残存R1同所属(所属集合の重なり。分離不能時のみ>0)。ダブルスは team+partner_team の集合で判定。
+  let r1SameClub = 0;
+  for (let i = 0; i < size; i += 2) {
+    const a = leaves[i], b = leaves[i + 1];
+    if (a && b) { const ca = clubsOf(a); if (ca.length && _clubsOverlap(ca, clubsOf(b))) r1SameClub++; }
+  }
+  return { leaves, warnings, r1_same_club: r1SameClub };
 }
 
 const DRAW_ALGO_VERSION = "1";   // computeDrawLeaves のアルゴリズム版数(再現/検証の固定キー)
@@ -3296,16 +3316,9 @@ function drawSingleBracket(tournamentId, event, opts) {
     ? ((+opts.draw_seed) >>> 0) : randomSeed();
   const rng = mulberry32(drawSeed);
   const sep = opts.separate_by === "region" ? "region" : opts.separate_by === "none" ? "none" : "team";
-  const { leaves, warnings } = computeDrawLeaves(entrants, size, rng, { separateBy: sep });
+  const { leaves, warnings, r1_same_club: r1SameClub } = computeDrawLeaves(entrants, size, rng, { separateBy: sep });
   const seededCount = entrants.filter(e => (parseInt(e.seed) || 0) >= 1).length;
   const byeCount = size - entrants.length;
-
-  // 残存R1同所属(分離不能時のみ>0)
-  let r1SameClub = 0;
-  for (let i = 0; i < size; i += 2) {
-    const a = leaves[i], b = leaves[i + 1];
-    if (a && b && (a.team || "") && (a.team || "") === (b.team || "")) r1SameClub++;
-  }
   const cell = (e) => e ? { name: e.display_name || e.name, team: e.team || "", seed: (parseInt(e.seed) || 0) || null }
     : { bye: true };
   const meta = {

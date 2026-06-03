@@ -1011,7 +1011,9 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
   tournament = tournament || {};
   const seedByEntrant = new Map();
   const numByEntrant = new Map();
+  const entById = new Map();
   (entrants || []).forEach(e => {
+    entById.set(e.id, e);
     if ((parseInt(e.seed) || 0) >= 1) seedByEntrant.set(e.id, parseInt(e.seed));
     if ((parseInt(e.bracket_number) || 0) >= 1) numByEntrant.set(e.id, parseInt(e.bracket_number));
   });
@@ -1078,7 +1080,8 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
     const RADV = (r) => CENTER + (sideRounds - r + 1);     // 右 round r の横線列(中央寄りが大きいr)
     const R_SEED = CENTER + sideRounds + 1, R_TEAM = R_SEED + 1, R_NAME = R_TEAM + 1, R_NUM = R_NAME + 1;
     const lastCol = R_NUM;
-    const lastRow = leafTop(S / 2 - 1) + 1;                // 最終リーフの下端
+    // 最終リーフの下端。S=2 等の退化(halfR1非整数で片側に2枚載る)でも切れないよう実配置から算出。
+    let maxLeafBottom = TOP + 1;
 
     const ws = {};
     const merges = [];
@@ -1115,32 +1118,33 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
       const team = isP1 ? (m.player1_team || "") : (m.player2_team || "");
       const eid = isP1 ? m.player1_entrant_id : m.player2_entrant_id;
       const top = leafTop(localSlot);
+      if (top + 1 > maxLeafBottom) maxLeafBottom = top + 1;
       const isBye = !name || name === "BYE";
-      const disp = isBye ? "ｂｙｅ" : name;
       const seed = eid != null ? seedByEntrant.get(eid) : null;
       const num = eid != null ? numByEntrant.get(eid) : null;
-      if (side === "L") {
-        put(top, L_NUM, num || "", centerStyle);
-        put(top, L_NAME, disp, nameStyle);
-        put(top, L_TEAM, isBye ? "" : team, nameStyle);
-        put(top, L_SEED, seed ? "[" + seed + "]" : "", centerStyle);
-        merges.push({ s: { r: top, c: L_NUM }, e: { r: top + 1, c: L_NUM } });
-        merges.push({ s: { r: top, c: L_NAME }, e: { r: top + 1, c: L_NAME } });
-        merges.push({ s: { r: top, c: L_TEAM }, e: { r: top + 1, c: L_TEAM } });
-        merges.push({ s: { r: top, c: L_SEED }, e: { r: top + 1, c: L_SEED } });
-        // 下罫線(選手レール): 名前〜シード + 横線列左端まで
-        for (let c = L_NAME; c <= L_SEED; c++) border(top + 1, c, { bottom: thin });
+      const ent = eid != null ? entById.get(eid) : null;
+      const isDbl = !isBye && ent && (parseInt(ent.is_doubles) || 0) && (ent.partner_name || "");
+      const NUM = side === "L" ? L_NUM : R_NUM, NAME = side === "L" ? L_NAME : R_NAME, TEAM = side === "L" ? L_TEAM : R_TEAM, SEED = side === "L" ? L_SEED : R_SEED;
+      // 番号・シードは2行結合(縦中央)
+      put(top, NUM, num || "", centerStyle);
+      put(top, SEED, seed ? "[" + seed + "]" : "", centerStyle);
+      merges.push({ s: { r: top, c: NUM }, e: { r: top + 1, c: NUM } });
+      merges.push({ s: { r: top, c: SEED }, e: { r: top + 1, c: SEED } });
+      if (isDbl) {
+        // ダブルス: 上段=申込者(氏名+所属) / 下段=パートナー(氏名+所属)。所属併記で別クラブ混成も明示。
+        put(top, NAME, ent.name || name, nameStyle);
+        put(top, TEAM, ent.team || team, nameStyle);
+        put(top + 1, NAME, ent.partner_name || "", nameStyle);
+        put(top + 1, TEAM, ent.partner_team || "", nameStyle);
       } else {
-        put(top, R_NUM, num || "", centerStyle);
-        put(top, R_NAME, disp, nameStyle);
-        put(top, R_TEAM, isBye ? "" : team, nameStyle);
-        put(top, R_SEED, seed ? "[" + seed + "]" : "", centerStyle);
-        merges.push({ s: { r: top, c: R_NUM }, e: { r: top + 1, c: R_NUM } });
-        merges.push({ s: { r: top, c: R_NAME }, e: { r: top + 1, c: R_NAME } });
-        merges.push({ s: { r: top, c: R_TEAM }, e: { r: top + 1, c: R_TEAM } });
-        merges.push({ s: { r: top, c: R_SEED }, e: { r: top + 1, c: R_SEED } });
-        for (let c = R_SEED; c <= R_NAME; c++) border(top + 1, c, { bottom: thin });
+        put(top, NAME, isBye ? "ｂｙｅ" : name, nameStyle);
+        put(top, TEAM, isBye ? "" : team, nameStyle);
+        merges.push({ s: { r: top, c: NAME }, e: { r: top + 1, c: NAME } });
+        merges.push({ s: { r: top, c: TEAM }, e: { r: top + 1, c: TEAM } });
       }
+      // 下罫線(選手レール): 名前〜シード列(山により左右)
+      const ra = side === "L" ? L_NAME : R_SEED, rb = side === "L" ? L_SEED : R_NAME;
+      for (let c = Math.min(ra, rb); c <= Math.max(ra, rb); c++) border(top + 1, c, { bottom: thin });
     }
     const halfR1 = S / 4;   // 左右の境目(round1 の左マッチ数)
     round1.forEach(m => {
@@ -1153,6 +1157,7 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
         placeLeaf(m, 1, 2 * rq, "R");
         placeLeaf(m, 2, 2 * rq + 1, "R");
       }
+      // _import 用(取込)も placeLeaf と同様に正準位置で。
       // 取込用の正準位置(canonical leaf): global slot = 2*bracket_pos + (slot-1)。L/Rは表示の都合のみ。
       [1, 2].forEach(sk => {
         const nm = sk === 1 ? (m.player1_name || "") : (m.player2_name || "");
@@ -1163,6 +1168,7 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
         importRows.push([eventName, p, sk, eid || "", seed, bye ? "" : nm, bye ? "" : tm, bye]);
       });
     });
+    const lastRow = maxLeafBottom;   // 実際に置いたリーフの最下行(退化ケースでも切れない)
 
     // ── 各ラウンドの横線・縦線・勝者名 ──
     function drawMatch(r, localq, side) {
