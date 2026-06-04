@@ -1961,6 +1961,7 @@ const _opsFpStmt = sqlite.prepare(
           COALESCE(SUM(CASE WHEN pending_result != '' THEN 1 ELSE 0 END),0) AS pend,
           COALESCE(SUM(winner_sets + loser_sets),0) AS ssum,
           COALESCE(SUM(LENGTH(tie_results)),0) AS trlen,
+          COALESCE(SUM(CASE WHEN COALESCE(referee_id,'')!='' OR COALESCE(referee_name,'')!='' THEN 1 ELSE 0 END),0) AS refc,
           COALESCE(MAX(finished_at),'') AS f
      FROM matches WHERE tournament_id = ?`
 );
@@ -1968,9 +1969,9 @@ function getOpsFingerprint(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { v: "0", status: null, error: true };
   const r = _opsFpStmt.get(tournamentId);
-  // unconf/pend(承認待ち件数)・ssum/trlen(団体リーグのセット/得点訂正=tie_results変化) も含め、
-  // 審判報告・承認・結果訂正で viewer の順位表が即時更新されるように。
-  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.pend}.${r.ssum}.${r.trlen}.${r.f}`, status: t.status };
+  // unconf/pend(承認待ち件数)・ssum/trlen(団体リーグのセット/得点訂正=tie_results変化)・refc(審判の割当/解放)も含め、
+  // 審判報告・承認・結果訂正・審判の割当解放で viewer/他端末が即時更新されるように(SSE差分検知)。
+  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.pend}.${r.ssum}.${r.trlen}.${r.refc}.${r.f}`, status: t.status };
 }
 
 // ═══════════════════════════════════════════════════════
@@ -4350,6 +4351,10 @@ function callMatch(matchId, tableNo, refereeId, opts) {
   if (m.status !== "pending") return { error: "呼べる状態ではありません (status=" + m.status + ")" };
 
   const t = stmts.getTournament.get(m.tournament_id);
+  // 大会が「進行中(ongoing)」でなければ対戦を呼べない(#9)。予定/準備中/終了/中止 では台に出さない。
+  // これは force でも貫通させない運用ルール(誤って準備中・終了後に呼ぶ事故を防ぐ)。
+  if (t && t.status !== "ongoing")
+    return { error: "大会が進行中ではないため対戦を呼べません。大会ステータスを『進行中』にしてください（現在: " + (t.status || "不明") + "）。" };
   const enforce = t && t.enforce_referee_rule !== 0;
 
   // 同じ台に別試合がいないか
@@ -7246,6 +7251,25 @@ function getPushPlayerIds() {
   return sqlite.prepare("SELECT player_id, COUNT(*) AS n FROM push_subscriptions GROUP BY player_id").all()
     .map(r => ({ id: r.player_id, devices: r.n }));
 }
+// プッシュ登録(=マイ選手登録)を選手名・所属付きで一覧。管理画面の把握/送信/削除用 (#7/#10)。
+function getPushSubscribersDetailed() {
+  return sqlite.prepare(`
+    SELECT ps.player_id AS id, COUNT(*) AS devices, MAX(ps.created_at) AS last_at,
+           p.name, p.team, p.furigana
+    FROM push_subscriptions ps
+    LEFT JOIN players p ON p.id = ps.player_id
+    GROUP BY ps.player_id
+    ORDER BY p.furigana, p.name
+  `).all().map(r => ({
+    id: r.id, devices: r.devices, last_at: r.last_at,
+    name: r.name || ("選手#" + r.id), team: r.team || "", furigana: r.furigana || "",
+  }));
+}
+// 選手のプッシュ登録(全端末)を管理側から強制削除 (#10)。削除端末数を返す。
+function deletePushSubscriptionsForPlayer(playerId) {
+  const r = sqlite.prepare("DELETE FROM push_subscriptions WHERE player_id=?").run(playerId);
+  return { ok: true, removed: r.changes || 0 };
+}
 
 // ═══════════════════════════════════════════════════════
 // 審判結果入力 (本部に来ずに審判が結果を報告できる仕組み)
@@ -7545,6 +7569,7 @@ module.exports = {
   getRefereeCourtLinks, resolveRefereeCourt,
   setRefereePasscode, verifyRefereePasscode,   // #261 会場パスコード
   kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription, getPushPlayerIds,
+  getPushSubscribersDetailed, deletePushSubscriptionsForPlayer,
   // DB スナップショット (バックアップ/復元)
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, restoreFromUpload, hasOngoingTournament,
   // オーナー監査ログ (上級権限)

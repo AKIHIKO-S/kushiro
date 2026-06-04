@@ -413,3 +413,71 @@ test("(t) 機密.dbの送出は共有キャッシュ禁止(no-store)で硬化さ
   const dl2 = await fetch(BASE + "/api/owner/db-download", { headers: { "X-Owner-Key": OKEY } });
   assert.match(dl2.headers.get("cache-control") || "", /no-store/, "owner/db-download は no-store");
 });
+
+test("(u) 対戦の呼出は大会が ongoing のときだけ許可される(#9)", async () => {
+  const t = await adminPost("/api/tournaments", { name: "呼出ガード", date: "2027-01-01" });
+  await adminPut(`/api/tournaments/${t.id}/entry-settings`, { entries_open: 1, event_config: [{ name: "男子シングルス", type: "singles", fee: 0 }] });
+  for (const nm of ["呼出 太郎", "呼出 次郎"]) await adminPost(`/api/tournaments/${t.id}/entrants`, { event: "男子シングルス", name: nm, status: "confirmed" });
+  await adminPost(`/api/tournaments/${t.id}/bracket`, { event: "男子シングルス", regenerate: true });
+  const list = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
+  const arr = Array.isArray(list) ? list : (list.matches || []);
+  const m = arr.find(x => x.player1_name && x.player2_name && x.player1_name !== "BYE" && x.player2_name !== "BYE" && x.status === "pending");
+  assert.ok(m, "pendingの実戦がある");
+  // 既定は scheduled(進行中でない) → 呼出は拒否
+  const denied = await adminPost(`/api/matches/${m.id}/call`, { table_no: 1 });
+  assert.ok(denied.error && /進行中/.test(denied.error), "進行中でないと呼出拒否: " + JSON.stringify(denied).slice(0, 100));
+  // 進行中にすると呼べる
+  await adminPut(`/api/tournaments/${t.id}`, { status: "ongoing" });
+  const ok = await adminPost(`/api/matches/${m.id}/call`, { table_no: 1 });
+  assert.ok(!ok.error, "ongoing なら呼出成功: " + JSON.stringify(ok).slice(0, 100));
+  const after = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
+  const aarr = Array.isArray(after) ? after : (after.matches || []);
+  assert.strictEqual(aarr.find(x => x.id === m.id).status, "on_table", "呼出後は on_table");
+});
+
+test("(v) プッシュ/マイ選手 管理: 一覧(名前付き)・個別/一括送信・強制削除 (#7/#10)", async () => {
+  // 選手を作成 → その選手番号でプッシュ購読(マイ選手登録)
+  const p = await adminPost("/api/players", { name: "通知 花子", team: "Z中" });
+  const pid = p.id || (p.player && p.player.id);
+  assert.ok(pid, "選手作成: " + JSON.stringify(p).slice(0, 80));
+  const sub = { endpoint: "https://fcm.googleapis.com/fcm/send/smoke-" + pid, keys: { p256dh: "BTestKeyNotReal0000000000000000000000000000000000000000000000000000000000000000000000000", auth: "authtest0000000000000000" } };
+  const subRes = await fetch(BASE + "/api/push/subscribe", { method: "POST", headers: jhead, body: JSON.stringify({ player_id: pid, subscription: sub }) }).then(r => r.json());
+  assert.ok(subRes.ok, "購読登録: " + JSON.stringify(subRes));
+  // 一覧に名前付きで出る
+  const listed = await fetch(BASE + "/api/admin/push/players", { headers: akhead }).then(r => r.json());
+  const row = (listed.players || []).find(x => x.id === pid);
+  assert.ok(row && row.name === "通知 花子" && row.devices >= 1, "名前付き一覧: " + JSON.stringify(row));
+  // 個別送信(本文必須) — 実配信は失敗してもエンドポイントはok+端末数を返す
+  const noBody = await adminPost(`/api/admin/push/players/${pid}/send`, { title: "x" });
+  assert.ok(noBody.error, "本文なしは拒否");
+  const sent = await adminPost(`/api/admin/push/players/${pid}/send`, { title: "招集", body: "至急本部へ" });
+  assert.ok(sent.ok && sent.devices >= 1, "個別送信ok: " + JSON.stringify(sent));
+  // 一括送信
+  const bc = await adminPost("/api/admin/push/broadcast", { title: "全体連絡", body: "雨天のため順延" });
+  assert.ok(bc.ok && bc.players >= 1, "一括送信ok: " + JSON.stringify(bc));
+  // 強制削除
+  const del = await fetch(BASE + `/api/admin/push/players/${pid}`, { method: "DELETE", headers: akhead }).then(r => r.json());
+  assert.ok(del.ok && del.removed >= 1, "強制削除ok: " + JSON.stringify(del));
+  const after = await fetch(BASE + "/api/admin/push/players", { headers: akhead }).then(r => r.json());
+  assert.ok(!(after.players || []).find(x => x.id === pid), "削除後は一覧から消える");
+});
+
+test("(w) 審判の割当/解放で ops フィンガープリントが変化する(他端末へSSE反映 #1/#9レビュー)", async () => {
+  const t = await adminPost("/api/tournaments", { name: "審判FP", date: "2027-01-01" });
+  await adminPut(`/api/tournaments/${t.id}/entry-settings`, { entries_open: 1, event_config: [{ name: "男子シングルス", type: "singles", fee: 0 }] });
+  for (const nm of ["甲 太郎", "乙 次郎"]) await adminPost(`/api/tournaments/${t.id}/entrants`, { event: "男子シングルス", name: nm, status: "confirmed" });
+  await adminPost(`/api/tournaments/${t.id}/bracket`, { event: "男子シングルス", regenerate: true });
+  const list = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
+  const arr = Array.isArray(list) ? list : (list.matches || []);
+  const m = arr.find(x => x.player1_name && x.player2_name && x.player1_name !== "BYE" && x.player2_name !== "BYE");
+  assert.ok(m, "実戦の試合がある");
+  const v1 = (await fetch(BASE + `/api/public/tournaments/${t.id}/ops-version`).then(r => r.json())).v;
+  // 審判を割当 → フィンガープリント変化
+  await adminPost(`/api/matches/${m.id}/referee`, { referee_name: "テスト審判" });
+  const v2 = (await fetch(BASE + `/api/public/tournaments/${t.id}/ops-version`).then(r => r.json())).v;
+  assert.notStrictEqual(v2, v1, "審判割当でフィンガープリント変化(SSE差分検知される)");
+  // 解放 → さらに変化
+  await adminPost(`/api/matches/${m.id}/referee`, { referee_id: null });
+  const v3 = (await fetch(BASE + `/api/public/tournaments/${t.id}/ops-version`).then(r => r.json())).v;
+  assert.notStrictEqual(v3, v2, "審判解放でもフィンガープリント変化");
+});

@@ -59,7 +59,8 @@ standalone/  オフライン単機運用ラッパ (start.command/.bat)
   - API: `POST /bracket/draw`(preview/drawn_by) `GET /bracket/draw-readiness` `POST /bracket/undo-draw` `GET /bracket/draw-log` `GET /bracket/draw-diff` `GET /bracket/export.xlsx` `POST /bracket/import-xlsx` `GET /seed-suggestions` `POST /seed-suggestions/apply`。回帰: `draw-audit`/`bracket-xlsx`/`bracket-roundtrip`/`offline-draw`/`draw-doubles`/`seed-suggest`。
 - `finishMatchInternal(matchId, data)` (~2761): 勝者判定→冪等ガード→セット集計→**Eloは両者IDありかつ非BYEのときのみ更新**(`calcElo` K=32, 基準1500, db.js:527)→`advanceWinnerInline`で次戦へ。
 - `correctResult` (~2891): 確定済み結果の修正。勝者反転→次戦クリア→再進出を1トランザクション。
-- 優先度ロック: 種目優先(団体>混合>ダブルス>シングルス)/審判担当中/対戦中で呼出を拒否、`force`で強制。
+- 優先度ロック: 種目優先(団体>混合>ダブルス>シングルス)/審判担当中/対戦中で呼出を拒否、`force`で強制。**審判担当中で拘束された場合は呼出行に「審判を解放」ボタン**(#1: 担当試合の審判を解任し呼べるようにする)。**呼出(callMatch)は大会 status='ongoing' のときのみ可**(#9・force不可)。
+- **プッシュ通知/マイ選手 管理(#7/#10)**: `GET /api/admin/push/players`(選手名付き一覧) `POST /api/admin/push/players/:id/send`(個別) `POST /api/admin/push/broadcast`(一括) `DELETE /api/admin/push/players/:id`(強制削除)。全 requireAdmin。admin「📲 プッシュ通知/マイ選手」モーダル。`getOpsFingerprint` は審判の割当/解放(refc)も含み他端末へSSE反映。トーナメント表は BYE を非表示(#8・内部の自動進出は維持)、種目色は `TT.eventColor`(男女/形式)＋動的凡例(進行管理&観戦)。
 - `recordOp`/`undoLastOp`: 影響行の before を `op_log.before_json` に保存、`collectForwardChain` でBYE連鎖もスナップショット対象。
 
 ## サーバの横断的関心事 (server.js)

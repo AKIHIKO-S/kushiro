@@ -1205,7 +1205,10 @@ const V = {
  showBracketMatchDetail(m) {
  let sets = [];
  try { sets = m.sets || JSON.parse(m.sets_json || "[]"); } catch (e) {}
- const setsStr = (sets || []).map(s => (Array.isArray(s) && s.length === 2) ? (s[0] + "-" + s[1]) : "").filter(Boolean).join(" / ");
+ // sets は選手1視点で保存。見出し(勝者先頭)と揃えるため、勝者が選手2のときは各セットを反転(#セット逆順)。
+ // 同名対戦(player1とplayer2が同名)では誤反転を避けるため、player1 と一致しない場合のみ反転。
+ const _p2Won = m.winner_name && m.winner_name === m.player2_name && m.winner_name !== m.player1_name;
+ const setsStr = (sets || []).map(s => (Array.isArray(s) && s.length === 2) ? (_p2Won ? s[1] + "-" + s[0] : s[0] + "-" + s[1]) : "").filter(Boolean).join(" / ");
  const body = h("div", {},
    h("div", { className: "badge mb-2", style: { display: "inline-block" } }, [m.event, m.round].filter(Boolean).join(" ")),
    h("div", { style: { background: "#fffbeb", padding: "10px", borderRadius: "8px", borderLeft: "4px solid var(--warn)" } },
@@ -1871,8 +1874,9 @@ const MS = {
  ));
  const tbody = h("tbody", {});
  data.matches.forEach(m => {
+ const _p2Won = m.winner_name && m.winner_name === m.player2_name && m.winner_name !== m.player1_name;   // 勝者先頭に揃える(#セット逆順・同名は反転しない)
  const setsStr = (m.sets || []).map(s =>
- Array.isArray(s) && s.length === 2 ? `${s[0]}-${s[1]}` : "-").join(" ");
+ Array.isArray(s) && s.length === 2 ? (_p2Won ? `${s[1]}-${s[0]}` : `${s[0]}-${s[1]}`) : "-").join(" ");
  const row = h("tr", {
  onClick: () => MS.openMatchDetail(m),
  },
@@ -1936,7 +1940,7 @@ const MS = {
  h("div", { className: "text-lg font-bold mt-2",
  style: { fontFamily: "monospace" } }, TT.fmtScore(m.winner_sets, m.loser_sets)),
  h("div", { className: "text-sm text-sub mt-1" },
- (m.sets || []).map(s => Array.isArray(s) ? `${s[0]}-${s[1]}` : "").join(" / ")),
+ (m.sets || []).map(s => Array.isArray(s) ? ((m.winner_name === m.player2_name && m.winner_name !== m.player1_name) ? `${s[1]}-${s[0]}` : `${s[0]}-${s[1]}`) : "").join(" / ")),
  ),
  h("div", { style: { padding: "10px", marginTop: "8px",
  background: "#f8fafc", borderRadius: "8px" } },
@@ -2200,7 +2204,14 @@ const CO = {
  let tours = [];
  try { tours = await fetch("/api/public/tournaments").then(r => r.json()); } catch (e) {}
  tours = Array.isArray(tours) ? tours : [];
- if (!tours.length) { card.appendChild(h("div", { className: "text-sm text-sub", style: { padding: "4px 2px" } }, "大会がまだありません。")); return card; }
+ // 直近1年の大会のみ表示(#11)。日付未設定の大会は判定不能なため残す。ローカル日付で算出(UTCずれ回避)。
+ const _c = new Date(); _c.setFullYear(_c.getFullYear() - 1);
+ const _cutoffStr = `${_c.getFullYear()}-${String(_c.getMonth() + 1).padStart(2, "0")}-${String(_c.getDate()).padStart(2, "0")}`;
+ tours = tours.filter(t => !t.date || t.date >= _cutoffStr);
+ // 注意書き
+ card.appendChild(h("div", { className: "text-xs text-sub", style: { padding: "2px 2px 6px", lineHeight: 1.6 } },
+   "※ 表示は", h("b", {}, "直近1年"), "の大会のみです。過去の大会は本部にお問い合わせください。"));
+ if (!tours.length) { card.appendChild(h("div", { className: "text-sm text-sub", style: { padding: "4px 2px" } }, "直近1年の大会がありません。")); return card; }
  const sel = h("select", { className: "input", style: { flex: "1", minWidth: "180px" } },
  ...tours.map(t => h("option", { value: t.id }, (t.name || "大会") + (t.date ? " (" + t.date + ")" : "") + (t.status === "completed" ? " ・終了" : (t.status === "ongoing" ? " ・進行中" : "")))));
  card.appendChild(h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", marginTop: "4px" } },
@@ -2680,6 +2691,18 @@ const L = {
  });
 
  wrap.appendChild(grid);
+ // 種目色の凡例(進行中のコートに出ている種目のみ・男女/形式で自動色分け #2)
+ const activeEvents = [...new Set(s.tables.filter(t => t.match && t.match.event).map(t => t.match.event))];
+ if (activeEvents.length) {
+ const lg = h("div", { style: { display: "flex", flexWrap: "wrap", gap: "5px 12px",
+   margin: "8px 4px 0", fontSize: "11px", color: "var(--sub)", justifyContent: "center" } });
+ activeEvents.forEach(ev => { const ec = TT.eventColor(ev);
+   lg.appendChild(h("span", { style: { display: "inline-flex", alignItems: "center", gap: "4px" } },
+     h("span", { style: { width: "12px", height: "12px", borderRadius: "3px", background: ec.bg,
+       border: "1px solid " + ec.border, flex: "0 0 auto" } }),
+     h("span", {}, ev))); });
+ wrap.appendChild(lg);
+ }
  if (hq_position === "bottom") {
  wrap.appendChild(h("div", { className: "live-court-hq",
  style: { width: `${gridW}px`, marginLeft: "auto", marginRight: "auto" } },

@@ -98,9 +98,9 @@ function isAllowedPushEndpoint(ep) {
 
 // 指定選手の全購読端末へ通知を送信 (失効した購読は削除)
 async function sendPushToPlayer(playerId, payload) {
-  if (!PUSH_ENABLED || !playerId) return;
+  if (!PUSH_ENABLED || !playerId) return 0;
   const subs = db.getPushSubscriptionsForPlayer(playerId);
-  if (!subs.length) return;
+  if (!subs.length) return 0;
   const body = JSON.stringify(payload);
   await Promise.all(subs.map(async ({ endpoint, sub }) => {
     try {
@@ -112,6 +112,7 @@ async function sendPushToPlayer(playerId, payload) {
       }
     }
   }));
+  return subs.length;
 }
 
 // この選手を名簿に持つ監督の端末へまとめて呼出通知 (#287)
@@ -1063,8 +1064,40 @@ app.delete("/api/admin/coach-members/:mid", requireAdmin, (req, res) => {
 });
 // マイ番号(プッシュ)登録済みの選手一覧 (#288 Admin可視化)
 app.get("/api/admin/push/players", requireAdmin, (req, res) => {
-  const rows = db.getPushPlayerIds();
+  // 選手名・所属付きの一覧(#7/#10)。従来の {id, devices} も含むので既存の通知ONバッジ用途とも互換。
+  const rows = db.getPushSubscribersDetailed();
   res.json({ players: rows, count: rows.length });
+});
+// 個別送信(#7): 指定選手のマイ番号端末へ任意メッセージを送る。
+app.post("/api/admin/push/players/:playerId/send", requireAdmin, async (req, res) => {
+  if (!PUSH_ENABLED) return res.status(503).json({ error: "プッシュ通知は無効です" });
+  const b = req.body || {};
+  const title = String(b.title || "釧路卓球協会").slice(0, 80);
+  const body = String(b.body || "").slice(0, 300);
+  if (!body) return res.status(400).json({ error: "本文を入力してください" });
+  try {
+    const devices = await sendPushToPlayer(req.params.playerId, { title, body, url: b.url || "/viewer/", tag: "ktta-admin" });
+    res.json({ ok: true, devices });
+  } catch (e) { res.status(500).json({ error: "送信に失敗しました: " + (e && e.message || e) }); }
+});
+// 一括送信(#7): プッシュ登録している全選手の端末へ送る。
+app.post("/api/admin/push/broadcast", requireAdmin, async (req, res) => {
+  if (!PUSH_ENABLED) return res.status(503).json({ error: "プッシュ通知は無効です" });
+  const b = req.body || {};
+  const title = String(b.title || "釧路卓球協会").slice(0, 80);
+  const body = String(b.body || "").slice(0, 300);
+  if (!body) return res.status(400).json({ error: "本文を入力してください" });
+  const players = db.getPushPlayerIds();
+  let devices = 0, failed = 0;
+  for (const p of players) {
+    try { devices += (await sendPushToPlayer(p.id, { title, body, url: b.url || "/viewer/", tag: "ktta-admin" })) || 0; }
+    catch (e) { failed++; }   // 1人分の失敗で全体を止めない(必ず res で応答)
+  }
+  res.json({ ok: true, players: players.length, devices, failed });
+});
+// 強制削除(#10): 指定選手のプッシュ登録(全端末)を本部側から解除する。
+app.delete("/api/admin/push/players/:playerId", requireAdmin, (req, res) => {
+  res.json(db.deletePushSubscriptionsForPlayer(req.params.playerId));
 });
 // ── Admin: 本部→監督への一斉お知らせ (#290) ──
 app.get("/api/admin/coach-announcements", requireAdmin, (req, res) => {

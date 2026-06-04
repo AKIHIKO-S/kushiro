@@ -1537,6 +1537,65 @@ const A = {
  if (A.activeTab === "players") A.renderPlayers();
  } catch (e) { A.state.pushPlayers = A.state.pushPlayers || new Map(); }
  },
+ // プッシュ通知 / マイ選手 管理 (#7/#10): 登録者の把握・個別/一括送信・強制削除。
+ async openPushManager() {
+ const listWrap = h("div", {});
+ const bcTitle = h("input", { className: "input", value: "釧路卓球協会", placeholder: "件名" });
+ const bcBody = h("textarea", { className: "input", rows: 2, placeholder: "本文（プッシュ登録した全選手へ）" });
+ const bcBtn = h("button", { className: "btn btn-sm btn-ok", onClick: async () => {
+   const b = (bcBody.value || "").trim();
+   if (!b) return toast("本文を入力してください", "err");
+   if (!confirm("プッシュ登録している全選手の端末へ一括送信します。よろしいですか？")) return;
+   bcBtn.disabled = true; bcBtn.textContent = "送信中…";
+   let r; try { r = await api.post("/api/admin/push/broadcast", { title: bcTitle.value, body: b }); }
+   catch (e) { bcBtn.disabled = false; bcBtn.textContent = "全員へ一括送信"; return toast("通信エラー", "err"); }
+   bcBtn.disabled = false; bcBtn.textContent = "全員へ一括送信";
+   if (r && r.error) return toast(r.error, "err");
+   toast(`一括送信しました（${r.players || 0}人 / ${r.devices || 0}台）`, "ok");
+ } }, "全員へ一括送信");
+ const load = async () => {
+   listWrap.innerHTML = "読み込み中…";
+   let data; try { data = await api.get("/api/admin/push/players"); } catch (e) { listWrap.textContent = "取得に失敗しました"; return; }
+   const players = (data && data.players) || [];
+   listWrap.innerHTML = "";
+   listWrap.appendChild(h("div", { className: "text-sm text-sub", style: { marginBottom: "8px" } }, `登録: ${players.length} 名`));
+   if (!players.length) { listWrap.appendChild(h("div", { className: "empty-state", style: { padding: "14px" } }, "プッシュ通知（マイ選手）の登録者はまだいません。")); return; }
+   players.forEach(p => listWrap.appendChild(h("div", { style: { display: "flex", gap: "8px", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)" } },
+     h("div", { style: { flex: 1, minWidth: 0 } },
+       h("div", { className: "font-bold" }, p.name + (p.team ? " (" + p.team + ")" : "")),
+       h("div", { className: "text-xs text-sub" }, (p.furigana ? p.furigana + " ・ " : "") + p.devices + "台")),
+     h("button", { className: "btn btn-sm", onClick: () => A._pushSendOne(p) }, "通知"),
+     h("button", { className: "btn btn-sm btn-ghost", style: { color: "#b91c1c" }, onClick: async () => {
+       if (!confirm(p.name + " のプッシュ登録（全" + p.devices + "台）を解除します。よろしいですか？")) return;
+       let r; try { r = await api.del("/api/admin/push/players/" + p.id); } catch (e) { return toast("通信エラー", "err"); }
+       toast("解除しました（" + (r.removed || 0) + "台）", "ok"); load(); A.loadPushPlayers();
+     } }, "強制削除"))));
+ };
+ const body = h("div", {},
+   h("div", { className: "card", style: { marginBottom: "12px", padding: "12px" } },
+     h("div", { className: "font-bold", style: { marginBottom: "6px" } }, "全員へ一括送信"),
+     bcTitle, h("div", { style: { height: "6px" } }), bcBody, h("div", { style: { height: "6px" } }), bcBtn),
+   h("div", { className: "font-bold", style: { marginBottom: "6px" } }, "登録者一覧（個別に通知・解除）"),
+   listWrap);
+ openModal("📲 プッシュ通知 / マイ選手 管理", body, null);
+ load();
+ },
+ _pushSendOne(p) {
+ const tIn = h("input", { className: "input", value: "釧路卓球協会", placeholder: "件名" });
+ const bIn = h("textarea", { className: "input", rows: 3, placeholder: "本文" });
+ const foot = h("div", { className: "flex gap-2", style: { justifyContent: "flex-end" } },
+   h("button", { className: "btn btn-ghost", onClick: () => bg.remove() }, "キャンセル"),
+   h("button", { className: "btn btn-ok", onClick: async () => {
+     const b = (bIn.value || "").trim(); if (!b) return toast("本文を入力してください", "err");
+     let r; try { r = await api.post("/api/admin/push/players/" + p.id + "/send", { title: tIn.value, body: b }); }
+     catch (e) { return toast("通信エラー", "err"); }
+     if (r && r.error) return toast(r.error, "err");
+     toast(p.name + " へ送信しました（" + (r.devices || 0) + "台）", "ok"); bg.remove();
+   } }, "送信"));
+ const bg = openModal(p.name + " へ通知", h("div", {},
+   h("div", { className: "text-sm text-sub mb-2" }, p.name + (p.team ? " (" + p.team + ")" : "") + " の登録端末（" + p.devices + "台）へ送信します。"),
+   tIn, h("div", { style: { height: "6px" } }), bIn), foot);
+ },
 
  // ─── 設定モーダル ────────────────────────────────
  openSettings(firstRun) {
@@ -1712,6 +1771,10 @@ const A = {
  style: { background: "#eff6ff", color: "#1e40af", borderColor: "#93c5fd" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
    A.openLanConnect(); } }, "📱 端末接続 (会場LAN)"),
+ h("button", { className: "btn btn-sm",
+ style: { background: "#f0fdf4", color: "#15803d", borderColor: "#86efac" },
+ onClick: () => { document.querySelector(".modal-bg")?.remove();
+   A.openPushManager(); } }, "📲 プッシュ通知 / マイ選手"),
  h("a", { className: "btn btn-sm btn-ghost",
  href: "/OPERATIONS.md", target: "_blank" }, "運用マニュアル"),
  h("a", { className: "btn btn-sm btn-ghost",
@@ -3728,17 +3791,20 @@ const A = {
  style: { fontSize: "12px", marginTop: "4px" } });
  const tbody = h("tbody", {});
  ms.forEach((m, i) => {
- const p1 = m.player1_name || (i === 0 ? "(空)" : "");
- const p2 = m.player2_name || "";
- const isBye = (p1 === "BYE" || p2 === "BYE");
- const hasMissing = !p1 || !p2;
+ const rawP1 = m.player1_name || (i === 0 ? "(空)" : "");
+ const rawP2 = m.player2_name || "";
+ const isBye = (rawP1 === "BYE" || rawP2 === "BYE");
+ const hasMissing = !rawP1 || !rawP2;
+ // BYE は表示しない(#8): 名前を薄いダッシュに置換(シードの繰上進出として見せる)
+ const byeCell = h("span", { style: { color: "#cbd5e1", fontStyle: "italic" } }, "ー（不戦）");
+ const cellOf = (nm) => nm === "BYE" ? byeCell.cloneNode(true) : (nm || h("span", { className: "text-sub" }, "(未定)"));
  tbody.appendChild(h("tr", {
  style: hasMissing && !isBye ? { background: "#fef2f2" } : {} },
  h("td", { style: { width: "60px", color: "#64748b" } },
  `#${m.match_no || (m.bracket_pos != null ? m.bracket_pos + 1 : i + 1)}`),
- h("td", { style: { width: "40%" } }, p1 || h("span", { className: "text-sub" }, "(未定)")),
+ h("td", { style: { width: "40%" } }, cellOf(rawP1)),
  h("td", { style: { width: "40px", textAlign: "center", color: "#64748b" } }, "vs"),
- h("td", {}, p2 || h("span", { className: "text-sub" }, "(未定)")),
+ h("td", {}, cellOf(rawP2)),
  ));
  });
  tbl.appendChild(tbody);
@@ -7107,14 +7173,20 @@ const O = {
  h("details", { className: "op-tools" },
  h("summary", { className: "btn btn-sm btn-ghost", style: { display: "inline-block" } }, "ツール・設定 ▾"),
  h("div", { className: "op-tools-body" },
+ // 見出しでグルーピングし、散らばりを解消(#12)。
+ h("div", { className: "op-tools-adv", style: { marginTop: 0, paddingTop: 0, borderTop: "none" } }, "表示・編集"),
  h("button", { className: "btn btn-sm", style: { background: "#7c3aed" },
    onClick: () => O.openVisualBracket() }, "トーナメント表"),
  h("button", { className: "btn btn-sm", onClick: () => O.openBracketGen() }, "トーナメント生成"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openLayoutSettings() },
  `コートレイアウト (${O.state.tournament.court_rows}×${O.state.tournament.court_cols}=${O.state.tournament.court_rows * O.state.tournament.court_cols}コート)`),
+ h("div", { className: "op-tools-adv" }, "記録・公開"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openOpLog() }, "操作ログ"),
  h("a", { href: `/viewer/#tournament/${O.tournamentId}`, target: "_blank",
  className: "btn btn-sm btn-ghost" }, "公開ページ"),
+ // 散在していた端末接続/同期への導線を進行管理にも集約(#12)。A.openLanConnect を再利用。
+ h("div", { className: "op-tools-adv" }, "接続・同期"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openLanConnect() }, "📱 端末接続 (会場LAN) / 同期"),
  // 高度な操作: JSON入出力は目立たないように最下部へ #279
  h("div", { className: "op-tools-adv" }, "高度な操作"),
  h("button", { className: "btn btn-sm btn-ghost", style: { opacity: ".7", fontSize: "12px" },
@@ -7408,8 +7480,17 @@ const O = {
  let zoom = O._opBracketZoom || 0.85;
  let lastSig = "";
 
- const area = h("div", { style: { overflow: "auto", maxHeight: "62vh", padding: "8px",
-   background: "#f9fafb", borderRadius: "6px" } });
+ // 縦リサイズ可能なパネル(#6): ドラッグで高さを自由調整、localStorage に保存して再描画後も維持。
+ const _savedH = parseInt(localStorage.getItem("ktta_op_bracket_h")) || 0;
+ const area = h("div", { style: { overflow: "auto", padding: "8px",
+   background: "#f9fafb", borderRadius: "6px",
+   resize: "vertical", height: (_savedH ? _savedH + "px" : "62vh"), minHeight: "160px" } });
+ try {
+   let _rt; const _ro = new ResizeObserver(() => { clearTimeout(_rt); _rt = setTimeout(() => {
+     try { localStorage.setItem("ktta_op_bracket_h", String(area.offsetHeight)); } catch (e) {}
+   }, 400); });
+   _ro.observe(area);
+ } catch (e) {}
  const zlbl = h("span", { className: "text-xs", style: { minWidth: "40px", textAlign: "center", fontWeight: 700 } }, "85%");
  const applyZoom = () => { area.style.zoom = String(zoom); zlbl.textContent = Math.round(zoom * 100) + "%"; O._opBracketZoom = zoom; };
 
@@ -7785,8 +7866,8 @@ const O = {
    style: (m && cls === "active") ? { background: TT.eventColor(m.event).bg, color: TT.eventColor(m.event).fg } : {} },
    "コート" + t.table_no));
  if (m) {
- // 姓だけ + ふりがな (呼出重視)
- const shortName = (full) => (full || "").split(/[\s　]/)[0] || full || "";
+ // 姓だけ + ふりがな (呼出重視)。ダブルスは "姓 名 / 姓 名" 連結なので、各人を姓に縮約しつつペアを保持(#ダブルス表示)。
+ const shortName = (full) => (full || "").split(" / ").map(p => p.split(/[\s　]/)[0] || p).join(" / ") || full || "";
  cell.appendChild(h("div", { className: "court-cell-match" },
  h("div", { className: "cc-name" }, shortName(m.player1_name)),
  m.player1_furigana ? h("div", { className: "cc-furi" }, m.player1_furigana) : null,
@@ -7825,18 +7906,23 @@ const O = {
  else wrap.appendChild(hqEl);
  // 経過時間の1分カウントアップ開始 (#218)
  requestAnimationFrame(() => { if (TT.startElapsedTicker) TT.startElapsedTicker(); });
- // 凡例
- const legend = (color, label) => h("span", { style: { display: "inline-flex",
+ // 凡例: 種目色(進行中のコートに出ている種目を動的に)+ 状態。種目色は男女・形式で自動色分け(#2)。
+ const legend = (color, label, border) => h("span", { style: { display: "inline-flex",
    alignItems: "center", gap: "4px", fontSize: "11px", color: "var(--ink-600)" } },
    h("span", { style: { width: "12px", height: "12px", borderRadius: "3px",
-     background: color, display: "inline-block", border: "1px solid rgba(0,0,0,.1)" } }), label);
- wrap.appendChild(h("div", { style: { display: "flex", gap: "14px", flexWrap: "wrap",
-   marginTop: "10px", justifyContent: "center", paddingTop: "10px",
-   borderTop: "1px dashed var(--ink-300)" } },
-   legend("#dcfce7", "進行中"),
-   legend("#fee2e2", "呼出2回+ (未着の可能性)"),
-   legend("#f8fafc", "空き (クリックで試合配置)"),
- ));
+     background: color, display: "inline-block", border: "1px solid " + (border || "rgba(0,0,0,.1)") } }), label);
+ const legendRow = h("div", { style: { display: "flex", gap: "14px", flexWrap: "wrap",
+   marginTop: "10px", justifyContent: "center", paddingTop: "10px", alignItems: "center",
+   borderTop: "1px dashed var(--ink-300)" } });
+ const activeEvents = [...new Set(O.state.tables.filter(t => t.match && t.match.event).map(t => t.match.event))];
+ if (activeEvents.length) {
+   legendRow.appendChild(h("span", { style: { fontSize: "11px", color: "var(--sub)", fontWeight: 700 } }, "種目:"));
+   activeEvents.forEach(ev => { const ec = TT.eventColor(ev); legendRow.appendChild(legend(ec.bg, ev, ec.border)); });
+   legendRow.appendChild(h("span", { style: { width: "1px", height: "14px", background: "var(--ink-300)" } }));
+ }
+ legendRow.appendChild(legend("#fee2e2", "呼出2回+ (未着の可能性)"));
+ legendRow.appendChild(legend("#f8fafc", "空き (クリックで試合配置)"));
+ wrap.appendChild(legendRow);
  return wrap;
  },
 
@@ -8126,6 +8212,16 @@ const O = {
    r.style.display = (!q || names.indexOf(q) >= 0) ? "" : "none";
  });
  },
+ // 担当中の審判を解任(#1): 拘束元の試合の審判を未指定に戻し、その選手を別試合に呼べるようにする。
+ async releaseReferee(matchId, playerName) {
+ if (!confirm((playerName || "この選手") + " の審判担当を解任します。\n（担当していた試合は『審判未指定』に戻り、この選手は別の試合に呼べるようになります）\nよろしいですか？")) return;
+ let r;
+ try { r = await api.post(`/api/matches/${matchId}/referee`, { referee_id: null }); }
+ catch (e) { return toast("通信できません（オフライン）", "err"); }
+ if (r && r.error) return toast(r.error, "err");
+ toast("審判を解放しました", "ok");
+ O.reload();
+ },
  renderCallableRow(m, idx, isNext) {
  const blocks = m.blocks || [];
  const blocked = blocks.length > 0;
@@ -8169,7 +8265,14 @@ const O = {
  ...blocks.map(b =>
  h("div", { className: "lock-line" },
  h("span", { className: "lock-tag" }, "拘束"),
- h("span", { className: "lock-text" }, `${b.player_name}: ${b.label}`))),
+ h("span", { className: "lock-text" }, `${b.player_name}: ${b.label}`),
+ // 審判担当中で拘束されている場合は、その審判を解任して呼べるようにする(#1 審判解放)
+ (b.type === "referee" && b.locked_by_match) ? h("button", {
+   className: "btn btn-sm btn-ghost",
+   style: { padding: "2px 8px", fontSize: "11px", marginLeft: "6px", color: "#b45309", borderColor: "#fcd34d" },
+   title: "この選手の審判担当を解任し、別の試合に呼べるようにします",
+   onClick: (e) => { e.stopPropagation(); O.releaseReferee(b.locked_by_match, b.player_name); },
+ }, "審判を解放") : null)),
  ),
  h("div", { className: "flex gap-1", style: { alignItems: "center" } },
  m.referee_name
@@ -9637,8 +9740,9 @@ const O = {
          padding: "2px 4px",
          opacity: lost ? 0.55 : 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
          borderRadius: "4px" } },
-       (name || "—"),
-       team ? h("span", { className: "text-xs text-sub", style: { marginLeft: "4px" } }, "(" + team + ")") : null);
+       // BYE は表示しない(シード/抽選トーナメント): 相手欄を薄いダッシュにし、シードは繰上で進出に見せる(#8)
+       (name === "BYE" ? h("span", { style: { color: "#cbd5e1", fontStyle: "italic" } }, "ー") : (name || "—")),
+       (team && name !== "BYE") ? h("span", { className: "text-xs text-sub", style: { marginLeft: "4px" } }, "(" + team + ")") : null);
      if (dndOn) {
        if (name && name !== "BYE") {
          row.setAttribute("draggable", "true");

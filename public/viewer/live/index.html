@@ -327,19 +327,20 @@
     background: rgba(0,0,0,.25); color: rgba(255,255,255,.85);
   }
 
-  /* 空きコート: 緑背景 */
+  /* 空きコート: 白背景(種目色=特に男子D緑 との混同を避ける。空きは無彩色+破線で非アクティブ感) */
   .lv-court.empty {
-    background: #f0fdf4;
-    border-color: #86efac;
-    color: var(--lv-ok);
+    background: #ffffff;
+    border-color: #d4d4d8;
+    border-style: dashed;
+    color: #9ca3af;
   }
   .lv-court.empty:hover {
-    border-color: var(--lv-ok);
-    background: #dcfce7;
+    border-color: #a1a1aa;
+    background: #fafafa;
   }
-  .lv-court.empty .lv-court-header { background: rgba(21,128,61,.12); }
-  .lv-court.empty .lv-court-header .ev { color: #15803d; font-weight: 700; }
-  .lv-court.empty .lv-court-footer { background: rgba(21,128,61,.08); color: #15803d; }
+  .lv-court.empty .lv-court-header { background: rgba(0,0,0,.04); }
+  .lv-court.empty .lv-court-header .ev { color: #9ca3af; font-weight: 700; }
+  .lv-court.empty .lv-court-footer { background: rgba(0,0,0,.03); color: #9ca3af; }
 
   /* 進行中: 赤背景・白文字・脈動アニメ */
   .lv-court.active {
@@ -381,7 +382,7 @@
     text-align: center;
     text-shadow: 0 1px 2px rgba(0,0,0,.15);
   }
-  .lv-court.empty .lv-court-p { text-shadow: none; color: var(--lv-ok); }
+  .lv-court.empty .lv-court-p { text-shadow: none; color: #9ca3af; }
   /* 選手名→個人DBリンク (#266) */
   .lv-name-link { color: inherit; text-decoration: underline; text-decoration-style: dotted;
     text-underline-offset: 2px; cursor: pointer; }
@@ -733,7 +734,7 @@
     vertical-align: middle;
     letter-spacing: 0;
   }
-  .lv-court.empty .lv-pnum { background: rgba(21,128,61,.12); color: var(--lv-ok); }
+  .lv-court.empty .lv-pnum { background: rgba(0,0,0,.05); color: #9ca3af; }
   .lv-court.active .lv-pnum,
   .lv-court.extra .lv-pnum { background: rgba(255,255,255,.28); color: #fff; }
   .lv-match-name .lv-pnum,
