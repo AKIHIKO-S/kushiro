@@ -7480,23 +7480,19 @@ const O = {
  let zoom = O._opBracketZoom || 0.85;
  let lastSig = "";
 
- // 縦リサイズ可能なパネル(#6): ドラッグで高さを自由調整、localStorage に保存して再描画後も維持。
- // 高さは「論理px(zoom適用前)」で保持。Blink系は CSS zoom が offsetHeight に乗るため、保存時は zoom で割り戻し
- // 復元時に再度 zoom が掛かっても収縮ドリフトしないようにする。値は 160px〜画面90% にクランプ(破損値/巨大化の崩壊防止)。
- const _clampH = (px) => Math.min(Math.max(160, Math.round(px) || 0), Math.round((window.innerHeight || 800) * 0.9));
+ // 縦リサイズ可能なパネル(#6/見やすさ): 既定を高めにし、下の「見えるグリップ」(_attachResizeGrip)で
+ // ドラッグ縦調整・ダブルクリックで最大。高さは論理px(zoom割戻し)で localStorage 保持し再描画後も維持。
+ const _clampH = (px) => Math.min(Math.max(180, Math.round(px) || 0), Math.round((window.innerHeight || 800) * 0.92));
  const _savedHraw = parseInt(localStorage.getItem("ktta_op_bracket_h")) || 0;
  const _savedH = _savedHraw ? _clampH(_savedHraw) : 0;
  const area = h("div", { style: { overflow: "auto", padding: "8px",
    background: "#f9fafb", borderRadius: "6px",
-   resize: "vertical", height: (_savedH ? _savedH + "px" : "62vh"), minHeight: "160px", maxHeight: "92vh" } });
- try {
-   let _rt; const _ro = new ResizeObserver(() => { clearTimeout(_rt); _rt = setTimeout(() => {
-     try { localStorage.setItem("ktta_op_bracket_h", String(_clampH(area.offsetHeight / (zoom || 1)))); } catch (e) {}
-   }, 400); });
-   _ro.observe(area);
- } catch (e) {}
+   height: (_savedH ? _savedH + "px" : "72vh"), minHeight: "180px" } });
  const zlbl = h("span", { className: "text-xs", style: { minWidth: "40px", textAlign: "center", fontWeight: 700 } }, "85%");
  const applyZoom = () => { area.style.zoom = String(zoom); zlbl.textContent = Math.round(zoom * 100) + "%"; O._opBracketZoom = zoom; };
+ // 横スクロール無しで全体が見えるよう、表の幅をパネル幅に合わせる zoom を計算(見やすさ)。
+ const fitWidth = () => { try { const natural = area.scrollWidth / (zoom || 1);
+   if (natural > 20) { let f = (area.clientWidth - 14) / natural; f = Math.max(0.4, Math.min(1.3, Math.round(f * 20) / 20)); zoom = f; applyZoom(); } } catch (e) {} };
 
  // 現在の状態シグネチャ (種目内の試合状況が変われば再描画)
  const sigOf = () => {
@@ -7580,6 +7576,8 @@ const O = {
      zlbl,
      h("button", { className: "btn btn-sm btn-ghost", title: "拡大",
        onClick: () => { zoom = Math.min(2, Math.round((zoom + 0.1) * 10) / 10); applyZoom(); } }, "＋")),
+   h("button", { className: "btn btn-sm btn-ghost", title: "横スクロール無しで全体が入るよう倍率を自動調整",
+     onClick: fitWidth }, "⤢ 画面に合わせる"),
    h("button", { className: "btn btn-sm", style: { background: "#7c3aed" },
      onClick: () => O.openVisualBracket() }, "全画面・印刷"),
    h("button", { className: "btn btn-sm", style: { background: "#1f6f3f", color: "#fff" },
@@ -7596,6 +7594,7 @@ const O = {
  if (events.length > 1) inner.appendChild(tabStrip);
  inner.appendChild(toolbar);
  inner.appendChild(area);
+ inner.appendChild(O._attachResizeGrip(area, { key: "ktta_op_bracket_h", zoom: () => zoom }));   // 見えるドラッグ用グリップ
  card.appendChild(inner);
 
  // 開閉状態の記憶 + 開いた時の遅延ロード
@@ -9582,8 +9581,11 @@ const O = {
    });
  };
 
+ // 高さは下のグリップでドラッグ調整・保存(既定は高め)。全画面時は CSS(:fullscreen #vbArea)が上限を持つ。
+ const _vbmRaw = parseInt(localStorage.getItem("ktta_vb_modal_h")) || 0;
+ const _vbmH = _vbmRaw ? Math.min(Math.max(180, _vbmRaw), Math.round((window.innerHeight || 800) * 0.9)) : 0;
  const bracketArea = h("div", { id: "vbArea",
-   style: { overflow: "auto", maxHeight: "84vh", padding: "8px",
+   style: { overflow: "auto", height: (_vbmH ? _vbmH + "px" : "82vh"), minHeight: "200px", padding: "8px",
      background: "#f9fafb", borderRadius: "6px" } });
 
  const reload = async () => {
@@ -9642,6 +9644,8 @@ const O = {
  let zoom = 1;
  const zoomLabel = h("span", { className: "text-xs", style: { minWidth: "38px", textAlign: "center", fontWeight: 700 } }, "100%");
  const applyZoom = () => { bracketArea.style.zoom = String(zoom); zoomLabel.textContent = Math.round(zoom * 100) + "%"; };
+ const fitWidth = () => { try { const natural = bracketArea.scrollWidth / (zoom || 1);
+   if (natural > 20) { let f = (bracketArea.clientWidth - 14) / natural; f = Math.max(0.4, Math.min(1.5, Math.round(f * 20) / 20)); zoom = f; applyZoom(); } } catch (e) {} };
  const toolbar = h("div", { className: "flex gap-2 mb-2", style: { alignItems: "center", flexWrap: "wrap" } },
    h("button", { className: "btn btn-sm btn-ghost", onClick: reload }, "更新"),
    h("div", { className: "flex", style: { alignItems: "center", gap: "2px" } },
@@ -9653,6 +9657,8 @@ const O = {
      h("button", { className: "btn btn-sm btn-ghost", title: "等倍に戻す",
        onClick: () => { zoom = 1; applyZoom(); } }, "100%"),
    ),
+   h("button", { className: "btn btn-sm btn-ghost", title: "横スクロール無しで全体が入るよう倍率を自動調整",
+     onClick: fitWidth }, "⤢ 画面に合わせる"),
    h("button", { className: "btn btn-sm", style: { background: "#0ea5e9" }, onClick: toggleFs }, "⛶ 全画面"),
    h("button", { className: "btn btn-sm", style: { background: "#7c3aed" }, onClick: printBracket }, "印刷 (A3横)"),
    h("span", { className: "text-xs text-sub", style: { marginLeft: "auto" } },
@@ -9662,6 +9668,7 @@ const O = {
  if (events.length > 1) fsWrap.appendChild(tabStrip); // 複数種目/ブロック時のみタブ表示
  fsWrap.appendChild(toolbar);
  fsWrap.appendChild(bracketArea);
+ fsWrap.appendChild(O._attachResizeGrip(bracketArea, { key: "ktta_vb_modal_h", zoom: () => zoom, maxFrac: 0.9 }));   // 見えるドラッグ用グリップ
  const body = h("div", {}, fsWrap);
  const foot = h("button", { className: "btn btn-ghost",
    onClick: () => modalBg.remove() }, "閉じる");
@@ -9673,6 +9680,38 @@ const O = {
    const mb = box.querySelector(".modal-body"); if (mb) mb.style.padding = "8px";
  }
  reload();
+ },
+
+ // トーナメント表パネル/モーダルを「見えるグリップ」で縦ドラッグ・リサイズ可能にする(見やすさ改善)。
+ // area=スクロール領域。opts.key=高さ保存先。opts.zoom=現在のCSS zoom取得関数(offsetHeight補正用)。
+ // 上下ドラッグで高さ変更、ダブルクリックで縦いっぱい。180px〜画面の maxFrac(既定92%)にクランプ。
+ _attachResizeGrip(area, opts) {
+   opts = opts || {};
+   const z = () => (opts.zoom ? (opts.zoom() || 1) : 1);
+   const maxFrac = opts.maxFrac || 0.92;
+   const clamp = (px) => Math.min(Math.max(180, Math.round(px) || 0), Math.round((window.innerHeight || 800) * maxFrac));
+   const grip = h("div", { className: "vb-resize-grip",
+     style: { height: "22px", cursor: "ns-resize", display: "flex", alignItems: "center", justifyContent: "center",
+       fontSize: "11px", fontWeight: "800", color: "#475569", background: "#e2e8f0",
+       border: "1px solid #cbd5e1", borderTop: "none", borderRadius: "0 0 8px 8px",
+       userSelect: "none", touchAction: "none", letterSpacing: ".04em", marginBottom: "6px" },
+     title: "上下にドラッグして高さを変更 / ダブルクリックで最大" },
+     h("span", { style: { pointerEvents: "none" } }, "⇕ ドラッグで高さ調整 ⇕"));
+   // 絶対位置方式: ポインタ位置から area の高さを直接決める(zoom 適用後の rendered 高さ→/z で論理px)。
+   // grab = 掴んだ瞬間のポインタと area 下端の差(初動のジャンプ防止)。delta 計算より zoom と独立で確実。
+   let on = false, grab = 0;
+   const save = () => { if (opts.key) { try { localStorage.setItem(opts.key, String(clamp(area.offsetHeight / z()))); } catch (e) {} } };
+   grip.addEventListener("pointerdown", (e) => { on = true;
+     const rect = area.getBoundingClientRect(); grab = e.clientY - (rect.top + area.offsetHeight);
+     try { grip.setPointerCapture(e.pointerId); } catch (er) {} e.preventDefault(); grip.style.background = "#cbd5e1"; });
+   grip.addEventListener("pointermove", (e) => { if (!on) return;
+     const rect = area.getBoundingClientRect(); area.style.height = clamp((e.clientY - grab - rect.top) / z()) + "px"; });
+   const end = (e) => { if (!on) return; on = false; grip.style.background = "#e2e8f0";
+     try { grip.releasePointerCapture(e.pointerId); } catch (er) {} save(); };
+   grip.addEventListener("pointerup", end);
+   grip.addEventListener("pointercancel", end);
+   grip.addEventListener("dblclick", () => { area.style.height = clamp((window.innerHeight || 800) * maxFrac) + "px"; save(); });
+   return grip;
  },
 
  // ─── ビジュアルブラケットの実 DOM 構築 (両側トーナメント) ─────

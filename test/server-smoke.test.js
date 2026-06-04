@@ -337,15 +337,8 @@ test("(o) push subscribe は endpoint を検証(http/生IP/内部は拒否・既
   assert.ok(!/エンドポイントが不正/.test(fcm.j.error || ""), "FCM host は通過: " + JSON.stringify(fcm.j));
 });
 
-test("(p) /api/sync/push は鍵総当たりを per-IP ロックアウト(#3)", async () => {
-  let got429 = false;
-  for (let i = 0; i < 14; i++) {
-    const r = await fetch(BASE + "/api/sync/push", { method: "POST",
-      headers: { ...jhead, "X-Sync-Key": "WRONG-" + i }, body: JSON.stringify({ tournament: { id: "x" } }) });
-    if (r.status === 429) got429 = true;
-  }
-  assert.ok(got429, "連続した誤キーで 429 ロックアウトに至る");
-});
+// (p) 同期の鍵総当たりロックアウト試験は test/sync-lock.test.js に隔離(127.0.0.1 の失敗カウンタを
+// ロックし、同一サーバを共有する (i)/(j) を 429 で汚染するため。独立プロセスで実行する)。
 
 // ── オーナー(上級管理者)権限: 危険操作を ADMIN_KEY の上の OWNER_KEY へ隔離 ──
 const OKEY = "smoke-owner-key-2468";
