@@ -6179,6 +6179,14 @@ const SYNC_T_FIELDS = ["id", "name", "date", "venue", "court_count", "status", "
   "category", "organizer", "court_rows", "court_cols", "event_config"];
 const SYNC_MATCH_NULL_FK = ["winner_id", "loser_id", "player1_id", "player2_id",
   "player1_entrant_id", "player2_entrant_id", "referee_id"];
+let _matchColCache = null;
+function _validMatchCols() {   // matches テーブルの実在列(同期受信時に列名をこれに制限=外部入力のSQL注入防止)
+  if (!_matchColCache) {
+    try { _matchColCache = new Set(sqlite.prepare("PRAGMA table_info(matches)").all().map(c => c.name)); }
+    catch (e) { _matchColCache = new Set(); }
+  }
+  return _matchColCache;
+}
 function exportPublicSnapshot(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return null;
@@ -6201,10 +6209,15 @@ function applyPublicSnapshot(snap) {
       if (setCols.length) sqlite.prepare(`UPDATE tournaments SET ${setCols.map(c => `"${c}"=@${c}`).join(",")} WHERE id=@id`).run(tpub);
     }
     sqlite.prepare("DELETE FROM matches WHERE tournament_id=?").run(tid);   // 本部が正本=全置換
+    const validCols = _validMatchCols();                                    // 受信データの列を実テーブル列のみに制限(SQL注入防止)
     for (const m of (snap.matches || [])) {
-      const row = Object.assign({}, m);
+      if (!m || !m.id) continue;
+      const row = {};
+      for (const k in m) if (validCols.has(k)) row[k] = m[k];               // 未知/悪意の列名を弾く
       SYNC_MATCH_NULL_FK.forEach(c => { if (c in row) row[c] = null; });    // FK列をnull化
+      row.tournament_id = tid;                                              // 他大会への混入を防ぐ(常にこの大会)
       const cols = Object.keys(row);
+      if (!cols.length) continue;
       sqlite.prepare(`INSERT INTO matches (${cols.map(c => `"${c}"`).join(",")}) VALUES (${cols.map(c => "@" + c).join(",")})`).run(row);
     }
   });

@@ -69,3 +69,24 @@ test("applyPublicSnapshot: 受信側に無い大会は新規作成(PII/entrants 
   assert.ok(db.getMatchesByTournament(newTid).length >= 1, "matches 反映");
   assert.strictEqual((db.getEntrants(newTid) || []).length, 0, "entrants は同期されない(PII温存)");
 });
+
+test("applyPublicSnapshot: 受信matchesの未知/悪意の列名を弾く・tournament_idを強制(注入防止)", () => {
+  const t = setupWithResult();
+  const newTid = "cloudsec-" + Date.now() + "-" + _seq;
+  const snap = {
+    v: 1, tournament: { id: newTid, name: "セキュリティ", date: "2027-01-01", status: "ongoing" },
+    matches: [{
+      id: "secm-1", tournament_id: "OTHER-TID-injection", event: "S", round: "決勝",
+      bracket_round: 1, bracket_pos: 0, player1_name: "Ａ", player2_name: "Ｂ", winner_name: "Ａ", status: "completed",
+      // 未知/悪意の列名 — 弾かれるべき(SQLに展開させない)
+      "evil\"); DROP TABLE matches;--": 1, "totally_unknown_col": "x",
+    }],
+  };
+  const r = db.applyPublicSnapshot(snap);   // throw せず適用できる
+  assert.ok(r.ok, "悪意キー入りでも安全に適用: " + JSON.stringify(r));
+  const cm = db.getMatchesByTournament(newTid);
+  assert.strictEqual(cm.length, 1, "matchは1件(他大会TIDへ混入しない)");
+  assert.strictEqual(cm[0].tournament_id, newTid, "tournament_idは強制的にこの大会");
+  // matchesテーブルは健在(DROPされていない)
+  assert.ok(db.getMatchesByTournament(t.id).length >= 1, "既存大会のmatchesは健在");
+});
