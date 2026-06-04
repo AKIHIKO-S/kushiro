@@ -55,6 +55,16 @@ echo ""
 echo "同じWi-Fiの他の端末からは、このPCのIPアドレスで開けます:"
 node -e "const os=require('os');const ns=os.networkInterfaces();for(const k in ns)for(const n of ns[k])if(n.family==='IPv4'&&!n.internal)console.log('  http://'+n.address+':'+(process.env.PORT||'3000')+'/viewer/live/');" 2>/dev/null || true
 echo ""
+echo ""
+echo "※ 会場運用: 本PCのWi-Fiテザリング(ホットスポット)か モバイルルータで会場内ローカル網を作り、"
+echo "   他の運営端末/大画面/観客を上記IPで接続してください。会場Wi-Fiが落ちても運用は止まりません。"
+echo "   接続用のURL/QRは 管理画面 → ⚙設定 → 『📱端末接続(会場LAN)』 でも表示できます。"
+echo ""
 echo "終了するには この画面で Ctrl+C を押してください。"
 echo "==============================================="
-node server.js
+# 大会中に本PCがスリープすると全端末が止まるため、可能なら省電力スリープを抑止して起動する(macOS: caffeinate)。
+if command -v caffeinate >/dev/null 2>&1; then
+  exec caffeinate -is node server.js
+else
+  node server.js
+fi
