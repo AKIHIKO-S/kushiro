@@ -6169,6 +6169,49 @@ function exportBracket(tournamentId, event) {
 }
 
 // 全ブラケット書き出し（複数event対応）
+// ── クラウド公開ミラーへの一方向同期(本部ローカル=正本 → クラウド) ──
+// 会場WiFi断に無依存なローカル運用の結果を、ネット復帰時にクラウド公開ビューへ反映する。
+// 同期するのは「大会の公開フィールド + 全 matches(ブラケット/結果/tie内訳)」のみ。
+//   ・referee_token/entry_gas_url 等の秘匿列・申込設定・連絡先PII(entrants)は同期しない(クラウド側を温存)。
+//   ・matches の player/entrant/referee の id(FK)は null 化(クラウドに無い選手IDでのFK違反回避・PII連鎖防止)。
+//     公開ビューは player1_name 等の非正規化名で描画するので表示は成立する。
+const SYNC_T_FIELDS = ["id", "name", "date", "venue", "court_count", "status", "description", "state_json",
+  "category", "organizer", "court_rows", "court_cols", "event_config"];
+const SYNC_MATCH_NULL_FK = ["winner_id", "loser_id", "player1_id", "player2_id",
+  "player1_entrant_id", "player2_entrant_id", "referee_id"];
+function exportPublicSnapshot(tournamentId) {
+  const t = stmts.getTournament.get(tournamentId);
+  if (!t) return null;
+  const tpub = {}; SYNC_T_FIELDS.forEach(f => { if (f in t) tpub[f] = t[f]; });
+  const matches = sqlite.prepare("SELECT * FROM matches WHERE tournament_id=?").all(tournamentId);
+  return { v: 1, exported_at: new Date().toISOString(), tournament: tpub, matches };
+}
+function applyPublicSnapshot(snap) {
+  if (!snap || !snap.tournament || !snap.tournament.id) return { error: "不正な同期データ" };
+  const tid = snap.tournament.id;
+  const tpub = {}; SYNC_T_FIELDS.forEach(f => { if (snap.tournament[f] !== undefined) tpub[f] = snap.tournament[f]; });
+  if (!tpub.name) tpub.name = "(同期)";
+  const tx = sqlite.transaction(() => {
+    const exists = stmts.getTournament.get(tid);
+    if (!exists) {
+      const cols = Object.keys(tpub);
+      sqlite.prepare(`INSERT INTO tournaments (${cols.map(c => `"${c}"`).join(",")}) VALUES (${cols.map(c => "@" + c).join(",")})`).run(tpub);
+    } else {
+      const setCols = Object.keys(tpub).filter(c => c !== "id");   // 公開フィールドのみ更新(秘匿/申込は触らない)
+      if (setCols.length) sqlite.prepare(`UPDATE tournaments SET ${setCols.map(c => `"${c}"=@${c}`).join(",")} WHERE id=@id`).run(tpub);
+    }
+    sqlite.prepare("DELETE FROM matches WHERE tournament_id=?").run(tid);   // 本部が正本=全置換
+    for (const m of (snap.matches || [])) {
+      const row = Object.assign({}, m);
+      SYNC_MATCH_NULL_FK.forEach(c => { if (c in row) row[c] = null; });    // FK列をnull化
+      const cols = Object.keys(row);
+      sqlite.prepare(`INSERT INTO matches (${cols.map(c => `"${c}"`).join(",")}) VALUES (${cols.map(c => "@" + c).join(",")})`).run(row);
+    }
+  });
+  tx();
+  return { ok: true, tournament_id: tid, matches: (snap.matches || []).length };
+}
+
 function exportAllBrackets(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return null;
@@ -7451,6 +7494,7 @@ module.exports = {
   updateEntrySettings, getOpenTournaments,
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
+  exportPublicSnapshot, applyPublicSnapshot,
   // Entrants (大会参加選手) - マスタDBと分離
   createEntrant, updateEntrant, deleteEntrant, getEntrant, getEntrants,
   setEntrantBracketNumber, autoAssignDrawNumbers, buildRosterData,

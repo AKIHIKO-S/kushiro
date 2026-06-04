@@ -178,6 +178,35 @@ function appOriginOf(req) {
 }
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
+// クラウド公開ミラー同期(本部ローカル=正本 → クラウド)。
+//   SYNC_KEY: 受信側(クラウド)に設定すると /api/sync/push を有効化。送信側(本部)にも同値を設定。
+//   SYNC_CLOUD_URL: 送信側(本部ローカル)に設定するクラウドのベースURL。設定時のみ push する。
+const SYNC_KEY = process.env.SYNC_KEY || "";
+const SYNC_CLOUD_URL = (process.env.SYNC_CLOUD_URL || "").replace(/\/$/, "");
+const _syncState = { last_ok_at: null, last_error: null, last_count: 0 };
+async function pushTournamentToCloud(tid) {
+  if (!SYNC_CLOUD_URL || !SYNC_KEY) return { error: "クラウド同期が未設定です(SYNC_CLOUD_URL / SYNC_KEY)" };
+  const snap = db.exportPublicSnapshot(tid);
+  if (!snap) return { error: "大会が見つかりません" };
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const res = await fetch(SYNC_CLOUD_URL + "/api/sync/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Sync-Key": SYNC_KEY },
+      body: JSON.stringify(snap), signal: ctrl.signal,
+    });
+    clearTimeout(to);
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) { _syncState.last_error = "HTTP " + res.status + (j.error ? " " + j.error : ""); return { error: _syncState.last_error }; }
+    _syncState.last_ok_at = new Date().toISOString(); _syncState.last_error = null; _syncState.last_count = (snap.matches || []).length;
+    return { ok: true, matches: snap.matches.length };
+  } catch (e) {
+    clearTimeout(to);
+    _syncState.last_error = (e && e.name === "AbortError") ? "タイムアウト(オフライン?)" : (e && e.message) || "失敗";
+    return { error: _syncState.last_error };
+  }
+}
 const IS_PROD = process.env.NODE_ENV === "production";
 
 // HTML エラー応答 (本番では内部詳細を隠す — Y3 対策)
@@ -3277,6 +3306,41 @@ app.get("/api/lan-info", async (req, res) => {
   res.json({ port: Number(PORT) || PORT, ips, urls });
 });
 
+// クラウド受信(公開ミラー): 本部ローカルからのスナップショットを適用。X-Sync-Key で認証。
+// 大会の公開フィールドと matches のみ反映(秘匿列・申込PIIは温存)。本部が正本=全置換。
+app.post("/api/sync/push", (req, res) => {
+  if (!SYNC_KEY) return res.status(503).json({ error: "同期受信が無効です(SYNC_KEY 未設定)" });
+  const key = req.get("X-Sync-Key") || "";
+  if (!safeEqualStr(key, SYNC_KEY)) return res.status(401).json({ error: "同期キーが不正です" });
+  try {
+    const r = db.applyPublicSnapshot(req.body);
+    if (r.error) return res.status(400).json(r);
+    res.json(r);
+  } catch (e) { console.error("sync/push error:", e); res.status(500).json({ error: "同期適用失敗: " + e.message }); }
+});
+// 本部ローカル: 今すぐクラウドへ同期(手動)。:id 指定でその大会、無指定は進行中/準備中の大会を一括。
+app.post("/api/tournaments/:id/sync/now", requireAdmin, async (req, res) => {
+  const r = await pushTournamentToCloud(req.params.id);
+  if (r.error) return res.status(r.error.includes("未設定") ? 400 : 502).json(r);
+  res.json(r);
+});
+app.post("/api/sync/now", requireAdmin, async (req, res) => {
+  if (!SYNC_CLOUD_URL || !SYNC_KEY) return res.status(400).json({ error: "クラウド同期が未設定です(SYNC_CLOUD_URL / SYNC_KEY)" });
+  const active = (db.getTournaments() || []).filter(t => t.status === "ongoing" || t.status === "preparing");
+  const results = [];
+  for (const t of active) { results.push({ id: t.id, name: t.name, ...(await pushTournamentToCloud(t.id)) }); }
+  res.json({ ok: results.every(r => r.ok), pushed: results.filter(r => r.ok).length, total: results.length, results });
+});
+// 同期の設定/状態(admin)。
+app.get("/api/sync/status", requireAdmin, (req, res) => {
+  res.json({
+    push_enabled: !!(SYNC_CLOUD_URL && SYNC_KEY),     // この機(本部)からクラウドへ送れるか
+    receive_enabled: !!SYNC_KEY,                       // この機がクラウド受信側か
+    cloud_host: SYNC_CLOUD_URL ? SYNC_CLOUD_URL.replace(/^https?:\/\//, "") : "",
+    last_ok_at: _syncState.last_ok_at, last_error: _syncState.last_error, last_count: _syncState.last_count,
+  });
+});
+
 // ═══ 診断 API (admin 専用) ═══
 // 直近のエラー・リクエスト・サーバー状態を返す
 app.get("/api/diagnostics", requireAdmin, (req, res) => {
@@ -3548,3 +3612,15 @@ setInterval(() => {
       console.error("[snapshot] 自動バックアップ失敗:", e.message));
   } catch (e) { /* 進行中判定の失敗は無視 */ }
 }, SNAPSHOT_INTERVAL_MS).unref();
+
+// クラウド公開ミラーへの自動同期(本部ローカルのみ・SYNC_CLOUD_URL 設定時)。
+// インターネットが生きた間欠で、進行中/準備中の大会をクラウドへ push(失敗=オフラインは黙って次回再試行)。
+if (SYNC_CLOUD_URL && SYNC_KEY) {
+  setInterval(async () => {
+    try {
+      const active = (db.getTournaments() || []).filter(t => t.status === "ongoing" || t.status === "preparing");
+      for (const t of active) { await pushTournamentToCloud(t.id); }
+    } catch (e) { /* オフライン等は無視(次回再試行) */ }
+  }, 3 * 60 * 1000).unref();
+  console.log(`   クラウド同期: 有効(${SYNC_CLOUD_URL.replace(/^https?:\/\//, "")} へ進行中大会を自動push)`);
+}

@@ -1765,7 +1765,30 @@ const A = {
    body.appendChild(h("div", { className: "text-xs text-sub" },
      "※ 運営端末は『運営』URLで管理キーを入力。大画面はコート表示、観戦は選手・観客向け。"));
  }
- openModal("📱 端末接続 (会場LAN)", body, null);
+ // ── クラウド公開ミラーへの同期(本部=正本 → ネット復帰時にクラウドへ) ──
+ let sync = null;
+ try { sync = await api.get("/api/sync/status"); } catch (e) {}
+ const syncBox = h("div", { className: "card", style: { padding: "12px", marginTop: "6px", background: "#f8fafc" } });
+ syncBox.appendChild(h("div", { style: { fontWeight: 700, marginBottom: "4px" } }, "☁ クラウド公開ビューへの同期"));
+ if (sync && sync.push_enabled) {
+   syncBox.appendChild(h("div", { className: "text-xs" },
+     "送信先: " + (sync.cloud_host || "—") + " ・ " +
+     (sync.last_ok_at ? "最終同期: " + new Date(sync.last_ok_at).toLocaleString("ja-JP") : "未同期") +
+     (sync.last_error ? " ・ ⚠" + sync.last_error : "")));
+   syncBox.appendChild(h("div", { className: "text-xs text-sub", style: { margin: "2px 0 6px" } },
+     "ネットが生きた間欠で進行中大会を自動同期します(観客は数分遅れで閲覧)。"));
+   syncBox.appendChild(h("button", { className: "btn btn-sm", onClick: async () => {
+     const r = await api.post("/api/sync/now", {});
+     if (!r || r.error) return toast((r && r.error) || "同期失敗(オフライン?)", "err");
+     toast("クラウドへ同期: " + (r.pushed || 0) + "/" + (r.total || 0) + "大会", "ok");
+   } }, "今すぐ同期"));
+ } else {
+   syncBox.appendChild(h("div", { className: "text-xs text-sub" },
+     "未設定(この機ではクラウド同期しません)。本部ホストの環境変数 SYNC_CLOUD_URL と SYNC_KEY を設定すると、" +
+     "進行中大会をクラウド公開ビューへ自動同期します。"));
+ }
+ body.appendChild(syncBox);
+ openModal("📱 端末接続 (会場LAN) / クラウド同期", body, null);
  },
 
  // ── データ保護: DBスナップショット (バックアップ/復元) #201 ──
