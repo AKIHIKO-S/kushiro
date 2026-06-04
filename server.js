@@ -102,9 +102,12 @@ async function sendPushToPlayer(playerId, payload) {
   const subs = db.getPushSubscriptionsForPlayer(playerId);
   if (!subs.length) return 0;
   const body = JSON.stringify(payload);
+  let sent = 0;
+  // timeout 付き(プッシュサービス無応答で一括送信が固着しないように)。実際に成功した端末数のみ数える。
   await Promise.all(subs.map(async ({ endpoint, sub }) => {
     try {
-      await webpush.sendNotification(sub, body);
+      await webpush.sendNotification(sub, body, { timeout: 8000 });
+      sent++;
     } catch (err) {
       // 410 Gone / 404 → 購読失効。DBから削除。
       if (err && (err.statusCode === 410 || err.statusCode === 404)) {
@@ -112,7 +115,7 @@ async function sendPushToPlayer(playerId, payload) {
       }
     }
   }));
-  return subs.length;
+  return sent;   // 試行数ではなく成功数(管理UIの「N台へ送信」が実態と一致)
 }
 
 // この選手を名簿に持つ監督の端末へまとめて呼出通知 (#287)

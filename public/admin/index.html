@@ -1551,7 +1551,7 @@ const A = {
    catch (e) { bcBtn.disabled = false; bcBtn.textContent = "全員へ一括送信"; return toast("通信エラー", "err"); }
    bcBtn.disabled = false; bcBtn.textContent = "全員へ一括送信";
    if (r && r.error) return toast(r.error, "err");
-   toast(`一括送信しました（${r.players || 0}人 / ${r.devices || 0}台）`, "ok");
+   toast(`一括送信（対象${r.players || 0}人 / 成功${r.devices || 0}台${r.failed ? " / 失敗" + r.failed + "人" : ""}）`, r.failed ? "err" : "ok");
  } }, "全員へ一括送信");
  const load = async () => {
    listWrap.innerHTML = "読み込み中…";
@@ -7481,13 +7481,17 @@ const O = {
  let lastSig = "";
 
  // 縦リサイズ可能なパネル(#6): ドラッグで高さを自由調整、localStorage に保存して再描画後も維持。
- const _savedH = parseInt(localStorage.getItem("ktta_op_bracket_h")) || 0;
+ // 高さは「論理px(zoom適用前)」で保持。Blink系は CSS zoom が offsetHeight に乗るため、保存時は zoom で割り戻し
+ // 復元時に再度 zoom が掛かっても収縮ドリフトしないようにする。値は 160px〜画面90% にクランプ(破損値/巨大化の崩壊防止)。
+ const _clampH = (px) => Math.min(Math.max(160, Math.round(px) || 0), Math.round((window.innerHeight || 800) * 0.9));
+ const _savedHraw = parseInt(localStorage.getItem("ktta_op_bracket_h")) || 0;
+ const _savedH = _savedHraw ? _clampH(_savedHraw) : 0;
  const area = h("div", { style: { overflow: "auto", padding: "8px",
    background: "#f9fafb", borderRadius: "6px",
-   resize: "vertical", height: (_savedH ? _savedH + "px" : "62vh"), minHeight: "160px" } });
+   resize: "vertical", height: (_savedH ? _savedH + "px" : "62vh"), minHeight: "160px", maxHeight: "92vh" } });
  try {
    let _rt; const _ro = new ResizeObserver(() => { clearTimeout(_rt); _rt = setTimeout(() => {
-     try { localStorage.setItem("ktta_op_bracket_h", String(area.offsetHeight)); } catch (e) {}
+     try { localStorage.setItem("ktta_op_bracket_h", String(_clampH(area.offsetHeight / (zoom || 1)))); } catch (e) {}
    }, 400); });
    _ro.observe(area);
  } catch (e) {}
@@ -8213,8 +8217,11 @@ const O = {
  });
  },
  // 担当中の審判を解任(#1): 拘束元の試合の審判を未指定に戻し、その選手を別試合に呼べるようにする。
- async releaseReferee(matchId, playerName) {
- if (!confirm((playerName || "この選手") + " の審判担当を解任します。\n（担当していた試合は『審判未指定』に戻り、この選手は別の試合に呼べるようになります）\nよろしいですか？")) return;
+ // どの試合(コート)の審判を外すかを明示し、進行中(コートに入っている)試合の審判を盲目的に外さないよう警告する。
+ async releaseReferee(matchId, playerName, lockLabel) {
+ const onCourt = lockLabel && /コート/.test(lockLabel);
+ const warn = onCourt ? ("\n⚠ この審判は今" + lockLabel.replace(/\s*\(審判担当中\)\s*/, "") + " を担当中です。外すとその試合は審判未指定に戻ります。") : "";
+ if (!confirm((playerName || "この選手") + " の審判担当を解任します。" + warn + "\n（この選手は別の試合に呼べるようになります）\nよろしいですか？")) return;
  let r;
  try { r = await api.post(`/api/matches/${matchId}/referee`, { referee_id: null }); }
  catch (e) { return toast("通信できません（オフライン）", "err"); }
@@ -8271,7 +8278,7 @@ const O = {
    className: "btn btn-sm btn-ghost",
    style: { padding: "2px 8px", fontSize: "11px", marginLeft: "6px", color: "#b45309", borderColor: "#fcd34d" },
    title: "この選手の審判担当を解任し、別の試合に呼べるようにします",
-   onClick: (e) => { e.stopPropagation(); O.releaseReferee(b.locked_by_match, b.player_name); },
+   onClick: (e) => { e.stopPropagation(); O.releaseReferee(b.locked_by_match, b.player_name, b.label || b.locked_by_label); },
  }, "審判を解放") : null)),
  ),
  h("div", { className: "flex gap-1", style: { alignItems: "center" } },

@@ -1962,6 +1962,8 @@ const _opsFpStmt = sqlite.prepare(
           COALESCE(SUM(winner_sets + loser_sets),0) AS ssum,
           COALESCE(SUM(LENGTH(tie_results)),0) AS trlen,
           COALESCE(SUM(CASE WHEN COALESCE(referee_id,'')!='' OR COALESCE(referee_name,'')!='' THEN 1 ELSE 0 END),0) AS refc,
+          COALESCE(SUM(COALESCE(referee_id,0)),0) AS refid,
+          COALESCE(SUM(LENGTH(COALESCE(referee_name,''))),0) AS refnl,
           COALESCE(MAX(finished_at),'') AS f
      FROM matches WHERE tournament_id = ?`
 );
@@ -1969,9 +1971,9 @@ function getOpsFingerprint(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { v: "0", status: null, error: true };
   const r = _opsFpStmt.get(tournamentId);
-  // unconf/pend(承認待ち件数)・ssum/trlen(団体リーグのセット/得点訂正=tie_results変化)・refc(審判の割当/解放)も含め、
-  // 審判報告・承認・結果訂正・審判の割当解放で viewer/他端末が即時更新されるように(SSE差分検知)。
-  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.pend}.${r.ssum}.${r.trlen}.${r.refc}.${r.f}`, status: t.status };
+  // unconf/pend(承認待ち件数)・ssum/trlen(団体リーグのセット/得点訂正=tie_results変化)・審判(refc=件数, refid=選手ID合計,
+  // refnl=DB外名の文字数合計)も含め、審判の割当/解放/差し替え(同数のA→Bも refid/refnl で検知)で viewer/他端末が即時更新されるように。
+  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.pend}.${r.ssum}.${r.trlen}.${r.refc}.${r.refid}.${r.refnl}.${r.f}`, status: t.status };
 }
 
 // ═══════════════════════════════════════════════════════
