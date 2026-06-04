@@ -299,6 +299,38 @@ app.use(compression({
 }));
 app.use(express.json({ limit: "10mb" }));
 
+// ── 国外アクセス遮断 (任意・env で有効化。サイト全体に適用) ──
+// Cloudflare が付与する CF-IPCountry を見て、許可国(GEO_ALLOW_COUNTRIES)以外を 403 で拒否する。
+// 本来の主防御は「Cloudflareで国ブロック + オリジンをCloudflare限定」。本ミドルウェアは保険(直叩き/設定漏れ対策)。
+//   GEO_ALLOW_COUNTRIES=JP            許可国(カンマ区切り。未設定なら本機能は無効=従来どおり)
+//   GEO_ALLOW_IPS=1.2.3.4,...         国に関わらず常に許可するIP(運営PC・会場の固定IP等)
+//   GEO_REQUIRE_COUNTRY_HEADER=1      CF-IPCountry が無いリクエストも拒否(完全にCF配下の本番向け。既定は通す)
+// 既定で通すもの: /api/health(監視) と /api/sync/*(本部→クラウドのサーバ間同期。SYNC_KEY/IP制限で別途保護)。
+// 本部のローカル/standalone は Cloudflare 非経由=CF-IPCountry 無し→既定で通る(GEO_STRICT を立てない限り)。
+const GEO_ALLOW_COUNTRIES = (process.env.GEO_ALLOW_COUNTRIES || "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+const GEO_ALLOW_IPS = (process.env.GEO_ALLOW_IPS || "").split(",").map(s => s.trim()).filter(Boolean);
+const GEO_STRICT = process.env.GEO_REQUIRE_COUNTRY_HEADER === "1";
+function geoDeny(res) {
+  return res.status(403).type("text/html; charset=utf-8").send(
+    '<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>アクセスできません</title></head><body style="font-family:-apple-system,sans-serif;max-width:520px;margin:60px auto;padding:0 20px;color:#334155;line-height:1.7">' +
+    '<h1 style="font-size:20px;color:#0f172a">このサイトは日本国内からのみご利用いただけます</h1>' +
+    '<p>釧路卓球協会の大会運営システムは、日本国内からのアクセスに限定しています。</p>' +
+    '<p style="color:#64748b;font-size:14px">This site is available from within Japan only.</p></body></html>');
+}
+if (GEO_ALLOW_COUNTRIES.length) {
+  app.use((req, res, next) => {
+    if (req.path === "/api/health" || req.path.startsWith("/api/sync/")) return next();
+    if (GEO_ALLOW_IPS.length && GEO_ALLOW_IPS.includes(clientIp(req))) return next();
+    const cc = (req.get("cf-ipcountry") || "").toUpperCase();
+    if (!cc) return GEO_STRICT ? geoDeny(res) : next();   // 判定ヘッダ無し: 既定は通す(オリジン限定が本来の対策)
+    if (GEO_ALLOW_COUNTRIES.includes(cc)) return next();
+    return geoDeny(res);
+  });
+  console.log("[geo] 国外アクセス遮断 有効: 許可国=" + GEO_ALLOW_COUNTRIES.join(",") +
+    (GEO_ALLOW_IPS.length ? " 許可IP=" + GEO_ALLOW_IPS.length + "件" : "") + (GEO_STRICT ? " (ヘッダ無しも拒否)" : ""));
+}
+
 // ── 冪等性ガード: op_id 付き書込みの二重適用を防ぐ (オフライン再送対策) ──
 // クライアントが op_id (body または X-Op-Id ヘッダ) を付けて再送した場合、
 // 既に成功済みなら処理を再実行せず前回のレスポンスを返す。
