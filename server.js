@@ -2849,6 +2849,19 @@ app.post("/api/admin/snapshots/download", requireOwner, (req, res) => {
   auditOwner(req, "backup_download", name);
   sendDbFile(res, p);
 });
+// 復元成功時:応答を確実に送り切ってからプロセスを再起動する(systemd が復元後DBで再オープン)。
+// 固定msの当て推量ではなく res 'finish'(本体送出完了)を契機にし、復元レスポンス自体の誤502を減らす。
+function _restartAfterResponse(res, label) {
+  let done = false;
+  const go = () => {
+    if (done) return; done = true;
+    console.log("[restore] " + label + " → プロセスを再起動します");
+    setTimeout(() => process.exit(0), 50);
+  };
+  res.on("finish", go);   // 本体がOSソケットへ送出完了(=nginxが受け取り済)
+  res.on("close", go);    // 途中切断でも再起動は必要(冪等)
+  setTimeout(go, 3000).unref();   // 保険: finish が来なくても3秒で再起動
+}
 // 復元 (オーナー・破壊的)。安全網スナップを取ってから差し替え、プロセス再起動。
 app.post("/api/admin/snapshots/restore", requireOwner, (req, res) => {
   const name = (req.body && req.body.name) || "";
@@ -2861,13 +2874,13 @@ app.post("/api/admin/snapshots/restore", requireOwner, (req, res) => {
   let r;
   try { r = db.restoreSnapshot(name); }
   catch (e) { return res.status(500).json({ error: "復元に失敗しました: " + e.message }); }
-  if (r.error) return res.status(400).json(r);
-  res.json(r);
-  if (r.restart_required) {
-    console.log("[restore] スナップショット復元 → プロセスを再起動します:", name);
-    // 応答を送り切ってからプロセス終了 (systemd 等が再起動して復元後DBで再オープン)
-    setTimeout(() => process.exit(0), 400);
+  if (r.error) {
+    res.status(400).json(r);
+    if (r.restart_required) _restartAfterResponse(res, "snapshot:" + name + " (差替失敗)");
+    return;
   }
+  res.json(r);
+  if (r.restart_required) _restartAfterResponse(res, "snapshot:" + name);
 });
 
 // ─── オーナー (上級管理者) 専用ルート ───────────────────────────
@@ -2919,12 +2932,13 @@ app.post("/api/owner/restore-upload", requireOwner,
   try { r = db.restoreFromUpload(req.file.path, name); }
   catch (e) { r = { error: "復元に失敗しました: " + e.message }; }
   try { fs.rmSync(req.file.path, { force: true }); } catch (e) {}   // アップロード一時ファイルを掃除
-  if (r.error) return res.status(400).json(r);
-  res.json(r);
-  if (r.restart_required) {
-    console.log("[restore] アップロード復元 → プロセスを再起動します:", name);
-    setTimeout(() => process.exit(0), 400);
+  if (r.error) {
+    res.status(400).json(r);
+    if (r.restart_required) _restartAfterResponse(res, "upload:" + name + " (差替失敗)");
+    return;
   }
+  res.json(r);
+  if (r.restart_required) _restartAfterResponse(res, "upload:" + name);
 });
 
 app.get("/api/public/tournaments/:id/live", (req, res) => {

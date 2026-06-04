@@ -10,7 +10,94 @@ const { mulberry32, shuffle, randomSeed } = require("./lib/rng");
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "tournament.db");
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
-const sqlite = new Database(DB_PATH);
+// ── DBの原子的差し替え + 起動時 自己修復 ──────────────────────────
+// 復元(restore)は本番DBファイルを丸ごと置き換える。直接 copyFileSync で上書きすると、
+// コピー途中の停電/OOM/強制終了で本番DBが切り詰め=破損し、しかも次回起動で開けず
+// クラッシュループ→恒久502になり得る。これを防ぐため (1)差し替えは「.incoming へコピー→
+// fsync→rename」の原子的手順、(2)起動時に開けない/破損なら安全網スナップショットから
+// 自動復旧、の2段で守る。
+function _atomicReplaceFile(srcPath, destPath) {
+  // 同一FS内の一時ファイルへコピー→fsync→rename。rename(2) は同一ボリュームで原子的なので、
+  // 途中で死んでも destPath は「旧 or 新」の一貫状態のまま(中間状態が観測されない)。
+  const inc = destPath + ".incoming";
+  try { fs.rmSync(inc, { force: true }); } catch (e) {}
+  fs.copyFileSync(srcPath, inc);
+  const fd = fs.openSync(inc, "r+"); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  try { fs.rmSync(destPath + "-wal", { force: true }); } catch (e) {}
+  try { fs.rmSync(destPath + "-shm", { force: true }); } catch (e) {}
+  fs.renameSync(inc, destPath);
+}
+function _dbFileIsHealthy(p) {
+  try {
+    const probe = new Database(p, { readonly: true, fileMustExist: true });
+    let integ = "";
+    try { integ = (probe.pragma("integrity_check", { simple: true }) || "").toString(); } catch (e) { integ = "error"; }
+    probe.close();
+    return integ === "ok";
+  } catch (e) { return false; }
+}
+function _recoverDbThenOpen(p, origErr) {
+  console.error("[boot] DBが開けない/破損しています: " + p + " (" + origErr.message + ") → 安全網スナップショットから自動復旧を試みます");
+  const dir = process.env.SNAPSHOT_DIR || path.join(path.dirname(p), "snapshots");
+  let cands = [];
+  try {
+    if (fs.existsSync(dir)) {
+      cands = fs.readdirSync(dir).filter(f => /\.db$/.test(f)).map(f => {
+        let m = 0; try { m = fs.statSync(path.join(dir, f)).mtimeMs; } catch (e) {}
+        return { f, full: path.join(dir, f), m };
+      });
+    }
+  } catch (e) {}
+  // 直近の復元前状態 prerestore_* を最優先、その後は新しい順(auto_/manual_)
+  const pre = cands.filter(x => x.f.startsWith("prerestore_")).sort((a, b) => b.m - a.m);
+  const rest = cands.filter(x => !x.f.startsWith("prerestore_")).sort((a, b) => b.m - a.m);
+  for (const cand of pre.concat(rest)) {
+    if (!_dbFileIsHealthy(cand.full)) continue;   // 候補(=backup生成の単体.db, -wal無し)を readonly で検査
+    try {
+      const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      // 破損DBは消さず複製退避(rename ではなく copy。こうすると p は常に存在し続け、
+      // _atomicReplaceFile の最終 rename(原子的)まで「DB_PATH 不在」の窓が一切できない)。
+      try { fs.copyFileSync(p, p + ".corrupt-" + ts); } catch (e) {}
+      _atomicReplaceFile(cand.full, p);
+      const h = new Database(p);                  // 復旧後を実際に開いて最終確認
+      const integ = (h.pragma("integrity_check", { simple: true }) || "").toString();
+      if (integ !== "ok") { try { h.close(); } catch (e) {} continue; }
+      console.error("[boot] 自動復旧に成功しました: " + cand.f + " から起動します(破損DBは .corrupt-* に退避)");
+      return h;
+    } catch (e) { /* この候補も使えなければ次へ */ }
+  }
+  console.error("[boot] 自動復旧に失敗(健全な安全網が見つかりません)。手動復旧が必要です。");
+  throw origErr;
+}
+
+// 空/不在DBは integrity_check=ok を通ってしまう。KTTAテーブルが無い(=空)のに健全な安全網が
+// 存在するなら「本来データがあったのに消えた」とみなす(真の初回起動はスナップ無しなので巻き込まない)。
+function _looksEmptyButHasSnapshots(handle) {
+  let hasTables = 1;   // 取得失敗時は「テーブルあり=通常起動」に倒す(誤復旧を避ける)
+  try { hasTables = handle.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE type='table' AND name IN ('tournaments','players','matches')").get().c; } catch (e) {}
+  if (hasTables >= 1) return false;   // 既存DB(テーブルあり)=通常起動
+  const dir = process.env.SNAPSHOT_DIR || path.join(path.dirname(DB_PATH), "snapshots");
+  try {
+    if (!fs.existsSync(dir)) return false;
+    for (const s of fs.readdirSync(dir).filter(f => /\.db$/.test(f))) {
+      if (_dbFileIsHealthy(path.join(dir, s))) return true;   // 健全な安全網が1つでもあれば復旧へ
+    }
+  } catch (e) {}
+  return false;
+}
+
+// 通常は DB_PATH を「読み書きで」開いて integrity_check。破損(torn/不正)なら安全網から自動復旧。
+// 読み書きで開くので残った -wal も正しく適用され、健全DBを誤検知して巻き戻すことが無い。新規/空DBは "ok"。
+let sqlite;
+try {
+  sqlite = new Database(DB_PATH);
+  const integ = (sqlite.pragma("integrity_check", { simple: true }) || "").toString();
+  if (integ !== "ok") { try { sqlite.close(); } catch (e) {} throw new Error("integrity_check=" + integ); }
+  if (_looksEmptyButHasSnapshots(sqlite)) { try { sqlite.close(); } catch (e) {} throw new Error("空DBだが健全な安全網が存在するため復旧します"); }
+} catch (e0) {
+  try { if (sqlite) sqlite.close(); } catch (e) {}
+  sqlite = _recoverDbThenOpen(DB_PATH, e0);
+}
 sqlite.pragma("journal_mode = WAL");
 sqlite.pragma("synchronous = NORMAL");   // WAL下では安全。fsync頻度を下げ書込/読込の遅延を低減
 sqlite.pragma("busy_timeout = 5000");    // 同時書込時に最大5秒待機しSQLITE_BUSYエラーを回避
@@ -7159,11 +7246,29 @@ function _swapDbWithSafety(srcPath, restoredLabel) {
       return { error: "安全網バックアップの作成に失敗したため復元を中止しました: " + e.message };
     }
   }
-  // ハンドルを閉じてファイルを差し替え (以後この forge では DB 操作不可・要再起動)
+  // 差し替えはアトミックに行う。まず .incoming へコピー+fsync (ここまでは現DBハンドルに触れない=
+  // 失敗しても本番DBは無傷で通常継続できる)。その後ハンドルを閉じ rename(原子的)で切り替える。
+  // (差し替え後は this forge では DB 操作不可・要再起動)
+  const incoming = DB_PATH + ".incoming";
+  try {
+    try { fs.rmSync(incoming, { force: true }); } catch (e) {}
+    fs.copyFileSync(srcPath, incoming);
+    const fd = fs.openSync(incoming, "r+"); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  } catch (e) {
+    try { fs.rmSync(incoming, { force: true }); } catch (e2) {}
+    // コピー失敗。DBハンドルは開いたまま=本番は通常どおり継続。再起動不要。
+    return { error: "復元データの準備に失敗しました(本番DBは変更していません): " + e.message, safety_snapshot: safetyName };
+  }
   try { sqlite.close(); } catch (e) {}
   try { fs.rmSync(DB_PATH + "-wal", { force: true }); } catch (e) {}
   try { fs.rmSync(DB_PATH + "-shm", { force: true }); } catch (e) {}
-  fs.copyFileSync(srcPath, DB_PATH);
+  try {
+    fs.renameSync(incoming, DB_PATH);
+  } catch (e) {
+    try { fs.rmSync(incoming, { force: true }); } catch (e2) {}
+    // 最終段(rename)で失敗(極めて稀)。本番DBは旧状態のまま無傷。閉じたハンドルを開き直すため要再起動。
+    return { error: "DBの差し替えに失敗しました(本番DBは旧状態のまま): " + e.message, safety_snapshot: safetyName, restart_required: true };
+  }
   return { ok: true, restored: restoredLabel, safety_snapshot: safetyName, restart_required: true };
 }
 
