@@ -3381,6 +3381,15 @@ app.get(["/viewer/live", "/viewer/live/", "/viewer/live/index.html"], _serveVers
 app.get(["/widget", "/widget/", "/widget/index.html"], _serveVersionedHtml(path.join(publicDir, "widget", "index.html")));
 app.get(["/ref", "/ref/", "/ref/index.html"], _serveVersionedHtml(path.join(publicDir, "ref", "index.html"))); // 審判結果入力 (限定トークン)
 
+// ルートスコープ Service Worker(アプリ本体のオフラインキャッシュ・network-first)。
+// scope "/" を効かせるため root から配信。SW自身は no-cache で更新を確実に伝播させる。
+app.get("/sw.js", (req, res) => {
+  res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Service-Worker-Allowed", "/");
+  res.sendFile(path.join(publicDir, "sw.js"));
+});
+
 app.use("/shared", cacheMw, express.static(path.join(publicDir, "shared"), staticOpts));
 app.use("/admin", cacheMw, express.static(path.join(publicDir, "admin"), staticOpts));
 app.use("/viewer", cacheMw, express.static(path.join(publicDir, "viewer"), staticOpts));

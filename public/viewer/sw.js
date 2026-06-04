@@ -1,5 +1,7 @@
-// KTTA Platform - Service Worker (Web Push 受信専用)
-// スコープ: /viewer/  — マイ番号(選手本人)の呼出通知をバックグラウンドで受信する。
+// KTTA Platform - Service Worker (Web Push 受信 + アプリ本体のオフラインキャッシュ)
+// スコープ: /viewer/  — マイ番号(選手本人)の呼出通知 + 会場WiFi断/リロード時のシェル提供。
+// オフラインキャッシュ(network-first)は /shared/sw-cache.js に集約し import する。
+importScripts("/shared/sw-cache.js");
 
 self.addEventListener("install", (e) => { self.skipWaiting(); });
 self.addEventListener("activate", (e) => { e.waitUntil(self.clients.claim()); });

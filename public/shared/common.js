@@ -231,6 +231,15 @@
     }
   })();
 
+  // ── アプリ本体のオフラインキャッシュ(Service Worker・network-first) ──
+  // 会場WiFi断/リロードでも画面が出るように /sw.js(scope "/") を登録。オンライン時は常にネット最新
+  // (古コード固着なし)。push 通知が有効な viewer は /viewer/sw.js が別途 import で同等のキャッシュを持つ。
+  (function registerShellSW() {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator) || typeof location === "undefined") return;
+    if (!/^\/(admin|viewer|ref|widget)/.test(location.pathname) && location.pathname !== "/") return;
+    try { navigator.serviceWorker.register("/sw.js").catch(function () {}); } catch (e) {}
+  })();
+
   // ── 所要時間フォーマット (秒 → "12分" / "1時間5分" / "45秒") ──
   function fmtDuration(sec) {
     sec = parseInt(sec) || 0;
