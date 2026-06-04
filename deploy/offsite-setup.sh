@@ -56,12 +56,15 @@ install -d -o ktta -g ktta -m 755 "$BK"
 chown -R ktta:ktta "$BK"
 
 echo "== 5) 毎晩3時の自動バックアップ→退避 cron を登録(ktta・冪等) =="
-CRON_LINE='0 3 * * * . /etc/ktta.env; /opt/ktta/deploy/backup.sh && /opt/ktta/deploy/offsite-sync.sh >> /var/data/backups/offsite.log 2>&1'
+# offsite-sync.sh は /etc/ktta.env から OFFSITE_* を自前で安全に読むため、cron で `. /etc/ktta.env` は不要
+# (source は env形式の非互換行で壊れるため使わない)。backup.sh は DB_PATH を自動判定するので env 不要。
+CRON_LINE='0 3 * * * cd / && /opt/ktta/deploy/backup.sh && /opt/ktta/deploy/offsite-sync.sh >> /var/data/backups/offsite.log 2>&1'
 ( crontab -u ktta -l 2>/dev/null | grep -v 'offsite-sync.sh' ; echo "$CRON_LINE" ) | crontab -u ktta -
 echo "  登録された ktta cron:"; crontab -u ktta -l | grep -E 'backup|offsite' | sed 's/^/    /'
 
 if [ "${4:-}" = "test" ]; then
   echo "== 6) テスト退避(backup.sh → offsite-sync.sh を ktta で実行) =="
+  cd /   # ktta が辿れない cwd(/home/ubuntu)のままだと find が警告するため安全な場所へ
   sudo -u ktta /opt/ktta/deploy/backup.sh
   sudo -u ktta /opt/ktta/deploy/offsite-sync.sh
   echo

@@ -24,8 +24,16 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 set -euo pipefail
 
-# OFFSITE_* が環境に無ければ /etc/ktta.env から自動読込(手動実行でも cron でも設定が効くように)。
-if [ -z "${OFFSITE_DEST:-}" ] && [ -f /etc/ktta.env ]; then set -a; . /etc/ktta.env; set +a; fi
+# OFFSITE_* が環境に無ければ /etc/ktta.env から安全に読み込む。
+# 注意: systemd の EnvironmentFile 形式は bash 構文と非互換な行を含み得るため `. source` は使わない
+# (1行でも bash で解釈不能だと source 全体が失敗する)。OFFSITE_ で始まる行だけを抽出して export する。
+if [ -z "${OFFSITE_DEST:-}" ] && [ -f /etc/ktta.env ]; then
+  while IFS='=' read -r _k _v; do
+    case "$_k" in
+      OFFSITE_DEST|OFFSITE_SSH_KEY|OFFSITE_SSH_PORT|OFFSITE_KNOWN_HOSTS) export "$_k=$_v" ;;
+    esac
+  done < /etc/ktta.env
+fi
 
 DB_FILE="${DB_PATH:-/var/data/tournament.db}"
 SRC_DIR="${BACKUP_DIR:-$(dirname "$DB_FILE")/backups}"
