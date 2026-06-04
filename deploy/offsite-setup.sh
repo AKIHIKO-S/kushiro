@@ -40,12 +40,16 @@ else
   die "ログインできませんでした。次を確認: 公開鍵(ssh-rsa)の登録 / host=$HOST port=$PORT user=$RUSER / コントロールパネルでSSH有効化"
 fi
 
-echo "== 3) /etc/ktta.env に退避設定を追記(既存はそのまま) =="
+echo "== 3) /etc/ktta.env に退避設定を追記 + ktta が読めるように =="
 touch "$ENVF"
 grep -q '^OFFSITE_DEST='     "$ENVF" || echo "OFFSITE_DEST=$DEST"     >> "$ENVF"
 grep -q '^OFFSITE_SSH_KEY='  "$ENVF" || echo "OFFSITE_SSH_KEY=$KEY"   >> "$ENVF"
 grep -q '^OFFSITE_SSH_PORT=' "$ENVF" || echo "OFFSITE_SSH_PORT=$PORT" >> "$ENVF"
+# 重要: cron は ktta として `. /etc/ktta.env` で読み込む。root専用(600)だと ktta が読めず毎晩静かに失敗する。
+# group=ktta・640 にして、秘密は他者非公開のまま ktta だけ読めるようにする(systemdはroot読込なので影響なし)。
+chown root:ktta "$ENVF"; chmod 640 "$ENVF"
 echo "  現在の OFFSITE 設定:"; grep -E '^OFFSITE_' "$ENVF" | sed 's/^/    /'
+echo "  env 権限: $(ls -l "$ENVF" | awk '{print $1, $3, $4}')"
 
 echo "== 4) バックアップ保存先を ktta 所有へ(cronがkttaで書けるように) =="
 install -d -o ktta -g ktta -m 755 "$BK"
@@ -56,7 +60,15 @@ CRON_LINE='0 3 * * * . /etc/ktta.env; /opt/ktta/deploy/backup.sh && /opt/ktta/de
 ( crontab -u ktta -l 2>/dev/null | grep -v 'offsite-sync.sh' ; echo "$CRON_LINE" ) | crontab -u ktta -
 echo "  登録された ktta cron:"; crontab -u ktta -l | grep -E 'backup|offsite' | sed 's/^/    /'
 
-echo
-echo "[完了] オフサイト退避のセットアップが完了しました。"
-echo "今すぐ1回テスト退避するには(任意):"
-echo "  sudo -u ktta bash -c '. /etc/ktta.env; /opt/ktta/deploy/backup.sh && /opt/ktta/deploy/offsite-sync.sh'"
+if [ "${4:-}" = "test" ]; then
+  echo "== 6) テスト退避(backup.sh → offsite-sync.sh を ktta で実行) =="
+  sudo -u ktta /opt/ktta/deploy/backup.sh
+  sudo -u ktta /opt/ktta/deploy/offsite-sync.sh
+  echo
+  echo "[完了] セットアップ + テスト退避まで完了しました。上に退避先の中身が出ていれば成功です。"
+else
+  echo
+  echo "[完了] オフサイト退避のセットアップが完了しました。"
+  echo "今すぐ1回テスト退避するには、同じコマンドの末尾に test を付けて実行:"
+  echo "  sudo bash /opt/ktta/deploy/offsite-setup.sh $HOST $PORT $RUSER test"
+fi
