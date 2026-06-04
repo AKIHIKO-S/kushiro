@@ -6671,17 +6671,30 @@ const O = {
    if (!bar) {
      bar = h("div", { id: "opNetBar", style: { position: "fixed", top: "0", left: "0", right: "0",
        zIndex: "99998", textAlign: "center", fontWeight: "800", fontSize: "13px",
-       padding: "7px 12px", color: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,.25)" } });
+       padding: "7px 12px", color: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,.25)",
+       display: "flex", justifyContent: "center", alignItems: "center", gap: "10px", flexWrap: "wrap" } });
      document.body.appendChild(bar);
    }
-   bar.style.display = "block";
+   bar.style.display = "flex";
+   clear(bar);
+   bar.style.background = down ? "#b91c1c" : "#0ea5e9";
+   const msg = down
+     ? "⚠ オフライン — 操作は端末に保存中。本部(サーバ)に戻ると自動送信します" + (pend > 0 ? "（送信待ち " + pend + "件）" : "")
+     : "↑ 送信待ち " + pend + "件 を送信中…";
+   bar.appendChild(h("span", {}, msg));
+   const miniBtn = (label, onClick) => h("button", {
+     onClick,
+     style: { background: "rgba(255,255,255,.22)", color: "#fff", border: "1px solid rgba(255,255,255,.6)",
+       borderRadius: "6px", padding: "3px 10px", fontWeight: "700", fontSize: "12px", cursor: "pointer" } }, label);
+   if (pend > 0) {
+     bar.appendChild(miniBtn("今すぐ送信", () => {
+       try { TT.toast("送信を試みます…", "ok"); } catch (e) {}
+       if (api.flushQueue) api.flushQueue();
+       if (O.reload) O.reload(true);
+     }));
+   }
    if (down) {
-     bar.style.background = "#b91c1c";
-     bar.textContent = "⚠ オフライン — 操作は端末に保存中。回線が戻ると自動送信します"
-       + (pend > 0 ? "（送信待ち " + pend + "件）" : "");
-   } else {
-     bar.style.background = "#0ea5e9";
-     bar.textContent = "↑ 送信待ち " + pend + "件 を送信中…";
+     bar.appendChild(miniBtn("再接続を確認", () => { if (O.reload) O.reload(); }));
    }
  },
  // 送信待ちキュー/オンライン状態の監視を一度だけ仕込む
