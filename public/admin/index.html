@@ -1293,7 +1293,7 @@
  <!-- API連携 -->
  <div class="tab-panel hidden" id="tab-api">
  <div class="card">
- <div class="card-head"><div class="card-title">大会進行運営アプリとの連携</div></div>
+ <div class="card-head"><div class="card-title">外部の大会進行運営アプリとつなぐ（技術者向け）</div></div>
  <p class="text-sm mb-3">大会進行運営アプリから試合結果を POST で送信してください。送信されたデータは自動的にデータベースに反映されます。</p>
 
  <div class="field">
@@ -1624,17 +1624,17 @@ const A = {
 
  const body = h("div", {},
  firstRun ? h("div", { className: "badge badge-warn mb-3", style: { display: "block" } },
- "初回設定：管理キーを入力してください（環境変数 ADMIN_KEY が未設定なら空欄で OK）") : null,
+ "初回設定：管理キーを入力してください（サーバー側で管理キーを設定していない場合は空欄のままでOK）") : null,
  checkSection,
  h("div", { className: "card", style: { padding: "14px", marginBottom: "14px" } },
  h("div", { className: "card-title", style: { marginBottom: "10px" } }, "管理キー"),
  h("div", { className: "field" },
- h("label", { className: "field-label" }, "管理キー (X-Admin-Key)"),
+ h("label", { className: "field-label" }, "管理キー（パスワード）"),
  h("input", { className: "input", id: "settingsKey", type: "password",
  placeholder: "管理キーを入力", value: api.adminKey || "" }),
  ),
  h("div", { className: "text-xs text-sub" },
- "管理キーは localStorage に保存されます。VPS の場合 /etc/ktta.env で設定。"),
+ "管理キーはこのパソコンのブラウザに保存されます。（サーバー側の設定は担当者にお問い合わせください）"),
  ),
  h("div", { className: "card", style: { padding: "14px", marginBottom: "14px" } },
  h("div", { className: "card-title", style: { marginBottom: "10px" } }, "本番公開URL"),
@@ -1723,10 +1723,10 @@ const A = {
    } catch (e) { toast("失敗: " + e.message, "err"); }
  } }, "テスト送信"),
  h("div", { className: "text-xs text-sub mt-2", style: { lineHeight: "1.6" } },
- "SMTP は環境変数で設定: SMTP_USER, SMTP_PASS, ADMIN_EMAIL, SMTP_FROM。", h("br"),
- "Gmail App Password 必要 (2段階認証 ON + ",
+ "メール送信の設定はサーバー側で行います（設定は担当者にお問い合わせください）。", h("br"),
+ "Gmailを使う場合はアプリ用パスワードが必要です (2段階認証をオンにして ",
  h("a", { href: "https://myaccount.google.com/apppasswords", target: "_blank",
- style: { color: "#b91c1c" } }, "App Password 生成"), ")。"),
+ style: { color: "#b91c1c" } }, "アプリ用パスワードを取得"), ")。"),
  ),
  // メール状態取得
  (() => {
@@ -1737,13 +1737,13 @@ const A = {
        if (!div) return;
        if (s.enabled) {
          div.innerHTML = `<span style="color:#15803d;font-weight:bold;">● 有効</span><br>` +
-           `SMTP: ${s.config.SMTP_HOST}:${s.config.SMTP_PORT}<br>` +
-           `User: ${s.config.SMTP_USER}<br>` +
-           `From: ${s.config.SMTP_FROM}<br>` +
-           `Admin: ${s.config.ADMIN_EMAIL || "(未設定)"}`;
+           `送信サーバー: ${s.config.SMTP_HOST}:${s.config.SMTP_PORT}<br>` +
+           `送信元: ${s.config.SMTP_USER}<br>` +
+           `差出人: ${s.config.SMTP_FROM}<br>` +
+           `通知先: ${s.config.ADMIN_EMAIL || "(未設定)"}`;
        } else {
          div.innerHTML = `<span style="color:#dc2626;font-weight:bold;">○ 未設定</span><br>` +
-           `SMTP_USER と SMTP_PASS を /etc/ktta.env に設定してください。`;
+           `メール送信が未設定です。設定は担当者にお問い合わせください。`;
        }
      } catch (e) {
        const div = document.getElementById("mailStatus");
@@ -1762,7 +1762,7 @@ const A = {
  h("div", { className: "flex gap-2 mt-3", style: { flexWrap: "wrap" } },
  h("button", { className: "btn btn-sm",
  onClick: () => { document.querySelector(".modal-bg")?.remove();
-   A.openDiagnostics(); } }, "本番診断パネルを開く"),
+   A.openDiagnostics(); } }, "動作状況・エラー履歴を見る"),
  h("button", { className: "btn btn-sm",
  style: { background: "#fef2f2", color: "#7f1d1d", borderColor: "#fca5a5" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
@@ -1770,7 +1770,7 @@ const A = {
  h("button", { className: "btn btn-sm",
  style: { background: "#eff6ff", color: "#1e40af", borderColor: "#93c5fd" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
-   A.openLanConnect(); } }, "📱 端末接続 (会場LAN)"),
+   A.openLanConnect(); } }, "📱 会場の他の端末をつなぐ"),
  h("button", { className: "btn btn-sm",
  style: { background: "#f0fdf4", color: "#15803d", borderColor: "#86efac" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
@@ -1802,10 +1802,10 @@ const A = {
  const body = h("div", {});
  body.appendChild(h("div", { className: "text-sm", style: { marginBottom: "10px" } },
    "会場の他の端末(運営2〜3台・大画面・観客)を、このPC(本部)に下のURL/QRで接続してください。" +
-   "同じローカルネットワーク(このPCのテザリング or モバイルルータ)に繋げば、会場Wi-Fiが落ちても本部に到達でき運用が止まりません。"));
+   "同じネットワーク(このパソコンのテザリングやモバイルルータ)につなげば、会場のWi-Fiが切れても使い続けられます。"));
  if (!info || !info.ips || !info.ips.length) {
    body.appendChild(h("div", { style: { color: "#c01526" } },
-     "LANのIPアドレスが取得できませんでした。Wi-Fi/有線に接続されているか確認してください(クラウド運用中は本機能は不要です)。"));
+     "会場内の接続先アドレスを取得できませんでした。Wi-Fiまたは有線でネットにつながっているか確認してください（インターネット経由で使っている場合この機能は不要です）。"));
  } else {
    const primary = info.ips[0];
    const byPath = {};
@@ -1814,8 +1814,11 @@ const A = {
      const u = (byPath[p] || []).find(x => x.ip === primary) || (byPath[p] || [])[0];
      if (!u) return;
      const card = h("div", { className: "card", style: { padding: "12px", marginBottom: "10px", display: "flex", gap: "14px", alignItems: "center", flexWrap: "wrap" } });
-     const qrWrap = h("div", { style: { flex: "0 0 auto", width: "118px", height: "118px" } });
+     const qrWrap = h("div", { style: { flex: "0 0 auto", width: "118px", height: "118px", lineHeight: "0", overflow: "hidden" } });
      qrWrap.innerHTML = u.qr || "";   // 本部サーバがローカル生成した信頼SVG(外部QRサービス不使用=オフライン可)
+     // サーバ生成SVGは150px固定のため、枠(118px)に収まるようサイズを上書き(隣の文字への被り防止)。
+     const _qsvg = qrWrap.querySelector("svg");
+     if (_qsvg) { _qsvg.setAttribute("width", "118"); _qsvg.setAttribute("height", "118"); _qsvg.style.display = "block"; _qsvg.style.maxWidth = "100%"; }
      card.appendChild(qrWrap);
      card.appendChild(h("div", { style: { flex: "1 1 200px" } },
        h("div", { style: { fontWeight: 700, marginBottom: "4px" } }, label),
@@ -1828,7 +1831,7 @@ const A = {
    body.appendChild(h("div", { className: "text-xs text-sub" },
      "※ 運営端末は『運営』URLで管理キーを入力。大画面はコート表示、観戦は選手・観客向け。"));
  }
- // ── クラウド公開ミラーへの同期(本部=正本 → ネット復帰時にクラウドへ) ──
+ // ── 観客向け公開ページへの送信（本部のデータをもとに、ネットが戻ったとき送ります） ──
  let sync = null;
  try { sync = await api.get("/api/sync/status"); } catch (e) {}
  const syncBox = h("div", { className: "card", style: { padding: "12px", marginTop: "6px", background: "#f8fafc" } });
@@ -1847,11 +1850,11 @@ const A = {
    } }, "今すぐ同期"));
  } else {
    syncBox.appendChild(h("div", { className: "text-xs text-sub" },
-     "未設定(この機ではクラウド同期しません)。本部ホストの環境変数 SYNC_CLOUD_URL と SYNC_KEY を設定すると、" +
-     "進行中大会をクラウド公開ビューへ自動同期します。"));
+     "未設定（このパソコンからは自動送信しません）。設定すると、進行中の大会を観客向け公開ページへ" +
+     "自動で送れます（設定は担当者にお問い合わせください）。"));
  }
  body.appendChild(syncBox);
- openModal("📱 端末接続 (会場LAN) / クラウド同期", body, null);
+ openModal("📱 会場の他の端末をつなぐ / クラウド同期", body, null);
  },
 
  // ── データ保護: DBスナップショット (バックアップ/復元) #201 ── ※オーナー権限へ隔離
@@ -2551,9 +2554,9 @@ const A = {
 
  const s2 = chip("確認中…", "");
  mk(2, "申込を確認する",
-   "届いた申込を一覧で確認・承認。Googleフォーム集計(GAS)とも連携。", s2, [
+   "届いた申込を一覧で確認・承認。Googleフォームの集計とも連携できます。", s2, [
    h("button", { className: "btn btn-sm", onClick: () => A.openEntriesFullView(t) }, "申込一覧を見る"),
-   h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.fetchGasStats(t) }, "GAS集計取得"),
+   h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.fetchGasStats(t) }, "Googleフォーム集計を取得"),
  ]);
 
  const s3 = chip("確認中…", "");
@@ -2568,7 +2571,7 @@ const A = {
 
  const s4 = matches > 0 ? chip(matches + "試合 作成済", "ok") : chip("未作成", "todo");
  mk(4, "トーナメント表を作る",
-   "名簿からブラケット自動生成、またはExcel/PDF組合せ表を取込。", s4, [
+   "名簿からトーナメント表を自動作成、またはExcel/PDFの組合せ表を取込。", s4, [
    h("button", { className: "btn btn-sm", onClick: () => A.openExcelUpload(t.id) }, "Excel/PDF 取込"),
    h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openEntrantsTab(t.id) }, "名簿から生成"),
  ]);
@@ -2712,7 +2715,7 @@ const A = {
      h("div", { className: "flex gap-2 mb-3" },
        h("button", { className: "btn btn-sm",
          onClick: () => A.fetchAndShowReceipts(t) },
-         "GAS から取得して領収書発行"),
+         "Googleフォームから取得して領収書発行"),
      ),
      h("div", { id: "rcvList_" + t.id,
        style: { maxHeight: "300px", overflow: "auto",
@@ -2758,7 +2761,7 @@ const A = {
  // GAS から申込リストを取得して一括領収書発行
  async fetchAndShowReceipts(t) {
    const url = document.getElementById("rcvGasUrl").value.trim();
-   if (!url) return toast("GAS URL を入力してください", "err");
+   if (!url) return toast("Googleフォーム連携用のURLを入力してください", "err");
    const target = document.getElementById("rcvList_" + t.id);
    target.style.display = "block";
    target.innerHTML = "<em>取得中...</em>";
@@ -2888,14 +2891,14 @@ const A = {
  async fetchGasStats(t) {
  const gasUrl = localStorage.getItem("tt_gas_url_" + t.id);
  if (!gasUrl) {
- return toast("GAS Web App URL が未設定です。「フォーム生成」から設定してください。", "err");
+ return toast("Googleフォーム連携用のURLが未設定です。「フォーム設定」から設定してください。", "err");
  }
  // 専用の表示先 div があればそこに、無ければモーダルで表示 (div は現状未生成のため null 安全に)
  const target = document.getElementById("gasStats_" + t.id);
  let modalBox = null;
  const render = (html) => {
    if (target) { target.style.display = "block"; target.innerHTML = html; return; }
-   if (!modalBox) { modalBox = h("div", {}); openModal("GAS 申込集計", modalBox, null); }
+   if (!modalBox) { modalBox = h("div", {}); openModal("Googleフォーム 申込集計", modalBox, null); }
    modalBox.innerHTML = html;
  };
  render("<em>スプレッドシートに問い合わせ中...</em>");
@@ -2991,7 +2994,7 @@ const A = {
  h("button", { className: "btn",
  onClick: () => {
  navigator.clipboard?.writeText(url).then(() => {
- toast("URLをクリップボードにコピーしました", "ok");
+ toast("URLをコピーしました", "ok");
  }).catch(() => {
  const inp = document.getElementById("liveShareUrlInput");
  if (inp) { inp.select(); document.execCommand("copy"); }
@@ -3402,7 +3405,7 @@ const A = {
  h("button", { className: "btn btn-sm",
  onClick: () => {
  codeArea.select(); document.execCommand("copy");
- toast("クリップボードにコピーしました", "ok");
+ toast("コピーしました", "ok");
  } }, "コードをコピー"),
  h("a", { className: "btn btn-sm btn-ghost",
  onClick: (e) => {
@@ -3972,7 +3975,7 @@ const A = {
  userMsg = "Excel ファイルの形式が認識できませんでした。";
  suggestions = [
  "卓球協会 標準のトーナメント表形式 (罫線で対戦が描かれているもの) を使用してください",
- "結合セル (merged cells) が多用されているとうまく解析できない場合があります",
+ "セルの結合が多いと、うまく読み取れない場合があります",
  "別シートに記載例/サンプルがある場合、それらは無視されます",
  ];
  } else if (errStr.includes("出場選手が2人未満") || errStr.includes("2人以上")) {
@@ -3983,9 +3986,9 @@ const A = {
  "「シングルス」「ダブルス」「団体」など、シート名にイベント種別を含めると判定精度が向上します",
  ];
  } else if (errStr.includes("python")) {
- userMsg = "Python パーサーの起動に失敗しました。";
+ userMsg = "ファイルの読み取り処理を開始できませんでした。";
  suggestions = [
- "サーバーに Python3 がインストールされているか管理者に確認してください",
+ "システムの管理担当にご連絡ください（読み取り機能の不具合の可能性）",
  ];
  } else {
  userMsg = errStr || "原因不明のエラーが発生しました。";
@@ -4266,7 +4269,7 @@ const A = {
  ),
  h("div", { className: "text-xs",
    style: { color: "#92400e", marginTop: "6px" } },
-   "選択した形式に応じてパーサーの解析ロジックが切り替わります。" +
+   "選んだ形式に合わせて、ファイルの読み取り方が切り替わります。" +
    "1シートに「○一般男子団体」「○一般男子シングルス」のような複数セクションがある場合は「自動判定」を選択してください。"),
  ),
 
@@ -4294,7 +4297,7 @@ const A = {
  h("span", {}, "氏名+所属の一致でマスタDB と自動連携 (推奨)"),
  )),
  h("div", { className: "text-xs text-sub mt-2" },
- "アップロード後、サーバー側で Excel パーサーが実行されます。"),
+ "アップロード後、Excelの読み取りが自動で行われます。"),
  );
  const foot = h("button", { className: "btn", onClick: async () => {
  const file = document.getElementById("xlsxFile").files[0];
@@ -4513,7 +4516,7 @@ const A = {
  }
  const html = await resp.text();
  if (!html || html.length < 100) {
- area.innerHTML = '<div style="padding:20px;color:var(--accent)">空のレスポンス</div>';
+ area.innerHTML = '<div style="padding:20px;color:var(--accent)">データを受け取れませんでした</div>';
  return;
  }
  // iframe で隔離表示
@@ -4558,7 +4561,7 @@ const A = {
  const resp = await fetch(url, { headers: { "X-Admin-Key": api.adminKey } });
  if (!resp.ok) return toast("取得失敗: HTTP " + resp.status + (resp.status === 401 || resp.status === 503 ? " (管理キーを確認してください)" : ""), "err");
  const html = await resp.text();
- if (!html || html.length < 50) return toast("空のレスポンス", "err");
+ if (!html || html.length < 50) return toast("データを受け取れませんでした", "err");
  const blob = new Blob([html], { type: "text/html; charset=utf-8" });
  const u = URL.createObjectURL(blob);
  const win = window.open(u, "_blank");
@@ -4578,7 +4581,7 @@ const A = {
  const resp = await fetch(A._receiptsUrl(t, team), { headers: { "X-Admin-Key": api.adminKey } });
  if (!resp.ok) return toast("取得失敗: HTTP " + resp.status + (resp.status === 401 || resp.status === 503 ? " (管理キーを確認)" : ""), "err");
  const html = await resp.text();
- if (!html || html.length < 100) return toast("空のレスポンス", "err");
+ if (!html || html.length < 100) return toast("データを受け取れませんでした", "err");
  const blob = new Blob([html], { type: "text/html; charset=utf-8" });
  const url = URL.createObjectURL(blob);
  const win = window.open(url, "_blank");
@@ -6537,9 +6540,9 @@ const A = {
  const text = await f.text();
  let data;
  try { data = JSON.parse(text); }
- catch (e) { return toast("JSON 解析に失敗しました: " + e.message, "err"); }
+ catch (e) { return toast("ファイルを読み取れませんでした（形式が正しくない可能性があります）: " + e.message, "err"); }
  const players = data.players || data;
- if (!Array.isArray(players)) return toast("不正なJSONです", "err");
+ if (!Array.isArray(players)) return toast("ファイルの形式が正しくありません", "err");
  const r = await api.post("/api/import/players", { players });
  toast(`追加${r.added || 0}件 / 更新${r.merged || 0}件`, "ok");
  await A.reload();
@@ -6623,7 +6626,7 @@ const A = {
        const r = await A.ownerFetch("/api/owner/verify");
        if (r.ok) { bg.remove(); resolve(true); return; }
        try { sessionStorage.removeItem("ktta_owner_key"); } catch (e) {}
-       msg.textContent = r.status === 503 ? "オーナー機能が未設定です（サーバーに OWNER_KEY を設定してください）。"
+       msg.textContent = r.status === 503 ? "オーナー機能がまだ使えません。設定が必要なため、システムの管理担当にご連絡ください。"
          : r.status === 429 ? "試行回数が多すぎます。しばらく待ってから再試行してください。"
          : "オーナーキーが違います。";
      };
@@ -6651,16 +6654,16 @@ const A = {
    const body = h("div", {},
      h("div", { className: "text-xs", style: { background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: "8px", padding: "8px 10px", color: "#7f1d1d", lineHeight: 1.6, marginBottom: "12px" } },
        "⚠ 上級管理者専用。全データのPIIを動かす/取り返しのつかない操作を含みます。操作は監査ログに記録されます。"),
-     card("バックアップ / 復元", "DBスナップショットの保存・PCへ保存・復元。", [
+     card("バックアップ / 復元", "今のデータをまるごと控え(バックアップ)として保存・PCへ保存・元に戻す。", [
        h("button", { className: "btn btn-sm", onClick: () => { document.querySelector(".modal-bg")?.remove(); A.openBackups(); } }, "開く")]),
-     card("DBを保存（.db ダウンロード）", "DB全体を一貫スナップショットとして即ダウンロード（全PIIを含む手元保存）。", [
+     card("データをまるごとPCに保存（バックアップ用）", "今のデータをまるごと1つのファイルにしてPCに保存します（連絡先などの個人情報も含む手元の控えです）。", [
        h("button", { className: "btn btn-sm btn-ok", onClick: () => A.ownerDownloadDB() }, "ダウンロード")]),
-     card("全データ書き出し（JSON）", "全選手・大会・試合の構造化JSONを書き出し。", [
-       h("button", { className: "btn btn-sm", onClick: () => A.exportJSON() }, "JSONエクスポート")]),
+     card("全データ書き出し（データ用ファイル）", "全選手・大会・試合のデータをファイルに書き出します。", [
+       h("button", { className: "btn btn-sm", onClick: () => A.exportJSON() }, "データを書き出す")]),
      card("全選手の削除", "全選手レコードを削除（実行前に自動バックアップ＋件数の打鍵確認）。", [
        h("button", { className: "btn btn-sm btn-danger", onClick: () => A.ownerDeleteAllPlayers() }, "全選手を削除")]),
-     card("申込PIIの一括削除（purge）", "保持期間を過ぎた申込の連絡先(PII)を一括匿名化（件数・集計は残す）。", [
-       h("button", { className: "btn btn-sm btn-danger", onClick: () => A.ownerPurgePII() }, "purge 実行")]),
+     card("申込者の連絡先を一括で消す", "保存期間を過ぎた申込の連絡先(氏名・メール・電話)をまとめて消します(件数や集計は残ります)。", [
+       h("button", { className: "btn btn-sm btn-danger", onClick: () => A.ownerPurgePII() }, "連絡先を消す")]),
      card("監査ログ", "オーナー操作の履歴（いつ・何を・実施者・IP）。", [
        h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.ownerAudit() }, "監査ログを見る")]),
      h("div", { className: "text-xs text-sub", style: { marginTop: "8px", display: "flex", gap: "8px", alignItems: "center" } },
@@ -6672,7 +6675,7 @@ const A = {
  // DB全体を .db でダウンロード(=全PII)。サーバ側で一貫スナップショットを生成して返す。
  async ownerDownloadDB() {
    if (!(await A.ensureOwner())) return;
-   toast("DBスナップショットを生成中…", "ok");
+   toast("保存ファイルを準備中…", "ok");
    try {
      const res = await fetch("/api/owner/db-download", { headers: A._ownerHeaders() });
      if (!res.ok) { const j = await res.json().catch(() => ({})); return toast("失敗: " + (j.error || res.status), "err"); }
@@ -6718,7 +6721,7 @@ const A = {
    if (!(await A.ensureOwner())) return;
    if (!confirm("保持期間を過ぎた申込の連絡先(PII)を一括で匿名化します。\n（申込の件数・集計は残り、連絡先のみ消えます。取り消せません）\n実行しますか？")) return;
    const r = await A.ownerFetch("/api/admin/purge-submission-pii", { method: "POST", body: {} });
-   if (r.ok) toast("PIIをpurgeしました", "ok");
+   if (r.ok) toast("連絡先を消しました", "ok");
    else toast("失敗: " + ((r.json && r.json.error) || r.status), "err");
  },
  async ownerAudit() {
@@ -6790,7 +6793,7 @@ const O = {
        h("div", { className: "text-sm mb-2" },
          "進行中の大会がありません。"),
        h("div", { className: "text-xs text-sub" },
-         "上のセレクタから大会を選択するか、大会管理タブでステータスを「進行中」に変更してください。")));
+         "上の選択欄から大会を選ぶか、大会管理タブで状態を「進行中」に変更してください。")));
    }
  }
  } catch (e) {
@@ -6946,7 +6949,7 @@ const O = {
    clear(bar);
    bar.style.background = down ? "#b91c1c" : "#0ea5e9";
    const msg = down
-     ? "⚠ オフライン — 操作は端末に保存中。本部(サーバ)に戻ると自動送信します" + (pend > 0 ? "（送信待ち " + pend + "件）" : "")
+     ? "⚠ 通信が切れています — 操作はこの端末に一時保存中。通信が戻ると自動で送信します" + (pend > 0 ? "（送信待ち " + pend + "件）" : "")
      : "↑ 送信待ち " + pend + "件 を送信中…";
    bar.appendChild(h("span", {}, msg));
    const miniBtn = (label, onClick) => h("button", {
@@ -7027,7 +7030,7 @@ const O = {
        h("div", { className: "font-bold mb-2" }, "進行管理の描画でエラーが発生しました"),
        h("div", { className: "text-sm" }, String(renderErr.message || renderErr)),
        h("div", { className: "text-xs text-sub mt-2" },
-         "ブラウザのコンソール (F12) でスタックトレースを確認してください。"),
+         "同じエラーが続く場合は、画面の写真を撮ってシステムの管理担当にお知らせください。"),
        h("button", { className: "btn btn-sm mt-2",
          onClick: () => O.reload() }, "再読込")));
    }
@@ -7186,13 +7189,13 @@ const O = {
  className: "btn btn-sm btn-ghost" }, "公開ページ"),
  // 散在していた端末接続/同期への導線を進行管理にも集約(#12)。A.openLanConnect を再利用。
  h("div", { className: "op-tools-adv" }, "接続・同期"),
- h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openLanConnect() }, "📱 端末接続 (会場LAN) / 同期"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openLanConnect() }, "📱 会場の他の端末をつなぐ / データ共有"),
  // 高度な操作: JSON入出力は目立たないように最下部へ #279
  h("div", { className: "op-tools-adv" }, "高度な操作"),
  h("button", { className: "btn btn-sm btn-ghost", style: { opacity: ".7", fontSize: "12px" },
-   onClick: () => O.openImportBracket() }, "JSON 読込"),
+   onClick: () => O.openImportBracket() }, "ファイルから読込"),
  h("button", { className: "btn btn-sm btn-ghost", style: { opacity: ".7", fontSize: "12px" },
-   onClick: () => O.exportBracket() }, "JSON 書出"),
+   onClick: () => O.exportBracket() }, "ファイルに書出"),
  )),
  ));
 
@@ -7472,7 +7475,7 @@ const O = {
 
  if (!events.length) {
    card.appendChild(h("div", { className: "empty-state", style: { padding: "16px" } },
-     "トーナメント未生成です。「ツール・設定」→「トーナメント生成」または JSON 読込で作成できます。"));
+     "トーナメント未生成です。「ツール・設定」→「トーナメント生成」または ファイルから読込で作成できます。"));
    return card;
  }
 
@@ -7584,7 +7587,7 @@ const O = {
      title: "両山トーナメント表(左右対向・中央決勝)をExcelで出力。手修正・印刷用。",
      onClick: () => A.downloadAuthedFile(`/api/tournaments/${O.tournamentId}/bracket/export.xlsx?event=${encodeURIComponent(sel)}`, `トーナメント表_${sel}.xlsx`) }, "📋 表をExcel出力"),
    h("button", { className: "btn btn-sm", style: { background: "#0f766e", color: "#fff" },
-     title: "出力したExcelを手修正して取込み、組合せを正本化(選手データ・結果は保持・位置だけ差分更新)。",
+     title: "出力したExcelを直して取り込み、その並びを正しい組み合わせとして反映します(選手や結果はそのまま、位置だけ更新)。",
      onClick: () => O.importBracketXlsx(sel) }, "📥 Excel取込で反映"),
    h("span", { className: "text-xs text-sub" },
      "1回戦: ドラッグで入替 / クリックで編集 ・ 各対戦の ✕ で削除"),
@@ -8447,7 +8450,7 @@ const O = {
    else if (refSource === "manual") nb = h("div", {},
      h("input", { className: "input", placeholder: "氏名を直接入力 (例: 山本 満 / 外部審判員)",
        value: manualRefName, onInput: (e) => { manualRefName = e.target.value; } }),
-     h("div", { className: "text-xs text-sub mt-1" }, "DBに登録されていない外部審判員も指定できます。"));
+     h("div", { className: "text-xs text-sub mt-1" }, "選手名簿に登録されていない外部の審判員も指定できます。"));
    else if (refSource === "none") nb = h("div", { className: "text-sub text-sm" }, "審判なしで呼出 (拘束チェックも軽減)");
    else nb = h("div", { className: "text-sub text-sm" }, "同じコートで直前に敗れた選手を自動的に審判アサインします。 (敗者審判)");
    refSection.innerHTML = "";
@@ -8701,7 +8704,7 @@ const O = {
      const fd = new FormData(); fd.append("file", f);
      if (extra) Object.keys(extra).forEach(k => fd.append(k, extra[k]));
      const resp = await fetch(`/api/tournaments/${tid}/bracket/import-xlsx${qs || ""}`, { method: "POST", headers: { "X-Admin-Key": api.adminKey }, body: fd });
-     return resp.json().catch(() => ({ error: "応答が不正です" }));
+     return resp.json().catch(() => ({ error: "サーバーからの返事を読み取れませんでした" }));
    };
    const summOf = (r) => (r.results || []).map(x => x.error ? `${x.event}: ✕ ${x.error}` : `${x.event}: ${x.placed}名配置 / BYE${x.byes}`).join("\n");
    const pv = await post("?dry_run=1");
@@ -8759,7 +8762,7 @@ const O = {
    if (!data || data.error) { data = null; return toast((data && data.error) || "取得失敗", "err"); }
    applyTopN(); render();
  };
- const renderBy = () => { clear(byBtns); [["blend", "Elo＋成績"], ["elo", "Eloのみ"], ["achievements", "成績のみ"]].forEach(([v, l]) =>
+ const renderBy = () => { clear(byBtns); [["blend", "実力＋成績"], ["elo", "実力のみ"], ["achievements", "成績のみ"]].forEach(([v, l]) =>
    byBtns.appendChild(h("button", { className: "btn btn-sm" + (by === v ? "" : " btn-ghost"), onClick: () => { by = v; renderBy(); load(); } }, l))); };
  renderBy();
  const apply = async () => {
@@ -8774,7 +8777,7 @@ const O = {
    if (O.reload) O.reload();
  };
  const body = h("div", {},
-   h("div", { className: "text-sm" }, `「${event}」のシードを選手DB(Elo＋過去成績)から提案します。自動確定はしません(人手で採否・順位を決定)。`),
+   h("div", { className: "text-sm" }, `「${event}」のシードを選手名簿（実力レーティング＋過去成績）から提案します。自動確定はしません(人手で採否・順位を決定)。`),
    h("div", { className: "flex gap-2", style: { alignItems: "center", marginTop: "6px", flexWrap: "wrap" } },
      h("span", { className: "text-xs" }, "根拠:"), byBtns,
      h("span", { className: "text-xs" }, "シード数:"), nSeedInput,
@@ -9218,7 +9221,7 @@ const O = {
  if (!members.length) return null;
  const hasPush = (id) => A.state.pushPlayers && A.state.pushPlayers.has(id);
  return h("div", { className: "flex gap-2 mb-2", style: { flexWrap: "wrap", alignItems: "center" } },
-   h("span", { className: "text-xs text-sub" }, "選手DB:"),
+   h("span", { className: "text-xs text-sub" }, "選手名簿:"),
    ...members.map(x => h("button", { className: "btn btn-sm btn-ghost",
      onClick: () => A.editPlayer({ id: x.id }) },
      (x.name || "選手") + " ▸",
@@ -9521,7 +9524,7 @@ const O = {
    '<button class="noprint" onclick="window.print()" style="margin-bottom:6mm;padding:6px 16px;font-size:13px;cursor:pointer">🖨 印刷する</button>' +
    '<div class="grid">' + cards + "</div></body></html>";
  const w = window.open("", "_blank");
- if (!w) { toast("ポップアップがブロックされました。ブラウザ設定をご確認ください。", "err"); return; }
+ if (!w) { toast("別ウィンドウが開けませんでした。画面の表示から『許可』してください。", "err"); return; }
  w.document.write(html); w.document.close();
  },
 
@@ -9662,7 +9665,7 @@ const O = {
    h("button", { className: "btn btn-sm", style: { background: "#0ea5e9" }, onClick: toggleFs }, "⛶ 全画面"),
    h("button", { className: "btn btn-sm", style: { background: "#7c3aed" }, onClick: printBracket }, "印刷 (A3横)"),
    h("span", { className: "text-xs text-sub", style: { marginLeft: "auto" } },
-     "1回戦の選手はドラッグ&ドロップで入替できます"),
+     "1回戦の選手は、名前を指やマウスで動かして入れ替えできます"),
  );
  renderTabs();
  if (events.length > 1) fsWrap.appendChild(tabStrip); // 複数種目/ブロック時のみタブ表示
@@ -9793,7 +9796,7 @@ const O = {
        if (name && name !== "BYE") {
          row.setAttribute("draggable", "true");
          row.style.cursor = "grab";
-         row.title = "ドラッグして他の選手と位置を入れ替え";
+         row.title = "名前を動かして、ほかの選手と位置を入れ替え";
          row.addEventListener("dragstart", (e) => {
            e.stopPropagation();
            e.dataTransfer.setData("text/plain", JSON.stringify({ pos, slot, name }));
@@ -10236,7 +10239,7 @@ const O = {
  borderRadius: "6px", overflow: "auto", marginTop: "6px" } },
  sample),
  h("strong", {}, "② 完全ブラケット形式: "),
- "「JSON 書出」で出力される形式と同じ。試合の位置(bracket_round/bracket_pos)、対戦カード、結果を明示。",
+ "「ファイルに書出」で出力される形式と同じ。試合の位置(bracket_round/bracket_pos)、対戦カード、結果を明示。",
  ),
  ),
  h("label", { className: "flex gap-2 mt-2", style: { alignItems: "center" } },
