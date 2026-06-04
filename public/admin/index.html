@@ -7300,8 +7300,11 @@ const O = {
      title: "シードを選手DB(Elo+過去成績)から客観スコア順に提案。根拠を見て人手で採否・順位を決めて一括設定。抽選の前に。",
      onClick: () => O.openSeedSuggest(sel) }, "🏅 シード提案"),
    h("button", { className: "btn btn-sm", style: { background: "#1a7a45", color: "#fff" },
-     title: "個人戦をシード固定＋ランダム抽選でトーナメント表を作成。シードは申込管理で指定した番号順に標準位置へ固定し、残りを抽選(同一所属を分散)。",
+     title: "個人戦をシード固定＋ランダム抽選でトーナメント表を作成。1回戦は配置するだけで自動進行しません(編集後に『進行開始』で進める)。",
      onClick: () => O.openDrawBracket(sel) }, "🎲 抽選ドロー"),
+   h("button", { className: "btn btn-sm", style: { background: "#b45309", color: "#fff" },
+     title: "抽選で配置・編集した1回戦を確定し、不戦勝(vs BYE)を繰り上げて進行を開始します。抽選直後は自動進行しないので、編集が済んだらこれを押してください。",
+     onClick: () => O.advanceByes(sel) }, "▶ 進行開始(不戦勝確定)"),
    h("button", { className: "btn btn-sm", style: { background: "#0e8fa3", color: "#fff" },
      title: "団体種目を総当たり(リーグ)で生成。各ブロックで全チームが対戦し、勝敗→セット率→得点率で順位。",
      onClick: () => O.openLeagueGen(sel) }, "リーグ生成"),
@@ -8355,7 +8358,7 @@ const O = {
      body.force = true; r = await api.post(`/api/tournaments/${tid}/bracket/draw`, body);
    }
    if (!r || r.error) return toast((r && r.error) || "確定に失敗", "err");
-   toast(`確定: ${r.bracket_size}枠 / 記録ID ${r.draw_seed}`, "ok");
+   toast(`抽選確定: ${r.bracket_size}枠。1回戦を配置しました(自動進行なし)。編集後『▶進行開始』で進めます`, "ok");
    document.querySelector(".modal-bg")?.remove();
    if (O._vbReload) O._vbReload(); if (O.reload) O.reload();
  };
@@ -8386,6 +8389,17 @@ const O = {
    h("button", { className: "btn btn-ghost", title: "両山トーナメント表をExcelで出力", onClick: () => A.downloadAuthedFile(`/api/tournaments/${tid}/bracket/export.xlsx?event=${encodeURIComponent(event)}`, `トーナメント表_${event}.xlsx`) }, "📋 Excel出力"),
    h("button", { className: "btn", style: { background: "#b45309", color: "#fff" }, onClick: doUndo }, "直前の抽選を取消"));
  openModal("抽選ドロー（" + event + "）", body, foot);
+ },
+
+ // ── 進行開始(不戦勝確定): 抽選で配置・編集した1回戦を確定し、不戦勝(vs BYE)を繰り上げて進行を開始 ──
+ async advanceByes(event) {
+ const ev = (O._eventConfig() || []).find(c => c && c.name === event);
+ if (ev && ev.type === "team") return toast("団体種目は対象外です", "err");
+ if (!confirm("「" + event + "」の1回戦を確定し、不戦勝(vs BYE)を繰り上げて進行を開始します。\n以後はこの配置で進みます。よろしいですか？")) return;
+ const r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/advance-byes`, { event });
+ if (!r || r.error) return toast((r && r.error) || "進行開始に失敗", "err");
+ toast(r.advanced > 0 ? `進行開始: 不戦勝${r.advanced}件を繰り上げました` : "進行開始しました(不戦勝なし)", "ok");
+ if (O._vbReload) O._vbReload(); if (O.reload) O.reload();
  },
 
  // ── Excelラウンドトリップ取込: 出力した表を手修正→再取込して『位置だけ』正本化(選手/結果は保持) ──

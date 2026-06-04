@@ -203,19 +203,40 @@ function setupDraw(n, seedTop) {
 const r1Of = (t) => db.getMatchesByTournament(t.id).filter(m => m.event === EV && m.bracket_round === 1)
   .sort((a, b) => a.bracket_pos - b.bracket_pos);
 
-test("drawSingleBracket: ブラケット生成・draw_seed返却・BYEが上位シードに", () => {
+test("drawSingleBracket: 1回戦は配置のみ(自動進行しない)・BYEは上位シードに配置・進行開始で繰り上げ", () => {
   const { t } = setupDraw(12, 4);
   const r = db.drawSingleBracket(t.id, EV, { draw_seed: 777, separate_by: "team" });
   assert.ok(r.success, "成功: " + JSON.stringify(r));
   assert.strictEqual(r.draw_seed, 777, "draw_seed返却");
   assert.strictEqual(r.bracket_size, 16);
   assert.strictEqual(r.bye_count, 4);
-  // 第1シードの1回戦はBYE(不戦勝)で自動完了している
-  const r1 = r1Of(t);
+  // ★抽選直後: 不戦勝(vs BYE)も自動完了させない=1回戦は全て未完了の編集可能な状態
+  let r1 = r1Of(t);
+  assert.strictEqual(r1.filter(m => m.is_walkover).length, 0, "抽選直後は walkover 0(自動進行しない)");
+  assert.strictEqual(r1.filter(m => m.status === "completed").length, 0, "抽選直後は completed 0");
+  // 上位シードの1回戦相手は BYE(配置されている)
   const seedNames = db.getEntrants(t.id, EV).filter(e => e.seed >= 1).map(e => e.display_name || e.name);
-  let byeWins = 0;
-  r1.forEach(m => { if (m.is_walkover && seedNames.includes(m.winner_name)) byeWins++; });
-  assert.ok(byeWins >= 1, "上位シードに不戦勝BYE: " + byeWins);
+  const byeForSeed = r1.some(m =>
+    (m.player1_name === "BYE" && seedNames.includes(m.player2_name)) ||
+    (m.player2_name === "BYE" && seedNames.includes(m.player1_name)));
+  assert.ok(byeForSeed, "上位シードの1回戦相手が BYE(配置)");
+  // 進行開始(不戦勝確定)で繰り上がる
+  const adv = db.autoAdvanceByes(t.id, EV);
+  assert.ok(adv >= 1, "進行開始で不戦勝が繰り上がる: " + adv);
+  r1 = r1Of(t);
+  assert.ok(r1.filter(m => m.is_walkover).length >= 1, "繰り上げ後は walkover あり");
+});
+
+test("drawSingleBracket: 編集フェーズ(結果未入力)のswapは不戦勝を自動進行しない(自由に編集できる)", () => {
+  const { t } = setupDraw(12, 4);   // 16枠・4 BYE
+  db.drawSingleBracket(t.id, EV, { draw_seed: 5, separate_by: "team" });
+  const r = db.swapBracketSlots(t.id, EV, { pos: 0, slot: 1 }, { pos: 4, slot: 1 });
+  assert.ok(r.success, "編集中のswap成功: " + JSON.stringify(r));
+  const r1 = db.getMatchesByTournament(t.id).filter(m => m.event === EV && m.bracket_round === 1);
+  assert.strictEqual(r1.filter(m => m.is_walkover).length, 0, "編集中のswapで不戦勝は自動進行しない");
+  // 進行開始後はswapで生じたBYEを繰り上げる(従来挙動の維持)
+  db.autoAdvanceByes(t.id, EV);
+  assert.ok(db.getMatchesByTournament(t.id).filter(m => m.event === EV && m.bracket_round === 1 && m.is_walkover).length >= 1, "進行開始後は繰り上げ");
 });
 
 test("drawSingleBracket: seed(シードランク)を上書きしない(非破壊)", () => {

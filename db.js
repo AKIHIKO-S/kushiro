@@ -3021,8 +3021,12 @@ function generateBracket(tournamentId, event, options) {
       });
     });
 
-    // round1 のBYE試合を自動完了 → 勝者を次へ進める
+    // round1 のBYE試合を自動完了 → 勝者を次へ進める。
+    // ★no_auto_advance(抽選ドロー): 抽選直後は1回戦を「配置するだけ」で自動進行させない。
+    //   不戦勝も pending のまま残し、運営が編集後に『進行開始(不戦勝確定)』で初めて進めるようにする
+    //   (自動で全員2回戦に上がって編集できなくなる問題の修正)。
     matchesByRound[0].forEach(m => {
+      if (options.no_auto_advance) return;
       if (!m.player1 || !m.player2) {
         const winner = m.player1 || m.player2;
         if (!winner) return;
@@ -3082,8 +3086,9 @@ function generateBracket(tournamentId, event, options) {
   });
   try { numberTxn(); } catch (e) { console.error("bracket_number assignment error:", e); }
 
-  // 残ったシードBYEの取りこぼしを念のため解消 (通常はround1ループで処理済)
-  autoAdvanceByes(tournamentId, event);
+  // 残ったシードBYEの取りこぼしを念のため解消 (通常はround1ループで処理済)。
+  // no_auto_advance(抽選ドロー)では不戦勝も進めない=1回戦を編集可能な状態で据え置く。
+  if (!options.no_auto_advance) autoAdvanceByes(tournamentId, event);
 
   return {
     success: true,
@@ -3350,7 +3355,9 @@ function drawSingleBracket(tournamentId, event, opts) {
     matches: sqlite.prepare("SELECT * FROM matches WHERE tournament_id=? AND event=?").all(tournamentId, event),
     entrants: sqlite.prepare("SELECT id, bracket_number, bracket_side FROM entrants WHERE tournament_id=? AND event=?").all(tournamentId, event),
   };
-  const r = generateBracket(tournamentId, event, { regenerate: true, force: !!opts.force, fixedLeaves: leaves });
+  // ★抽選では1回戦を「配置するだけ」(no_auto_advance)=不戦勝も自動進行させず編集可能に据え置く。
+  //   運営が編集後に『進行開始(不戦勝確定)』(advanceEventByes / autoAdvanceByes)で初めて進める。
+  const r = generateBracket(tournamentId, event, { regenerate: true, force: !!opts.force, fixedLeaves: leaves, no_auto_advance: true });
   if (r && r.error) return r;
 
   const drawId = uid();
@@ -6287,8 +6294,10 @@ function swapBracketSlots(tournamentId, event, a, b) {
   });
   setSlot();
   // 入れ替えで「実選手 vs BYE」が生じた場合はシード繰り上がりを自動適用 (#57766方針)。
-  // autoAdvanceByes は status!='completed' のみ対象・最大12パスで安全。
-  autoAdvanceByes(tournamentId, event);
+  // ただし抽選直後の「編集フェーズ」(まだ実戦の結果が無い=進行未開始)では不戦勝を自動進行させない。
+  //   → 抽選で配置した1回戦を自由に入替できる(byeが完了扱いになって編集をブロックしない)。
+  //   進行開始後(実戦の結果あり)は従来どおり、入替で生じたBYEを繰り上げる。
+  if (eventResultCount(tournamentId, event) > 0) autoAdvanceByes(tournamentId, event);
   return { success: true };
 }
 

@@ -1498,6 +1498,14 @@ app.post("/api/tournaments/:id/bracket/draw", requireAdmin, (req, res) => {
   if (r?.error) return res.status(400).json(r);
   res.json(r);
 });
+// 進行開始(不戦勝を確定): 抽選で配置・編集した1回戦を確定し、不戦勝(vs BYE)を繰り上げて進行を開始する。
+// 抽選ドローは1回戦を「配置するだけ」で自動進行させないため、編集後に運営がこれで進める。
+app.post("/api/tournaments/:id/bracket/advance-byes", requireAdmin, (req, res) => {
+  const event = req.body?.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const advanced = db.autoAdvanceByes(req.params.id, event);
+  res.json({ ok: true, advanced });
+});
 // 抽選の事前検査(プリフライト・ポカヨケ)。?event=種目名
 app.get("/api/tournaments/:id/bracket/draw-readiness", requireAdmin, (req, res) => {
   const event = req.query.event;
