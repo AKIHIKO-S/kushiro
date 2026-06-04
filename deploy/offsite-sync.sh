@@ -24,6 +24,9 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 set -euo pipefail
 
+# OFFSITE_* が環境に無ければ /etc/ktta.env から自動読込(手動実行でも cron でも設定が効くように)。
+if [ -z "${OFFSITE_DEST:-}" ] && [ -f /etc/ktta.env ]; then set -a; . /etc/ktta.env; set +a; fi
+
 DB_FILE="${DB_PATH:-/var/data/tournament.db}"
 SRC_DIR="${BACKUP_DIR:-$(dirname "$DB_FILE")/backups}"
 KEY="${OFFSITE_SSH_KEY:-$HOME/.ssh/onamae_rsync}"
@@ -58,3 +61,9 @@ else
   for f in "${FILES[@]}"; do scp -i "$KEY" -P "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$f" "$OFFSITE_DEST"; done
   log "[OK] scp 転送完了 (${#FILES[@]} 件)"
 fi
+
+# 確認: 退避先(お名前ドットコム)に実際に届いたファイル一覧を表示する。
+DEST_HOST="${OFFSITE_DEST%%:*}"        # user@host
+DEST_PATH="${OFFSITE_DEST#*:}"         # ~/ktta-backups/
+log "退避先の中身 ($DEST_HOST:$DEST_PATH):"
+$SSH_CMD "$DEST_HOST" "ls -la $DEST_PATH" 2>/dev/null | sed 's/^/    /' || log "  (一覧取得はスキップ)"
