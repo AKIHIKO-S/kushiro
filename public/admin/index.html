@@ -1708,6 +1708,10 @@ const A = {
  style: { background: "#ecfdf5", color: "#065f46", borderColor: "#6ee7b7" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
    A.openBackups(); } }, "データ保護 (バックアップ/復元)"),
+ h("button", { className: "btn btn-sm",
+ style: { background: "#eff6ff", color: "#1e40af", borderColor: "#93c5fd" },
+ onClick: () => { document.querySelector(".modal-bg")?.remove();
+   A.openLanConnect(); } }, "📱 端末接続 (会場LAN)"),
  h("a", { className: "btn btn-sm btn-ghost",
  href: "/OPERATIONS.md", target: "_blank" }, "運用マニュアル"),
  h("a", { className: "btn btn-sm btn-ghost",
@@ -1726,6 +1730,42 @@ const A = {
  onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"),
  );
  openModal("管理設定 / 本番運用チェック", body, foot);
+ },
+
+ // ── 端末接続(会場LAN): 本部ホストのURL/ローカルQRを提示し、他の運営端末/大画面/観客を接続させる ──
+ async openLanConnect() {
+ let info = null;
+ try { info = await api.get("/api/lan-info"); } catch (e) {}
+ const body = h("div", {});
+ body.appendChild(h("div", { className: "text-sm", style: { marginBottom: "10px" } },
+   "会場の他の端末(運営2〜3台・大画面・観客)を、このPC(本部)に下のURL/QRで接続してください。" +
+   "同じローカルネットワーク(このPCのテザリング or モバイルルータ)に繋げば、会場Wi-Fiが落ちても本部に到達でき運用が止まりません。"));
+ if (!info || !info.ips || !info.ips.length) {
+   body.appendChild(h("div", { style: { color: "#c01526" } },
+     "LANのIPアドレスが取得できませんでした。Wi-Fi/有線に接続されているか確認してください(クラウド運用中は本機能は不要です)。"));
+ } else {
+   const primary = info.ips[0];
+   const byPath = {};
+   (info.urls || []).forEach(u => { (byPath[u.path] = byPath[u.path] || []).push(u); });
+   [["admin", "運営(他の運営端末)"], ["viewer/live", "大画面(コート表示)"], ["viewer", "観戦(選手・観客)"]].forEach(([p, label]) => {
+     const u = (byPath[p] || []).find(x => x.ip === primary) || (byPath[p] || [])[0];
+     if (!u) return;
+     const card = h("div", { className: "card", style: { padding: "12px", marginBottom: "10px", display: "flex", gap: "14px", alignItems: "center", flexWrap: "wrap" } });
+     const qrWrap = h("div", { style: { flex: "0 0 auto", width: "118px", height: "118px" } });
+     qrWrap.innerHTML = u.qr || "";   // 本部サーバがローカル生成した信頼SVG(外部QRサービス不使用=オフライン可)
+     card.appendChild(qrWrap);
+     card.appendChild(h("div", { style: { flex: "1 1 200px" } },
+       h("div", { style: { fontWeight: 700, marginBottom: "4px" } }, label),
+       h("div", { className: "mono", style: { fontSize: "15px", wordBreak: "break-all" } }, u.url),
+       info.ips.length > 1 ? h("div", { className: "text-xs text-sub", style: { marginTop: "4px" } },
+         "他のIP: " + info.ips.slice(1).map(ip => "http://" + ip + ":" + info.port + "/" + p).join(" / ")) : null,
+       h("button", { className: "btn btn-sm btn-ghost mt-2", onClick: () => { try { navigator.clipboard.writeText(u.url); toast("URLをコピーしました", "ok"); } catch (e) { toast("URLを長押しでコピーしてください", "err"); } } }, "URLをコピー")));
+     body.appendChild(card);
+   });
+   body.appendChild(h("div", { className: "text-xs text-sub" },
+     "※ 運営端末は『運営』URLで管理キーを入力。大画面はコート表示、観戦は選手・観客向け。"));
+ }
+ openModal("📱 端末接続 (会場LAN)", body, null);
  },
 
  // ── データ保護: DBスナップショット (バックアップ/復元) #201 ──

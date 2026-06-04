@@ -37,6 +37,7 @@ function runChild(cmd, args, { env, timeoutMs = 30000, maxOut = 32 * 1024 * 1024
 }
 const compression = require("compression");
 const multer = require("multer");
+const QRCode = require("qrcode");     // ローカルQR生成(会場オフラインで外部QRサービスに依存しないLAN接続案内用)
 const db = require("./db");
 const reports = require("./reports");
 const entryForm = require("./entry_form");
@@ -3255,6 +3256,27 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: dbOk, time: new Date().toISOString() });
 });
 
+// 端末接続案内(LAN URL + ローカル生成QR)。会場オフラインでも外部QRサービスに依存しない(qrcode 同梱)。
+// 本部ホストで開いた管理画面が、他の運営端末/大画面/観客端末の接続先を提示するのに使う。
+app.get("/api/lan-info", async (req, res) => {
+  const ips = lanIPv4s();
+  const targets = [
+    { path: "admin", label: "運営(他端末)" },
+    { path: "viewer/live", label: "大画面(コート)" },
+    { path: "viewer", label: "観戦(選手・観客)" },
+  ];
+  const urls = [];
+  for (const ip of ips) {
+    for (const t of targets) {
+      const url = `http://${ip}:${PORT}/${t.path}`;
+      let qr = "";
+      try { qr = await QRCode.toString(url, { type: "svg", margin: 1, width: 150 }); } catch (e) {}
+      urls.push({ ip, label: t.label, path: t.path, url, qr });
+    }
+  }
+  res.json({ port: Number(PORT) || PORT, ips, urls });
+});
+
 // ═══ 診断 API (admin 専用) ═══
 // 直近のエラー・リクエスト・サーバー状態を返す
 app.get("/api/diagnostics", requireAdmin, (req, res) => {
@@ -3463,11 +3485,28 @@ process.on("unhandledRejection", (reason) => {
   console.error("[FATAL] unhandledRejection:", reason);
 });
 
-const server = app.listen(PORT, () => {
+// LAN内の他端末(運営2〜3台/大画面/観客)が本部ホストに接続するための IPv4 を列挙。
+function lanIPv4s() {
+  const out = [];
+  const ns = os.networkInterfaces();
+  for (const k in ns) for (const n of (ns[k] || [])) {
+    if (n.family === "IPv4" && !n.internal) out.push(n.address);
+  }
+  return out;
+}
+const server = app.listen(PORT, () => {   // host未指定=0.0.0.0(全インターフェース)=LAN内の他端末から到達可能
   console.log(`\n🏓 卓球大会運営アプリ 起動中`);
   console.log(`   閲覧画面:  http://localhost:${PORT}/viewer`);
   console.log(`   管理画面:  http://localhost:${PORT}/admin`);
   console.log(`   API:       http://localhost:${PORT}/api/health`);
+  const lan = lanIPv4s();
+  if (lan.length) {
+    console.log(`\n   ── 会場内の他端末(運営2〜3台/大画面)はこのPCのIPで接続 ──`);
+    lan.forEach(ip => {
+      console.log(`   本部運営: http://${ip}:${PORT}/admin   大画面: http://${ip}:${PORT}/viewer/live`);
+    });
+    console.log(`   ※ 同じローカルネットワーク(本PCのテザリング/モバイルルータ)に繋げば会場WiFi断でも動作します`);
+  }
   if (ADMIN_KEY) console.log(`   ADMIN_KEY: 設定あり（管理API保護）`);
   // PII 保持期間: env PII_RETENTION_DAYS 指定時のみ、大会終了からN日超過の申込原本連絡先を起動時に匿名化。
   // 既定(未設定)は無効=既存挙動を変えない(自動データ破壊を避けるオプトイン)。

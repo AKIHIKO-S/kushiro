@@ -210,3 +210,15 @@ test("(g) /live 射影: 再コール系(call_count*/recall/called_at)を保持�
   ["referee_id", "winner_rating_delta", "loser_rating_delta", "next_match_id", "sets_json", "tournament_id"].forEach(k =>
     assert.ok(!(k in rf), `内部列 ${k} は /live から除去`));
 });
+
+test("(h) /api/lan-info: 端末接続用のURLとローカル生成QR(外部QR非依存)を返す", async () => {
+  const info = await fetch(BASE + "/api/lan-info").then(r => r.json());
+  assert.ok(typeof info.port === "number", "port を返す");
+  assert.ok(Array.isArray(info.ips), "ips 配列");
+  assert.ok(Array.isArray(info.urls), "urls 配列");
+  if (info.ips.length) {
+    const admin = info.urls.find(u => u.path === "admin");
+    assert.ok(admin && /^http:\/\/[\d.]+:\d+\/admin$/.test(admin.url), "admin の LAN URL: " + (admin && admin.url));
+    assert.ok(admin.qr && admin.qr.startsWith("<svg"), "ローカル生成のQR(SVG)が付く=外部QRサービス不要");
+  }
+});
