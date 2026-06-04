@@ -301,6 +301,39 @@ OFFSITE_CMD='oci os object put -bn ktta-backups --force --file'
 ※ cron 実行は env を継承しないため、`0 2 * * * . /etc/ktta.env; /opt/ktta/deploy/backup.sh` のように
 env を source してから実行する。
 
+#### お名前ドットコム(レンタルサーバー SSH/SFTP)へ毎晩退避する手順
+Oracle無料枠VMの回収に備え、別事業者(お名前ドットコム)へ DB を毎晩ミラーする。専用スクリプト
+`deploy/offsite-sync.sh`(ローカルの30日ローテ済バックアップを rsync ミラー。空ソース時は中止する安全ガード付き)を使う。
+
+```bash
+# 1) Oracle 側で ktta 用の SSH 鍵を作成(パスフレーズ無し=cron用)
+sudo -u ktta ssh-keygen -t ed25519 -f /home/ktta/.ssh/onamae_rsync -N "" -C "ktta-offsite"
+sudo -u ktta cat /home/ktta/.ssh/onamae_rsync.pub   # ← この公開鍵を控える
+
+# 2) お名前ドットコム側に公開鍵を登録(コントロールパネルのSSH設定 or 下記)
+#    ssh <user>@<onamae-host> 後、~/.ssh/authorized_keys に上の .pub を追記。退避先フォルダも作る:
+#    mkdir -p ~/ktta-backups && chmod 700 ~/.ssh
+
+# 3) Oracle 側で疎通確認(初回はホスト鍵を accept)
+sudo -u ktta ssh -i /home/ktta/.ssh/onamae_rsync -p <PORT> <user>@<onamae-host> 'echo OK; ls ~/ktta-backups'
+
+# 4) /etc/ktta.env に退避設定を追記
+OFFSITE_DEST=<user>@<onamae-host>:~/ktta-backups/
+OFFSITE_SSH_KEY=/home/ktta/.ssh/onamae_rsync
+OFFSITE_SSH_PORT=<PORT>          # お名前RSは 2222 等の場合あり。標準SSHなら22
+
+# 5) 毎晩3時に「ローカルバックアップ → お名前ドットコムへミラー」する cron を登録(ktta ユーザーの crontab)
+#    crontab -u ktta -e
+0 3 * * * . /etc/ktta.env; /opt/ktta/deploy/backup.sh && /opt/ktta/deploy/offsite-sync.sh >> /var/data/backups/offsite.log 2>&1
+
+# 6) 手動で1回流して確認
+sudo -u ktta bash -c '. /etc/ktta.env; /opt/ktta/deploy/backup.sh && /opt/ktta/deploy/offsite-sync.sh'
+```
+- rsync があれば `--delete` で遠隔も同じ30日窓に自動ローテ。rsync 不在時は scp で全件転送(遠隔ローテは手動)。
+- **災害復旧(VM回収時)**: 新サーバを建てて配置(git)後、お名前ドットコムから最新 `ktta-*.db.gz` を取得し、
+  管理画面「🔒 システム管理（オーナー）」→ バックアップ/復元 → **「ファイルから復元（アップロード）」** で
+  その `.db.gz` を取り込めば復旧する(ローカルにスナップショットが無くてもよい)。CLI なら restore.sh にパス指定も可。
+
 ### 復元 (restore.sh を使う。パスは自動解決)
 ```bash
 sudo /opt/ktta/deploy/restore.sh --list                 # 一覧(/var/data/backups を参照)

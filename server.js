@@ -168,6 +168,24 @@ const upload = multer({
   },
 });
 
+// DBファイル(.db / .db.gz)アップロード復元 専用 (オーナー権限・DR用)。通常アップロードとは別枠で、
+// SQLite/gzip のみ許可・容量を大きめに。検証は db.restoreFromUpload が厳格に行う。
+const uploadDb = multer({
+  storage: multer.diskStorage({
+    destination: uploadDir,
+    filename: (req, file, cb) => {
+      const gz = /\.gz$/i.test(file.originalname || "");
+      cb(null, "restore_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8) + (gz ? ".db.gz" : ".db"));
+    },
+  }),
+  limits: { fileSize: 200 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const n = (file.originalname || "").toLowerCase();
+    if (/\.(db|sqlite)(\.gz)?$/.test(n)) return cb(null, true);
+    cb(new Error(".db または .db.gz をアップロードしてください"));
+  },
+});
+
 const app = express();
 // リバースプロキシ(Caddy/nginx)・Cloudflare・Cloudflare Tunnel の背後で動作するため
 // X-Forwarded-* を信頼し、req.ip 等が実クライアントを指すようにする (#236)。
@@ -2817,6 +2835,28 @@ app.post("/api/owner/players/delete-all", requireOwner, async (req, res) => {
     auditOwner(req, "players_delete_all", "deleted=" + total + " backup=" + (backup && backup.name));
     res.json({ ok: true, deleted: total, backup: backup && backup.name });
   } catch (e) { res.status(500).json({ error: "削除に失敗しました: " + e.message }); }
+});
+// アップロードした .db / .db.gz から復元 (DR用・オーナー)。オフサイト退避(お名前ドットコム等)から
+// 落としたバックアップを、ローカルスナップショットが無い新サーバでも取り込めるようにする。
+// multer のファイル種別エラーは下の (err,req,res,next) で 400 整形。
+app.post("/api/owner/restore-upload", requireOwner,
+  (req, res, next) => uploadDb.single("file")(req, res, (err) => err ? res.status(400).json({ error: err.message || "アップロードに失敗しました" }) : next()),
+  (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "ファイルがありません（.db または .db.gz）" });
+  const name = req.file.originalname || "upload";
+  // 復元はDB全体(=owner_audit表ごと)を差し替えるため、close 前に監査 + journal に残す。
+  auditOwner(req, "db_restore_upload", name);
+  console.log("[owner-audit] db_restore_upload name=" + name + " operator=" + (ownerOperator(req) || "-") + " ip=" + clientIp(req));
+  let r;
+  try { r = db.restoreFromUpload(req.file.path, name); }
+  catch (e) { r = { error: "復元に失敗しました: " + e.message }; }
+  try { fs.rmSync(req.file.path, { force: true }); } catch (e) {}   // アップロード一時ファイルを掃除
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+  if (r.restart_required) {
+    console.log("[restore] アップロード復元 → プロセスを再起動します:", name);
+    setTimeout(() => process.exit(0), 400);
+  }
 });
 
 app.get("/api/public/tournaments/:id/live", (req, res) => {

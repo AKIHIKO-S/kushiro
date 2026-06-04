@@ -1859,6 +1859,30 @@ const A = {
    if (r && r.ok) toast("保存しました", "ok"); else toast("保存失敗: " + ((r && r.error) || ""), "err");
    load();
  } }, "今すぐ保存");
+ // ── ファイルから復元 (DR用): オフサイト退避(お名前ドットコム等)やPCに保存した .db/.db.gz を取り込む ──
+ const fileInput = h("input", { type: "file", accept: ".db,.db.gz,.sqlite,.sqlite.gz",
+   style: { fontSize: "12px", maxWidth: "100%" } });
+ const upBtn = h("button", { className: "btn btn-sm", style: { background: "#fee2e2", color: "#7c2d12", borderColor: "#fca5a5" },
+   onClick: async () => {
+     const f = fileInput.files && fileInput.files[0];
+     if (!f) return toast("復元するファイル(.db / .db.gz)を選んでください", "err");
+     if (!confirm("アップロードした「" + f.name + "」で現在のデータを上書き復元します。\n直前の状態は自動で安全網バックアップに保存されます。\n復元後サーバーが再起動します。続行しますか？")) return;
+     upBtn.disabled = true; upBtn.textContent = "復元中…";
+     const fd = new FormData(); fd.append("file", f);
+     const hd = A._ownerHeaders(); delete hd["Content-Type"];   // multipart は境界をブラウザに任せる
+     try {
+       const res = await fetch("/api/owner/restore-upload", { method: "POST", headers: hd, body: fd });
+       const j = await res.json().catch(() => ({}));
+       if (res.ok && j.ok) { toast("アップロードから復元しました。サーバー再起動を待っています…", "ok"); setTimeout(() => location.reload(), 5000); }
+       else { upBtn.disabled = false; upBtn.textContent = "アップロードして復元"; toast("復元失敗: " + (j.error || res.status), "err"); }
+     } catch (e) { upBtn.disabled = false; upBtn.textContent = "アップロードして復元"; toast("通信エラー: " + e.message, "err"); }
+   } }, "アップロードして復元");
+ const upRestore = h("div", { style: { marginTop: "14px", padding: "12px", border: "1px dashed var(--border)", borderRadius: "10px" } },
+   h("div", { className: "font-bold", style: { fontSize: "13px", marginBottom: "4px" } }, "ファイルから復元（災害復旧）"),
+   h("div", { className: "text-xs text-sub", style: { lineHeight: 1.6, marginBottom: "8px" } },
+     "外部サーバ（お名前ドットコム等）やPCに保存した ", h("b", {}, ".db / .db.gz"),
+     " を取り込んで復元します。サーバを作り直した直後（バックアップ一覧が空）でもここから戻せます。"),
+   h("div", { className: "flex gap-2 flex-wrap", style: { alignItems: "center" } }, fileInput, upBtn));
  const body = h("div", {},
    h("div", { className: "text-sm text-sub", style: { lineHeight: "1.7", marginBottom: "12px" } },
      "進行中の大会があると約7分ごとに自動でバックアップします。ここでは手動保存・PCへの保存・復元ができます。",
@@ -1867,7 +1891,8 @@ const A = {
    h("div", { className: "flex gap-2 flex-wrap", style: { marginBottom: "12px" } },
      saveBtn,
      h("button", { className: "btn btn-sm btn-ghost", onClick: () => load() }, "一覧を更新")),
-   listWrap);
+   listWrap,
+   upRestore);
  openModal("データ保護 (バックアップ / 復元)", body, null);
  load();
  },

@@ -7132,6 +7132,34 @@ function getAllBest8(tournamentId) {
 }
 // スナップショットから復元 (破壊的)。現状の安全網スナップを取ってから DB を差し替える。
 // 差し替え後は sqlite ハンドルを閉じるため、呼び出し側はプロセスを再起動すること。
+// 現DBを安全網スナップショットへ退避してから src で上書きする(復元の共通部・破壊的)。
+// 重要: 安全網の作成に失敗したら上書きへ進まず中止する。さもないと「復元を取り消す唯一の手段」が
+// 無いまま本番DBを潰し得る(DR=最後の砦の完全性ハザード)。現DBが空/不在(初回起動)のときのみ退避をスキップ。
+function _swapDbWithSafety(srcPath, restoredLabel) {
+  fs.mkdirSync(SNAP_DIR, { recursive: true });
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
+  const safety = path.join(SNAP_DIR, `prerestore_${ts}.db`);
+  let safetyName = null;
+  let dbHasData = false;
+  try { dbHasData = fs.existsSync(DB_PATH) && fs.statSync(DB_PATH).size > 0; } catch (e) {}
+  if (dbHasData) {
+    try { sqlite.pragma("wal_checkpoint(TRUNCATE)"); } catch (e) {}
+    try {
+      fs.copyFileSync(DB_PATH, safety);
+      if (!fs.existsSync(safety) || fs.statSync(safety).size <= 0) throw new Error("安全網スナップショットが空でした");
+      safetyName = path.basename(safety);
+    } catch (e) {
+      return { error: "安全網バックアップの作成に失敗したため復元を中止しました: " + e.message };
+    }
+  }
+  // ハンドルを閉じてファイルを差し替え (以後この forge では DB 操作不可・要再起動)
+  try { sqlite.close(); } catch (e) {}
+  try { fs.rmSync(DB_PATH + "-wal", { force: true }); } catch (e) {}
+  try { fs.rmSync(DB_PATH + "-shm", { force: true }); } catch (e) {}
+  fs.copyFileSync(srcPath, DB_PATH);
+  return { ok: true, restored: restoredLabel, safety_snapshot: safetyName, restart_required: true };
+}
+
 function restoreSnapshot(name) {
   const src = snapshotPath(name);
   if (!src) return { error: "スナップショットが見つかりません" };
@@ -7143,18 +7171,51 @@ function restoreSnapshot(name) {
       return { error: "正しいSQLiteファイルではありません" };
     }
   } catch (e) { return { error: "ファイル検証に失敗: " + e.message }; }
-  // 1) 現状の安全網スナップショット (復元自体を取り消せるように)
-  fs.mkdirSync(SNAP_DIR, { recursive: true });
-  const ts = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
-  const safety = path.join(SNAP_DIR, `prerestore_${ts}.db`);
-  try { sqlite.pragma("wal_checkpoint(TRUNCATE)"); } catch (e) {}
-  try { fs.copyFileSync(DB_PATH, safety); } catch (e) {}
-  // 2) ハンドルを閉じてファイルを差し替え (以後この forge では DB 操作不可)
-  try { sqlite.close(); } catch (e) {}
-  try { fs.rmSync(DB_PATH + "-wal", { force: true }); } catch (e) {}
-  try { fs.rmSync(DB_PATH + "-shm", { force: true }); } catch (e) {}
-  fs.copyFileSync(src, DB_PATH);
-  return { ok: true, restored: name, safety_snapshot: path.basename(safety), restart_required: true };
+  return _swapDbWithSafety(src, name);
+}
+
+// アップロードされたファイル(.db / .db.gz)から復元する(災害復旧=DR用)。
+// ローカルスナップショットが無い新サーバでも、オフサイト退避(お名前ドットコム等)から落とした
+// バックアップで復元できるようにする。検証: ① .gz は解凍 ② SQLite ヘッダ ③ KTTA らしいスキーマ。
+// 通過したら現状を安全網スナップショットに退避してから差し替える(restoreSnapshot と同じ作法)。
+function restoreFromUpload(srcPath, originalName) {
+  const zlib = require("zlib");
+  if (!srcPath || !fs.existsSync(srcPath)) return { error: "アップロードファイルがありません" };
+  const isGz = /\.gz$/i.test(originalName || "") || /\.gz$/i.test(srcPath);
+  let candidate = srcPath;
+  const tmps = [];
+  try {
+    if (isGz) {
+      candidate = srcPath + ".decompressed.db";
+      tmps.push(candidate);
+      // 解凍は上限付き(zip爆弾でDR中にOOMクラッシュしないように。現DBは数十MB級なので512MBで余裕)。
+      try { fs.writeFileSync(candidate, zlib.gunzipSync(fs.readFileSync(srcPath), { maxOutputLength: 512 * 1024 * 1024 })); }
+      catch (e) { return { error: "gzip の解凍に失敗しました（壊れているか、展開後が大きすぎます）" }; }
+    }
+    // ① SQLite ヘッダ検証
+    try {
+      const head = Buffer.alloc(16);
+      const fd = fs.openSync(candidate, "r"); fs.readSync(fd, head, 0, 16, 0); fs.closeSync(fd);
+      if (head.toString("latin1", 0, 15) !== "SQLite format 3")
+        return { error: "正しいSQLiteファイルではありません（.db または .db.gz をアップロードしてください）" };
+    } catch (e) { return { error: "ファイル検証に失敗: " + e.message }; }
+    // ② KTTA のDBか + 破損していないか(誤ったDB/別アプリ/破損DBの全置換を防ぐ)
+    try {
+      const probe = new Database(candidate, { readonly: true, fileMustExist: true });
+      const row = probe.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE type='table' AND name IN ('tournaments','players','matches')").get();
+      let integ = "";
+      try { integ = (probe.pragma("integrity_check", { simple: true }) || "").toString(); } catch (e) { integ = "error"; }
+      probe.close();
+      if (!row || row.c < 3) return { error: "KTTAのDBではないようです（tournaments / players / matches が揃っていません）" };
+      if (integ !== "ok") return { error: "DBファイルが破損しています（integrity_check: " + (integ || "失敗") + "）" };
+    } catch (e) { return { error: "DBの内容を検証できませんでした: " + e.message }; }
+    // ③ 安全網スナップショット → 差し替え(失敗時は中止する共通ヘルパ)
+    return _swapDbWithSafety(candidate, originalName || "upload");
+  } catch (e) {
+    return { error: "復元に失敗しました: " + e.message };
+  } finally {
+    for (const t of tmps) { try { fs.rmSync(t, { force: true }); } catch (e) {} }
+  }
 }
 
 const pushStmts = {
@@ -7485,7 +7546,7 @@ module.exports = {
   setRefereePasscode, verifyRefereePasscode,   // #261 会場パスコード
   kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription, getPushPlayerIds,
   // DB スナップショット (バックアップ/復元)
-  createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, hasOngoingTournament,
+  createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, restoreFromUpload, hasOngoingTournament,
   // オーナー監査ログ (上級権限)
   logOwnerAction, getOwnerAudit,
   // 操作ログ + Undo
