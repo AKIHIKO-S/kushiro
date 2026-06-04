@@ -499,6 +499,17 @@ const PUBLIC_MATCH_OMIT = new Set([
   "sets_json", "tournament_id", "created_at", "updated_at",
 ]);
 function publicMatch(m) { const o = {}; for (const k in m) if (!PUBLIC_MATCH_OMIT.has(k)) o[k] = m[k]; return o; }
+// /live(on_table/recent_finished)専用の射影。/matches より残す列が多い: 再コール系
+// (call_count*/recall_count/called_at)は PII でなく /viewer/live が「再コール」バッジ・呼出時刻として
+// 観戦者に表示する意図的機能(コート盤面 tables[].match も表示)。これを落とすと盤面と進行中リストで
+// バッジが不一致になるため、/live では残し、真に内部の列(Elo差分/承認待ち/次戦リンク/原文sets_json等)のみ落とす。
+const LIVE_MATCH_OMIT = new Set([
+  "referee_id", "pending_result",
+  "winner_rating_delta", "loser_rating_delta",
+  "next_match_id", "next_slot",
+  "sets_json", "tournament_id", "created_at", "updated_at",
+]);
+function liveMatch(m) { const o = {}; for (const k in m) if (!LIVE_MATCH_OMIT.has(k)) o[k] = m[k]; return o; }
 app.get("/api/public/tournaments/:id/matches", (req, res) => {
   // 進行フィンガープリントを ETag 化(未変化の再取得は304で本体0=ポーリング軽量化)。
   const fp = db.getOpsFingerprint(req.params.id);
@@ -2524,13 +2535,14 @@ function slimPublicState(st) {
     blocks: m.blocks, is_blocked: m.is_blocked,
   }));
   return {
-    // on_table / recent_finished は callable と違いフル row が素通しだった(viewer未使用の
-    // next_match_id/referee_id/rating_delta/sets_json 等を全観客へ毎回配布)。publicMatch(P3の射影)で
-    // 内部列を落とす。1得点変化×200観客の差が大きい。elapsed_min/pending(算出済)は publicMatch が保持。
+    // on_table / recent_finished は callable と違いフル row が素通しだった(内部の
+    // next_match_id/referee_id/rating_delta/sets_json 等を全観客へ毎回配布)。liveMatch で内部列のみ落とす。
+    // 1得点変化×200観客の差が大きい。再コール系(call_count*/recall_count/called_at)・elapsed_min/pending は
+    // /viewer/live がバッジ/呼出時刻として表示するため liveMatch が保持(/matches とは別射影=盤面と整合)。
     tournament: sanitizeTournamentPublic(st.tournament), tables: st.tables,
-    on_table: (st.on_table || []).map(publicMatch),
+    on_table: (st.on_table || []).map(liveMatch),
     callable: slimCall, waiting: st.waiting,
-    recent_finished: (st.recent_finished || []).slice(0, 12).map(publicMatch),
+    recent_finished: (st.recent_finished || []).slice(0, 12).map(liveMatch),
     finished_count: st.finished_count,
     event_stats: st.event_stats, total_matches: st.total_matches, progress: st.progress,
   };

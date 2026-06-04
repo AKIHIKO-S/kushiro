@@ -188,3 +188,25 @@ test("(f) 公開 /matches: 内部列を射影で除去・表示列は維持・ET
   const r2 = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`, { headers: { "If-None-Match": etag } });
   assert.strictEqual(r2.status, 304, "未変化は304");
 });
+
+test("(g) /live 射影: 再コール系(call_count*/recall/called_at)を保持し内部列のみ除去(P4回帰)", async () => {
+  const t = await adminPost("/api/tournaments", { name: "live-proj", date: "2027-01-01" });
+  await adminPut(`/api/tournaments/${t.id}/entry-settings`, { entries_open: 1, event_config: [{ name: "S", type: "singles", fee: 0 }] });
+  for (const nm of ["山田 太郎", "鈴木 一"]) await adminPost(`/api/tournaments/${t.id}/entrants`, { event: "S", name: nm, status: "confirmed" });
+  await adminPost(`/api/tournaments/${t.id}/bracket`, { event: "S", regenerate: true });
+  const list = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
+  const m = list.find(x => x.player1_name && x.player2_name && x.player1_name !== "BYE" && x.player2_name !== "BYE");
+  await adminPost(`/api/matches/${m.id}/finish`, { winner_slot: 1, sets: [[11, 5], [11, 7], [11, 9]] });
+  const live = await fetch(BASE + `/api/public/tournaments/${t.id}/live`).then(r => r.json());
+  const rf = (live.recent_finished || []).find(x => x.id === m.id);
+  assert.ok(rf, "直近結果に終了試合がある");
+  // 再コール系は /viewer/live がバッジ/呼出時刻に使う=保持(キーが存在すること。値0でも可)。
+  // 実在カラムは call_count/call_count_p1/call_count_p2/called_at(recall_count列は存在しない)。
+  ["call_count", "call_count_p1", "call_count_p2", "called_at"].forEach(k =>
+    assert.ok(k in rf, `再コール列 ${k} は /live で保持`));
+  // 表示列は維持
+  ["winner_name", "player1_name", "sets", "status"].forEach(k => assert.ok(k in rf, `表示列 ${k} 維持`));
+  // 内部列は除去
+  ["referee_id", "winner_rating_delta", "loser_rating_delta", "next_match_id", "sets_json", "tournament_id"].forEach(k =>
+    assert.ok(!(k in rf), `内部列 ${k} は /live から除去`));
+});
