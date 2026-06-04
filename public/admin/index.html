@@ -3023,11 +3023,11 @@ const A = {
  let paymentNote = "参加料は、大会当日の開会式前に受付でお支払いください。";
 
  // 種目編集テーブル
- const eventsTable = h("table", { className: "tbl" });
+ const eventsTable = h("table", { className: "tbl", style: { minWidth: "720px" } });
  const renderEventsTable = () => {
  clear(eventsTable);
  eventsTable.appendChild(h("thead", {}, h("tr", {},
- h("th", {}, "種目名"),
+ h("th", { style: { minWidth: "220px" } }, "種目名"),
  h("th", { style: { width: "92px" } }, "形式"),
  h("th", { style: { width: "120px" } }, "一般(¥)"),
  h("th", { style: { width: "120px" } }, "中高生(¥)"),
@@ -3283,7 +3283,7 @@ const A = {
  ),
 
  h("h3", { className: "text-sm font-bold mt-3 mb-2" }, "① 種目・料金設定"),
- eventsTable,
+ h("div", { style: { overflowX: "auto", marginBottom: "2px", paddingBottom: "2px" } }, eventsTable),
  h("div", { className: "flex gap-2 mt-2", style: { flexWrap: "wrap" } },
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => {
@@ -3498,7 +3498,7 @@ const A = {
  document.querySelector(".modal-bg")?.remove();
  } }, "保存して閉じる"),
  );
- openModal("申込フォーム生成 (Jimdo / STUDIO 埋込)", body, foot);
+ openModal("申込フォーム生成 (Jimdo / STUDIO 埋込)", body, foot, { size: "lg" });
  },
 
  // ── 種目カタログ ピッカー (デフォルト種目から複数選択) ──
