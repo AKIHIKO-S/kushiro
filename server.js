@@ -901,6 +901,33 @@ app.get("/api/players/:id", (req, res) => {
   if (!player) return res.status(404).json({ error: "選手が見つかりません" });
   res.json(player);
 });
+// ─── 楽観ロック(同時編集の衝突検知) ──────────────────────────────
+// 保存時に「他の端末が先に編集したか」を判定し、競合なら 409 を返して後勝ち(変更の黙殺)を防ぐ。
+// 既定=内容ベース: クライアントが base_fields(編集対象フィールドの“編集開始時の値”)を送り、現在値と突き合わせる。
+//   → Elo レーティング等の機械的更新(updated_at だけ動く)を競合と誤検知しない(これが重要)。
+// base_fields が無い時のみ版ベース(base_updated_at)へフォールバック(機械churnの無い記録向け・後方互換)。
+// いずれも未指定なら従来どおり通す。
+function occStale(current, body) {
+  if (!current || !body) return false;
+  if (body.base_fields && typeof body.base_fields === "object") {
+    for (const k of Object.keys(body.base_fields)) {
+      if (String(current[k] == null ? "" : current[k]) !== String(body.base_fields[k] == null ? "" : body.base_fields[k])) return true;
+    }
+    return false;
+  }
+  const base = body.base_updated_at != null ? body.base_updated_at : body.expected_updated_at;
+  if (base == null || base === "") return false;
+  return String(current.updated_at == null ? "" : current.updated_at) !== String(base);
+}
+function stripOcc(body) { if (body) { delete body.base_fields; delete body.base_updated_at; delete body.expected_updated_at; } return body; }
+function sendConflict(res, current) {
+  return res.status(409).json({
+    conflict: true,
+    error: "他の端末で先に更新されました。画面を一度閉じて最新を確認してから、もう一度お試しください。",
+    current,
+  });
+}
+
 app.post("/api/players", requireAdmin, (req, res) => {
   try {
     res.status(201).json(db.createPlayer(req.body));
@@ -912,7 +939,10 @@ app.post("/api/players", requireAdmin, (req, res) => {
   }
 });
 app.put("/api/players/:id", requireAdmin, (req, res) => {
-  const player = db.updatePlayer(req.params.id, req.body);
+  const cur = db.getPlayer(req.params.id);
+  if (!cur) return res.status(404).json({ error: "選手が見つかりません" });
+  if (occStale(cur, req.body)) return sendConflict(res, cur);
+  const player = db.updatePlayer(req.params.id, stripOcc(req.body));
   if (!player) return res.status(404).json({ error: "選手が見つかりません" });
   res.json(player);
 });
@@ -1204,7 +1234,10 @@ app.post("/api/tournaments", requireAdmin, (req, res) => {
   res.status(201).json(db.createTournament(req.body));
 });
 app.put("/api/tournaments/:id", requireAdmin, (req, res) => {
-  const t = db.updateTournament(req.params.id, req.body);
+  const cur = db.getTournament(req.params.id);
+  if (!cur) return res.status(404).json({ error: "大会が見つかりません" });
+  if (occStale(cur, req.body)) return sendConflict(res, cur);
+  const t = db.updateTournament(req.params.id, stripOcc(req.body));
   if (!t) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(t);
 });
@@ -1776,7 +1809,9 @@ app.get("/api/public/tournaments/:id/standings", (req, res) => {
     matches: db.getLeagueMatchResults(req.params.id, event, block) });
 });
 app.put("/api/entrants/:id", requireAdmin, (req, res) => {
-  const e = db.updateEntrant(req.params.id, req.body || {});
+  const cur = db.getEntrant(req.params.id);
+  if (cur && occStale(cur, req.body)) return sendConflict(res, cur);
+  const e = db.updateEntrant(req.params.id, stripOcc(req.body) || {});
   if (!e) return res.status(404).json({ error: "エントリーが見つかりません" });
   res.json(e);
 });
@@ -3203,6 +3238,7 @@ app.post("/api/matches/:id/finish", requireAdmin, (req, res) => {
   const before = db.snapshotMatchRows(ids);
   const r = db.finishMatchOp(req.params.id, req.body || {});
   if (!r) return res.status(404).json({ error: "試合が見つかりません" });
+  if (r.conflict) return res.status(409).json(r);   // 同時編集の衝突: 別端末が先に別結果で確定済み
   if (!r.error && pre) db.recordOp(pre.tournament_id, "finish",
     `結果入力: ${r.winner_name || ""} ${r.winner_sets || 0}-${r.loser_sets || 0} ${r.loser_name || ""}（${pre.event || ""} ${pre.round || ""}）`,
     ids, before);
@@ -3438,6 +3474,7 @@ app.post("/api/matches/:id/approve-result", requireAdmin, (req, res) => {
   const before = db.snapshotMatchRows(ids);
   const r = db.finishMatchOp(req.params.id, pend);
   if (!r) return res.status(404).json({ error: "試合が見つかりません" });
+  if (r.conflict) return res.status(409).json(r);   // 同時編集の衝突: 別端末が先に別結果で確定済み
   if (r.error) return res.status(400).json(r);
   try { db.markResultSource(m.id, "referee"); } catch (e) { /* 由来バッジ */ }
   db.clearPendingResult(m.id);

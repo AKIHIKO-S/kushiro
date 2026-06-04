@@ -101,6 +101,15 @@
       if (this.adminKey) h["X-Admin-Key"] = this.adminKey;
       return h;
     },
+    onConflict: null,   // 同時編集の衝突(409 conflict)を受けた時にアプリが差し込むフック
+    async _json(r) {
+      const j = await r.json().catch(() => ({}));
+      // 楽観ロックの衝突(他の端末が先に更新)を中央で検知してアプリへ通知(通知/再読込はフック側)。
+      if (r && r.status === 409 && j && j.conflict && typeof this.onConflict === "function") {
+        try { this.onConflict(j); } catch (e) {}
+      }
+      return j;
+    },
     async get(url) {
       // 管理キーを付与 (ADMIN_KEY 設定時に /api/admin/* 等の GET が 401 になる不具合を修正)。
       // 閲覧/審判ページは adminKey 未設定なので X-Admin-Key は付かない (_headers 参照)。
@@ -112,20 +121,20 @@
         method: "POST", headers: this._headers(),
         body: JSON.stringify(data || {})
       });
-      return r.json();
+      return this._json(r);
     },
     async put(url, data) {
       const r = await fetch(this.baseUrl + url, {
         method: "PUT", headers: this._headers(),
         body: JSON.stringify(data || {})
       });
-      return r.json();
+      return this._json(r);
     },
     async del(url) {
       const r = await fetch(this.baseUrl + url, {
         method: "DELETE", headers: this._headers()
       });
-      return r.json();
+      return this._json(r);
     },
   };
 
@@ -219,6 +228,10 @@
       if (res.status >= 500) {                         // サーバ一時障害: キューへ積み再試行(取りこぼし防止)
         const q = loadQ(); q.push(item); saveQ(q); notify();
         return { queued: true, op_id, retry: true };
+      }
+      // 同時編集の衝突(他端末が先に確定): 再送しても通らないので通知して呼出側へ返す
+      if (res.status === 409 && res.json && res.json.conflict && typeof api.onConflict === "function") {
+        try { api.onConflict(res.json); } catch (e) {}
       }
       return res.json;                                 // 4xx 恒久エラー: 応答をそのまま返す(呼出側がエラー表示)
     };

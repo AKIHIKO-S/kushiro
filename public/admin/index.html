@@ -6366,6 +6366,12 @@ const A = {
      const r = await api.post("/api/players", data);
      if (r.error) return toast(r.error, "err");
    } else {
+     // 楽観ロック(内容ベース): 編集開始時のプロフィール各値を送る。他端末が先に編集していれば409。
+     // updated_at ではなく中身で照合するので、Eloレーティングの機械更新では誤検知しない。
+     data.base_fields = {
+       name: p.name || "", furigana: p.furigana || "", team: p.team || "", branch: p.branch || "",
+       gender: p.gender || "", category: p.category || "", note: p.note || "", appearances: p.appearances || 0,
+     };
      const r = await api.put("/api/players/" + p.id, data);
      if (r.error) return toast(r.error, "err");
    }
@@ -10713,7 +10719,9 @@ const EnT = {
  if (isNew) {
  await api.post(`/api/tournaments/${EnT.tournamentId}/entrants`, data);
  } else {
- await api.put(`/api/entrants/${existing.id}`, data);
+ data.base_updated_at = existing.updated_at;   // 楽観ロック: 編集開始時の版
+ const _r = await api.put(`/api/entrants/${existing.id}`, data);
+ if (_r && _r.error) return toast(_r.error, "err");   // 競合(409)等を通知
  }
  toast("保存しました", "ok");
  document.querySelector(".modal-bg")?.remove();

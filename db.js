@@ -3937,12 +3937,25 @@ function finishMatchInternal(matchId, data) {
   // correctResult は status を pending/on_table に戻してから呼ぶので、ここには該当しない。
   // #21: 同名・player_id=null のentrantブラケットで「別人(同名)の勝ち」を同一視しないよう、
   //      player_id→entrant_id の順で識別子一致を確認し、どちらも無い場合のみ名前一致にフォールバック。
-  if (m.status === "completed" && m.winner_name && winner.name === m.winner_name) {
-    const sameWinner =
+  if (m.status === "completed") {
+    // まず「同じ勝者」なら冪等(連打/オフライン再送)で無害に現状を返す。
+    const sameWinner = m.winner_name && winner.name === m.winner_name && (
       (winner.id != null && m.winner_id != null) ? (winner.id === m.winner_id) :
       (winner.entrant_id != null && m.winner_entrant_id) ? (winner.entrant_id === m.winner_entrant_id) :
-      (winner.id == null && m.winner_id == null);
+      (winner.id == null && m.winner_id == null));
     if (sameWinner) return m;
+    // 別の勝者で確定し直そうとしている = 別端末が先に確定した可能性(同時編集の衝突)。
+    // 黙って上書きすると先に入れた結果が消え、ブラケット進出も二重/不整合になり得るので、
+    // ここで止めて競合を返す。変更したい時は「修正(correct)」を明示的に使う
+    // (correct は status を pending/on_table に戻してから finish を呼ぶのでここには来ない)。
+    return {
+      conflict: true,
+      error: "この試合は既に別の結果で確定されています（他の端末で入力された可能性があります）。最新を確認のうえ、変更する場合は「修正」を使ってください。",
+      current: {
+        winner_name: m.winner_name, loser_name: m.loser_name,
+        winner_sets: m.winner_sets, loser_sets: m.loser_sets, status: m.status,
+      },
+    };
   }
 
   // セットスコア集計 (sets は [p1, p2] 視点。勝者が p1 側か p2 側かで数え方を反転)
