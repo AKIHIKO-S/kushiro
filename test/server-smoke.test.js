@@ -22,7 +22,7 @@ const adminPut = (p, b) => fetch(BASE + p, { method: "PUT", headers: akhead, bod
 before(async () => {
   srv = spawn(process.execPath, ["server.js"], {
     cwd: path.join(__dirname, ".."),
-    env: { ...process.env, PORT: String(PORT), ADMIN_KEY: KEY, DB_PATH: DB, NODE_ENV: "test", SSE_MAX: "10", SYNC_KEY: "smoke-sync-key", SYNC_CLOUD_URL: "http://127.0.0.1:9" },
+    env: { ...process.env, PORT: String(PORT), ADMIN_KEY: KEY, DB_PATH: DB, NODE_ENV: "test", SSE_MAX: "10", SYNC_KEY: "smoke-sync-key", SYNC_CLOUD_URL: "http://127.0.0.1:9", OWNER_KEY: "smoke-owner-key-2468" },
     stdio: "ignore",
   });
   for (let i = 0; i < 80; i++) {
@@ -345,4 +345,71 @@ test("(p) /api/sync/push は鍵総当たりを per-IP ロックアウト(#3)", a
     if (r.status === 429) got429 = true;
   }
   assert.ok(got429, "連続した誤キーで 429 ロックアウトに至る");
+});
+
+// ── オーナー(上級管理者)権限: 危険操作を ADMIN_KEY の上の OWNER_KEY へ隔離 ──
+const OKEY = "smoke-owner-key-2468";
+// 実施者名(日本語)はヘッダ(latin1)に直接入れられない。POST はボディ operator で運ぶ。
+const ohead = { ...jhead, "X-Owner-Key": OKEY };
+
+test("(q) オーナー権限: 危険操作は管理キーでは拒否され、オーナーキーで通る (隔離の契約)", async () => {
+  // export/all は requireOwner へ昇格 → 管理キーだけでは 401
+  const withAdmin = await fetch(BASE + "/api/export/all", { headers: akhead });
+  assert.strictEqual(withAdmin.status, 401, "管理キーのみの export/all は拒否(オーナーへ昇格): " + withAdmin.status);
+  // 誤ったオーナーキーは 401
+  const wrong = await fetch(BASE + "/api/export/all", { headers: { "X-Owner-Key": "WRONG" } });
+  assert.strictEqual(wrong.status, 401, "誤オーナーキーは401");
+  // 正しいオーナーキーで通る
+  const ok = await fetch(BASE + "/api/export/all", { headers: { "X-Owner-Key": OKEY } });
+  assert.strictEqual(ok.status, 200, "正オーナーキーで export/all 200");
+  // verify エンドポイント
+  const v = await fetch(BASE + "/api/owner/verify", { headers: { "X-Owner-Key": OKEY } }).then(r => r.json());
+  assert.ok(v.ok, "owner/verify ok");
+});
+
+test("(r) オーナー DB保存: .db を一貫スナップショットで返す(SQLiteヘッダ)", async () => {
+  const res = await fetch(BASE + "/api/owner/db-download", { headers: { "X-Owner-Key": OKEY, "X-Owner-Operator": encodeURIComponent("保存太郎") } });
+  assert.strictEqual(res.status, 200, "200で返る");
+  const buf = Buffer.from(await res.arrayBuffer());
+  assert.strictEqual(buf.slice(0, 15).toString("latin1"), "SQLite format 3", "SQLiteファイルを返す");
+  assert.ok(buf.length > 1000, "中身がある");
+});
+
+test("(s) オーナー 全選手削除: 実施者名と件数の打鍵確認が必須・実行で自動バックアップ＋監査記録", async () => {
+  // 選手を2人作る
+  await adminPost("/api/players", { name: "削除対象A", team: "X" });
+  await adminPost("/api/players", { name: "削除対象B", team: "X" });
+  const before = await fetch(BASE + "/api/players").then(r => r.json());
+  const total = before.length;
+  assert.ok(total >= 2, "選手が居る: " + total);
+  // 実施者名なし → 400
+  const noOp = await fetch(BASE + "/api/owner/players/delete-all", { method: "POST",
+    headers: { ...jhead, "X-Owner-Key": OKEY }, body: JSON.stringify({ confirm: total }) }).then(r => ({ s: r.status }));
+  assert.strictEqual(noOp.s, 400, "実施者名なしは400");
+  // 件数間違い → 400 (実施者名はボディで渡し、件数チェックを単独で検証)
+  const badCount = await fetch(BASE + "/api/owner/players/delete-all", { method: "POST",
+    headers: ohead, body: JSON.stringify({ confirm: total + 99, operator: "テスト実施者" }) }).then(r => ({ s: r.status }));
+  assert.strictEqual(badCount.s, 400, "件数不一致は400");
+  // 正しく削除 → ok + backup名 + 監査
+  const ok = await fetch(BASE + "/api/owner/players/delete-all", { method: "POST",
+    headers: ohead, body: JSON.stringify({ confirm: total, operator: "テスト実施者" }) }).then(r => r.json());
+  assert.ok(ok.ok && ok.deleted === total && ok.backup, "削除成功+自動バックアップ: " + JSON.stringify(ok));
+  const after = await fetch(BASE + "/api/players").then(r => r.json());
+  assert.strictEqual(after.length, 0, "全選手が消えた");
+  // 監査ログに players_delete_all + 実施者名
+  const audit = await fetch(BASE + "/api/owner/audit", { headers: { "X-Owner-Key": OKEY } }).then(r => r.json());
+  const ev = (audit.log || []).find(e => e.action === "players_delete_all");
+  assert.ok(ev && ev.operator === "テスト実施者", "監査に削除と実施者が記録: " + JSON.stringify(ev));
+});
+
+test("(t) 機密.dbの送出は共有キャッシュ禁止(no-store)で硬化されている", async () => {
+  // 全PIIを含む .db が中間キャッシュに残らないこと(snapshots/download と owner/db-download 両経路)。
+  const mk = await fetch(BASE + "/api/admin/snapshots", { method: "POST", headers: { ...jhead, "X-Owner-Key": OKEY }, body: "{}" }).then(r => r.json());
+  assert.ok(mk && mk.name, "スナップショット作成: " + JSON.stringify(mk));
+  const dl = await fetch(BASE + "/api/admin/snapshots/download", { method: "POST",
+    headers: { ...jhead, "X-Owner-Key": OKEY }, body: JSON.stringify({ name: mk.name }) });
+  assert.strictEqual(dl.status, 200, "DL 200");
+  assert.match(dl.headers.get("cache-control") || "", /no-store/, "snapshots/download は no-store");
+  const dl2 = await fetch(BASE + "/api/owner/db-download", { headers: { "X-Owner-Key": OKEY } });
+  assert.match(dl2.headers.get("cache-control") || "", /no-store/, "owner/db-download は no-store");
 });

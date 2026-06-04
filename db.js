@@ -6998,6 +6998,27 @@ function hasOngoingTournament() {
   return !!sqlite.prepare(`SELECT 1 FROM tournaments WHERE status='ongoing' LIMIT 1`).get();
 }
 
+// ─── オーナー監査ログ (上級権限での破壊的操作の証跡) ───────────────
+// 共有鍵では個人識別できないため、実行者(operator 自由記入)+操作+詳細+IP を残す(draw_log と同思想)。
+sqlite.exec(`CREATE TABLE IF NOT EXISTS owner_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT DEFAULT (datetime('now','localtime')),
+  action TEXT NOT NULL,
+  detail TEXT DEFAULT '',
+  operator TEXT DEFAULT '',
+  ip TEXT DEFAULT ''
+)`);
+function logOwnerAction({ action, detail, operator, ip } = {}) {
+  try {
+    sqlite.prepare(`INSERT INTO owner_audit (action, detail, operator, ip) VALUES (?,?,?,?)`)
+      .run(String(action || ""), String(detail || ""), String(operator || ""), String(ip || ""));
+  } catch (e) { /* 監査の失敗は本処理を止めない */ }
+}
+function getOwnerAudit(limit = 200) {
+  return sqlite.prepare(`SELECT id, ts, action, detail, operator, ip FROM owner_audit ORDER BY id DESC LIMIT ?`)
+    .all(Math.min(parseInt(limit) || 200, 1000));
+}
+
 // ─── 操作ログ + Undo (誤操作/抗議対応) ───────────────────────────
 // 影響した試合行の「前状態」を before_json に保持し、LIFO で復元する。
 function snapshotMatchRows(ids) {
@@ -7465,6 +7486,8 @@ module.exports = {
   kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription, getPushPlayerIds,
   // DB スナップショット (バックアップ/復元)
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, hasOngoingTournament,
+  // オーナー監査ログ (上級権限)
+  logOwnerAction, getOwnerAudit,
   // 操作ログ + Undo
   snapshotMatchRows, collectForwardChain, recordOp, getOpLog, undoLastOp,
   // ベスト8 (準々決勝進出者)

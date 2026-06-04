@@ -95,6 +95,18 @@ server {
 
 審判が台ごとに「自分のコートだけ」結果報告できる仕組みを実運用化。マスタ `referee_token`(サーバ内秘密)から各コートのキーを `HMAC-SHA256(referee_token, "court:N")` で導出(個別発行不要)。`GET /api/admin/tournaments/:id/referee-court-qr` がコート別の **ローカル生成QR + 到達可能なURL** を返す。`refBaseUrl` は本部PCが `localhost/127.0.0.1` でアクセスしている場合に会場LAN IPへ自動置換(QRを他端末から開けるように)。審判は担当コートのQRをスキャンするだけで入力画面へ(長いトークン付きURLの手入力=伝達難易度を回避)。別コートのキーでは `resolveRefereeCourt` のHMAC不一致で弾かれ、報告も `m.table_no === req.refCourt` で担当コート限定(E2E: コート1トークンでコート2詐称→403)。会場パスコード(#261)と併用で、リンク拡散時も会場外からは報告不可。管理UIに全コートQRの一覧表示+台掲示用の印刷シート(`_printCourtQR`)。
 
+## オーナー権限（上級管理者・危険操作の隔離, 2026-06）
+
+単一 `ADMIN_KEY` では、その鍵を持つ全員が**全選手削除・DB全体のエクスポート/.dbダウンロード・バックアップ/復元・PII一括purge・大会削除**をワンクリックで実行でき、事故でも悪意でも全消去/全PII持ち出しが可能だった。これらを第2の強い鍵 `OWNER_KEY` の背後へ隔離。
+
+- **`requireOwner`(server.js)**: `OWNER_KEY` 設定時はオーナーキー必須(定時間比較 `safeEqualStr`・per-IP 失敗ロック 8回/10分→429)。`X-Owner-Key`(または body.owner_key)で受ける。
+- **後方互換フォールバック**: `OWNER_KEY` 未設定時は `requireAdmin` にフォールバック(分離は opt-in=未活性)。**セキュリティは今より弱くならない**(無認証は常に拒否)/このコードが入った瞬間に既存のバックアップ・大会削除等がロックアウトされない。`GET /api/owner/configured` で分離が有効かを真偽だけ返し(鍵は漏らさない)、UIは未設定時にオーナー入力を求めない。
+- **隔離した操作**: `/api/admin/snapshots*`(バックアップ/保存/DLは全PIIの.db/復元)・`/api/export/all`・`/api/export/players`・`DELETE /api/players`(全削除)・`/api/players/cleanup-invalid`・`/api/players/:id/merge`・`DELETE /api/tournaments/:id`・`DELETE /api/submissions/:id/pii`・`/api/admin/purge-submission-pii`。新設 `GET /api/owner/db-download`(一貫スナップショットを生成し `no-store`+`noindex` で.db返却=DB保存)・`POST /api/owner/players/delete-all`(**実施者名必須＋現在の選手数の打鍵確認＋実行前に自動バックアップ**)。
+- **監査ログ `owner_audit`**: 上級操作を「いつ・何を・実施者(自由記入)・IP」で記録(`db.logOwnerAction`/`GET /api/owner/audit`)。共有鍵では個人識別できないため実施者名で最小の説明責任(draw_log と同思想)。
+- **管理UI**: 「🔒 システム管理（オーナー）」に危険操作を集約(普段は隠す)。鍵はタブの sessionStorage に保持(閉じれば消える)。日本語の実施者名は HTTP ヘッダ(latin1)に直接入れられないため `X-Owner-Operator` は encodeURIComponent 済/POST は UTF-8 の body.operator 優先。
+- 回帰: `server-smoke(q,r,s)`(隔離契約・.db返却・全削除の確認/バックアップ/監査)・`owner-fallback`(未設定時の後方互換と無認証拒否)。
+- **運用**: 本番で分離を有効化するには `/etc/ktta.env` に `OWNER_KEY=<長い乱数>` を追記し `systemctl restart ktta`。ADMIN_KEY とは別の値にする。
+
 ## 監査履歴
 
 2026-06 多エージェント敵対的監査(6次元×独立検証)で確定3件を修正:

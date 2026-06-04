@@ -461,6 +461,47 @@ function isAdminAuthed(req) {
   return !!(key && safeEqualStr(key, ADMIN_KEY));
 }
 
+// ── オーナー権限 (管理キーの更に上の「上級管理者」) ──
+// 全選手削除・DB全体の保存(.dbダウンロード)・バックアップ/復元・全データエクスポート・PII一括削除・大会削除など、
+// 取り返しのつかない/全件PIIを動かす操作を、普段使いの ADMIN_KEY から分離した別キー OWNER_KEY の背後に隔離する。
+// フェイルクローズ: OWNER_KEY 未設定なら上級機能は一切使えない(管理キーにフォールバックしない=既存環境を勝手に露出しない)。
+const OWNER_KEY = process.env.OWNER_KEY || "";
+// オーナー鍵は最重要(漏れると全PII持ち出し/全削除が可能)。per-IP の連続失敗で一時ブロック。
+const _ownerFail = new Map(); // ip -> { count, resetAt }
+const OWNER_FAIL_MAX = 8, OWNER_FAIL_WINDOW = 10 * 60000;
+setInterval(() => { const now = Date.now(); for (const [ip, e] of _ownerFail) if (now > e.resetAt) _ownerFail.delete(ip); }, OWNER_FAIL_WINDOW).unref();
+function ownerBlocked(ip) { const e = _ownerFail.get(ip); return !!(e && Date.now() <= e.resetAt && e.count >= OWNER_FAIL_MAX); }
+function ownerFailMark(ip) { const now = Date.now(), e = _ownerFail.get(ip); if (!e || now > e.resetAt) _ownerFail.set(ip, { count: 1, resetAt: now + OWNER_FAIL_WINDOW }); else e.count++; }
+function ownerOk(ip) { _ownerFail.delete(ip); }
+function requireOwner(req, res, next) {
+  const ip = clientIp(req);
+  if (ownerBlocked(ip)) return res.status(429).json({ error: "試行回数が多すぎます。しばらく待ってから再試行してください。" });
+  if (OWNER_KEY) {
+    // 分離が有効: オーナーキー必須(管理キーだけでは通らない)。
+    const key = req.get("X-Owner-Key") || (req.body && req.body.owner_key) || "";
+    if (key && safeEqualStr(key, OWNER_KEY)) { ownerOk(ip); return next(); }
+    ownerFailMark(ip);
+    return res.status(401).json({ error: "オーナーキーが必要です" });
+  }
+  // OWNER_KEY 未設定: 分離は未活性(opt-in)。後方互換で管理キーにフォールバック(=従来どおり)。
+  // 既存環境にこのコードが入った瞬間にバックアップ/復元/削除がロックアウトされるのを防ぐ。
+  // セキュリティは「今より弱くならない」: OWNER_KEY を設定した時点でゲートが立つ。
+  return requireAdmin(req, res, next);
+}
+// オーナー操作の実行者名(自由記入・日本語可)を取り出す。監査ログ用。
+// HTTPヘッダは latin1 のみ(日本語不可)なので、ヘッダは encodeURIComponent 済みとして decode する。
+// JSONボディ(operator)は UTF-8 をそのまま運べるため、POST はボディを優先。
+function ownerOperator(req) {
+  if (req.body && req.body.operator) return String(req.body.operator).slice(0, 80);
+  let op = req.get("X-Owner-Operator") || "";
+  try { op = decodeURIComponent(op); } catch (e) { /* 不正な%列はそのまま */ }
+  return String(op).slice(0, 80);
+}
+// オーナー操作を監査ログに記録するヘルパ。
+function auditOwner(req, action, detail) {
+  try { db.logOwnerAction({ action, detail: detail || "", operator: ownerOperator(req), ip: clientIp(req) }); } catch (e) {}
+}
+
 // 未認証レスポンスから漏らしてはならない大会の秘密フィールド。
 //  referee_token / referee_passcode(_required): 審判認証の鍵 (#1)。漏洩すると会場限定・パスコード制が遠隔から無効化される。
 //  entry_gas_url: 申込POST先の GAS URL (#14)。漏洩すると集計シートへの直接スパムを許す。
@@ -822,7 +863,8 @@ app.put("/api/players/:id", requireAdmin, (req, res) => {
   res.json(player);
 });
 // 既存DBから「チーム名と判定される」選手レコードを削除 (admin 専用)
-app.post("/api/players/cleanup-invalid", requireAdmin, (req, res) => {
+app.post("/api/players/cleanup-invalid", requireOwner, (req, res) => {
+  auditOwner(req, "players_cleanup_invalid", "");
   res.json(db.cleanupInvalidPlayers());
 });
 // 所属(校名)から小/中/高/大カテゴリを一括自動振り分け (#247)
@@ -833,16 +875,19 @@ app.post("/api/players/normalize-categories", requireAdmin, (req, res) => {
 app.delete("/api/players/:id", requireAdmin, (req, res) => {
   db.deletePlayer(req.params.id); res.json({ ok: true });
 });
-app.delete("/api/players", requireAdmin, (req, res) => {
+// 全選手削除の素の経路もオーナーへ隔離(UIは確認付きの /api/owner/players/delete-all を使う)。
+app.delete("/api/players", requireOwner, (req, res) => {
+  auditOwner(req, "players_delete_all_raw", "");
   db.deleteAllPlayers(); res.json({ ok: true });
 });
 // 選手の重複候補 + 結合 (マージ) #275
 app.get("/api/player-merge/candidates", requireAdmin, (req, res) => {
   res.json(db.findDuplicatePlayerCandidates());
 });
-app.post("/api/players/:id/merge", requireAdmin, (req, res) => {
+app.post("/api/players/:id/merge", requireOwner, (req, res) => {
   const r = db.mergePlayers(req.params.id, (req.body || {}).duplicate_id);
   if (r.error) return res.status(400).json(r);
+  auditOwner(req, "players_merge", "survivor=" + req.params.id + " dup=" + ((req.body || {}).duplicate_id || ""));
   res.json(r);
 });
 
@@ -1077,8 +1122,11 @@ app.put("/api/tournaments/:id", requireAdmin, (req, res) => {
   if (!t) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(t);
 });
-app.delete("/api/tournaments/:id", requireAdmin, (req, res) => {
-  db.deleteTournament(req.params.id); res.json({ ok: true });
+app.delete("/api/tournaments/:id", requireOwner, (req, res) => {
+  const t = db.getTournament(req.params.id);
+  db.deleteTournament(req.params.id);
+  auditOwner(req, "tournament_delete", (t && t.name ? t.name + " " : "") + "(" + req.params.id + ")");
+  res.json({ ok: true });
 });
 
 // ═══ 管理API（試合CRUD・セット記録） ═════════════
@@ -2688,25 +2736,42 @@ app.get("/api/tournaments/:id/best8", (req, res) => {
 });
 
 // ─── DB スナップショット (試合中の自動バックアップ + 手動保存/復元) ───────────
-// 一覧 (名前/サイズ/日時のみ・中身は返さない → GET 可)
-app.get("/api/admin/snapshots", requireAdmin, (req, res) => {
+// バックアップ/復元/DB全体ダウンロードは「全件PIIを動かす/上書きする」最重要操作のため、
+// 普段使いの管理キーではなく上級の OWNER_KEY (requireOwner) の背後へ隔離した。
+// 一覧 (名前/サイズ/日時のみ・中身は返さない)
+app.get("/api/admin/snapshots", requireOwner, (req, res) => {
   res.json({ snapshots: db.listSnapshots(), auto_enabled: true,
     ongoing: db.hasOngoingTournament() });
 });
-// 今すぐ保存 (管理者)
-app.post("/api/admin/snapshots", requireAdmin, async (req, res) => {
-  try { res.json(await db.createSnapshot("manual")); }
+// 今すぐ保存 (オーナー)
+app.post("/api/admin/snapshots", requireOwner, async (req, res) => {
+  try { const r = await db.createSnapshot("manual"); auditOwner(req, "backup_create", r && r.name); res.json(r); }
   catch (e) { res.status(500).json({ error: "保存に失敗しました: " + e.message }); }
 });
-// ダウンロード (管理者・POST で X-Admin-Key を送らせる。ファイルをそのまま返す)
-app.post("/api/admin/snapshots/download", requireAdmin, (req, res) => {
-  const p = db.snapshotPath((req.body && req.body.name) || "");
-  if (!p) return res.status(404).json({ error: "スナップショットが見つかりません" });
-  res.download(p);
-});
-// 復元 (管理者・破壊的)。安全網スナップを取ってから差し替え、プロセス再起動。
-app.post("/api/admin/snapshots/restore", requireAdmin, (req, res) => {
+// 機密の .db ファイル送出の共通ヘルパ: 全PIIを含むため共有キャッシュ禁止(no-store)+noindex を硬化。
+// send 既定の 'public, max-age=0'+ETag を上書きし、機密DBが中間キャッシュに残らないようにする。
+function sendDbFile(res, p, filename) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  if (filename) res.download(p, filename); else res.download(p);
+}
+// ダウンロード (オーナー・POST で X-Owner-Key を送らせる。ファイルをそのまま返す=全PII)
+app.post("/api/admin/snapshots/download", requireOwner, (req, res) => {
   const name = (req.body && req.body.name) || "";
+  const p = db.snapshotPath(name);
+  if (!p) return res.status(404).json({ error: "スナップショットが見つかりません" });
+  auditOwner(req, "backup_download", name);
+  sendDbFile(res, p);
+});
+// 復元 (オーナー・破壊的)。安全網スナップを取ってから差し替え、プロセス再起動。
+app.post("/api/admin/snapshots/restore", requireOwner, (req, res) => {
+  const name = (req.body && req.body.name) || "";
+  // 復元はDB全体(=owner_audit表ごと)を差し替えるため、復元後DBには監査が載らない。
+  // ① 名前を先に検証 → ② DBクローズ前に監査を書く(prerestore安全網に残る) →
+  // ③ systemd journal にも残す(外部の durable トレイル) → ④ 実行。最も破壊的な操作の証跡を確保。
+  if (!db.snapshotPath(name)) return res.status(404).json({ error: "スナップショットが見つかりません" });
+  auditOwner(req, "db_restore", name);
+  console.log("[owner-audit] db_restore name=" + name + " operator=" + (ownerOperator(req) || "-") + " ip=" + clientIp(req));
   let r;
   try { r = db.restoreSnapshot(name); }
   catch (e) { return res.status(500).json({ error: "復元に失敗しました: " + e.message }); }
@@ -2717,6 +2782,41 @@ app.post("/api/admin/snapshots/restore", requireAdmin, (req, res) => {
     // 応答を送り切ってからプロセス終了 (systemd 等が再起動して復元後DBで再オープン)
     setTimeout(() => process.exit(0), 400);
   }
+});
+
+// ─── オーナー (上級管理者) 専用ルート ───────────────────────────
+// 鍵検証だけを行う(UIのロック解除に使用)。成功で操作可能を示す。
+app.get("/api/owner/verify", requireOwner, (req, res) => res.json({ ok: true }));
+// オーナー機能が構成されているか(鍵不要・真偽のみ)。UIが入口を出すかの判定用。鍵自体は漏らさない。
+app.get("/api/owner/configured", (req, res) => res.json({ configured: !!OWNER_KEY }));
+// オーナー監査ログ。
+app.get("/api/owner/audit", requireOwner, (req, res) => res.json({ log: db.getOwnerAudit(req.query.limit) }));
+// DB全体の保存(.dbダウンロード)。一貫スナップショットを生成してそのまま返す=全PIIを含む最重要操作。
+app.get("/api/owner/db-download", requireOwner, async (req, res) => {
+  try {
+    const snap = await db.createSnapshot("manual");   // WAL下でも一貫スナップショット(=バックアップも兼ねる)
+    const p = db.snapshotPath(snap.name);
+    if (!p) return res.status(500).json({ error: "スナップショット生成に失敗しました" });
+    auditOwner(req, "db_download", snap.name);
+    sendDbFile(res, p, "tournament-" + snap.name.replace(/^manual_/, ""));
+  } catch (e) { res.status(500).json({ error: "DB保存に失敗しました: " + e.message }); }
+});
+// 全選手の削除 (取り返しのつかない操作)。実行前に自動バックアップ + 件数の打鍵確認 + 実施者名を要求。
+app.post("/api/owner/players/delete-all", requireOwner, async (req, res) => {
+  const b = req.body || {};
+  const operator = ownerOperator(req);
+  if (!operator) return res.status(400).json({ error: "実施者名を入力してください（監査ログに記録します）。" });
+  const total = (db.getPlayers() || []).length;
+  if (Number(b.confirm) !== Number(total))
+    return res.status(400).json({ error: "確認のため、現在の選手数（" + total + "）を正確に入力してください。", expected: total });
+  let backup = null;
+  try { backup = await db.createSnapshot("manual"); }   // 実行前に自動バックアップ(復元可能に)
+  catch (e) { return res.status(500).json({ error: "事前バックアップに失敗したため中止しました: " + e.message }); }
+  try {
+    const r = db.deleteAllPlayers ? db.deleteAllPlayers() : null;
+    auditOwner(req, "players_delete_all", "deleted=" + total + " backup=" + (backup && backup.name));
+    res.json({ ok: true, deleted: total, backup: backup && backup.name });
+  } catch (e) { res.status(500).json({ error: "削除に失敗しました: " + e.message }); }
 });
 
 app.get("/api/public/tournaments/:id/live", (req, res) => {
@@ -3338,15 +3438,18 @@ app.get("/api/tournaments/:id/entry-issues", requireAdmin, (req, res) => {
   res.json(db.findEntrantDataIssues(req.params.id));
 });
 // PII 削除依頼対応: 申込原本と紐づく entrants の連絡先を匿名化(構造は残す)。閲覧トークンも失効。
-app.delete("/api/submissions/:id/pii", requireAdmin, (req, res) => {
+app.delete("/api/submissions/:id/pii", requireOwner, (req, res) => {
   const r = db.deleteSubmissionPII(req.params.id, { revoke_tokens: true });
   if (r.error) return res.status(404).json(r);
+  auditOwner(req, "pii_delete_one", "submission=" + req.params.id);
   res.json(r);
 });
 // 保持期間超過の申込原本PIIを手動で一括匿名化(?days=N)。env PII_RETENTION_DAYS 既定。
-app.post("/api/admin/purge-submission-pii", requireAdmin, (req, res) => {
+app.post("/api/admin/purge-submission-pii", requireOwner, (req, res) => {
   const days = req.query.days || req.body?.days || process.env.PII_RETENTION_DAYS;
-  res.json(db.purgeOldSubmissionPII(days));
+  const r = db.purgeOldSubmissionPII(days);
+  auditOwner(req, "pii_purge_old", "days=" + (days || ""));
+  res.json(r);
 });
 app.post("/api/tournaments/:id/entries/:pid/fix", requireAdmin, (req, res) => {
   const r = db.fixEntrant(req.params.pid, req.body || {});
@@ -3394,8 +3497,8 @@ app.post("/api/sync/tournament", requireAdmin, (req, res) => {
 });
 
 // ═══ インポート/エクスポート ══════════════════════════
-app.get("/api/export/all", requireAdmin, (req, res) => { res.json(db.exportAllData()); });
-app.get("/api/export/players", requireAdmin, (req, res) => { res.json(db.exportAllData()); });
+app.get("/api/export/all", requireOwner, (req, res) => { auditOwner(req, "export_all", ""); res.json(db.exportAllData()); });
+app.get("/api/export/players", requireOwner, (req, res) => { auditOwner(req, "export_players", ""); res.json(db.exportAllData()); });
 app.post("/api/import/players", requireAdmin, (req, res) => {
   res.json(db.importPlayers(req.body.players || []));
 });

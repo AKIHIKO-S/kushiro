@@ -1276,15 +1276,15 @@
 
  <div class="card">
  <div class="card-head"><div class="card-title">エクスポート</div></div>
- <p class="text-sm text-sub mb-3">全データをバックアップできます。</p>
+ <p class="text-sm text-sub mb-3">名簿・試合結果をCSVで書き出せます。</p>
  <div class="flex gap-2 flex-wrap">
- <button class="btn btn-ghost" onclick="A.exportJSON()">全データ JSON</button>
  <button class="btn btn-ghost" onclick="A.exportPlayersCSV()">選手 CSV</button>
  <button class="btn btn-ghost" onclick="A.exportMatchesCSV()">試合 CSV</button>
  </div>
  <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border)">
- <label class="field-label" style="color:var(--accent)">危険な操作</label>
- <button class="btn btn-danger btn-sm" onclick="A.resetAll()">全選手を削除</button>
+ <label class="field-label">全データ書き出し・バックアップ・全削除（上級）</label>
+ <p class="text-xs text-sub" style="margin:2px 0 8px">DB全体の保存・全選手削除など取り返しのつかない操作は、オーナー権限の「システム管理」に隔離しています。</p>
+ <button class="btn btn-sm" style="background:#fef2f2;color:#7f1d1d;border-color:#fca5a5" onclick="A.openOwnerPanel()">🔒 システム管理（オーナー）を開く</button>
  </div>
  </div>
  </div>
@@ -1705,9 +1705,9 @@ const A = {
  onClick: () => { document.querySelector(".modal-bg")?.remove();
    A.openDiagnostics(); } }, "本番診断パネルを開く"),
  h("button", { className: "btn btn-sm",
- style: { background: "#ecfdf5", color: "#065f46", borderColor: "#6ee7b7" },
+ style: { background: "#fef2f2", color: "#7f1d1d", borderColor: "#fca5a5" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
-   A.openBackups(); } }, "データ保護 (バックアップ/復元)"),
+   A.openOwnerPanel(); } }, "🔒 システム管理（オーナー）"),
  h("button", { className: "btn btn-sm",
  style: { background: "#eff6ff", color: "#1e40af", borderColor: "#93c5fd" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
@@ -1791,19 +1791,19 @@ const A = {
  openModal("📱 端末接続 (会場LAN) / クラウド同期", body, null);
  },
 
- // ── データ保護: DBスナップショット (バックアップ/復元) #201 ──
+ // ── データ保護: DBスナップショット (バックアップ/復元) #201 ── ※オーナー権限へ隔離
  async openBackups() {
+ if (!(await A.ensureOwner())) return;
  const fmtSize = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + " MB"
    : Math.max(1, Math.round(n / 1024)) + " KB";
  const fmtTime = (iso) => { try { return new Date(iso).toLocaleString("ja-JP"); } catch (e) { return iso; } };
  const listWrap = h("div", {});
 
  const downloadSnap = async (name) => {
-   if (!api.adminKey) return toast("管理キーが必要です（管理設定で入力してください）", "err");
    try {
      const res = await fetch("/api/admin/snapshots/download", {
        method: "POST",
-       headers: { "Content-Type": "application/json", "X-Admin-Key": api.adminKey },
+       headers: A._ownerHeaders(),
        body: JSON.stringify({ name }),
      });
      if (!res.ok) return toast("ダウンロード失敗 (" + res.status + ")", "err");
@@ -1816,9 +1816,9 @@ const A = {
    } catch (e) { toast("通信エラー: " + e.message, "err"); }
  };
  const restoreSnap = async (name) => {
-   if (!api.adminKey) return toast("管理キーが必要です", "err");
    if (!confirm("「" + name + "」で現在のデータを上書き復元します。\n直前の状態は自動で安全網バックアップに保存されます。\n復元後サーバーが再起動します。続行しますか？")) return;
-   const r = await api.post("/api/admin/snapshots/restore", { name });
+   const rr = await A.ownerFetch("/api/admin/snapshots/restore", { method: "POST", body: { name } });
+   const r = rr.json || {};
    if (r && r.ok) {
      toast("復元しました。サーバー再起動を待っています…", "ok");
      setTimeout(() => location.reload(), 4500);
@@ -1827,7 +1827,7 @@ const A = {
  const load = async () => {
    clear(listWrap);
    listWrap.appendChild(h("div", { className: "text-sm text-sub" }, "読み込み中…"));
-   const data = await api.get("/api/admin/snapshots");
+   const data = (await A.ownerFetch("/api/admin/snapshots")).json || {};
    clear(listWrap);
    const snaps = (data && data.snapshots) || [];
    listWrap.appendChild(h("div", { className: "text-xs", style: { marginBottom: "8px",
@@ -1853,9 +1853,8 @@ const A = {
    });
  };
  const saveBtn = h("button", { className: "btn btn-sm", onClick: async () => {
-   if (!api.adminKey) return toast("管理キーが必要です（管理設定で入力してください）", "err");
    saveBtn.disabled = true; saveBtn.textContent = "保存中…";
-   const r = await api.post("/api/admin/snapshots", {});
+   const r = (await A.ownerFetch("/api/admin/snapshots", { method: "POST", body: {} })).json || {};
    saveBtn.disabled = false; saveBtn.textContent = "今すぐ保存";
    if (r && r.ok) toast("保存しました", "ok"); else toast("保存失敗: " + ((r && r.error) || ""), "err");
    load();
@@ -2268,7 +2267,9 @@ const A = {
 
  async deleteTournament(id) {
  if (!confirm("この大会を削除します。よろしいですか？（試合データも削除されます）")) return;
- await api.del("/api/tournaments/" + id);
+ if (!(await A.ensureOwner())) return;   // 大会削除はオーナー権限
+ const r = await A.ownerFetch("/api/tournaments/" + id, { method: "DELETE" });
+ if (!r.ok) return toast("削除失敗: " + ((r.json && r.json.error) || r.status), "err");
  toast("削除しました", "ok");
  await A.reload();
  },
@@ -5818,10 +5819,12 @@ const A = {
  const others = g.players.filter(p => p.id !== survivorId);
  if (!others.length) return toast("結合する相手がいません", "err");
  if (!confirm(`「${others.map(p => p.name).join("」「")}」を「${survName}」に統合します。\n戦績・入賞・出場記録は「${survName}」に引き継がれ、統合元は削除されます。\n元に戻せません。よろしいですか?`)) return;
+ if (!(await A.ensureOwner())) return;   // 選手マージはオーナー権限
  let ok = 0;
  for (const o of others) {
- const r = await api.post(`/api/players/${survivorId}/merge`, { duplicate_id: o.id });
- if (r && r.error) toast(`結合失敗 (${o.name}): ${r.error}`, "err");
+ const rr = await A.ownerFetch(`/api/players/${survivorId}/merge`, { method: "POST", body: { duplicate_id: o.id } });
+ const r = rr.json || {};
+ if (!rr.ok || (r && r.error)) toast(`結合失敗 (${o.name}): ${(r && r.error) || rr.status}`, "err");
  else ok++;
  }
  A._playerSuggestCache = null;
@@ -6062,7 +6065,8 @@ const A = {
  // チーム名混入を一括削除
  async cleanupInvalidPlayers() {
    if (!confirm("選手DBから「チーム名/学校名と判定される」レコードを削除します。よろしいですか?")) return;
-   const r = await api.post("/api/players/cleanup-invalid", {});
+   if (!(await A.ensureOwner())) return;   // 一括クリーンアップはオーナー権限
+   const r = (await A.ownerFetch("/api/players/cleanup-invalid", { method: "POST", body: {} })).json || {};
    toast(`${r.removed || 0}件の不正レコードを削除しました`, "ok");
    await A.reload();
  },
@@ -6451,8 +6455,10 @@ const A = {
  },
 
  async exportJSON() {
- const data = await api.get("/api/export/all");
- downloadJSON(`tabletennis-${new Date().toISOString().slice(0,10)}.json`, data);
+ if (!(await A.ensureOwner())) return;   // 全データ書き出しはオーナー権限
+ const r = await A.ownerFetch("/api/export/all");
+ if (!r.ok) return toast("エクスポート失敗: " + ((r.json && r.json.error) || r.status), "err");
+ downloadJSON(`tabletennis-${new Date().toISOString().slice(0,10)}.json`, r.json);
  },
 
  async exportPlayersCSV() {
@@ -6482,12 +6488,160 @@ const A = {
  downloadCSV("matches.csv", rows);
  },
 
- async resetAll() {
- if (!confirm("本当に全選手を削除しますか？この操作は取り消せません。")) return;
- if (!confirm("本当に本当に全選手を削除しますか？")) return;
- await api.del("/api/players");
- toast("全選手を削除しました", "ok");
- await A.reload();
+ async resetAll() { return A.ownerDeleteAllPlayers(); },   // 全選手削除はオーナー権限の安全フローへ集約
+
+ // ═══ オーナー (上級管理者) 権限 ════════════════════════════
+ // ADMIN_KEY の更に上。全選手削除・DB全体の保存(.db)・バックアップ/復元・全エクスポート・PII purge・
+ // 大会削除・選手マージ など「取り返しのつかない/全件PIIを動かす」操作を OWNER_KEY の背後へ隔離する。
+ // 鍵はこのタブのセッション中のみ sessionStorage に保持(タブを閉じれば消える)。
+ ownerKey() { try { return sessionStorage.getItem("ktta_owner_key") || ""; } catch (e) { return ""; } },
+ ownerOperator() { try { return sessionStorage.getItem("ktta_owner_op") || ""; } catch (e) { return ""; } },
+ _ownerHeaders(extra) {
+   // 管理キーも併送する: OWNER_KEY 未設定(分離未活性)時はサーバが requireAdmin にフォールバックするため。
+   const hd = Object.assign({ "Content-Type": "application/json" }, (api._headers ? api._headers() : {}), extra || {});
+   const k = A.ownerKey(); if (k) hd["X-Owner-Key"] = k;
+   // ヘッダは latin1 のみ。実施者名は日本語が入るため encodeURIComponent(サーバ側で decode)。
+   const op = A.ownerOperator(); if (op) hd["X-Owner-Operator"] = encodeURIComponent(op);
+   return hd;
+ },
+ async ownerFetch(path, opts) {
+   opts = opts || {};
+   const init = { method: opts.method || "GET", headers: A._ownerHeaders(opts.headers) };
+   if (opts.body !== undefined) init.body = typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body);
+   const res = await fetch(path, init);
+   let json = null; try { json = await res.clone().json(); } catch (e) {}
+   return { res, status: res.status, ok: res.ok, json };
+ },
+ // オーナーキーのロック解除。未解除/失効ならモーダルで入力→/api/owner/verify。成功で true。
+ async ensureOwner() {
+   // OWNER_KEY 未設定(分離未活性)なら、従来どおり管理キーで操作可。プロンプト不要。
+   try { const c = await (await fetch("/api/owner/configured")).json(); if (c && !c.configured) return true; } catch (e) {}
+   if (A.ownerKey()) {
+     const r = await A.ownerFetch("/api/owner/verify");
+     if (r.ok) return true;
+     try { sessionStorage.removeItem("ktta_owner_key"); } catch (e) {}
+   }
+   return await new Promise((resolve) => {
+     const keyInput = h("input", { className: "input", type: "password", placeholder: "オーナーキー", autocomplete: "off" });
+     const opInput = h("input", { className: "input", placeholder: "実施者名（監査ログに記録）", value: A.ownerOperator() });
+     const msg = h("div", { className: "text-xs", style: { color: "#b91c1c", minHeight: "16px", marginTop: "4px" } });
+     const submit = async () => {
+       const key = (keyInput.value || "").trim();
+       if (!key) { msg.textContent = "オーナーキーを入力してください"; return; }
+       try { sessionStorage.setItem("ktta_owner_key", key); sessionStorage.setItem("ktta_owner_op", (opInput.value || "").trim()); } catch (e) {}
+       const r = await A.ownerFetch("/api/owner/verify");
+       if (r.ok) { bg.remove(); resolve(true); return; }
+       try { sessionStorage.removeItem("ktta_owner_key"); } catch (e) {}
+       msg.textContent = r.status === 503 ? "オーナー機能が未設定です（サーバーに OWNER_KEY を設定してください）。"
+         : r.status === 429 ? "試行回数が多すぎます。しばらく待ってから再試行してください。"
+         : "オーナーキーが違います。";
+     };
+     keyInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+     const body = h("div", {},
+       h("div", { className: "text-sm text-sub", style: { lineHeight: 1.7, marginBottom: "10px" } },
+         "この操作には上級管理者（オーナー）権限が必要です。", h("br"),
+         "全データの保存・全削除・バックアップ/復元など、取り返しのつかない操作を保護しています。"),
+       h("div", { className: "field" }, h("label", { className: "field-label" }, "オーナーキー"), keyInput),
+       h("div", { className: "field" }, h("label", { className: "field-label" }, "実施者名"), opInput),
+       msg);
+     const foot = h("div", { className: "flex gap-2", style: { justifyContent: "flex-end" } },
+       h("button", { className: "btn btn-ghost", onClick: () => { bg.remove(); resolve(false); } }, "キャンセル"),
+       h("button", { className: "btn btn-ok", onClick: submit }, "ロック解除"));
+     const bg = openModal("🔒 オーナー権限の確認", body, foot);
+   });
+ },
+ // 上級管理者ホーム(普段は隠す)。危険操作の集約先。
+ async openOwnerPanel() {
+   if (!(await A.ensureOwner())) return;
+   const card = (title, desc, btns) => h("div", { style: { border: "1px solid var(--border)", borderRadius: "10px", padding: "12px", marginBottom: "10px" } },
+     h("div", { style: { fontWeight: 700, marginBottom: "4px" } }, title),
+     h("div", { className: "text-xs text-sub", style: { lineHeight: 1.6, marginBottom: "8px" } }, desc),
+     h("div", { className: "flex gap-2 flex-wrap" }, ...btns));
+   const body = h("div", {},
+     h("div", { className: "text-xs", style: { background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: "8px", padding: "8px 10px", color: "#7f1d1d", lineHeight: 1.6, marginBottom: "12px" } },
+       "⚠ 上級管理者専用。全データのPIIを動かす/取り返しのつかない操作を含みます。操作は監査ログに記録されます。"),
+     card("バックアップ / 復元", "DBスナップショットの保存・PCへ保存・復元。", [
+       h("button", { className: "btn btn-sm", onClick: () => { document.querySelector(".modal-bg")?.remove(); A.openBackups(); } }, "開く")]),
+     card("DBを保存（.db ダウンロード）", "DB全体を一貫スナップショットとして即ダウンロード（全PIIを含む手元保存）。", [
+       h("button", { className: "btn btn-sm btn-ok", onClick: () => A.ownerDownloadDB() }, "ダウンロード")]),
+     card("全データ書き出し（JSON）", "全選手・大会・試合の構造化JSONを書き出し。", [
+       h("button", { className: "btn btn-sm", onClick: () => A.exportJSON() }, "JSONエクスポート")]),
+     card("全選手の削除", "全選手レコードを削除（実行前に自動バックアップ＋件数の打鍵確認）。", [
+       h("button", { className: "btn btn-sm btn-danger", onClick: () => A.ownerDeleteAllPlayers() }, "全選手を削除")]),
+     card("申込PIIの一括削除（purge）", "保持期間を過ぎた申込の連絡先(PII)を一括匿名化（件数・集計は残す）。", [
+       h("button", { className: "btn btn-sm btn-danger", onClick: () => A.ownerPurgePII() }, "purge 実行")]),
+     card("監査ログ", "オーナー操作の履歴（いつ・何を・実施者・IP）。", [
+       h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.ownerAudit() }, "監査ログを見る")]),
+     h("div", { className: "text-xs text-sub", style: { marginTop: "8px", display: "flex", gap: "8px", alignItems: "center" } },
+       "実施者: ", h("b", {}, A.ownerOperator() || "(未設定)"),
+       h("button", { className: "btn btn-sm btn-ghost", style: { marginLeft: "auto" },
+         onClick: () => { try { sessionStorage.removeItem("ktta_owner_key"); } catch (e) {} document.querySelector(".modal-bg")?.remove(); toast("オーナー権限をロックしました", "ok"); } }, "ロックする")));
+   openModal("🔒 システム管理（オーナー）", body, null);
+ },
+ // DB全体を .db でダウンロード(=全PII)。サーバ側で一貫スナップショットを生成して返す。
+ async ownerDownloadDB() {
+   if (!(await A.ensureOwner())) return;
+   toast("DBスナップショットを生成中…", "ok");
+   try {
+     const res = await fetch("/api/owner/db-download", { headers: A._ownerHeaders() });
+     if (!res.ok) { const j = await res.json().catch(() => ({})); return toast("失敗: " + (j.error || res.status), "err"); }
+     const blob = await res.blob();
+     const cd = res.headers.get("content-disposition") || "";
+     const m = /filename="?([^"]+)"?/.exec(cd);
+     const name = (m && m[1]) || ("tournament-" + new Date().toISOString().slice(0, 10) + ".db");
+     const url = URL.createObjectURL(blob);
+     const a = document.createElement("a"); a.href = url; a.download = name;
+     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+     toast("DBを保存しました（" + name + "）", "ok");
+   } catch (e) { toast("通信エラー: " + e.message, "err"); }
+ },
+ // 全選手削除(オーナー)。件数の打鍵確認 + 実施者名 + 実行前自動バックアップ。
+ async ownerDeleteAllPlayers() {
+   if (!(await A.ensureOwner())) return;
+   const players = await api.get("/api/players");
+   const total = (players || []).length;
+   if (!total) return toast("削除する選手がいません", "ok");
+   const cntInput = h("input", { className: "input", inputmode: "numeric", placeholder: "現在の選手数を入力" });
+   const opInput = h("input", { className: "input", placeholder: "実施者名（監査ログに記録）", value: A.ownerOperator() });
+   const msg = h("div", { className: "text-xs", style: { color: "#b91c1c", minHeight: "16px", marginTop: "4px" } });
+   const body = h("div", {},
+     h("div", { className: "text-sm", style: { lineHeight: 1.7, marginBottom: "10px" } },
+       "全 ", h("b", {}, String(total)), " 名の選手を削除します。",
+       h("b", { style: { color: "#b91c1c" } }, "取り消せません"), "（実行前に自動でバックアップを取得します）。", h("br"),
+       "確認のため、現在の選手数 ", h("b", {}, String(total)), " を入力してください。"),
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "選手数の確認"), cntInput),
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "実施者名"), opInput), msg);
+   const foot = h("div", { className: "flex gap-2", style: { justifyContent: "flex-end" } },
+     h("button", { className: "btn btn-ghost", onClick: () => bg.remove() }, "キャンセル"),
+     h("button", { className: "btn btn-danger", onClick: async () => {
+       const operator = (opInput.value || "").trim();
+       if (!operator) { msg.textContent = "実施者名を入力してください"; return; }
+       try { sessionStorage.setItem("ktta_owner_op", operator); } catch (e) {}
+       const r = await A.ownerFetch("/api/owner/players/delete-all", { method: "POST", body: { confirm: Number(cntInput.value), operator } });
+       if (r.ok && r.json && r.json.ok) { bg.remove(); toast("全選手を削除しました（バックアップ: " + (r.json.backup || "") + "）", "ok"); A.reload(); }
+       else { msg.textContent = (r.json && r.json.error) || ("失敗 (" + r.status + ")"); }
+     } }, "全選手を削除する"));
+   const bg = openModal("全選手の削除（オーナー）", body, foot);
+ },
+ async ownerPurgePII() {
+   if (!(await A.ensureOwner())) return;
+   if (!confirm("保持期間を過ぎた申込の連絡先(PII)を一括で匿名化します。\n（申込の件数・集計は残り、連絡先のみ消えます。取り消せません）\n実行しますか？")) return;
+   const r = await A.ownerFetch("/api/admin/purge-submission-pii", { method: "POST", body: {} });
+   if (r.ok) toast("PIIをpurgeしました", "ok");
+   else toast("失敗: " + ((r.json && r.json.error) || r.status), "err");
+ },
+ async ownerAudit() {
+   if (!(await A.ensureOwner())) return;
+   const r = await A.ownerFetch("/api/owner/audit?limit=200");
+   const log = (r.json && r.json.log) || [];
+   const body = h("div", {});
+   if (!log.length) body.appendChild(h("div", { className: "empty-state", style: { padding: "14px" } }, "まだ監査記録がありません。"));
+   else log.forEach(e => body.appendChild(h("div", { style: { borderBottom: "1px solid var(--border)", padding: "6px 2px", fontSize: "12px", lineHeight: 1.6 } },
+     h("span", { style: { color: "var(--sub)" } }, (e.ts || "")), " ",
+     h("b", {}, e.action), e.detail ? (" " + e.detail) : "",
+     e.operator ? h("span", { style: { color: "#0369a1" } }, "　／" + e.operator) : null,
+     e.ip ? h("span", { style: { color: "var(--sub)" } }, "　(" + e.ip + ")") : null)));
+   openModal("オーナー監査ログ", body, null);
  },
 };
 
