@@ -681,7 +681,10 @@
     let lastTs = null;
     let timer = null;
     let onUpdate = null;
+    let visHandler = null;
     async function tick() {
+      // 背面タブ/画面ロック中は叩かない(会場200台の無駄ヒット削減)。前面復帰時に即tickで鮮度回復。
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
         const r = await fetch("/api/public/last-updated");
         const { t } = await r.json();
@@ -697,8 +700,15 @@
         onUpdate = cb || fetchFn;
         tick();
         timer = setInterval(tick, intervalMs);
+        if (typeof document !== "undefined") {
+          visHandler = () => { if (!document.hidden) tick(); };   // 前面復帰で即更新
+          document.addEventListener("visibilitychange", visHandler);
+        }
       },
-      stop() { if (timer) clearInterval(timer); timer = null; }
+      stop() {
+        if (timer) clearInterval(timer); timer = null;
+        if (visHandler) { document.removeEventListener("visibilitychange", visHandler); visHandler = null; }
+      }
     };
   }
 

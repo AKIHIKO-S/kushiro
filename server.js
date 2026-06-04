@@ -2714,7 +2714,9 @@ app.get("/api/public/tournaments/:id/ops-stream", (req, res) => {
     "X-Accel-Buffering": "no",   // nginx/Cloudflare: この応答はバッファせず即流す (SSE 必須)
   });
   if (res.flushHeaders) res.flushHeaders();
-  res.write("retry: 3000\n\n");
+  // 再接続間隔を接続ごとにジッタ化(2.5〜5.5秒)。systemctl restart で200台が一斉切断されても
+  // 固定3秒だと3秒境界に再接続が殺到しスパイクするため、各クライアントの retry をばらして平準化する。
+  res.write("retry: " + (2500 + Math.floor(Math.random() * 3000)) + "\n\n");
   sseSend(res, { type: "hello" });
   let set = sseClients.get(tid); if (!set) { set = new Set(); sseClients.set(tid, set); }
   set.add(res); sseTotal++;
