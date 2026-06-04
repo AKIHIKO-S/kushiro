@@ -1638,8 +1638,7 @@ const LV = {
   showShareDialog() {
     const url = location.origin + location.pathname +
       (LV.tournamentId ? "?t=" + encodeURIComponent(LV.tournamentId) : "");
-    const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=260x260&data="
-      + encodeURIComponent(url);
+    const qrUrl = "/api/qr.svg?size=260&text=" + encodeURIComponent(url);
     const overlay = document.getElementById("lvOverlay");
     overlay.innerHTML = "";
     const closeFn = () => { overlay.innerHTML = ""; };

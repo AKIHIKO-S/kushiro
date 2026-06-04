@@ -53,8 +53,16 @@ let PUSH_ENABLED = false;
 let VAPID_PUBLIC = "";
 try {
   webpush = require("web-push");
-  let pub = db.kvGet("vapid_public");
-  let priv = db.kvGet("vapid_private");
+  // 秘密鍵は env 注入を優先(本番は /etc/ktta.env 600 に置きDBへ平文保存しない / #17)。
+  // env 未設定時のみ従来どおり DB(app_kv) に自動生成・保存(開発/standalone の利便性維持)。
+  // env は all-or-nothing: 片方だけだと env公開鍵 × DB秘密鍵の不一致ペアで push が無言で署名失敗するため、
+  // 両方そろった時のみ env を採用し、片方のみなら警告して DB/自動生成にフォールバックする。
+  const envPub = process.env.VAPID_PUBLIC_KEY, envPriv = process.env.VAPID_PRIVATE_KEY;
+  const useEnv = !!(envPub && envPriv);
+  if ((envPub || envPriv) && !useEnv)
+    console.warn("[push] VAPID_PUBLIC_KEY と VAPID_PRIVATE_KEY は両方設定が必要です。片方のみのため env を無視し DB/自動生成にフォールバックします (#17)。");
+  let pub = useEnv ? envPub : db.kvGet("vapid_public");
+  let priv = useEnv ? envPriv : db.kvGet("vapid_private");
   if (!pub || !priv) {
     const keys = webpush.generateVAPIDKeys();
     pub = keys.publicKey; priv = keys.privateKey;
@@ -69,6 +77,23 @@ try {
   console.log("[push] Web Push 有効");
 } catch (e) {
   console.warn("[push] Web Push 無効 (web-push 未インストール等):", e.message);
+}
+
+// 購読 endpoint の宛先検証 (#8 SSRF対策): web-push はサーバから endpoint へ POST するため、
+// 内部ホスト/生IP/非HTTPS を弾き、既知のプッシュプロバイダ host のみ許可する。
+const PUSH_HOST_SUFFIXES = [
+  "fcm.googleapis.com", "android.googleapis.com",          // Chrome / FCM
+  "push.services.mozilla.com",                              // Firefox
+  "notify.windows.com", "wns.windows.com",                  // Edge / Windows
+  "push.apple.com",                                         // Safari (web.push.apple.com 等)
+];
+function isAllowedPushEndpoint(ep) {
+  let u; try { u = new URL(String(ep || "")); } catch { return false; }
+  if (u.protocol !== "https:") return false;
+  const host = u.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".local")) return false;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;   // 生IP(プッシュは常にFQDN)=内部宛SSRF拒否
+  return PUSH_HOST_SUFFIXES.some(s => host === s || host.endsWith("." + s));
 }
 
 // 指定選手の全購読端末へ通知を送信 (失効した購読は削除)
@@ -183,9 +208,22 @@ const ADMIN_KEY = process.env.ADMIN_KEY || "";
 //   SYNC_CLOUD_URL: 送信側(本部ローカル)に設定するクラウドのベースURL。設定時のみ push する。
 const SYNC_KEY = process.env.SYNC_KEY || "";
 const SYNC_CLOUD_URL = (process.env.SYNC_CLOUD_URL || "").replace(/\/$/, "");
+// 受信側(クラウド)の送信元IP allowlist(任意)。設定時はこのIPからのみ /api/sync/push を受理 (#3)。
+const SYNC_ALLOW_IPS = (process.env.SYNC_ALLOW_IPS || "").split(",").map(s => s.trim()).filter(Boolean);
+if (SYNC_KEY && SYNC_KEY.length < 32)
+  console.warn("[sync] SYNC_KEY が短い(<32文字)です。十分な長さのランダム値を推奨します (#3)。");
+// /api/sync/push の鍵総当たり対策: per-IP の連続失敗で一時ブロック (#3)。
+const _syncFail = new Map(); // ip -> { count, resetAt }
+const SYNC_FAIL_MAX = 10, SYNC_FAIL_WINDOW = 5 * 60000;
+setInterval(() => { const now = Date.now(); for (const [ip, e] of _syncFail) if (now > e.resetAt) _syncFail.delete(ip); }, SYNC_FAIL_WINDOW).unref();
+function syncFailBlocked(ip) { const e = _syncFail.get(ip); return !!(e && Date.now() <= e.resetAt && e.count >= SYNC_FAIL_MAX); }
+function syncFailMark(ip) { const now = Date.now(), e = _syncFail.get(ip); if (!e || now > e.resetAt) _syncFail.set(ip, { count: 1, resetAt: now + SYNC_FAIL_WINDOW }); else e.count++; }
 const _syncState = { last_ok_at: null, last_error: null, last_count: 0 };
 async function pushTournamentToCloud(tid) {
   if (!SYNC_CLOUD_URL || !SYNC_KEY) return { error: "クラウド同期が未設定です(SYNC_CLOUD_URL / SYNC_KEY)" };
+  // 本番は平文HTTPでの同期を拒否(SYNC_KEY と公開スナップショットの平文流出を遮断 / #2)。
+  if (process.env.NODE_ENV === "production" && !/^https:\/\//i.test(SYNC_CLOUD_URL))
+    return { error: "クラウドURLはHTTPSが必要です(平文同期は不可)" };
   const snap = db.exportPublicSnapshot(tid);
   if (!snap) return { error: "大会が見つかりません" };
   const ctrl = new AbortController();
@@ -319,7 +357,7 @@ app.use((req, res, next) => {
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
-    "img-src 'self' data: blob: https://api.qrserver.com",
+    "img-src 'self' data: blob:",
     "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
@@ -625,7 +663,8 @@ async function verifyTurnstile(token, ip) {
     const body = new URLSearchParams({ secret: TURNSTILE_SECRET, response: String(token) });
     if (ip) body.set("remoteip", ip);
     const resp = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify",
-      { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+      { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body,
+        signal: AbortSignal.timeout(5000) });   // #32 ハング防止(到達不能時は下のcatchでフェイルオープン)
     const data = await resp.json();
     return { ok: !!data.success, errors: data["error-codes"] };
   } catch (e) {
@@ -706,7 +745,13 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
           ? adminRes.value : { ok: false, error: String(adminRes.reason) };
       }
       const base = r.error ? { ok: true, saved_to: "gas_only" } : r;
-      res.status(201).json({ ...base, mail: mailResults, gas: gasRelay });
+      // 公開(CORS全開放)レスポンスには成否boolのみ返す。SMTP生エラー/GAS生応答などの
+      // 内部詳細は外部へ出さない(#15)。申込番号(applicant_token)は本人閲覧に必要なため base に残す。
+      const mailSafe = {
+        confirmation: mailResults.confirmation ? { ok: !!mailResults.confirmation.ok } : null,
+        admin: mailResults.admin ? { ok: !!mailResults.admin.ok } : null,
+      };
+      res.status(201).json({ ...base, mail: mailSafe, gas: gasRelay ? { ok: !!gasRelay.ok } : null });
     } catch (e) {
       recordError(e, req, res, 500);
       res.status(500).json({ error: "申込処理エラー: " + e.message });
@@ -895,6 +940,8 @@ app.post("/api/coach/push/subscribe", requireCoach, (req, res) => {
   if (!PUSH_ENABLED) return res.status(503).json({ error: "プッシュ通知は無効です" });
   const sub = (req.body || {}).subscription;
   if (!sub) return res.status(400).json({ error: "subscription が必要です" });
+  if (!isAllowedPushEndpoint(sub.endpoint))
+    return res.status(400).json({ error: "購読エンドポイントが不正です" });   // #8 SSRF対策
   const r = db.saveCoachSubscription(req.coach.id, sub);
   if (r.error) return res.status(400).json(r);
   res.json({ ok: true });
@@ -2444,17 +2491,19 @@ app.get("/api/tournaments/:id/entry-form-config", (req, res) => {
 // 外部通信を行うため、コスト/クォータ悪用防止に専用レート制限 + タイムアウトを付与 (H1/H2対策)
 const gasProxyRateLimit = rateLimit({ windowMs: 60000, max: 20,
   message: "集計取得が多すぎます。しばらく待って再試行してください。" });
-app.get("/api/tournaments/:id/gas-stats", gasProxyRateLimit, async (req, res) => {
-  const gasUrl = req.query.gas_url || "";
-  if (!gasUrl) return res.status(400).json({ error: "gas_url が必要です" });
+app.get("/api/tournaments/:id/gas-stats", requireAdmin, gasProxyRateLimit, async (req, res) => {
+  const tournament = db.getTournament(req.params.id);
+  // 集計先URLは大会設定の entry_gas_url を正本にする(クライアント供給URLでの出口プロキシ踏み台化を防止 / #5)。
+  // 後方互換: 未設定の大会のみ、クライアント gas_url を許容(ホスト固定検証は同一・requireAdmin 済)。
+  const gasUrl = (tournament && tournament.entry_gas_url) || req.query.gas_url || "";
+  if (!gasUrl) return res.status(400).json({ error: "この大会にGAS集計URL(entry_gas_url)が設定されていません" });
   // ホストを script.google.com に固定 (任意URLへの踏み台/SSRF防止)
   let parsed;
   try { parsed = new URL(gasUrl); } catch { parsed = null; }
   if (!parsed || parsed.protocol !== "https:" || parsed.hostname !== "script.google.com") {
-    return res.status(400).json({ error: "gas_url は https://script.google.com/... 形式である必要があります" });
+    return res.status(400).json({ error: "GAS集計URLは https://script.google.com/... 形式である必要があります" });
   }
   try {
-    const tournament = db.getTournament(req.params.id);
     const tournamentId = tournament ? tournament.id : req.params.id;
     const sep = gasUrl.includes("?") ? "&" : "?";
     const fullUrl = gasUrl + sep + "action=stats&tournament_id=" + encodeURIComponent(tournamentId);
@@ -2463,11 +2512,12 @@ app.get("/api/tournaments/:id/gas-stats", gasProxyRateLimit, async (req, res) =>
     const r = await fetch(fullUrl, { redirect: "follow", signal: AbortSignal.timeout(8000) });
     const txt = await r.text();
     let data;
+    // 本番では GAS 生応答(raw)を反射しない(内部詳細/PII反射の抑止 / #5)。
     try { data = JSON.parse(txt); }
-    catch { return res.status(502).json({ error: "GAS 応答が JSON ではありません", raw: txt.slice(0, 200) }); }
+    catch { return res.status(502).json({ error: "GAS 応答が JSON ではありません", ...(IS_PROD ? {} : { raw: txt.slice(0, 200) }) }); }
     res.json(data);
   } catch (err) {
-    res.status(502).json({ error: "GAS 通信失敗: " + err.message });
+    res.status(502).json({ error: IS_PROD ? "GAS 通信失敗" : ("GAS 通信失敗: " + err.message) });
   }
 });
 
@@ -2863,6 +2913,8 @@ app.post("/api/push/subscribe", rateLimit({ windowMs: 60000, max: 30 }), (req, r
   if (!PUSH_ENABLED) return res.status(503).json({ error: "プッシュ通知は無効です" });
   const { player_id, subscription } = req.body || {};
   if (!player_id || !subscription) return res.status(400).json({ error: "player_id と subscription が必要です" });
+  if (!isAllowedPushEndpoint(subscription.endpoint))
+    return res.status(400).json({ error: "購読エンドポイントが不正です" });   // #8 SSRF対策
   const r = db.savePushSubscription(player_id, subscription);
   if (r.error) return res.status(400).json(r);
   res.json({ ok: true });
@@ -3015,6 +3067,72 @@ app.get("/api/admin/tournaments/:id/referee-court-links", requireAdmin, (req, re
   const r = db.getRefereeCourtLinks(req.params.id);
   if (!r) return res.status(400).json({ error: "審判入力が有効ではありません（先に「有効にする」を押してください）" });
   res.json(r);
+});
+
+// 審判が会場の他端末から到達できる base URL を決める。localhost/127.0.0.1 でアクセスしている
+// (本部PCで開いた)場合は、QRに埋めても他端末から繋がらないため LAN IP に自動置換する。?base= で明示も可。
+function refBaseUrl(req) {
+  const explicit = String((req.query && req.query.base) || "").trim().replace(/\/$/, "");
+  if (explicit) return explicit;
+  const host = req.get("host") || ("localhost:" + PORT);
+  if (/^(localhost|127\.0\.0\.1|\[?::1\]?)/.test(host)) {
+    const lan = lanIPv4s()[0];
+    if (lan) return "http://" + lan + ":" + PORT;
+  }
+  return (req.protocol || "http") + "://" + host;
+}
+
+// コート別 審判QR: 各コートの審判入力リンク(/ref?tid&court&ct)を、会場オフラインでも使える
+// ローカル生成QR(qrcode 同梱)付きで返す。審判は担当コートのQRをスキャンするだけで入力に入れる
+// (長いトークン付きURLの手入力=伝達難易度 を回避)。?courts=N で枚数、?base= で接続先を指定可。
+app.get("/api/admin/tournaments/:id/referee-court-qr", requireAdmin, async (req, res) => {
+  const links = db.getRefereeCourtLinks(req.params.id);
+  if (!links) return res.status(400).json({ error: "審判入力が有効ではありません（先に「有効にする」を押してください）" });
+  const t = db.getTournament(req.params.id);
+  const base = refBaseUrl(req);
+  // 枚数: 指定 > court_count > グリッド。多すぎる無駄を避けるため上限40。
+  const want = parseInt(req.query.courts) || (t && t.court_count) || links.count;
+  const n = Math.max(1, Math.min(want, links.count, 40));
+  const courts = [];
+  for (const l of links.links.slice(0, n)) {
+    const url = base + "/ref?tid=" + encodeURIComponent(links.tournament_id) + "&court=" + l.court + "&ct=" + l.key;
+    let qr = "";
+    try { qr = await QRCode.toString(url, { type: "svg", margin: 1, width: 150 }); } catch (e) {}
+    courts.push({ court: l.court, url, qr });
+  }
+  res.json({
+    tournament_id: links.tournament_id, tournament_name: links.tournament_name, base, count: n,
+    passcode_required: !!(t && t.referee_passcode_required),
+    courts,
+  });
+});
+
+// 管理用 ローカルQR (機密URL向け: 審判トークン等を公開エンドポイントのアクセスログに残さない)。
+// 返り値はインラインSVG文字列。<img> ではなくDOMへ直接挿入して使う。
+app.get("/api/admin/qr", requireAdmin, async (req, res) => {
+  const text = String((req.query && req.query.text) || "");
+  if (!text || text.length > 1024) return res.status(400).json({ error: "textが不正です" });
+  const size = Math.max(120, Math.min(parseInt(req.query.size) || 240, 480));
+  try {
+    const svg = await QRCode.toString(text, { type: "svg", margin: 1, width: size });
+    res.json({ svg });
+  } catch (e) { res.status(500).json({ error: "QR生成に失敗しました" }); }
+});
+
+// 公開 ローカルQR (非機密URL向け: 観戦ビュー共有など)。会場オフラインで外部QRサービスに依存しない。
+// 濫用対策: 認証なしのため長さ上限+レート制限。出力は純粋な<path>のSVG(スクリプト無)で安全。
+app.get("/api/qr.svg",
+  rateLimit({ windowMs: 60000, max: 120, message: "リクエストが多すぎます。少し待って再試行してください。" }),
+  async (req, res) => {
+  const text = String((req.query && req.query.text) || "");
+  if (!text || text.length > 512) return res.status(400).type("text/plain").send("bad text");
+  const size = Math.max(120, Math.min(parseInt(req.query.size) || 260, 480));
+  try {
+    const svg = await QRCode.toString(text, { type: "svg", margin: 1, width: size });
+    res.set("Content-Type", "image/svg+xml; charset=utf-8");
+    res.set("Cache-Control", "public, max-age=86400");
+    res.send(svg);
+  } catch (e) { res.status(500).type("text/plain").send("qr error"); }
 });
 
 // 審判ビュー: 現在台に入っている試合 (PII除外・管理キー不要・トークンのみ)
@@ -3318,8 +3436,16 @@ app.get("/api/lan-info", async (req, res) => {
 // 大会の公開フィールドと matches のみ反映(秘匿列・申込PIIは温存)。本部が正本=全置換。
 app.post("/api/sync/push", (req, res) => {
   if (!SYNC_KEY) return res.status(503).json({ error: "同期受信が無効です(SYNC_KEY 未設定)" });
+  const ip = clientIp(req);
+  if (syncFailBlocked(ip)) return res.status(429).json({ error: "試行回数が多すぎます。しばらく待ってから再試行してください。" });
+  // 本番は平文HTTPでのキー受信を拒否(X-Forwarded-Proto 準拠 / #2)。
+  const isHttps = req.secure || (req.get("x-forwarded-proto") || "").split(",")[0].trim() === "https";
+  if (IS_PROD && !isHttps) return res.status(400).json({ error: "同期はHTTPS必須です" });
+  // 送信元IP allowlist(設定時のみ)。本部固定IP/Tunnel からのみ受理 (#3)。
+  if (SYNC_ALLOW_IPS.length && !SYNC_ALLOW_IPS.includes(ip))
+    return res.status(403).json({ error: "許可されていない送信元です" });
   const key = req.get("X-Sync-Key") || "";
-  if (!safeEqualStr(key, SYNC_KEY)) return res.status(401).json({ error: "同期キーが不正です" });
+  if (!safeEqualStr(key, SYNC_KEY)) { syncFailMark(ip); return res.status(401).json({ error: "同期キーが不正です" }); }
   try {
     const r = db.applyPublicSnapshot(req.body);
     if (r.error) return res.status(400).json(r);

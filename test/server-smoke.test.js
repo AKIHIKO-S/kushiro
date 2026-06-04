@@ -265,3 +265,84 @@ test("(j) /api/sync/now: 進行中(ongoing)と準備中(preparation)の両方を
   assert.ok(ids.includes(prep.id), "準備中(preparation)が同期対象=綴り修正の確認");
   assert.ok(!ids.includes(sched.id), "予定(scheduled)は対象外");
 });
+
+test("(k) /api/qr.svg: 公開ローカルQR(外部QR非依存)。SVGを返し長さ上限/空textを拒否", async () => {
+  // 観戦ビュー共有などの非機密QRをローカル生成(api.qrserver.com 撤去の回帰)。
+  const ok = await fetch(BASE + "/api/qr.svg?text=" + encodeURIComponent("http://example.com/live"));
+  assert.strictEqual(ok.status, 200, "200で返る");
+  assert.match(ok.headers.get("content-type") || "", /image\/svg\+xml/, "image/svg+xml");
+  const body = await ok.text();
+  assert.match(body, /<svg/, "SVGを返す");
+  assert.ok(!body.includes("<script"), "SVGにscript無(安全)");
+  // 空text/超長textは拒否
+  assert.strictEqual((await fetch(BASE + "/api/qr.svg?text=")).status, 400, "空textは400");
+  const long = "x".repeat(600);
+  assert.strictEqual((await fetch(BASE + "/api/qr.svg?text=" + long)).status, 400, "512超は400");
+});
+
+test("(l) /api/admin/qr: 機密URL用QRは管理キー必須・SVGをJSONで返す", async () => {
+  // 審判トークンを含むQRは公開エンドポイントのアクセスログに残さないため管理側で生成。
+  const noKey = await fetch(BASE + "/api/admin/qr?text=" + encodeURIComponent("http://x/ref?t=SECRET"));
+  assert.ok(noKey.status === 401 || noKey.status === 403, "キー無は拒否: " + noKey.status);
+  const ok = await fetch(BASE + "/api/admin/qr?text=" + encodeURIComponent("http://x/ref?t=SECRET"), { headers: akhead }).then(r => r.json());
+  assert.match(ok.svg || "", /<svg/, "管理キーでSVGを返す");
+});
+
+test("(m) コート別 審判QR: 審判入力ON時に各コートのローカルQR+到達可能なURL(localhost→LAN置換)を返す", async () => {
+  const t = await adminPost("/api/tournaments", { name: "QR大会", date: "2027-01-01" });
+  // 審判入力OFFのうちは400(先に有効化が必要)
+  const off = await fetch(BASE + `/api/admin/tournaments/${t.id}/referee-court-qr`, { headers: akhead });
+  assert.strictEqual(off.status, 400, "審判入力OFFは400");
+  // 有効化(トークン自動発行)
+  await adminPut(`/api/admin/tournaments/${t.id}/referee-input`, { enabled: true });
+  const r = await fetch(BASE + `/api/admin/tournaments/${t.id}/referee-court-qr?courts=3`, { headers: akhead }).then(r => r.json());
+  assert.strictEqual(r.count, 3, "指定枚数=3");
+  assert.strictEqual((r.courts || []).length, 3, "3コート分");
+  assert.match(r.courts[0].qr || "", /<svg/, "コートQRはローカルSVG");
+  assert.ok(r.courts[0].url.includes("/ref?tid=") && r.courts[0].url.includes("&court=1") && r.courts[0].url.includes("&ct="),
+    "URLは /ref?tid&court&ct 形式: " + r.courts[0].url);
+  // localhost(127.0.0.1)アクセスは他端末から到達不能なため base を localhost のままにしない
+  assert.ok(!/127\.0\.0\.1|localhost/.test(r.base), "baseはlocalhostでない(LAN IP置換): " + r.base);
+  // コート別キーは別コートのキーでは通らない(自分のコート限定の契約)。?base= 明示も尊重
+  const r2 = await fetch(BASE + `/api/admin/tournaments/${t.id}/referee-court-qr?courts=2&base=http://192.168.50.9:3000`, { headers: akhead }).then(r => r.json());
+  assert.ok(r2.courts[0].url.startsWith("http://192.168.50.9:3000/ref?tid="), "?base=明示が反映");
+});
+
+test("(n) gas-stats プロキシは requireAdmin(未認証拒否)・URL未設定は400 (#5 踏み台化対策)", async () => {
+  const t = await adminPost("/api/tournaments", { name: "GAS大会", date: "2027-01-01" });
+  // 管理キー無しは拒否(出口プロキシ踏み台化の遮断)
+  const noKey = await fetch(BASE + `/api/tournaments/${t.id}/gas-stats?gas_url=https://script.google.com/x`);
+  assert.ok(noKey.status === 401 || noKey.status === 503, "未認証は拒否: " + noKey.status);
+  // 認証あり・entry_gas_url 未設定・client gas_url も無し → 400(URL必須)
+  const noUrl = await fetch(BASE + `/api/tournaments/${t.id}/gas-stats`, { headers: akhead });
+  assert.strictEqual(noUrl.status, 400, "URL未設定は400");
+  // 非 script.google.com ホストは拒否(SSRF固定の回帰)
+  const bad = await fetch(BASE + `/api/tournaments/${t.id}/gas-stats?gas_url=` + encodeURIComponent("https://evil.example.com/x"), { headers: akhead });
+  assert.strictEqual(bad.status, 400, "別ホストは400");
+});
+
+test("(o) push subscribe は endpoint を検証(http/生IP/内部は拒否・既知プッシュhostのみ許可 / #8 SSRF)", async () => {
+  const sub = (ep) => fetch(BASE + "/api/push/subscribe", { method: "POST", headers: jhead,
+    body: JSON.stringify({ player_id: 1, subscription: { endpoint: ep, keys: { p256dh: "x", auth: "y" } } }) }).then(r => r.json().then(j => ({ status: r.status, j })));
+  const http = await sub("http://fcm.googleapis.com/x");
+  assert.ok(/不正/.test(http.j.error || ""), "httpは拒否: " + JSON.stringify(http.j));
+  const ip = await sub("https://10.0.0.5/x");
+  assert.ok(/不正/.test(ip.j.error || ""), "生IPは拒否");
+  const localhost = await sub("https://localhost/x");
+  assert.ok(/不正/.test(localhost.j.error || ""), "localhostは拒否");
+  const evil = await sub("https://evil.example.com/x");
+  assert.ok(/不正/.test(evil.j.error || ""), "未知hostは拒否");
+  // 既知プッシュhostは endpoint 検証を通過する(=エンドポイント不正エラーにはならない)
+  const fcm = await sub("https://fcm.googleapis.com/fcm/send/abc123");
+  assert.ok(!/エンドポイントが不正/.test(fcm.j.error || ""), "FCM host は通過: " + JSON.stringify(fcm.j));
+});
+
+test("(p) /api/sync/push は鍵総当たりを per-IP ロックアウト(#3)", async () => {
+  let got429 = false;
+  for (let i = 0; i < 14; i++) {
+    const r = await fetch(BASE + "/api/sync/push", { method: "POST",
+      headers: { ...jhead, "X-Sync-Key": "WRONG-" + i }, body: JSON.stringify({ tournament: { id: "x" } }) });
+    if (r.status === 429) got429 = true;
+  }
+  assert.ok(got429, "連続した誤キーで 429 ロックアウトに至る");
+});

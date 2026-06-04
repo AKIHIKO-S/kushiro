@@ -75,6 +75,26 @@ server {
 ※ `rate`/`burst` は会場規模(同一NATの観客数)に合わせて調整。Cloudflare 経由なら `set_real_ip_from` で
 真のクライアントIPを復元してから `limit_req` を効かせること(`TRUST_PROXY` と整合)。
 
+## 外部API連携のリスクレジスタと対策（2026-06）
+
+外部連携5種(① GAS申込中継 ② SMTPメール ③ Web Push ④ クラウド同期 ⑤ 外部QR)を次元別(security/availability/PII/abuse/offline/integrity)に多エージェントで構造化(33件)。会場オフライン/本部ローカル正本/小規模運営の文脈で優先度付けし、自己完結・高価値・低回帰の対策を実装した。
+
+実装済みの対策:
+- **[Critical] 外部QRの撲滅(オフライン破壊+トークン平文流出)**: 審判トークン入りURLが外部QR(`api.qrserver.com`)へGETクエリで平文送信され第三者ログに残る最重大リスクを解消。QRを同梱 `qrcode` でローカル生成に統一 — 機密URL(審判トークン/コート別ct)は `GET /api/admin/qr`(requireAdmin・`{svg}`をDOMへ直挿入=公開アクセスログにトークンを残さない)、非機密URL(観戦共有)は `GET /api/qr.svg`(公開・rateLimit 120/分・長さ上限512・純粋path SVG)。CSP `img-src` から `api.qrserver.com` を削除(grep 0件を回帰テストで固定)。会場オフラインでQR生成不可だった可用性欠陥も同時に解消。
+- **[High] gas-statsプロキシの踏み台化**: 未認証で誰でもサーバを出口プロキシ化し `script.google.com` を任意GET+502 raw反射できた → `requireAdmin` 付与・集計URLは大会設定 `entry_gas_url` を正本化(クライアント供給URLは未設定大会の後方互換のみ)・本番は raw 非反射。
+- **[High] クラウド同期チャネル**: 本番は平文HTTP同期を拒否(送信`pushTournamentToCloud`/受信`/api/sync/push` 双方・受信は `X-Forwarded-Proto` 準拠)、`/api/sync/push` に per-IP 失敗ロック(10回/5分→429)と任意の送信元IP allowlist(`SYNC_ALLOW_IPS`)、`SYNC_KEY<32`文字を起動時警告。
+- **[High] Web Push のSSRF**: 購読 `endpoint` を検証(`isAllowedPushEndpoint`: https必須・既知プッシュhost(FCM/Mozilla/Apple/Windows)のみ・生IP/localhost/内部拒否)を `/api/push/subscribe` と `/api/coach/push/subscribe` に適用。VAPID秘密鍵は env 注入(`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`)を優先しDB平文保存を回避(未設定時のみ従来どおりDB自動生成)。
+- **[Medium] 公開申込レスポンスのサニタイズ**: CORS全開放の `submit-team-entry` 応答から SMTP生エラー/GAS生応答を除去(成否boolのみ)。申込番号 `applicant_token` は本人閲覧に必要なため保持。
+- **[Low] Turnstile検証のハング防止**: siteverify fetch に `AbortSignal.timeout(5000)`(到達不能時は従来どおり申込漏れ防止のフェイルオープン)。
+
+過剰回避(YAGNI・見送り): mTLS/クライアント証明書同期、選手ポータルのフルID基盤、push endpointの能動probe、GAS連携の双方向同期化、メール送信の専用ジョブ基盤、Turnstileのfail-close化(会場WiFi断で正規申込を落とすため方針に反する)、全PIIのat-rest暗号化基盤。これらは小規模本部運営の脅威モデルに対し運用負荷過大と判断。
+
+積み残し(運用/別系統・要手当): GAS Web App の匿名公開受け口(共有秘密なし)はアプリ層スパム対策を直POSTで全バイパスし得る → GAS側 `doPost` への共有シークレット検証(後方互換で追加可)を推奨。GASスプレッドシート/送信済メールに残るPIIは KTTA DB の purge 対象外 → ミラー先の同期削除・保持期間文書化が残課題。
+
+## コート別 審判QR（#229 実運用化, 2026-06）
+
+審判が台ごとに「自分のコートだけ」結果報告できる仕組みを実運用化。マスタ `referee_token`(サーバ内秘密)から各コートのキーを `HMAC-SHA256(referee_token, "court:N")` で導出(個別発行不要)。`GET /api/admin/tournaments/:id/referee-court-qr` がコート別の **ローカル生成QR + 到達可能なURL** を返す。`refBaseUrl` は本部PCが `localhost/127.0.0.1` でアクセスしている場合に会場LAN IPへ自動置換(QRを他端末から開けるように)。審判は担当コートのQRをスキャンするだけで入力画面へ(長いトークン付きURLの手入力=伝達難易度を回避)。別コートのキーでは `resolveRefereeCourt` のHMAC不一致で弾かれ、報告も `m.table_no === req.refCourt` で担当コート限定(E2E: コート1トークンでコート2詐称→403)。会場パスコード(#261)と併用で、リンク拡散時も会場外からは報告不可。管理UIに全コートQRの一覧表示+台掲示用の印刷シート(`_printCourtQR`)。
+
 ## 監査履歴
 
 2026-06 多エージェント敵対的監査(6次元×独立検証)で確定3件を修正:
