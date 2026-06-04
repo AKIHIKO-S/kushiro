@@ -3326,7 +3326,7 @@ app.post("/api/tournaments/:id/sync/now", requireAdmin, async (req, res) => {
 });
 app.post("/api/sync/now", requireAdmin, async (req, res) => {
   if (!SYNC_CLOUD_URL || !SYNC_KEY) return res.status(400).json({ error: "クラウド同期が未設定です(SYNC_CLOUD_URL / SYNC_KEY)" });
-  const active = (db.getTournaments() || []).filter(t => t.status === "ongoing" || t.status === "preparing");
+  const active = (db.getTournaments() || []).filter(t => t.status === "ongoing" || t.status === "preparation");
   const results = [];
   for (const t of active) { results.push({ id: t.id, name: t.name, ...(await pushTournamentToCloud(t.id)) }); }
   res.json({ ok: results.every(r => r.ok), pushed: results.filter(r => r.ok).length, total: results.length, results });
@@ -3618,7 +3618,7 @@ setInterval(() => {
 if (SYNC_CLOUD_URL && SYNC_KEY) {
   setInterval(async () => {
     try {
-      const active = (db.getTournaments() || []).filter(t => t.status === "ongoing" || t.status === "preparing");
+      const active = (db.getTournaments() || []).filter(t => t.status === "ongoing" || t.status === "preparation");
       for (const t of active) { await pushTournamentToCloud(t.id); }
     } catch (e) { /* オフライン等は無視(次回再試行) */ }
   }, 3 * 60 * 1000).unref();

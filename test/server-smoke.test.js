@@ -22,7 +22,7 @@ const adminPut = (p, b) => fetch(BASE + p, { method: "PUT", headers: akhead, bod
 before(async () => {
   srv = spawn(process.execPath, ["server.js"], {
     cwd: path.join(__dirname, ".."),
-    env: { ...process.env, PORT: String(PORT), ADMIN_KEY: KEY, DB_PATH: DB, NODE_ENV: "test", SSE_MAX: "10", SYNC_KEY: "smoke-sync-key" },
+    env: { ...process.env, PORT: String(PORT), ADMIN_KEY: KEY, DB_PATH: DB, NODE_ENV: "test", SSE_MAX: "10", SYNC_KEY: "smoke-sync-key", SYNC_CLOUD_URL: "http://127.0.0.1:9" },
     stdio: "ignore",
   });
   for (let i = 0; i < 80; i++) {
@@ -248,4 +248,20 @@ test("(i) /api/sync/push: X-Sync-Key 認証で受信し公開ミラーを作る(
   const am1 = (Array.isArray(am) ? am : am.matches || []).find(x => x.id === "sm-1");
   assert.strictEqual(am1.winner_id, null, "winner_id(FK)はnull化");
   assert.strictEqual(am1.player1_entrant_id, null, "player1_entrant_id(FK)はnull化");
+});
+
+test("(j) /api/sync/now: 進行中(ongoing)と準備中(preparation)の両方を同期対象に含む(綴り回帰)", async () => {
+  // レビュー指摘: フィルタが "preparing"(誤) だと準備中大会が同期されなかった。正規値は "preparation"。
+  const ong = await adminPost("/api/tournaments", { name: "進行中大会", date: "2027-01-01" });
+  await adminPut(`/api/tournaments/${ong.id}`, { status: "ongoing" });
+  const prep = await adminPost("/api/tournaments", { name: "準備中大会", date: "2027-01-01" });
+  await adminPut(`/api/tournaments/${prep.id}`, { status: "preparation" });
+  const sched = await adminPost("/api/tournaments", { name: "予定大会", date: "2027-01-01" });
+  await adminPut(`/api/tournaments/${sched.id}`, { status: "scheduled" });
+  // SYNC_CLOUD_URL は到達不能なdummyなので各pushは失敗するが、対象(results)に含まれること自体を検証。
+  const r = await adminPost("/api/sync/now", {});
+  const ids = (r.results || []).map(x => x.id);
+  assert.ok(ids.includes(ong.id), "進行中が同期対象");
+  assert.ok(ids.includes(prep.id), "準備中(preparation)が同期対象=綴り修正の確認");
+  assert.ok(!ids.includes(sched.id), "予定(scheduled)は対象外");
 });
