@@ -2116,7 +2116,8 @@ app.get("/api/tournaments/:id/receipts.html", requireAdmin, (req, res) => {
           }
         }
       }
-      if (!sealUrl) sealUrl = "/shared/assets/seal.png";
+      // 実アップロードが無ければ印影は空(領収書は「印」枠を直接描く)。存在しない seal.png への404を出さない。
+      if (!sealUrl) sealUrl = "";
     }
     // 協会ロゴURL: アップロード済み logo.* があれば優先、なければ既定アイコン (#272)
     let logoUrl = req.query.logo_url;

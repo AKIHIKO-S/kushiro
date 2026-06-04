@@ -356,7 +356,9 @@ function buildReceiptsHTML(tournament, entrants, opts) {
   opts = opts || {};
   const { teams, fees: F } = buildAggregation(tournament, entrants, opts.fees);
   // src属性に展開するため必ずエスケープ (seal_url/logo_url はクエリ由来=反射XSS防止)
-  const sealPath = escapeHtml(opts.seal_url || "/shared/assets/seal.png");
+  // 印影は未設定なら空にして「印」枠を直接描く(0バイト/未配置の seal.png を無駄に取りに行って
+  // 404→onerror で差し替える往復を避ける)。実アップロード(/uploads/seal.*)があれば server が seal_url を渡す。
+  const sealPath = escapeHtml(opts.seal_url || "");
   const logoPath = escapeHtml(opts.logo_url || "/shared/assets/icon-192.png");   // 協会ロゴ (#272)
   const issuer = opts.issuer || "釧路卓球協会";
   const president = opts.president || "会長  山本 満";
