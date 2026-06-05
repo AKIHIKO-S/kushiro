@@ -2785,6 +2785,75 @@ function _destructiveGuard(tournamentId, event, force, what) {
 }
 
 // ── トーナメント生成 (entrants ベース) ──────────
+// 標準配置(seed+entry_round)の結果ブラケットを「書込なし」で構築する純関数(プレビュー用)。
+// generateBracket が txn 前に作る matchesByRound を受け、BYE自動進行(autoAdvanceByes 相当)を
+// in-memory で再現し、exportBracket と同形式の {matches:[...]} を返す。DB/Elo/txn に一切触れない。
+function _previewBracketStructure(matchesByRound, totalRounds, bracketSize, N, event, nameOf) {
+  const idIndex = {};
+  matchesByRound.flat().forEach(m => { idIndex[m.id] = m; });
+  // 各 match の実効スロット名/所属を初期化(round1=配置から, 上位ラウンド=空)
+  matchesByRound.forEach((rnd, r) => {
+    rnd.forEach(m => {
+      if (r === 0) {
+        m._n1 = m.player1 ? nameOf(m.player1) : "BYE";
+        m._n2 = m.player2 ? nameOf(m.player2) : "BYE";
+        m._t1 = m.player1 ? (m.player1.team || "") : "";
+        m._t2 = m.player2 ? (m.player2.team || "") : "";
+      } else { m._n1 = ""; m._n2 = ""; m._t1 = ""; m._t2 = ""; }
+      m._adv = false;
+    });
+  });
+  // BYE自動進行を反復で写経: 片側だけ実選手(他方BYE)→上へ繰り上げ、両側BYE→BYEを上へ。
+  // 両側とも実選手(=実試合)は勝者未定なので進めない(次スロットは空のまま=TBD)。
+  for (let pass = 0; pass <= totalRounds + 1; pass++) {
+    let changed = false;
+    matchesByRound.forEach(rnd => {
+      rnd.forEach(m => {
+        if (m._adv) return;
+        const a = (m._n1 || "").trim(), b = (m._n2 || "").trim();
+        const aReal = a && a !== "BYE", bReal = b && b !== "BYE";
+        let winName, winTeam;
+        if (aReal && b === "BYE") { winName = m._n1; winTeam = m._t1; }
+        else if (bReal && a === "BYE") { winName = m._n2; winTeam = m._t2; }
+        else if (a === "BYE" && b === "BYE") { winName = "BYE"; winTeam = ""; }
+        else return; // 両側実選手(未定) or スロット未充填 → まだ進めない
+        m._adv = true;
+        if (m.next_match_id != null && idIndex[m.next_match_id]) {
+          const nm = idIndex[m.next_match_id];
+          if (m.next_slot === 1) { nm._n1 = winName; nm._t1 = winTeam; }
+          else { nm._n2 = winName; nm._t2 = winTeam; }
+        }
+        changed = true;
+      });
+    });
+    if (!changed) break;
+  }
+  // exportBracket 同形にマップ(BYE/未充填スロットは空名=描画側で「ー」表示)
+  const matches = [];
+  matchesByRound.forEach((rnd, r) => {
+    rnd.forEach(m => {
+      const a = (m._n1 || "").trim(), b = (m._n2 || "").trim();
+      const aReal = a && a !== "BYE", bReal = b && b !== "BYE";
+      matches.push({
+        id: m.id,
+        bracket_round: r + 1,
+        bracket_pos: m.bracket_pos,
+        round: "",
+        match_no: m.match_no,
+        status: (aReal && bReal) ? "pending" : "waiting",
+        player1_name: aReal ? m._n1 : "", player1_team: aReal ? m._t1 : "",
+        player2_name: bReal ? m._n2 : "", player2_team: bReal ? m._t2 : "",
+        result: null,
+      });
+    });
+  });
+  return {
+    preview: true, format: "tabletennis-bracket-v1", event: event || "",
+    bracket_size: bracketSize, total_rounds: totalRounds,
+    player_count: N, bye_count: bracketSize - N, matches,
+  };
+}
+
 function generateBracket(tournamentId, event, options) {
   options = options || {};
   // 破壊的再生成ガード: 結果入力済みの試合がある種目を force 無しで再生成しない(当日の不可逆データ破壊防止)。
@@ -2804,7 +2873,8 @@ function generateBracket(tournamentId, event, options) {
   }
 
   // ② レガシー互換: entrants が空の場合は tournament_players から自動移行
-  if (!entrants.length && event) {
+  // (preview では DB に entrant を作る副作用を避けるためスキップ)
+  if (!entrants.length && event && !options.preview) {
     const legacyPlayers = stmts.getTournamentPlayers.all(tournamentId)
       .filter(p => !p.entry_event || p.entry_event === event || p.entry_event === "");
     if (options.player_ids) {
@@ -3059,6 +3129,11 @@ function generateBracket(tournamentId, event, options) {
       m.next_slot = (i % 2) + 1;
     });
   }
+
+  // ── 書込なしプレビュー: txn を実行せず in-memory 構造を exportBracket 同形で返す(副作用ゼロ) ──
+  // 配置(matchesByRound)はここまで完全に in-memory。以後の txn/numberTxn/autoAdvanceByes は
+  // 全て書込なので、ここで return すれば DB/Elo/トランザクションに一切触れない。
+  if (options.preview) return _previewBracketStructure(matchesByRound, totalRounds, bracketSize, N, event, nameOf);
 
   // SQLite トランザクションで一括挿入 (小さい山=round1 から順に挿入)
   const txn = sqlite.transaction(() => {

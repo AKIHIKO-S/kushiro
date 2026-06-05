@@ -1750,6 +1750,15 @@ app.get("/api/tournaments/:id/bracket/draw-readiness", requireAdmin, (req, res) 
 app.get("/api/tournaments/:id/bracket/rev", requireAdmin, (req, res) => {
   res.json({ bracket_rev: db.bracketRev(req.params.id, req.query.event || "") });
 });
+// 書込なしプレビュー: 標準配置(seed+登場回戦)の結果ブラケットを「生成せず」に返す(スーパーシード確認用)。
+// DB/Elo/トランザクションに一切触れない。結果入力済みでも現ブラケットを壊さない(non-destructive)。
+app.get("/api/tournaments/:id/bracket/preview", requireAdmin, (req, res) => {
+  const event = req.query.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.generateBracket(req.params.id, event, { preview: true });
+  if (r && r.error) return res.status(400).json(r);
+  res.json(r);   // { preview:true, event, bracket_size, total_rounds, matches:[...] }
+});
 // 直前の抽選を取り消し、抽選直前のブラケットへ戻す。body: { event }
 app.post("/api/tournaments/:id/bracket/undo-draw", requireAdmin, (req, res) => {
   const event = req.body?.event;

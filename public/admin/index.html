@@ -4636,7 +4636,7 @@ const A = {
    tabs.forEach(([key, label, cnt]) => {
      tabStrip.appendChild(h("button", {
        className: "btn btn-sm " + (activeTab === key ? "" : "btn-ghost"),
-       onClick: () => { activeTab = key; renderTabs(); renderTable(); } },
+       onClick: () => { activeTab = key; renderTabs(); renderTable(); updatePreview(); } },
        label + " (" + cnt + ")"));
    });
  };
@@ -4711,13 +4711,13 @@ const A = {
          value: e.seed || 0,
          onChange: async (ev) => { try {
            await api.put(`/api/tournaments/${t.id}/entries/${e.id}/seed`, { seed: parseInt(ev.target.value) || 0 });
-           toast("シード更新", "ok"); } catch (err) { toast("失敗", "err"); } } })),
+           toast("シード更新", "ok"); updatePreview(); } catch (err) { toast("失敗", "err"); } } })),
        h("td", {}, h("select", { className: "input-sm", style: { width: "118px" },
          title: "登場回戦(スーパーシード): 罫線が大きいほど後の回戦から登場。1=1回戦から(通常)。R≧3 はスーパーシード相当。標準配置の生成に反映。",
          onChange: async (ev) => { try {
            const r = parseInt(ev.target.value) || 1;
            await api.put(`/api/tournaments/${t.id}/entries/${e.id}/entry-round`, { entry_round: r });
-           e.entry_round = r; toast("登場回戦を更新", "ok"); } catch (err) { toast("失敗", "err"); } } },
+           e.entry_round = r; toast("登場回戦を更新", "ok"); updatePreview(); } catch (err) { toast("失敗", "err"); } } },
          ...[1, 2, 3, 4, 5, 6].map(r => h("option",
            { value: String(r), selected: (parseInt(e.entry_round) || 1) === r ? "" : null },
            r === 1 ? "1回戦から(通常)" : r + "回戦から" + (r >= 3 ? "（SS）" : ""))))),
@@ -4750,7 +4750,27 @@ const A = {
    h("b", {}, "登場回戦（スーパーシード）"), "：紙の組合せ表で「罫線が大きい＝後の回戦から登場」。",
    "取込後はこの表の「登場R」で各選手を ", h("b", {}, "1回戦から（通常）/ 2回戦から / 3回戦から（SS）…"),
    " に設定できます（標準配置の生成に反映）。スーパーシードは年2回（なごやか亭杯・VICTAS杯）などで使用。");
- const body = h("div", {}, summary, qualityBar, tabStrip, ssNote, tableWrap);
+ // ── 登場回戦の配置プレビュー(書込なし) ──
+ let previewOpen = false;
+ const previewBox = h("div", { style: { display: "none", marginTop: "10px", overflow: "auto", maxHeight: "62vh", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "8px", background: "#fff" } });
+ const updatePreview = async () => {
+   if (!previewOpen) return;
+   if (activeTab === "all") { previewBox.innerHTML = '<div class="text-sub" style="padding:10px">種目タブを選ぶと、その種目の配置（スーパーシード反映）をプレビューします。</div>'; return; }
+   previewBox.innerHTML = '<div class="text-sub" style="padding:10px">プレビュー生成中…</div>';
+   try {
+     const bdata = await api.get(`/api/tournaments/${t.id}/bracket/preview?event=` + encodeURIComponent(activeTab));
+     if (!bdata || bdata.error) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + ((bdata && bdata.error) || "プレビューできません") + '</div>'; return; }
+     previewBox.innerHTML = "";
+     previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "6px" } },
+       `※「標準配置で生成したら」のプレビューです（まだ生成していません）。 枠${bdata.bracket_size} / ${bdata.total_rounds}回戦 / 出場${bdata.player_count}名 / BYE${bdata.bye_count}`));
+     previewBox.appendChild(O.renderVisualBracket(bdata));
+   } catch (e) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + (e.message || e) + '</div>'; }
+ };
+ const previewBtn = h("button", { className: "btn btn-sm btn-ghost", style: { marginTop: "8px" },
+   onClick: () => { previewOpen = !previewOpen; previewBox.style.display = previewOpen ? "block" : "none";
+     previewBtn.textContent = previewOpen ? "▲ 配置プレビューを閉じる" : "🔍 登場回戦の配置をプレビュー"; updatePreview(); } },
+   "🔍 登場回戦の配置をプレビュー");
+ const body = h("div", {}, summary, qualityBar, tabStrip, ssNote, tableWrap, previewBtn, previewBox);
  const modalBg = openModal(`申込一覧 — ${t.name}`, body,
    h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
  const box = modalBg && modalBg.querySelector ? modalBg.querySelector(".modal-box") : null;
@@ -9778,7 +9798,8 @@ const O = {
 
  // 1試合カード (side: left/right/center)
  const makeCard = (m, side) => {
-   const callable = m.status === "pending";
+   const isPreview = !!bdata.preview;   // プレビューは実DBの試合ではないので呼出/入替を一切無効化
+   const callable = m.status === "pending" && !isPreview;
    const card = h("div", { className: "vb-match" + (callable ? " vb-callable" : ""),
      // 呼出可能(pending)の対戦はカードクリックで呼出フローを開く #トーナメント表から呼出
      onClick: callable ? ((e) => {
@@ -9803,7 +9824,7 @@ const O = {
        style: { marginLeft: "6px", color: "#16a34a", fontWeight: 800 } }, "✓") : null,
      callable ? h("span", { className: "vb-call-chip" }, "▶ クリックで呼出") : null,
    ));
-   const dndOn = m.bracket_round === 1; // 1回戦のみ入替可能
+   const dndOn = m.bracket_round === 1 && !isPreview; // 1回戦のみ入替可能(プレビューは不可)
    const pos = m.bracket_pos || 0;
    const pRow = (name, team, won, lost, slot) => {
      const row = h("div", {
