@@ -10909,7 +10909,8 @@ const EnT = {
  if (_r && _r.error) return toast(_r.error, "err");   // 競合(409)等を通知
  }
  toast("保存しました", "ok");
- document.querySelector(".modal-bg")?.remove();
+ // 最前面(=この編集モーダル)だけ閉じる。申込一覧から開いた場合に、下の申込一覧を消さず残すため。
+ const _bgs = document.querySelectorAll(".modal-bg"); _bgs[_bgs.length - 1]?.remove();
  EnT.reload();
  } }, isNew ? "登録" : "保存");
  openModal(isNew ? "出場選手 新規登録" : "出場選手 編集", body, foot);
