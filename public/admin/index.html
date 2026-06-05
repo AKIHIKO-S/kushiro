@@ -3848,6 +3848,9 @@ const A = {
  playerCard.appendChild(playerHead);
  playerCard.appendChild(h("div", { className: "text-xs text-sub mb-2" },
    "左=氏名 / 右=所属チーム の前提で取り込まれます。逆転している場合は ⇄ ボタンか各行右側の入替ボタンで修正してください。"));
+ // 氏名/所属の振り分け確認パネル(例を示し、逆なら全員入替=芋づる式)。中身は LV_redrawPlayers 定義後に描画。
+ const patternBox = h("div", { style: { margin: "0 0 10px", padding: "10px 12px", background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: "8px" } });
+ playerCard.appendChild(patternBox);
 
  const tblWrap = h("div", { style: { overflow: "auto", maxHeight: "320px" } });
  const tbl = h("table", { className: "tbl", style: { fontSize: "12px" } });
@@ -3900,6 +3903,33 @@ const A = {
    });
  };
  LV_redrawPlayers();
+
+ // 氏名/所属の振り分け確認: 先頭数名を例に出し、逆なら全員入替(芋づる式)をワンクリックで。
+ const renderPatternBox = () => {
+   clear(patternBox);
+   patternBox.appendChild(h("div", { style: { fontWeight: 700, fontSize: "13px", marginBottom: "6px", color: "#1e3a8a" } },
+     "🔍 氏名／所属チームの振り分けを確認してください"));
+   const samples = editablePlayers.slice(0, 3).filter(p => p && (p.name || p.team));
+   if (samples.length) {
+     patternBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "3px" } }, "例（先頭の選手）— この振り分けで正しいですか？"));
+     const tb = h("table", { style: { fontSize: "12px", marginBottom: "6px" } });
+     tb.appendChild(h("thead", {}, h("tr", {},
+       h("th", { style: { textAlign: "left", padding: "2px 16px 2px 0", color: "#1d4ed8" } }, "氏名"),
+       h("th", { style: { textAlign: "left", padding: "2px 8px", color: "#1d4ed8" } }, "所属チーム"))));
+     const tbb = h("tbody", {});
+     samples.forEach(p => tbb.appendChild(h("tr", {},
+       h("td", { style: { fontWeight: 700, padding: "2px 16px 2px 0" } }, p.name || "(空)"),
+       h("td", { style: { padding: "2px 8px", color: "#475569" } }, p.team || "(空)"))));
+     tb.appendChild(tbb);
+     patternBox.appendChild(tb);
+   }
+   patternBox.appendChild(h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center" } },
+     h("button", { className: "btn btn-sm", style: { background: "#dc2626", color: "#fff", borderColor: "#b91c1c" },
+       onClick: () => { editablePlayers.forEach(p => { const tmp = p.name; p.name = p.team || ""; p.team = tmp || ""; }); LV_redrawPlayers(); renderPatternBox(); } },
+       "⇄ 逆です：全員『氏名↔所属』を入れ替え"),
+     h("span", { className: "text-xs text-sub" }, "1か所直すのと同じパターンで全員に反映。個別は各行の ⇄ / 下の表で修正できます。")));
+ };
+ renderPatternBox();
 
  // 取込時に editablePlayers を反映するため preview を上書き
  preview._editablePlayers = editablePlayers;
