@@ -3634,6 +3634,26 @@ app.post("/api/tournaments/:id/bracket/promote-seed", requireAdmin, (req, res) =
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, b.event) });
 });
 
+// エクセル風 枠グリッド用データ(トーナメント管理タブ): 1回戦スロット×entrant 結合
+app.get("/api/tournaments/:id/bracket/grid", requireAdmin, (req, res) => {
+  const event = req.query.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const data = db.getBracketGrid(req.params.id, event);
+  if (!data) return res.status(404).json({ error: "ブラケットが見つかりません" });
+  data.bracket_rev = db.bracketRev(req.params.id, event);
+  res.json(data);
+});
+// 氏名/所属の編集を表(matches の非正規化名)へ波及。割当・結果は変えず name/team のみ再同期。
+// 冪等(現entrantの表示名を該当スロットへ反映するだけ)で、スロット移動とは直交するため base_rev ガードは付けない
+// (名前編集の本来の楽観ロックは entrant 側 occStale が担う)。同時にスロット入替があっても安全に共存する。
+app.post("/api/tournaments/:id/bracket/resync-names", requireAdmin, (req, res) => {
+  const event = req.body && req.body.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.syncEntrantsToBracket(req.params.id, event);
+  if (r && r.error) return res.status(400).json(r);
+  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
+});
+
 app.put("/api/tournaments/:id/court-layout", requireAdmin, (req, res) => {
   const r = db.setCourtLayout(req.params.id, req.body || {});
   if (!r) return res.status(404).json({ error: "大会が見つかりません" });

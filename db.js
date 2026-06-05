@@ -6473,6 +6473,105 @@ function exportBracket(tournamentId, event) {
   };
 }
 
+// ── エクセル風 枠グリッド用データ(トーナメント管理タブ Phase2) ──────────────
+// 1回戦の各スロット(枠)を、その entrant_id 経由で entrant の全フィールドに結合して返す。
+// グリッドはこの rows をそのまま行(シングル=1行/ダブルス=選手1・選手2の2サブ行)に描画し、
+// セル編集を entrant 正本(PUT /entrants/:id)・seed・登場回戦へ振り分ける。
+// matches には player1_entrant_id/player2_entrant_id が保存済(generateBracket/setBracketSlot)。
+function getBracketGrid(tournamentId, event) {
+  if (!event) return null;
+  const all = opStmts.getBracketMatches.all(tournamentId, event);
+  if (!all.length) return null;
+  const round1 = all.filter(m => m.bracket_round === 1).sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0));
+  const bracketSize = round1.length * 2;
+  const byId = new Map();
+  entrantStmts.listByEvent.all(tournamentId, event).forEach(e => byId.set(e.id, e));
+  const rowFor = (m, slot) => {
+    const eid = slot === 1 ? m.player1_entrant_id : m.player2_entrant_id;
+    const slotName = (slot === 1 ? m.player1_name : m.player2_name) || "";
+    const slotTeam = (slot === 1 ? m.player1_team : m.player2_team) || "";
+    const oppName = (slot === 1 ? m.player2_name : m.player1_name) || "";
+    const e = eid ? byId.get(eid) : null;
+    return {
+      pos: m.bracket_pos || 0, slot, match_id: m.id,
+      entrant_id: eid || null,
+      updated_at: e ? (e.updated_at || "") : "",
+      is_bye: slotName === "BYE",
+      slot_name: slotName, slot_team: slotTeam,
+      opponent: oppName === "BYE" ? "BYE" : oppName,
+      match_status: m.status,
+      // 編集用 entrant フィールド(無ければ空)
+      is_doubles: e ? !!e.is_doubles : false,
+      name: e ? (e.name || "") : "",
+      surname: e ? (e.surname || "") : "",
+      given_name: e ? (e.given_name || "") : "",
+      furigana: e ? (e.furigana || "") : "",
+      team: e ? (e.team || "") : slotTeam,
+      seed: e ? (e.seed || 0) : 0,
+      entry_round: e ? (e.entry_round || 1) : 1,
+      partner_name: e ? (e.partner_name || "") : "",
+      partner_surname: e ? (e.partner_surname || "") : "",
+      partner_given_name: e ? (e.partner_given_name || "") : "",
+      partner_team: e ? (e.partner_team || "") : "",
+      partner_furigana: e ? (e.partner_furigana || "") : "",
+      gender: e ? (e.gender || "") : "",
+      partner_gender: e ? (e.partner_gender || "") : "",
+      display_name: e ? (e.display_name || "") : slotName,
+    };
+  };
+  const rows = [];
+  round1.forEach(m => { rows.push(rowFor(m, 1)); rows.push(rowFor(m, 2)); });
+  return {
+    event, bracket_size: bracketSize,
+    total_rounds: bracketSize ? Math.log2(bracketSize) : 0,
+    rows,
+  };
+}
+
+// entrant の現在の display_name/team を、その entrant が居る全 matches スロットの
+// 非正規化列(player*_name/team)へ反映する。割当(entrant_id)・結果・進行状態は一切変えず
+// name/team のみ更新(BYE枠は除外)。氏名/所属の編集を表ツリーへ波及させるために使う。
+function syncEntrantsToBracket(tournamentId, event) {
+  if (!event) return { error: "event が必要です" };
+  const ents = entrantStmts.listByEvent.all(tournamentId, event);
+  // スロットの非正規化名(player*_name/team)に加え、完了済み試合の winner/loser 名・所属も追従させる。
+  // SQLite は単一 UPDATE の SET 右辺で「更新前」の列値を参照する。勝者/敗者の判定は winner_entrant_id
+  // (完了時に保存される勝者の entrant_id)で行う: この entrant が勝者(winner_entrant_id=@eid)なら winner_*、
+  // この entrant が居る(WHERE player*_entrant_id=@eid)が勝者でない(winner_entrant_id<>@eid)なら loser_*。
+  // 名前文字列ではなく entrant_id で判定するため、同姓同名対決(winner_name===loser_name)でも
+  // 敗者の改名が勝者名を汚染しない。これで viewer/ツリーの勝敗判定・帳票が改名後も整合する。
+  // 割当(entrant_id)・winner_id・結果・Elo は一切変えない。
+  // winner_entrant_id が空の旧データ(列追加前に確定した完了試合)は entrant_id 判定できないため、
+  // 従来どおり名前一致(winner_name=player*_name)へフォールバックする。新データは entrant_id 判定が優先。
+  const up1 = sqlite.prepare(`UPDATE matches SET
+    player1_name=@nm, player1_team=@tm,
+    winner_name = CASE WHEN winner_entrant_id=@eid OR (winner_entrant_id='' AND winner_name<>'' AND winner_name=player1_name) THEN @nm ELSE winner_name END,
+    winner_team = CASE WHEN winner_entrant_id=@eid OR (winner_entrant_id='' AND winner_name<>'' AND winner_name=player1_name) THEN @tm ELSE winner_team END,
+    loser_name  = CASE WHEN loser_name<>'' AND ((winner_entrant_id<>'' AND winner_entrant_id<>@eid) OR (winner_entrant_id='' AND loser_name=player1_name)) THEN @nm ELSE loser_name  END,
+    loser_team  = CASE WHEN loser_name<>'' AND ((winner_entrant_id<>'' AND winner_entrant_id<>@eid) OR (winner_entrant_id='' AND loser_name=player1_name)) THEN @tm ELSE loser_team  END
+    WHERE tournament_id=@tid AND event=@ev AND player1_entrant_id=@eid AND player1_name<>'BYE'`);
+  const up2 = sqlite.prepare(`UPDATE matches SET
+    player2_name=@nm, player2_team=@tm,
+    winner_name = CASE WHEN winner_entrant_id=@eid OR (winner_entrant_id='' AND winner_name<>'' AND winner_name=player2_name) THEN @nm ELSE winner_name END,
+    winner_team = CASE WHEN winner_entrant_id=@eid OR (winner_entrant_id='' AND winner_name<>'' AND winner_name=player2_name) THEN @tm ELSE winner_team END,
+    loser_name  = CASE WHEN loser_name<>'' AND ((winner_entrant_id<>'' AND winner_entrant_id<>@eid) OR (winner_entrant_id='' AND loser_name=player2_name)) THEN @nm ELSE loser_name  END,
+    loser_team  = CASE WHEN loser_name<>'' AND ((winner_entrant_id<>'' AND winner_entrant_id<>@eid) OR (winner_entrant_id='' AND loser_name=player2_name)) THEN @tm ELSE loser_team  END
+    WHERE tournament_id=@tid AND event=@ev AND player2_entrant_id=@eid AND player2_name<>'BYE'`);
+  let changed = 0;
+  const tx = sqlite.transaction(() => {
+    for (const e of ents) {
+      const nm = e.display_name || e.name || "";
+      if (!nm || nm === "BYE") continue;   // 番兵語 'BYE' は実スロットに書かない(偽BYE化・誤自動進行の防止)
+      const tm = e.team || "";
+      const args = { nm, tm, tid: tournamentId, ev: event, eid: e.id };
+      changed += up1.run(args).changes;
+      changed += up2.run(args).changes;
+    }
+  });
+  tx();
+  return { ok: true, updated: changed };
+}
+
 // 全ブラケット書き出し（複数event対応）
 // ── クラウド公開ミラーへの一方向同期(本部ローカル=正本 → クラウド) ──
 // 会場WiFi断に無依存なローカル運用の結果を、ネット復帰時にクラウド公開ビューへ反映する。
@@ -7940,6 +8039,7 @@ module.exports = {
   updateEntrySettings, getOpenTournaments,
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
+  getBracketGrid, syncEntrantsToBracket,
   exportPublicSnapshot, applyPublicSnapshot,
   // Entrants (大会参加選手) - マスタDBと分離
   createEntrant, updateEntrant, deleteEntrant, getEntrant, getEntrants,

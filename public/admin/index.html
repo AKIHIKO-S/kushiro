@@ -1186,10 +1186,17 @@
  .tm-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
  .tm-bar select{min-width:180px;padding:6px 8px;border:1px solid var(--border,#e2e8f0);border-radius:8px;font:inherit}
  .tm-split{display:flex;gap:12px;align-items:flex-start}
- .tm-left{flex:1 1 48%;min-width:340px}
- .tm-right{flex:1 1 52%;min-width:320px;overflow:auto;background:#f9fafb;border-radius:6px;padding:6px}
+ .tm-left{flex:1 1 48%;min-width:340px;max-height:80vh;overflow:auto}
+ .tm-right{flex:1 1 52%;min-width:320px;max-height:80vh;overflow:auto;background:#f9fafb;border-radius:6px;padding:6px}
  .tm-empty{padding:24px;text-align:center;color:#64748b}
- @media(max-width:900px){.tm-split{flex-direction:column}.tm-left,.tm-right{width:100%}}
+ .tm-grid{border-collapse:collapse;width:100%;font-size:13px;background:#fff}
+ .tm-grid th,.tm-grid td{border:1px solid #e2e8f0;padding:3px 7px;white-space:nowrap;text-align:left;vertical-align:middle}
+ .tm-grid th{background:#f1f5f9;position:sticky;top:0;z-index:1;font-weight:700;color:#334155;font-size:12px}
+ .tm-grid td.tm-cell-edit{cursor:cell}
+ .tm-grid td.tm-cell-edit:hover{background:#eff6ff}
+ .tm-grid input{width:100%;min-width:56px;border:1px solid #60a5fa;border-radius:3px;font:inherit;padding:1px 3px;box-sizing:border-box}
+ .tm-grid tr.tm-row-bye td{background:#f8fafc}
+ @media(max-width:900px){.tm-split{flex-direction:column}.tm-left,.tm-right{width:100%;max-height:none}}
  </style>
 
  <!-- 大会管理 -->
@@ -11199,9 +11206,14 @@ const TMgmt = {
       const ents = (await api.get(`/api/tournaments/${tid}/entrants`)) || [];
       TMgmt._entrants = (Array.isArray(ents) ? ents : []).filter(e => e.event === ev);
       const bdata = await api.get(`/api/tournaments/${tid}/bracket/export?event=` + encodeURIComponent(ev));
-      // Phase1は読み取り専用。base_rev を送る編集を行わないので、event名のみキーの共有キャッシュ
-      // O._bracketRev は汚さない(別大会のrevで上書きすると進行管理タブで偽409が起きるため)。
+      // base_rev は大会+種目スコープの grid 応答(bracket_rev)を使う。event名のみキーの共有キャッシュ
+      // O._bracketRev は使わない(別大会のrevで汚すと進行管理タブで偽409が起きるため)。
       TMgmt._bracket = (bdata && bdata.error) ? null : bdata;
+      if (TMgmt._bracket) {
+        const grid = await api.get(`/api/tournaments/${tid}/bracket/grid?event=` + encodeURIComponent(ev));
+        TMgmt._grid = (grid && !grid.error) ? grid : null;
+        TMgmt._gridRev = TMgmt._grid ? TMgmt._grid.bracket_rev : null;
+      } else { TMgmt._grid = null; TMgmt._gridRev = null; }
       TMgmt.render();
     } catch (e) {
       main.innerHTML = "";
@@ -11224,14 +11236,178 @@ const TMgmt = {
     }
     status.textContent = "ブラケット" + b.bracket_size + "・" + b.total_rounds + "回戦・出場" + TMgmt._entrants.length + "名";
     const split = h("div", { className: "tm-split" });
-    const left = h("div", { className: "tm-left" },
-      h("div", { className: "tm-empty", style: { textAlign: "left", color: "#94a3b8" } },
-        "▶ エクセル風 枠グリッド（編集）は次の更新で表示されます。"));
+    const left = h("div", { className: "tm-left" });
+    TMgmt.renderGrid(left);
     const right = h("div", { className: "tm-right" });
     right.appendChild(O.renderVisualBracket(b, { readOnly: true }));
     split.appendChild(left);
     split.appendChild(right);
     main.appendChild(split);
+  },
+
+  // ── エクセル風 枠グリッド(左ペイン) ──────────────────────────
+  renderGrid(container) {
+    const g = TMgmt._grid;
+    if (!g || !g.rows || !g.rows.length) {
+      container.appendChild(h("div", { className: "tm-empty", style: { textAlign: "left" } }, "枠データを取得できませんでした。"));
+      return;
+    }
+    container.appendChild(h("div", { style: { fontSize: "12px", color: "#64748b", marginBottom: "6px" } },
+      "セルをクリックして編集 → Enter/Tabで確定・Escで取消。氏名/所属の変更は右の表にも反映されます。"));
+    const tbl = h("table", { className: "tm-grid" });
+    tbl.appendChild(h("thead", {}, h("tr", {},
+      ["枠", "姓", "名", "所属", "ふりがな", "シード", "登場R", "相手"].map(t => h("th", {}, t)))));
+    const tbody = h("tbody", {});
+    g.rows.forEach(row => TMgmt._appendGridRows(tbody, row));
+    tbl.appendChild(tbody);
+    container.appendChild(tbl);
+  },
+
+  _appendGridRows(tbody, row) {
+    const posLabel = (row.pos + 1) + (row.slot === 1 ? "上" : "下");
+    if (row.is_bye) {
+      tbody.appendChild(h("tr", { className: "tm-row-bye" },
+        h("td", {}, posLabel),
+        h("td", { colSpan: 7, style: { color: "#94a3b8", fontStyle: "italic" } }, "BYE（シード扱い）")));
+      return;
+    }
+    if (!row.entrant_id) {
+      tbody.appendChild(h("tr", {},
+        h("td", {}, posLabel),
+        h("td", { colSpan: 7, style: { color: "#cbd5e1" } }, "（空き）")));
+      return;
+    }
+    const seedTd = TMgmt._cell(row.seed || "", (v) => TMgmt._commitSeed(row, v), { numeric: true, rowSpan: row.is_doubles ? 2 : 1 });
+    const erTd = h("td", { rowSpan: row.is_doubles ? 2 : 1, style: { textAlign: "center", color: "#64748b" } }, String(row.entry_round || 1));
+    const oppTd = h("td", { rowSpan: row.is_doubles ? 2 : 1, style: { color: "#64748b", fontSize: "12px" } }, row.opponent || "—");
+    if (row.is_doubles) {
+      tbody.appendChild(h("tr", {},
+        h("td", { rowSpan: 2 }, posLabel, h("div", { style: { fontSize: "10px", color: "#94a3b8" } }, "ﾀﾞﾌﾞﾙｽ")),
+        TMgmt._cell(row.surname, (v) => TMgmt._commitField(row, "surname", v)),
+        TMgmt._cell(row.given_name, (v) => TMgmt._commitField(row, "given_name", v)),
+        TMgmt._cell(row.team, (v) => TMgmt._commitField(row, "team", v)),
+        TMgmt._cell(row.furigana, (v) => TMgmt._commitField(row, "furigana", v)),
+        seedTd, erTd, oppTd));
+      tbody.appendChild(h("tr", {},
+        TMgmt._cell(row.partner_surname, (v) => TMgmt._commitField(row, "partner_surname", v)),
+        TMgmt._cell(row.partner_given_name, (v) => TMgmt._commitField(row, "partner_given_name", v)),
+        TMgmt._cell(row.partner_team, (v) => TMgmt._commitField(row, "partner_team", v)),
+        TMgmt._cell(row.partner_furigana, (v) => TMgmt._commitField(row, "partner_furigana", v))));
+      return;
+    }
+    tbody.appendChild(h("tr", {},
+      h("td", {}, posLabel),
+      TMgmt._cell(row.surname, (v) => TMgmt._commitField(row, "surname", v)),
+      TMgmt._cell(row.given_name, (v) => TMgmt._commitField(row, "given_name", v)),
+      TMgmt._cell(row.team, (v) => TMgmt._commitField(row, "team", v)),
+      TMgmt._cell(row.furigana, (v) => TMgmt._commitField(row, "furigana", v)),
+      seedTd, erTd, oppTd));
+  },
+
+  // 編集可能セル: クリックで input 化、Enter/Tab/blurで確定、Escで取消
+  _cell(value, commit, opts) {
+    opts = opts || {};
+    const disp = (v) => (v === "" || v == null) ? "—" : String(v);
+    const td = h("td", { className: "tm-cell-edit" });
+    if (opts.rowSpan && opts.rowSpan > 1) td.rowSpan = opts.rowSpan;
+    td.appendChild(h("span", {}, disp(value)));
+    td.onclick = () => {
+      if (td.querySelector("input")) return;
+      const input = h("input", { type: opts.numeric ? "number" : "text", value: value == null ? "" : String(value) });
+      td.innerHTML = ""; td.appendChild(input);
+      input.focus(); try { input.select(); } catch (e) {}
+      let done = false;
+      const finish = async (save) => {
+        if (done) return; done = true;
+        const nv = input.value;
+        if (save && String(nv) !== String(value == null ? "" : value)) {
+          td.innerHTML = ""; td.appendChild(h("span", { style: { color: "#94a3b8" } }, "…"));
+          await commit(nv);   // commit が grid 再描画(updated_at/表示名を正に)
+        } else {
+          td.innerHTML = ""; td.appendChild(h("span", {}, disp(value)));
+        }
+      };
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); finish(true); }
+        else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+        else if (e.key === "Tab") { finish(true); }   // 既定のTabでフォーカス移動、値は確定
+      });
+      input.addEventListener("blur", () => finish(true));
+    };
+    return td;
+  },
+
+  // PUT応答(entrant)からグリッド行をその場で更新。再取得をスキップしても updated_at/表示が正に保たれる。
+  _patchRowFromEntrant(row, e) {
+    if (!e) return;
+    ["updated_at", "surname", "given_name", "furigana", "team", "seed", "entry_round",
+      "name", "display_name", "gender", "partner_gender",
+      "partner_surname", "partner_given_name", "partner_team", "partner_furigana"].forEach(k => {
+      if (k in e) row[k] = e[k];
+    });
+  },
+
+  async _commitField(row, field, value) {
+    if (!row.entrant_id) { toast("この枠は選手が未割当です", "err"); return; }
+    const tid = TMgmt.tournamentId, ev = TMgmt.event;
+    try {
+      const r = await api.put(`/api/entrants/${row.entrant_id}`, { [field]: value, base_updated_at: row.updated_at });
+      if (!r || r.error || r.conflict) { toast((r && r.error) || "更新に失敗しました", "err"); return TMgmt.reload(); }
+      TMgmt._patchRowFromEntrant(row, r);   // 行をその場更新(連続編集でも updated_at が最新=偽競合を防ぐ)
+      // 氏名(姓/名)・所属は表(matches の非正規化名・完了試合の勝敗名)へ再同期。resync は冪等で楽観ロック不要。
+      if (/^(surname|given_name|team|partner_surname|partner_given_name|partner_team)$/.test(field)) {
+        const rs = await api.post(`/api/tournaments/${tid}/bracket/resync-names`, { event: ev });
+        if (rs && rs.error) { toast(rs.error, "err"); return TMgmt.reload(); }
+        if (rs && rs.bracket_rev) TMgmt._gridRev = rs.bracket_rev;
+        TMgmt._scheduleTreeRefresh();
+      }
+      await TMgmt._reloadGridOnly();
+      toast("更新しました", "ok");
+    } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); TMgmt.reload(); }
+  },
+
+  async _commitSeed(row, value) {
+    if (!row.entrant_id) { toast("この枠は選手が未割当です", "err"); return; }
+    const tid = TMgmt.tournamentId;
+    try {
+      const r = await api.put(`/api/tournaments/${tid}/entries/${row.entrant_id}/seed`, { seed: parseInt(value) || 0 });
+      if (!r || r.error) { toast((r && r.error) || "シードの更新に失敗しました", "err"); return TMgmt.reload(); }
+      if (r && r.seed != null) row.seed = r.seed;
+      await TMgmt._reloadGridOnly();   // seed は生成済み表/revに影響しない(再同期不要)
+    } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); TMgmt.reload(); }
+  },
+
+  // グリッドを再取得して左ペインを再描画。他セル編集中(input開)なら破壊的再描画を避け(打鍵保護)、
+  // 取得中に種目/大会が切替わった場合は描画を破棄(stale-guard)。
+  async _reloadGridOnly() {
+    const left0 = document.querySelector("#tmMain .tm-left");
+    if (left0 && left0.querySelector("input")) return;   // 編集中: 行はcommit時にその場更新済みなので安全
+    const tid = TMgmt.tournamentId, ev = TMgmt.event;
+    try {
+      const grid = await api.get(`/api/tournaments/${tid}/bracket/grid?event=` + encodeURIComponent(ev));
+      if (TMgmt.tournamentId !== tid || TMgmt.event !== ev) return;
+      if (grid && !grid.error) { TMgmt._grid = grid; TMgmt._gridRev = grid.bracket_rev; }
+      const left = document.querySelector("#tmMain .tm-left");
+      if (left && !left.querySelector("input")) { left.innerHTML = ""; TMgmt.renderGrid(left); }
+    } catch (e) { /* 一時障害は次の編集/再読込で回復 */ }
+  },
+
+  // 右ツリーを遅延更新(連続編集をまとめる)。取得中に種目/大会が切替わった場合は破棄。
+  _scheduleTreeRefresh() {
+    clearTimeout(TMgmt._treeTimer);
+    TMgmt._treeTimer = setTimeout(async () => {
+      const tid = TMgmt.tournamentId, ev = TMgmt.event;
+      if (!tid || !ev) return;
+      try {
+        const bdata = await api.get(`/api/tournaments/${tid}/bracket/export?event=` + encodeURIComponent(ev));
+        if (TMgmt.tournamentId !== tid || TMgmt.event !== ev) return;
+        if (bdata && !bdata.error) {
+          TMgmt._bracket = bdata;
+          const right = document.querySelector("#tmMain .tm-right");
+          if (right) { right.innerHTML = ""; right.appendChild(O.renderVisualBracket(bdata, { readOnly: true })); }
+        }
+      } catch (e) { /* 一時障害は無視 */ }
+    }, 400);
   },
 };
 
