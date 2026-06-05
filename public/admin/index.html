@@ -3858,7 +3858,8 @@ const A = {
    h("th", { style: { width: "40px" } }, "#"),
    h("th", {}, "氏名"),
    h("th", { style: { width: "32%" } }, "所属チーム"),
-   meta.is_doubles ? h("th", {}, "パートナー") : null,
+   meta.is_doubles ? h("th", {}, "パートナー氏名") : null,
+   meta.is_doubles ? h("th", { style: { width: "26%" } }, "パートナー所属") : null,
    h("th", { style: { width: "32px" } }, ""),
  )));
  const tbody = h("tbody", {});
@@ -3892,6 +3893,11 @@ const A = {
          h("input", { className: "input input-sm",
            value: p.partner_name || "",
            onInput: (e) => { p.partner_name = e.target.value; } })) : null,
+       meta.is_doubles ? h("td", {},
+         h("input", { className: "input input-sm",
+           placeholder: "相方の所属(別チームなら)",
+           value: p.partner_team || "",
+           onInput: (e) => { p.partner_team = e.target.value; } })) : null,
        h("td", {},
          h("button", { className: "btn btn-sm btn-ghost", title: "この行の氏名と所属を入替",
            style: { padding: "4px 8px", minWidth: 0 },
@@ -3909,6 +3915,8 @@ const A = {
    clear(patternBox);
    patternBox.appendChild(h("div", { style: { fontWeight: 700, fontSize: "13px", marginBottom: "6px", color: "#1e3a8a" } },
      "🔍 氏名／所属チームの振り分けを確認してください"));
+   if (meta.is_doubles) patternBox.appendChild(h("div", { className: "text-xs", style: { color: "#1e3a8a", marginBottom: "6px", lineHeight: "1.6" } },
+     "ダブルスは「選手2名を上下に並べ、右に所属（2人同じなら所属1つ／別チームなら各自の所属）」として読み取ります。ペアの相手や所属が違う場合は、下の表の『パートナー氏名／パートナー所属』で修正してください。"));
    const samples = editablePlayers.slice(0, 3).filter(p => p && (p.name || p.team));
    if (samples.length) {
      patternBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "3px" } }, "例（先頭の選手）— この振り分けで正しいですか？"));
