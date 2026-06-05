@@ -10158,12 +10158,37 @@ const O = {
    };
    searchInput.addEventListener("input", renderList);
 
+   // シードに繰り上げ(既存選手を外して、選んだ登場回戦のシードとして上/下に再配置)
+   const seedRoundSel = h("select", { className: "input input-sm", style: { width: "130px" } },
+     ...[2, 3, 4, 5].map(r => h("option", { value: String(r), selected: r === 2 ? "" : null }, r + "回戦から")));
+   const seedSideSel = h("select", { className: "input input-sm", style: { width: "110px" } },
+     h("option", { value: "top" }, "表の上へ"), h("option", { value: "bottom" }, "表の下へ"));
+   const promoteBox = (currentName && currentName !== "BYE") ? h("div", {},
+     h("div", { className: "modal-section-title", style: { marginTop: "12px" } }, "シードに繰り上げ"),
+     h("div", { className: "text-xs text-sub", style: { marginBottom: "6px", lineHeight: "1.6" } },
+       "この選手を外して、選んだ登場回戦のシードとして上/下に再配置します（元の相手は不戦勝で繰り上がり、枠は自動で広がります）。"),
+     h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
+       seedRoundSel, seedSideSel,
+       h("button", { className: "btn btn-sm", style: { background: "#7c3aed", color: "#fff" },
+         onClick: async () => {
+           if (!confirm(`「${currentName}」を ${seedRoundSel.value}回戦からのシードに繰り上げます。よろしいですか？`)) return;
+           const payload = { event, pos, slot, entry_round: parseInt(seedRoundSel.value) || 2, side: seedSideSel.value, base_rev: (O._bracketRev && O._bracketRev[event]) };
+           let r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/promote-seed`, payload);
+           if (r && r.needs_force) { if (!confirm("⚠ " + r.error + "\n\n結果入力済みも消して作り直しますか？")) return; r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/promote-seed`, { ...payload, force: true }); }
+           if (r && r.error) return toast(r.error, "err");
+           if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[event] = r.bracket_rev; }
+           toast(`「${currentName}」をシードに繰り上げました`, "ok");
+           modal.remove();
+           if (typeof O._vbReload === "function") O._vbReload();
+         } }, "⬆ シードに繰り上げ"))) : null;
+
    const body = h("div", {},
      h("div", { className: "text-xs text-sub", style: { marginBottom: "8px" } },
        event + " ／ " + posLabel),
      curBox,
      h("div", { className: "modal-section-title" }, "クイック操作"),
      quick,
+     promoteBox,
      h("div", { className: "modal-section-title", style: { marginTop: "12px" } },
        "別の選手に置き換える"),
      searchInput,

@@ -58,3 +58,35 @@ test("addBracketSeed: 表が無い種目はエラー(先に生成を促す)", ()
   const r = db.addBracketSeed(t.id, EV, { name: "Y", side: "top", entry_round: 1 });
   assert.ok(r && r.error && /トーナメント表がありません/.test(r.error), "未生成はエラー: " + JSON.stringify(r));
 });
+
+test("promoteToSeed: クリックした枠の選手をシードに繰り上げ(元位置から外し、登場回戦から合流・他は保持)", () => {
+  const t = setup(8);
+  const r1 = r1Of(t).sort((a, b) => a.bracket_pos - b.bracket_pos);
+  const sizeBefore = r1.length * 2;
+  const target = r1[0].player1_name;   // pos0 / slot1 の選手を繰り上げる
+  const otherPairs = new Set(r1.filter((m, i) => i > 0 && m.player1_name && m.player2_name).map(pairKey));
+
+  const res = db.promoteToSeed(t.id, EV, 0, 1, { entry_round: 2, side: "top" });
+  assert.ok(res && !res.error, "繰り上げ成功: " + JSON.stringify(res).slice(0, 160));
+
+  const newR1 = r1Of(t);
+  assert.ok(newR1.length * 2 > sizeBefore, "枠が広がる: " + sizeBefore + "→" + newR1.length * 2);
+  const newPairs = new Set(newR1.map(pairKey));
+  for (const p of otherPairs) assert.ok(newPairs.has(p), "繰り上げ以外の対戦は保持: " + p);
+  const tgtR1 = newR1.find(m => m.player1_name === target || m.player2_name === target);
+  assert.ok(tgtR1, "繰り上げた選手は1回戦の枠に居る");
+  const opp = tgtR1.player1_name === target ? tgtR1.player2_name : tgtR1.player1_name;
+  assert.ok(!opp || opp === "" || opp === "BYE", "繰り上げた選手の1回戦相手はBYE(=シード上がり・進行開始で2回戦へ): opp=" + opp);
+});
+
+test("promoteToSeed: BYE枠を指定したらエラー", () => {
+  const t = setup(4);
+  // 末尾に空きを作る: 5人目をシードにして枠を広げ、BYE枠を発生させる
+  db.addBracketSeed(t.id, EV, { name: "追加シード", side: "bottom", entry_round: 3 });
+  const r1 = r1Of(t).sort((a, b) => a.bracket_pos - b.bracket_pos);
+  const byeIdx = r1.findIndex(m => !m.player2_name || m.player2_name === "");
+  if (byeIdx >= 0) {
+    const res = db.promoteToSeed(t.id, EV, r1[byeIdx].bracket_pos, 2, { entry_round: 2 });
+    assert.ok(res && res.error, "BYE枠の繰り上げはエラー: " + JSON.stringify(res));
+  }
+});

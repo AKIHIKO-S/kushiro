@@ -3624,6 +3624,15 @@ app.post("/api/tournaments/:id/bracket/add-seed", requireAdmin, (req, res) => {
   if (r && r.error) return res.status(400).json(r);   // needs_force も r に含めて返す(フロントが再確認)
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
+// 既存選手をシードに繰り上げ(クリックした枠 pos/slot の選手を登場回戦Rのシードとして再配置)。
+app.post("/api/tournaments/:id/bracket/promote-seed", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (!b.event) return res.status(400).json({ error: "event が必要です" });
+  if (bracketRevStale(req.params.id, b.event, b)) return sendBracketConflict(res, req.params.id, b.event);
+  const r = db.promoteToSeed(req.params.id, b.event, b.pos, b.slot, b);
+  if (r && r.error) return res.status(400).json(r);
+  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, b.event) });
+});
 
 app.put("/api/tournaments/:id/court-layout", requireAdmin, (req, res) => {
   const r = db.setCourtLayout(req.params.id, req.body || {});

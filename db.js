@@ -2884,8 +2884,13 @@ function addBracketSeed(tournamentId, event, opts) {
   if (!r1.length) return { error: "この種目のトーナメント表がありません。先に生成してから追加してください。" };
   const byId = {};
   entrantStmts.listByEvent.all(tournamentId, event).forEach(e => { byId[e.id] = e; });
-  const existing = [];   // 現R1リーフ(entrant or null=BYE)を順番どおりに復元(配置保持)
-  r1.forEach(m => { existing.push(m.p1 ? (byId[m.p1] || null) : null); existing.push(m.p2 ? (byId[m.p2] || null) : null); });
+  const existing = [];   // 現R1リーフ(entrant or null=BYE)を順番どおりに復元(配置保持)。
+  // 既存選手を「シードに繰り上げ」る場合(entrant_id が既に表に居る)は、その枠を外す(=元の相手は不戦勝で上がる)。
+  const _exclude = opts.entrant_id || null;
+  r1.forEach(m => {
+    existing.push((_exclude && m.p1 === _exclude) ? null : (m.p1 ? (byId[m.p1] || null) : null));
+    existing.push((_exclude && m.p2 === _exclude) ? null : (m.p2 ? (byId[m.p2] || null) : null));
+  });
   // 登場回戦 R の領域 = 2^(R-1) リーフ(本人 + BYE)。R=1 は通常の1回戦エントリー。
   const R = Math.max(1, Math.min(10, parseInt(opts.entry_round) || 1));
   const region = Math.pow(2, R - 1);
@@ -2904,6 +2909,22 @@ function addBracketSeed(tournamentId, event, opts) {
   while (leaves.length < size) leaves.push(null);   // BYE で 2^k に
   // fixedLeaves で配置を凍結して再構築(既存の組み合わせ保持・自動進行はしない=確認後に進行開始)
   return generateBracket(tournamentId, event, { regenerate: true, force: true, fixedLeaves: leaves, no_auto_advance: true });
+}
+
+// トーナメント表で既存の選手を「シードに繰り上げ」る(クリックした枠の選手を、登場回戦Rのシードとして
+// 上/下に再配置)。pos/slot から対象 entrant を特定し addBracketSeed に委譲(元の枠は外れて相手はBYE上がり)。
+function promoteToSeed(tournamentId, event, pos, slot, opts) {
+  opts = opts || {};
+  if (!event) return { error: "event が必要です" };
+  const m = sqlite.prepare(
+    "SELECT player1_entrant_id p1, player2_entrant_id p2 FROM matches WHERE tournament_id=? AND event=? AND bracket_round=1 AND bracket_pos=?"
+  ).get(tournamentId, event, parseInt(pos) || 0);
+  if (!m) return { error: "対象の枠が見つかりません" };
+  const entrantId = (parseInt(slot) === 2) ? m.p2 : m.p1;
+  if (!entrantId) return { error: "その枠に選手が居ません(BYE)" };
+  return addBracketSeed(tournamentId, event, {
+    entrant_id: entrantId, side: opts.side, entry_round: opts.entry_round || 2, force: opts.force,
+  });
 }
 
 function generateBracket(tournamentId, event, options) {
@@ -7893,7 +7914,7 @@ module.exports = {
   exportAllData, importPlayers, getStats, getLastUpdated, getOpsFingerprint,
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
-  generateBracket, addBracketSeed, drawSingleBracket, computeDrawLeaves, bracketPositions,
+  generateBracket, addBracketSeed, promoteToSeed, drawSingleBracket, computeDrawLeaves, bracketPositions,
   checkDrawReadiness, bracketRev, undoDraw, getDrawLog, getBracketDrawDiff, importBracketRoundtrip,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   generateTeamLeague, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
