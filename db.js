@@ -6367,6 +6367,7 @@ function bulkFixEntrantInference(tournamentId, opts) {
   const issues = findEntrantDataIssues(tournamentId);
   let fixed = 0;
   for (const it of issues.items) {
+    if (opts.event && it.event !== opts.event) continue;   // 種目指定があればその種目だけ(表示件数とスコープを一致)
     const patch = {};
     for (const is of it.issues) {
       if (is.code === "gender_mismatch" && opts.gender !== false) patch.gender = is.suggested;
@@ -6605,6 +6606,39 @@ function swapEntrantPartners(tournamentId, event, aId, bId) {
   // 表示名(ペア構成)が変わったので非正規化名を表へ反映(割当/結果は不変)
   syncEntrantsToBracket(tournamentId, event);
   return { ok: true };
+}
+
+// 整合性チェック(ダブルス並び): 種目内の全ダブルス entrant で「選手1↔選手2」を一括入替する。
+// 取込でペアの上下(選手1/選手2)が逆に解釈された場合の一括修正。配置(枠/entrant_id)・seed・
+// 結果は不変=ペア内の表示順だけ入替。display_name を再計算し表へ再同期。
+function swapDoublesOrder(tournamentId, event) {
+  if (!event) return { error: "event が必要です" };
+  // 実ペア(相方あり・団体でない)のみ対象。団体種目は event 名により buildEntrantNames が
+  // is_doubles=1 を立てる(相方は空)ため、また取込で片側欠落したダブルスも、入替えると実選手が
+  // 空の相方枠へ押し込まれ氏名/所属が消える。これらを除外して構造化列の破壊を防ぐ。
+  const isTeam = /団体/.test(String(event));
+  const all = entrantStmts.listByEvent.all(tournamentId, event).filter(e => e.is_doubles);
+  const ents = isTeam ? [] : all.filter(e => entrantMembers(e).length === 0 && !!(e.partner_name || e.partner_surname || e.partner_given_name));
+  const skipped = all.length - ents.length;
+  if (!ents.length) return { ok: true, swapped: 0, skipped };
+  // furigana は updateEntrant の `|| existing` フォールバックを迂回して明示交換する。
+  const setFuri = sqlite.prepare("UPDATE entrants SET furigana=?, partner_furigana=? WHERE id=?");
+  let n = 0;
+  const tx = sqlite.transaction(() => {
+    for (const e of ents) {
+      updateEntrant(e.id, {
+        surname: e.partner_surname || "", given_name: e.partner_given_name || "",
+        team: e.partner_team || "", gender: e.partner_gender || "", player_id: e.partner_player_id || null,
+        partner_surname: e.surname || "", partner_given_name: e.given_name || "",
+        partner_team: e.team || "", partner_gender: e.gender || "", partner_player_id: e.player_id || null,
+      });
+      setFuri.run(e.partner_furigana || "", e.furigana || "", e.id);   // furigana ↔ partner_furigana
+      n++;
+    }
+  });
+  tx();
+  syncEntrantsToBracket(tournamentId, event);
+  return { ok: true, swapped: n, skipped };
 }
 
 // 全ブラケット書き出し（複数event対応）
@@ -8074,7 +8108,7 @@ module.exports = {
   updateEntrySettings, getOpenTournaments,
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
-  getBracketGrid, syncEntrantsToBracket, swapEntrantPartners,
+  getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,
   // Entrants (大会参加選手) - マスタDBと分離
   createEntrant, updateEntrant, deleteEntrant, getEntrant, getEntrants,

@@ -3662,6 +3662,15 @@ app.post("/api/tournaments/:id/bracket/swap-partner", requireAdmin, (req, res) =
   if (r && r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, b.event) });
 });
+// 整合性チェック(ダブルス並び): 種目内の全ダブルスの選手1↔選手2を一括入替。body: { event, base_rev }
+app.post("/api/tournaments/:id/bracket/swap-doubles-order", requireAdmin, (req, res) => {
+  const event = req.body && req.body.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
+  const r = db.swapDoublesOrder(req.params.id, event);
+  if (r && r.error) return res.status(400).json(r);
+  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
+});
 
 app.put("/api/tournaments/:id/court-layout", requireAdmin, (req, res) => {
   const r = db.setCourtLayout(req.params.id, req.body || {});

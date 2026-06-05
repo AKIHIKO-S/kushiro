@@ -1203,6 +1203,18 @@
  .tm-menu select{padding:5px 7px;border:1px solid #e2e8f0;border-radius:6px;font:inherit}
  .tm-pick{padding:7px 10px;border-bottom:1px solid #f1f5f9;cursor:pointer}
  .tm-pick:hover{background:#eff6ff}
+ .tm-integrity{border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px;background:#fff}
+ .tm-integrity-head{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;user-select:none}
+ .tm-integrity-head:hover{background:#f8fafc}
+ .tm-caret{color:#94a3b8;font-size:11px;width:12px}
+ .tm-badge-warn{margin-left:auto;background:#fef3c7;color:#b45309;font-weight:800;border-radius:999px;padding:1px 10px;font-size:12px}
+ .tm-badge-ok{margin-left:auto;background:#dcfce7;color:#16a34a;font-weight:800;border-radius:999px;padding:1px 10px;font-size:12px}
+ .tm-integrity-body{padding:4px 12px 12px}
+ .tm-int-sec{border-top:1px solid #f1f5f9;padding:8px 0}
+ .tm-int-h{font-size:12px;font-weight:700;color:#334155;margin-bottom:4px}
+ .tm-int-ok{font-size:12px;color:#16a34a}
+ .tm-int-row{font-size:13px;padding:3px 0;display:flex;align-items:center;flex-wrap:wrap;gap:2px}
+ .btn-xs{font-size:11px;padding:1px 8px;border-radius:6px}
  @media(max-width:900px){.tm-split{flex-direction:column}.tm-left,.tm-right{width:100%;max-height:none}}
  </style>
 
@@ -11221,6 +11233,8 @@ const TMgmt = {
         TMgmt._grid = (grid && !grid.error) ? grid : null;
         TMgmt._gridRev = TMgmt._grid ? TMgmt._grid.bracket_rev : null;
       } else { TMgmt._grid = null; TMgmt._gridRev = null; }
+      const iss = await api.get(`/api/tournaments/${tid}/entry-issues`);
+      TMgmt._issues = (iss && Array.isArray(iss.items)) ? iss : { items: [] };
       TMgmt.render();
     } catch (e) {
       main.innerHTML = "";
@@ -11242,6 +11256,7 @@ const TMgmt = {
       return;
     }
     status.textContent = "ブラケット" + b.bracket_size + "・" + b.total_rounds + "回戦・出場" + TMgmt._entrants.length + "名";
+    TMgmt.renderIntegrity(main);
     const split = h("div", { className: "tm-split" });
     const left = h("div", { className: "tm-left" });
     TMgmt.renderGrid(left);
@@ -11538,6 +11553,131 @@ const TMgmt = {
     const foot = h("div", { style: { display: "flex", gap: "8px", justifyContent: "flex-end" } },
       h("button", { className: "btn btn-sm", onClick: submit }, "追加"));
     modal = openModal("シードを追加", body, foot);
+  },
+
+  // ── 整合性チェック(取込の不整合を1画面で検出→ワンクリック修正) ─────────────
+  _dupGroups() {
+    const map = new Map();
+    (TMgmt._entrants || []).forEach(e => {
+      let key, blank;
+      if (e.is_doubles) {
+        const m = [(e.name || "") + "@" + (e.team || ""), (e.partner_name || "") + "@" + (e.partner_team || "")].sort().join("|");
+        key = "D:" + m; blank = !(e.name || "").trim() && !(e.partner_name || "").trim();
+      } else { key = "S:" + (e.name || "") + "@" + (e.team || ""); blank = !(e.name || "").trim(); }
+      if (blank) return;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(e);
+    });
+    const groups = [];
+    map.forEach(arr => { if (arr.length > 1) groups.push({ label: arr[0].display_name || arr[0].name || "(無名)", entrants: arr }); });
+    return groups;
+  },
+
+  _catLabel(c) { return ({ general: "一般", high: "高校生", middle: "中学生", elementary: "小学生", university: "大学生", student: "学生", senior: "シニア", junior: "ジュニア", youth: "ユース", large: "一般" })[c] || c; },
+
+  renderIntegrity(container) {
+    const ev = TMgmt.event;
+    const issues = (((TMgmt._issues || {}).items) || []).filter(i => i.event === ev);
+    const dups = TMgmt._dupGroups();
+    // 実ペア(相方あり・団体でない)のみ。団体種目は event 名で is_doubles=1 になるため除外。
+    const doubles = (TMgmt._entrants || []).filter(e => e.is_doubles && !/団体/.test(e.event || "") && !!(e.partner_name || e.partner_surname || e.partner_given_name));
+    const total = issues.length + dups.length;
+    const panel = h("div", { className: "tm-integrity" });
+    const open = !!TMgmt._integrityOpen;
+    const body = h("div", { className: "tm-integrity-body", style: { display: open ? "block" : "none" } });
+    const caret = h("span", { className: "tm-caret" }, open ? "▼" : "▶");
+    const head = h("div", { className: "tm-integrity-head",
+      onClick: () => { TMgmt._integrityOpen = !TMgmt._integrityOpen; body.style.display = TMgmt._integrityOpen ? "block" : "none"; caret.textContent = TMgmt._integrityOpen ? "▼" : "▶"; } },
+      caret, h("span", { style: { fontWeight: 700 } }, "整合性チェック"),
+      total ? h("span", { className: "tm-badge-warn" }, "⚠ " + total + " 件") : h("span", { className: "tm-badge-ok" }, "✓ 問題なし"));
+    panel.appendChild(head);
+
+    // 1. 推定不一致(性別/カテゴリ/ふりがな)
+    const s1 = h("div", { className: "tm-int-sec" }, h("div", { className: "tm-int-h" }, "推定不一致（性別 / カテゴリ / ふりがな）"));
+    if (!issues.length) s1.appendChild(h("div", { className: "tm-int-ok" }, "問題なし"));
+    else {
+      s1.appendChild(h("div", { style: { margin: "4px 0" } },
+        h("button", { className: "btn btn-sm", onClick: () => TMgmt._bulkFixInference() }, "推定値で一括修正（" + issues.length + "件）")));
+      issues.slice(0, 60).forEach(it => {
+        const row = h("div", { className: "tm-int-row" },
+          h("span", { style: { fontWeight: 600 } }, (it.name || "(無名)")),
+          h("span", { style: { color: "#b45309", marginLeft: "6px" } }, it.issues.map(x => x.label).join(" / ")));
+        it.issues.forEach(x => {
+          if (x.code === "missing_name") return;
+          if (x.code === "missing_furigana" && !x.suggested) return;   // 推定読みが無ければボタンを出さない(グリッドで手入力)
+          const disp = x.field === "gender" ? (x.suggested === "female" ? "女子" : x.suggested === "male" ? "男子" : x.suggested)
+            : x.field === "category" ? TMgmt._catLabel(x.suggested) : (x.suggested || "");
+          row.appendChild(h("button", { className: "btn btn-xs", style: { marginLeft: "6px" },
+            onClick: () => TMgmt._fixOne(it.id, x.field, x.suggested) }, "修正→" + disp));
+        });
+        s1.appendChild(row);
+      });
+    }
+    body.appendChild(s1);
+
+    // 2. ダブルスの並びパターン
+    if (doubles.length) {
+      const sample = doubles.slice(0, 3).map(e => (e.surname || e.name || "?") + "／" + (e.partner_surname || e.partner_name || "?") + "（" + (e.team || "?") + "・" + (e.partner_team || "?") + "）").join("　　");
+      const s2 = h("div", { className: "tm-int-sec" }, h("div", { className: "tm-int-h" }, "ダブルスの並び（" + doubles.length + "ペア）"),
+        h("div", { style: { fontSize: "12px", color: "#64748b", margin: "3px 0" } }, "現在の並び（選手1／選手2・所属）: " + sample),
+        h("div", { style: { fontSize: "12px", color: "#94a3b8", marginBottom: "4px" } }, "※ 取込でペアの上下が逆なら一括で入替できます。氏名⇄所属の取違えはグリッドのセルで個別修正。"),
+        h("button", { className: "btn btn-sm",
+          onClick: () => { if (confirm("この種目の全ダブルスで「選手1」と「選手2」を入れ替えます。よろしいですか？")) TMgmt._bracketWrite("/bracket/swap-doubles-order", { event: ev }, null, "選手1↔選手2を全員入替しました"); } }, "選手1⇄選手2を全員入替"));
+      body.appendChild(s2);
+    }
+
+    // 3. 重複エントリー
+    const s3 = h("div", { className: "tm-int-sec" }, h("div", { className: "tm-int-h" }, "重複エントリー"));
+    if (!dups.length) s3.appendChild(h("div", { className: "tm-int-ok" }, "問題なし"));
+    else dups.forEach(grp => {
+      const row = h("div", { className: "tm-int-row" }, h("span", { style: { fontWeight: 600 } }, grp.label),
+        h("span", { style: { color: "#b45309", marginLeft: "6px" } }, "×" + grp.entrants.length + "："));
+      grp.entrants.forEach((e, i) => row.appendChild(h("button", { className: "btn btn-xs", style: { marginLeft: "4px" },
+        onClick: () => TMgmt._deleteEntrant(e.id) }, "削除#" + (i + 1))));
+      s3.appendChild(row);
+    });
+    body.appendChild(s3);
+
+    panel.appendChild(body);
+    container.appendChild(panel);
+  },
+
+  async _bulkFixInference() {
+    const tid = TMgmt.tournamentId;
+    try {
+      const r = await api.post(`/api/tournaments/${tid}/entry-issues/bulk-fix`, { event: TMgmt.event, gender: true, category: true, furigana: true });
+      if (r && r.error) { toast(r.error, "err"); return; }
+      await api.post(`/api/tournaments/${tid}/bracket/resync-names`, { event: TMgmt.event });
+      toast("一括修正しました（" + ((r && r.fixed) || 0) + "件）", "ok");
+      await TMgmt.reload();
+    } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); }
+  },
+  async _fixOne(pid, field, suggested) {
+    const tid = TMgmt.tournamentId;
+    try {
+      const r = await api.post(`/api/tournaments/${tid}/entries/${pid}/fix`, { [field]: suggested });
+      if (r && r.error) { toast(r.error, "err"); return; }
+      if (field === "name" || field === "team") await api.post(`/api/tournaments/${tid}/bracket/resync-names`, { event: TMgmt.event });
+      toast("修正しました", "ok");
+      await TMgmt.reload();
+    } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); }
+  },
+  async _deleteEntrant(id) {
+    if (!confirm("この出場者を削除します。よろしいですか？\n（トーナメント表に配置されている場合、その枠は空きになります）")) return;
+    const tid = TMgmt.tournamentId, ev = TMgmt.event;
+    try {
+      // 配置されている枠があれば先に空きにする(削除後にダングリングな枠を残さない)
+      const placed = ((TMgmt._grid && TMgmt._grid.rows) || []).find(r => r.entrant_id === id);
+      if (placed) {
+        const sc = await api.post(`/api/tournaments/${tid}/bracket/set-slot`, { event: ev, pos: placed.pos, slot: placed.slot, mode: "clear", base_rev: TMgmt._gridRev });
+        if (sc && sc.error) { toast(sc.error || "枠の解除に失敗しました", "err"); if (sc.conflict) await TMgmt.reload(); return; }
+        if (sc && sc.bracket_rev) TMgmt._gridRev = sc.bracket_rev;
+      }
+      const r = await api.del(`/api/entrants/${id}`);
+      if (r && r.error) { toast(r.error, "err"); return; }
+      toast("削除しました", "ok");
+      await TMgmt.reload();
+    } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); }
   },
 };
 
