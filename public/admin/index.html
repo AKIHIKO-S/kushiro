@@ -4954,7 +4954,9 @@ const A = {
  openModal("+ 出場選手を直接追加", body, foot);
  },
 
- editTournament(t) {
+ async editTournament(t) {
+ // 楽観ロック用に最新を取得(フォームの基準値=base_fields を正確にする)
+ if (t && t.id) { try { const fresh = await api.get("/api/tournaments/" + t.id); if (fresh && !fresh.error) t = fresh; } catch (e) {} }
  const statusOpts = [["scheduled","予定"],["preparation","準備中"],["ongoing","進行中"],["completed","終了"]];
  const levelOpts = [["district","地区・市民大会"],["hokkaido","全道大会"],["national","全国大会"],["other","その他・オープン"]];
  const body = h("div", {},
@@ -4989,7 +4991,9 @@ const A = {
  h("textarea", { id: "etDesc", rows: 2 }, t.description || "")),
  );
  const foot = h("button", { className: "btn", onClick: async () => {
- await api.put("/api/tournaments/" + t.id, {
+ const r = await api.put("/api/tournaments/" + t.id, {
+ // 楽観ロック(内容ベース): 編集開始時の各値。他端末が先に変更していれば409(機械更新は無視)
+ base_fields: { name: t.name || "", date: t.date || "", venue: t.venue || "", status: t.status || "", level: t.level || "", description: t.description || "" },
  name: document.getElementById("etName").value.trim(),
  date: document.getElementById("etDate").value,
  venue: document.getElementById("etVenue").value.trim(),
@@ -4997,6 +5001,7 @@ const A = {
  level: document.getElementById("etLevel").value,
  description: document.getElementById("etDesc").value.trim(),
  });
+ if (r && r.error) return toast(r.error, "err");
  toast("更新しました", "ok");
  document.querySelector(".modal-bg")?.remove();
  await A.reload();
@@ -7539,6 +7544,7 @@ const O = {
        lastSig = sigOf(); return;
      }
      area.innerHTML = "";
+     if (bdata && bdata.event) { O._bracketRev = O._bracketRev || {}; O._bracketRev[bdata.event] = bdata.bracket_rev; }   // 同時作業ガード用に組合せの版を種目別に保持
      O._bracketEditMode = true;
      area.appendChild(O.renderVisualBracket(bdata));
      O._bracketEditMode = false;
@@ -8647,7 +8653,7 @@ const O = {
    if (!lastPreview) return toast("先に『抽選してみる』を押してプレビューしてください", "err");
    const by = drawnBy.value.trim();
    if (!by) { drawnBy.focus(); return toast("実施者名を入力してください(抽選の記録用)", "err"); }
-   const body = { event, separate_by: sep, draw_seed: lastSeed, drawn_by: by };
+   const body = { event, separate_by: sep, draw_seed: lastSeed, drawn_by: by, base_rev: rdy && rdy.bracket_rev };
    let r = await api.post(`/api/tournaments/${tid}/bracket/draw`, body);
    if (r && r.needs_force) {
      if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して確定しますか？")) return;
@@ -8660,7 +8666,7 @@ const O = {
  };
  const doUndo = async () => {
    if (!confirm("直前の抽選を取り消し、抽選前のブラケットに戻します。よろしいですか？")) return;
-   const r = await api.post(`/api/tournaments/${tid}/bracket/undo-draw`, { event });
+   const r = await api.post(`/api/tournaments/${tid}/bracket/undo-draw`, { event, base_rev: rdy && rdy.bracket_rev });
    if (!r || r.error) return toast((r && r.error) || "取り消せません", "err");
    toast("直前の抽選を取り消しました", "ok");
    document.querySelector(".modal-bg")?.remove();
@@ -8717,10 +8723,12 @@ const O = {
    if (pv.error) return toast(pv.error, "err");
    if (!pv.ok) return alert("取込できません:\n\n" + summOf(pv));
    if (!confirm("このExcelの組合せでブラケットを更新します(選手データ・結果リンクは保持)。\n\n" + summOf(pv) + "\n\nよろしいですか？")) return;
-   let r = await post("", {});
+   // 同時作業ガード: 編集UIで握った版(O._bracketRev[event])を base_rev として送る
+   const baseRev = (O._bracketRev && O._bracketRev[event]) || "";
+   let r = await post("", { ev: event, base_rev: baseRev });
    if (r.results && r.results.some(x => x.needs_force)) {
      if (!confirm("⚠ 結果入力済みの試合があります。消して上書きしますか？")) return;
-     r = await post("", { force: "1" });
+     r = await post("", { force: "1", ev: event, base_rev: baseRev });
    }
    if (r.error || (r.results || []).some(x => x.error)) return toast("取込失敗: " + (r.error || ((r.results || []).find(x => x.error) || {}).error || ""), "err");
    toast("Excelの組合せを反映しました", "ok");
@@ -9604,6 +9612,7 @@ const O = {
        encodeURIComponent(selectedEv));
      if (bdata.error) { bracketArea.innerHTML = '<div style="color:#dc2626">' + bdata.error + '</div>'; return; }
      bracketArea.innerHTML = "";
+     if (bdata && bdata.event) { O._bracketRev = O._bracketRev || {}; O._bracketRev[bdata.event] = bdata.bracket_rev; }   // 同時作業ガード用に組合せの版を種目別に保持
      bracketArea.appendChild(O.renderVisualBracket(bdata));
    } catch (e) {
      bracketArea.innerHTML = '<div style="color:#dc2626">読込失敗: ' + e.message + '</div>';
@@ -9914,8 +9923,9 @@ const O = {
  async _dndSwap(event, from, to) {
    try {
      const r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/swap`,
-       { event, a: { pos: from.pos, slot: from.slot }, b: { pos: to.pos, slot: to.slot } });
+       { event, a: { pos: from.pos, slot: from.slot }, b: { pos: to.pos, slot: to.slot }, base_rev: (O._bracketRev && O._bracketRev[event]) });
      if (r && r.error) return toast(r.error, "err");
+     if (r && r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[event] = r.bracket_rev; }
      toast(`「${from.name || "選手"}」の位置を入れ替えました`, "ok");
      if (typeof O._vbReload === "function") O._vbReload();
    } catch (e) { toast("入れ替えに失敗しました: " + (e.message || e), "err"); }
@@ -9931,8 +9941,9 @@ const O = {
    const submit = async (payload) => {
      try {
        const r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/set-slot`,
-         { event, pos, slot, ...payload });
+         { event, pos, slot, ...payload, base_rev: (O._bracketRev && O._bracketRev[event]) });
        if (r && r.error) return toast(r.error, "err");
+       if (r && r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[event] = r.bracket_rev; }
        toast("トーナメント表を更新しました", "ok");
        modal.remove();
        if (typeof O._vbReload === "function") O._vbReload();
@@ -10082,14 +10093,16 @@ const O = {
  const ids = Array.from(sel.selectedOptions).map(o => o.value);
  const regen = document.getElementById("bgRegen").checked;
  if (ids.length < 2) return toast("2人以上選択してください", "err");
- let r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event, player_ids: ids, regenerate: regen });
+ const _gbRev = O._bracketRev && O._bracketRev[event];   // 同時作業ガード: 見ていた組合せの版
+ let r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event, player_ids: ids, regenerate: regen, base_rev: _gbRev });
  if (r && r.needs_force) {
  if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
- r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event, player_ids: ids, regenerate: regen, force: true });
+ r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event, player_ids: ids, regenerate: regen, force: true, base_rev: _gbRev });
  }
  if (r.error) return toast(r.error, "err");
  toast(`${r.player_count}名 ${r.total_matches}試合生成 (${r.total_rounds}ラウンド)`, "ok");
  document.querySelector(".modal-bg")?.remove();
+ if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[event] = r.bracket_rev; }
  O.selectedEvent = event;
  O.reload();
  } }, "生成");
@@ -10896,13 +10909,15 @@ const EnT = {
  const entrants = EnT.entrants.filter(e => e.event === EnT.filterEvent);
  if (entrants.length < 2) return toast("出場選手が2人未満です", "err");
  if (!confirm(`${EnT.filterEvent} (${entrants.length}名) でブラケット生成しますか？\n既存の対戦は削除されます。`)) return;
- const body = { event: EnT.filterEvent, entrant_ids: entrants.map(e => e.id), regenerate: true };
+ const body = { event: EnT.filterEvent, entrant_ids: entrants.map(e => e.id), regenerate: true,
+   base_rev: O._bracketRev && O._bracketRev[EnT.filterEvent] };   // 同時作業ガード
  let r = await api.post(`/api/tournaments/${EnT.tournamentId}/bracket`, body);
  if (r && r.needs_force) {
  if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
  r = await api.post(`/api/tournaments/${EnT.tournamentId}/bracket`, { ...body, force: true });
  }
  if (r.error) return toast(r.error, "err");
+ if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[EnT.filterEvent] = r.bracket_rev; }
  toast(`${r.total_matches} 試合を生成しました (${r.total_rounds} ラウンド)`, "ok");
  EnT.reload();
  },

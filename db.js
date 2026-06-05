@@ -3362,6 +3362,24 @@ function _drawEntrantSnapshot(ents) {
 
 // 抽選の事前検査(プリフライト・ポカヨケ)。抽選後・印刷直前に発覚→全やり直しを防ぐ。
 // 返り値 { ok, issues:[{level:'block'|'warn', code, msg}], confirmed, bracket_size, bye_count, seeded }
+// ブラケット(組合せ)の版。種目内の各試合の「スロット割当(配置)」だけから作る内容フィンガープリント。
+// (matches に updated_at 列は無いので時刻ではなく内容で版を作る。)
+// 抽選/生成/手修正(swap/set-slot)/取込 で変わる=組合せ(配置)の変更を検知する。
+// 勝者・状態(winner_name/status)は意図的に含めない: 結果入力や台への呼出で版が動くと、無関係な
+// 組合せ編集が偽の競合(409)になるため。結果の同時編集は別系統(finish の競合ガード)で保護する。
+function bracketRev(tournamentId, event) {
+  try {
+    const rows = sqlite.prepare(
+      `SELECT id, COALESCE(player1_entrant_id,'') p1, COALESCE(player2_entrant_id,'') p2,
+              COALESCE(player1_name,'') n1, COALESCE(player2_name,'') n2
+         FROM matches WHERE tournament_id=? AND event=? ORDER BY id`
+    ).all(tournamentId, event || "");
+    if (!rows.length) return "0:";
+    const sig = rows.map(r => `${r.id}:${r.p1}:${r.p2}:${r.n1}:${r.n2}`).join("|");
+    return rows.length + ":" + crypto.createHash("sha1").update(sig).digest("hex").slice(0, 16);
+  } catch (e) { return ""; }
+}
+
 function checkDrawReadiness(tournamentId, event) {
   if (!event) return { ok: false, issues: [{ level: "block", code: "no_event", msg: "種目が必要です" }] };
   const all = entrantStmts.listByEvent.all(tournamentId, event);
@@ -3386,7 +3404,7 @@ function checkDrawReadiness(tournamentId, event) {
     const maxR = Math.max(1, ...confirmed.map(e => Math.max(1, parseInt(e.entry_round) || 1)));
     if (Math.pow(2, maxR - 1) > sizeW / 2) issues.push({ level: "block", code: "entry_round_overflow", msg: "登場ラウンド(スーパーシード)が選手数に対し大きすぎます。登場ラウンドを下げてください" });
   }
-  return { ok: !issues.some(i => i.level === "block"), issues, confirmed: confirmed.length, bracket_size: size, bye_count: size - confirmed.length, seeded: Object.keys(seedMap).length };
+  return { ok: !issues.some(i => i.level === "block"), issues, confirmed: confirmed.length, bracket_size: size, bye_count: size - confirmed.length, seeded: Object.keys(seedMap).length, bracket_rev: bracketRev(tournamentId, event) };
 }
 
 // 種目の出場者を抽選する。opts:
@@ -7720,7 +7738,7 @@ module.exports = {
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
   generateBracket, drawSingleBracket, computeDrawLeaves, bracketPositions,
-  checkDrawReadiness, undoDraw, getDrawLog, getBracketDrawDiff, importBracketRoundtrip,
+  checkDrawReadiness, bracketRev, undoDraw, getDrawLog, getBracketDrawDiff, importBracketRoundtrip,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   generateTeamLeague, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
