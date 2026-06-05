@@ -4723,6 +4723,13 @@ const A = {
            r === 1 ? "1回戦から(通常)" : r + "回戦から" + (r >= 3 ? "（SS）" : ""))))),
        h("td", { className: "text-xs text-sub" }, e.applied_at ? String(e.applied_at).split(" ")[0] : "—"),
        h("td", { className: "flex gap-1" },
+         h("button", { className: "btn btn-sm btn-ghost", title: "氏名・所属・ダブルスのペア(相方)などを編集",
+           onClick: async () => {
+             EnT.tournamentId = t.id; EnT.reload = load;
+             let full = null;
+             try { const fr = await api.get(`/api/entrants/${e.id}`); if (fr && !fr.error) full = fr; } catch (err) {}
+             EnT.openEdit(full || e);   // 完全な entrant(surname/相方/event を含む)で開く
+           } }, "編集"),
          status !== "confirmed" ? h("button", { className: "btn btn-sm btn-ok", onClick: () => setStatus(e, "confirmed") }, "承認") : null,
          status !== "rejected" ? h("button", { className: "btn btn-sm btn-danger", onClick: () => setStatus(e, "rejected") }, "却下") : null)));
    });
@@ -7629,6 +7636,9 @@ const O = {
 
  const toolbar = h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", margin: "8px 0" } },
    h("button", { className: "btn btn-sm btn-ok", onClick: () => O.openAddMatch(sel) }, "＋ 対戦を追加"),
+   h("button", { className: "btn btn-sm", style: { background: "#7c3aed", color: "#fff" },
+     title: "トーナメント表にシード選手を追加。既存の対戦はそのまま保持し、表の上/下に登場回戦から合流(BYE上がり)します。",
+     onClick: () => O.openAddSeed(sel) }, "＋ シードを追加"),
    h("button", { className: "btn btn-sm", style: { background: "#a16207", color: "#fff" },
      title: "シードを選手DB(Elo+過去成績)から客観スコア順に提案。根拠を見て人手で採否・順位を決めて一括設定。抽選の前に。",
      onClick: () => O.openSeedSuggest(sel) }, "🏅 シード提案"),
@@ -7710,6 +7720,45 @@ const O = {
  },
 
  // 進行管理から対戦を追加 (種目を事前選択)。標準トーナメント外の追加対戦・3位決定戦など
+ // ⑤ トーナメント表にシード選手を追加(既存の対戦は保持・上/下に登場回戦から合流)
+ async openAddSeed(presetEvent) {
+   const ev = presetEvent || "";
+   if (!ev) return toast("種目を選んでください", "err");
+   const nameI = h("input", { className: "input", placeholder: "追加するシード選手 氏名" });
+   const teamI = h("input", { className: "input", placeholder: "所属(任意)" });
+   let side = "top";
+   const sideBtns = h("div", { className: "flex gap-1" });
+   const renderSide = () => { clear(sideBtns); [["top", "表の上に追加"], ["bottom", "表の下に追加"]].forEach(([v, l]) =>
+     sideBtns.appendChild(h("button", { className: "btn btn-sm" + (side === v ? "" : " btn-ghost"), onClick: () => { side = v; renderSide(); } }, l))); };
+   renderSide();
+   const roundSel = h("select", { className: "input", style: { maxWidth: "200px" } },
+     ...[1, 2, 3, 4, 5, 6].map(r => h("option", { value: String(r), selected: r === 2 ? "" : null },
+       r === 1 ? "1回戦から(通常)" : r + "回戦から" + (r >= 3 ? "（SS）" : ""))));
+   const body = h("div", {},
+     h("div", { className: "text-xs text-sub", style: { marginBottom: "8px", lineHeight: "1.6" } },
+       `「${ev}」のトーナメント表にシード選手を追加します。既存の対戦はそのまま保持し、表の上/下に「登場回戦」からBYE上がりで合流します（枠は自動で広がります）。`),
+     h("div", { className: "two-col" },
+       h("div", { className: "field" }, h("label", { className: "field-label" }, "氏名"), nameI),
+       h("div", { className: "field" }, h("label", { className: "field-label" }, "所属"), teamI)),
+     h("div", { className: "two-col" },
+       h("div", { className: "field" }, h("label", { className: "field-label" }, "位置"), sideBtns),
+       h("div", { className: "field" }, h("label", { className: "field-label" }, "登場回戦"), roundSel)));
+   const foot = h("button", { className: "btn", onClick: async () => {
+     const name = nameI.value.trim();
+     if (!name) { nameI.focus(); return toast("氏名を入力してください", "err"); }
+     const payload = { event: ev, name, team: teamI.value.trim(), side, entry_round: parseInt(roundSel.value) || 1,
+       base_rev: O._bracketRev && O._bracketRev[ev] };
+     let r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/add-seed`, payload);
+     if (r && r.needs_force) { if (!confirm("⚠ " + r.error + "\n\n結果入力済みも消して作り直しますか？")) return; r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/add-seed`, { ...payload, force: true }); }
+     if (r && r.error) return toast(r.error, "err");
+     if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[ev] = r.bracket_rev; }
+     toast(`「${name}」をシードとして追加しました（枠${r.bracket_size || ""}）`, "ok");
+     document.querySelector(".modal-bg")?.remove();
+     if (O._vbReload) O._vbReload();
+   } }, "追加");
+   openModal(`シード選手を追加 — ${ev}`, body, foot);
+ },
+
  async openAddMatch(presetEvent) {
  const events = Object.keys(O.state.event_stats || {}).filter(e => e && e !== "(未分類)");
  const evInput = h("input", { className: "input", id: "amEvent", list: "amEvents",

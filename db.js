@@ -2854,6 +2854,44 @@ function _previewBracketStructure(matchesByRound, totalRounds, bracketSize, N, e
   };
 }
 
+// トーナメント表に選手を「シード」として追加する(⑤)。既存の1回戦配置(対戦カード)はそのまま保ち、
+// 追加選手を上(side=top)/下(bottom)に、登場回戦 R(BYE上がりで R回戦から登場)で合流させる。
+// 仕組み: 現R1リーフを復元 → 追加選手の領域 2^(R-1) リーフ(本人+BYE) を端に足す → 2^k にパディング →
+//         generateBracket({fixedLeaves}) で配置を凍結。既存の対戦の組み合わせは崩れない。
+function addBracketSeed(tournamentId, event, opts) {
+  opts = opts || {};
+  if (!event) return { error: "event が必要です" };
+  // 再構築するため結果入力済みガード(取込やり直し同様、通常はプレー前=素通り)
+  const g = _destructiveGuard(tournamentId, event, opts.force, "トーナメント表に選手を追加");
+  if (g) return g;
+  const r1 = sqlite.prepare(
+    "SELECT bracket_pos, player1_entrant_id p1, player2_entrant_id p2 FROM matches WHERE tournament_id=? AND event=? AND bracket_round=1 ORDER BY bracket_pos"
+  ).all(tournamentId, event);
+  if (!r1.length) return { error: "この種目のトーナメント表がありません。先に生成してから追加してください。" };
+  const byId = {};
+  entrantStmts.listByEvent.all(tournamentId, event).forEach(e => { byId[e.id] = e; });
+  const existing = [];   // 現R1リーフ(entrant or null=BYE)を順番どおりに復元(配置保持)
+  r1.forEach(m => { existing.push(m.p1 ? (byId[m.p1] || null) : null); existing.push(m.p2 ? (byId[m.p2] || null) : null); });
+  // 登場回戦 R の領域 = 2^(R-1) リーフ(本人 + BYE)。R=1 は通常の1回戦エントリー。
+  const R = Math.max(1, Math.min(10, parseInt(opts.entry_round) || 1));
+  const region = Math.pow(2, R - 1);
+  // サイズ超過は entrant 作成より前に検証(失敗時の孤児entrantを防ぐ)
+  const size = Math.pow(2, Math.ceil(Math.log2(Math.max(2, existing.length + region))));
+  if (size > 2048) return { error: "ブラケットが大きすぎます。登場回戦を下げてください。", bracket_size: size };
+  // 追加選手(既存 entrant_id or 新規作成)
+  let newE = opts.entrant_id ? byId[opts.entrant_id] : null;
+  if (!newE) {
+    const nm = (opts.name || "").trim();
+    if (!nm) return { error: "追加する選手名(name)か entrant_id が必要です" };
+    newE = createEntrant({ tournament_id: tournamentId, event, name: nm, team: opts.team || "", seed: parseInt(opts.seed) || 0, status: "confirmed" });
+  }
+  const seedRegion = [newE].concat(new Array(Math.max(0, region - 1)).fill(null));
+  let leaves = (opts.side === "bottom") ? existing.concat(seedRegion) : seedRegion.concat(existing);
+  while (leaves.length < size) leaves.push(null);   // BYE で 2^k に
+  // fixedLeaves で配置を凍結して再構築(既存の組み合わせ保持・自動進行はしない=確認後に進行開始)
+  return generateBracket(tournamentId, event, { regenerate: true, force: true, fixedLeaves: leaves, no_auto_advance: true });
+}
+
 function generateBracket(tournamentId, event, options) {
   options = options || {};
   // 破壊的再生成ガード: 結果入力済みの試合がある種目を force 無しで再生成しない(当日の不可逆データ破壊防止)。
@@ -7837,7 +7875,7 @@ module.exports = {
   exportAllData, importPlayers, getStats, getLastUpdated, getOpsFingerprint,
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
-  generateBracket, drawSingleBracket, computeDrawLeaves, bracketPositions,
+  generateBracket, addBracketSeed, drawSingleBracket, computeDrawLeaves, bracketPositions,
   checkDrawReadiness, bracketRev, undoDraw, getDrawLog, getBracketDrawDiff, importBracketRoundtrip,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   generateTeamLeague, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,

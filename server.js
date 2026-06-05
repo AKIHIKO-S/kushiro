@@ -3614,6 +3614,17 @@ app.post("/api/tournaments/:id/bracket/set-slot", requireAdmin, (req, res) => {
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
 
+// ⑤ トーナメント表に選手をシードとして追加(上/下に登場回戦Rで合流・既存配置は保持)。
+// body: { event, name|entrant_id, side:'top'|'bottom', entry_round, seed?, team?, force?, base_rev? }
+app.post("/api/tournaments/:id/bracket/add-seed", requireAdmin, (req, res) => {
+  const event = req.body && req.body.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
+  const r = db.addBracketSeed(req.params.id, event, req.body || {});
+  if (r && r.error) return res.status(400).json(r);   // needs_force も r に含めて返す(フロントが再確認)
+  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
+});
+
 app.put("/api/tournaments/:id/court-layout", requireAdmin, (req, res) => {
   const r = db.setCourtLayout(req.params.id, req.body || {});
   if (!r) return res.status(404).json({ error: "大会が見つかりません" });
