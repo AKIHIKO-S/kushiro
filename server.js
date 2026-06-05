@@ -3653,6 +3653,15 @@ app.post("/api/tournaments/:id/bracket/resync-names", requireAdmin, (req, res) =
   if (r && r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
+// ダブルスのペア構成を組み替え(2ペアの相方を交換)。body: { event, a_entrant_id, b_entrant_id, base_rev }
+app.post("/api/tournaments/:id/bracket/swap-partner", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (!b.event) return res.status(400).json({ error: "event が必要です" });
+  if (bracketRevStale(req.params.id, b.event, b)) return sendBracketConflict(res, req.params.id, b.event);
+  const r = db.swapEntrantPartners(req.params.id, b.event, b.a_entrant_id, b.b_entrant_id);
+  if (r && r.error) return res.status(400).json(r);
+  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, b.event) });
+});
 
 app.put("/api/tournaments/:id/court-layout", requireAdmin, (req, res) => {
   const r = db.setCourtLayout(req.params.id, req.body || {});

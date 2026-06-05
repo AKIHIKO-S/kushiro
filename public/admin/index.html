@@ -1196,6 +1196,13 @@
  .tm-grid td.tm-cell-edit:hover{background:#eff6ff}
  .tm-grid input{width:100%;min-width:56px;border:1px solid #60a5fa;border-radius:3px;font:inherit;padding:1px 3px;box-sizing:border-box}
  .tm-grid tr.tm-row-bye td{background:#f8fafc}
+ .tm-menu-btn{border:1px solid #cbd5e1;background:#fff;border-radius:6px;cursor:pointer;font-size:15px;line-height:1;padding:2px 8px;color:#475569}
+ .tm-menu-btn:hover{background:#eff6ff;border-color:#60a5fa}
+ .tm-menu-sec{border-top:1px solid #eef2f7;padding-top:8px}
+ .tm-menu-h{font-size:12px;font-weight:700;color:#334155;margin-bottom:4px}
+ .tm-menu select{padding:5px 7px;border:1px solid #e2e8f0;border-radius:6px;font:inherit}
+ .tm-pick{padding:7px 10px;border-bottom:1px solid #f1f5f9;cursor:pointer}
+ .tm-pick:hover{background:#eff6ff}
  @media(max-width:900px){.tm-split{flex-direction:column}.tm-left,.tm-right{width:100%;max-height:none}}
  </style>
 
@@ -11252,15 +11259,24 @@ const TMgmt = {
       container.appendChild(h("div", { className: "tm-empty", style: { textAlign: "left" } }, "枠データを取得できませんでした。"));
       return;
     }
-    container.appendChild(h("div", { style: { fontSize: "12px", color: "#64748b", marginBottom: "6px" } },
-      "セルをクリックして編集 → Enter/Tabで確定・Escで取消。氏名/所属の変更は右の表にも反映されます。"));
+    container.appendChild(h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } },
+      h("button", { className: "btn btn-sm", onClick: () => TMgmt._openAddSeed() }, "＋ シードを追加"),
+      h("span", { style: { fontSize: "12px", color: "#64748b" } },
+        "セルをクリックで編集(Enter/Tab確定・Esc取消)。⋮で枠の操作(選手置換/BYE/登場回戦/相方入替)。")));
     const tbl = h("table", { className: "tm-grid" });
     tbl.appendChild(h("thead", {}, h("tr", {},
-      ["枠", "姓", "名", "所属", "ふりがな", "シード", "登場R", "相手"].map(t => h("th", {}, t)))));
+      ["枠", "姓", "名", "所属", "ふりがな", "シード", "登場R", "相手", "操作"].map(t => h("th", {}, t)))));
     const tbody = h("tbody", {});
     g.rows.forEach(row => TMgmt._appendGridRows(tbody, row));
     tbl.appendChild(tbody);
     container.appendChild(tbl);
+  },
+
+  _menuBtn(row, rowSpan) {
+    const td = h("td", { style: { textAlign: "center" } });
+    if (rowSpan && rowSpan > 1) td.rowSpan = rowSpan;
+    td.appendChild(h("button", { className: "tm-menu-btn", title: "枠の操作", onClick: () => TMgmt._rowMenu(row) }, "⋮"));
+    return td;
   },
 
   _appendGridRows(tbody, row) {
@@ -11268,13 +11284,15 @@ const TMgmt = {
     if (row.is_bye) {
       tbody.appendChild(h("tr", { className: "tm-row-bye" },
         h("td", {}, posLabel),
-        h("td", { colSpan: 7, style: { color: "#94a3b8", fontStyle: "italic" } }, "BYE（シード扱い）")));
+        h("td", { colSpan: 7, style: { color: "#94a3b8", fontStyle: "italic" } }, "BYE（シード扱い）"),
+        TMgmt._menuBtn(row, 1)));
       return;
     }
     if (!row.entrant_id) {
       tbody.appendChild(h("tr", {},
         h("td", {}, posLabel),
-        h("td", { colSpan: 7, style: { color: "#cbd5e1" } }, "（空き）")));
+        h("td", { colSpan: 7, style: { color: "#cbd5e1" } }, "（空き）"),
+        TMgmt._menuBtn(row, 1)));
       return;
     }
     const seedTd = TMgmt._cell(row.seed || "", (v) => TMgmt._commitSeed(row, v), { numeric: true, rowSpan: row.is_doubles ? 2 : 1 });
@@ -11287,7 +11305,7 @@ const TMgmt = {
         TMgmt._cell(row.given_name, (v) => TMgmt._commitField(row, "given_name", v)),
         TMgmt._cell(row.team, (v) => TMgmt._commitField(row, "team", v)),
         TMgmt._cell(row.furigana, (v) => TMgmt._commitField(row, "furigana", v)),
-        seedTd, erTd, oppTd));
+        seedTd, erTd, oppTd, TMgmt._menuBtn(row, 2)));
       tbody.appendChild(h("tr", {},
         TMgmt._cell(row.partner_surname, (v) => TMgmt._commitField(row, "partner_surname", v)),
         TMgmt._cell(row.partner_given_name, (v) => TMgmt._commitField(row, "partner_given_name", v)),
@@ -11301,7 +11319,7 @@ const TMgmt = {
       TMgmt._cell(row.given_name, (v) => TMgmt._commitField(row, "given_name", v)),
       TMgmt._cell(row.team, (v) => TMgmt._commitField(row, "team", v)),
       TMgmt._cell(row.furigana, (v) => TMgmt._commitField(row, "furigana", v)),
-      seedTd, erTd, oppTd));
+      seedTd, erTd, oppTd, TMgmt._menuBtn(row, 1)));
   },
 
   // 編集可能セル: クリックで input 化、Enter/Tab/blurで確定、Escで取消
@@ -11408,6 +11426,118 @@ const TMgmt = {
         }
       } catch (e) { /* 一時障害は無視 */ }
     }, 400);
+  },
+
+  // ── [⋮] 枠操作(構造変化を伴う書込: base_rev ガード付き・成功で全再読込) ──────────
+  async _bracketWrite(path, body, modal, okMsg) {
+    const tid = TMgmt.tournamentId;
+    try {
+      let r = await api.post(`/api/tournaments/${tid}${path}`, { ...body, base_rev: TMgmt._gridRev });
+      if (r && r.needs_force) {
+        if (!confirm("⚠ " + (r.error || "結果に影響する可能性があります") + "\n\n強制的に実行しますか？")) return;
+        r = await api.post(`/api/tournaments/${tid}${path}`, { ...body, force: true, base_rev: TMgmt._gridRev });
+      }
+      if (!r || r.error || r.conflict) {
+        toast((r && r.error) || "操作に失敗しました", "err");
+        if (r && r.conflict) { if (modal) modal.remove(); return TMgmt.reload(); }
+        return;
+      }
+      if (r.bracket_rev) TMgmt._gridRev = r.bracket_rev;
+      if (modal) modal.remove();
+      toast(okMsg, "ok");
+      await TMgmt.reload();   // 構造が変わるので全再読込(グリッド+ツリー)
+    } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); }
+  },
+
+  _rowMenu(row) {
+    const has = !!row.entrant_id && !row.is_bye;
+    const label = row.is_bye ? "BYE（シード扱い）" : (has ? (row.display_name || row.slot_name || "選手") : "（空き）");
+    const body = h("div", { className: "tm-menu", style: { minWidth: "320px", display: "flex", flexDirection: "column", gap: "10px" } });
+    body.appendChild(h("div", { style: { fontWeight: 700, fontSize: "14px" } },
+      (row.pos + 1) + (row.slot === 1 ? "上" : "下") + "枠 ・ " + label));
+    let modal;
+    if (has) {
+      const erSel = h("select", {}, [1, 2, 3, 4, 5, 6].map(n => h("option", { value: n, selected: n === (row.entry_round || 1) }, n + "回戦")));
+      const sideSel = h("select", {}, [["top", "上側"], ["bottom", "下側"]].map(a => h("option", { value: a[0] }, a[1])));
+      body.appendChild(h("div", { className: "tm-menu-sec" },
+        h("div", { className: "tm-menu-h" }, "登場回戦（シード繰り上げ）"),
+        h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
+          erSel, sideSel,
+          h("button", { className: "btn btn-sm", onClick: () => TMgmt._doPromote(row, parseInt(erSel.value) || 1, sideSel.value, modal) }, "変更"))));
+      if (row.is_doubles) {
+        const others = ((TMgmt._grid && TMgmt._grid.rows) || []).filter(r => r.is_doubles && r.entrant_id && r.entrant_id !== row.entrant_id);
+        const psel = h("select", {}, [h("option", { value: "" }, "相手ペアを選択…")].concat(
+          others.map(r => h("option", { value: r.entrant_id }, (r.display_name || r.slot_name || "ペア") + "（" + (r.pos + 1) + (r.slot === 1 ? "上" : "下") + "）"))));
+        body.appendChild(h("div", { className: "tm-menu-sec" },
+          h("div", { className: "tm-menu-h" }, "ペアの相方を入替"),
+          h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
+            psel,
+            h("button", { className: "btn btn-sm", onClick: () => { if (psel.value) TMgmt._doSwapPartner(row.entrant_id, psel.value, modal); else toast("相手ペアを選択してください", "err"); } }, "入替"))));
+      }
+    }
+    const opRow = h("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" } });
+    opRow.appendChild(h("button", { className: "btn btn-sm", onClick: () => TMgmt._openReplacePicker(row, modal) }, has ? "別の選手に置換" : "選手を設定"));
+    if (!row.is_bye) opRow.appendChild(h("button", { className: "btn btn-sm", style: { background: "#0ea5e9" }, onClick: () => TMgmt._doSetSlot(row, { mode: "bye" }, modal) }, "BYE(シード扱い)にする"));
+    if (has || row.is_bye) opRow.appendChild(h("button", { className: "btn btn-sm btn-ghost", onClick: () => TMgmt._doSetSlot(row, { mode: "clear" }, modal) }, "空きにする"));
+    body.appendChild(h("div", { className: "tm-menu-sec" }, h("div", { className: "tm-menu-h" }, "枠の操作"), opRow));
+    modal = openModal("枠の操作", body, null);
+  },
+
+  _doPromote(row, entryRound, side, modal) {
+    return TMgmt._bracketWrite("/bracket/promote-seed", { event: TMgmt.event, pos: row.pos, slot: row.slot, entry_round: entryRound, side: side }, modal, "登場回戦を変更しました");
+  },
+  _doSwapPartner(aId, bId, modal) {
+    return TMgmt._bracketWrite("/bracket/swap-partner", { event: TMgmt.event, a_entrant_id: aId, b_entrant_id: bId }, modal, "ペアの相方を入れ替えました");
+  },
+  _doSetSlot(row, payload, modal) {
+    return TMgmt._bracketWrite("/bracket/set-slot", { event: TMgmt.event, pos: row.pos, slot: row.slot, ...payload }, modal, "枠を更新しました");
+  },
+
+  // 選手の置換/設定: 出場者から選んで set-slot(mode:player)
+  _openReplacePicker(row, parentModal) {
+    if (parentModal) parentModal.remove();   // 親メニューを閉じてモーダルのスタックを避ける
+    const ents = (TMgmt._entrants || []).slice();
+    const search = h("input", { type: "text", placeholder: "氏名・所属で絞り込み", style: { width: "100%", padding: "6px 8px", marginBottom: "8px", boxSizing: "border-box" } });
+    const list = h("div", { style: { maxHeight: "360px", overflow: "auto", border: "1px solid #e2e8f0", borderRadius: "6px" } });
+    let modal;
+    const render = () => {
+      list.innerHTML = "";
+      const q = search.value.trim();
+      const filtered = ents.filter(e => !q || ((e.display_name || e.name || "").indexOf(q) >= 0) || ((e.team || "").indexOf(q) >= 0)).slice(0, 300);
+      if (!filtered.length) { list.appendChild(h("div", { style: { padding: "10px", color: "#94a3b8" } }, "該当なし")); return; }
+      filtered.forEach(e => {
+        list.appendChild(h("div", { className: "tm-pick",
+          onClick: () => TMgmt._bracketWrite("/bracket/set-slot",
+            { event: TMgmt.event, pos: row.pos, slot: row.slot, mode: "player", entrant_id: e.id, player_id: e.player_id || null, name: e.display_name || e.name || "", team: e.team || "" },
+            modal, "選手を設定しました"),
+        }, (e.display_name || e.name || "(無名)"),
+          h("span", { style: { color: "#64748b", marginLeft: "6px", fontSize: "12px" } }, e.team ? "（" + e.team + "）" : "")));
+      });
+    };
+    search.oninput = render; render();
+    modal = openModal("選手を選択", h("div", {}, search, list), null);
+  },
+
+  // ＋シードを追加(表の先頭/末尾に登場回戦Rで合流。既存配置は保持)
+  _openAddSeed() {
+    if (!TMgmt.event) { toast("先に種目を選択してください", "err"); return; }
+    const nameI = h("input", { type: "text", placeholder: "氏名（例: 山田 太郎）", style: { width: "100%", padding: "6px 8px", boxSizing: "border-box" } });
+    const teamI = h("input", { type: "text", placeholder: "所属", style: { width: "100%", padding: "6px 8px", boxSizing: "border-box" } });
+    const sideSel = h("select", {}, [["top", "表の先頭(上)"], ["bottom", "表の末尾(下)"]].map(a => h("option", { value: a[0] }, a[1])));
+    const erSel = h("select", {}, [1, 2, 3, 4, 5, 6].map(n => h("option", { value: n, selected: n === 2 }, n + "回戦から登場")));
+    const fld = (lbl, el) => h("div", { style: { marginBottom: "8px" } }, h("div", { style: { fontSize: "12px", color: "#64748b", marginBottom: "2px" } }, lbl), el);
+    const body = h("div", { style: { minWidth: "320px" } }, fld("氏名", nameI), fld("所属", teamI), fld("追加位置", sideSel), fld("登場回戦", erSel));
+    let modal;
+    const submit = () => {
+      const name = nameI.value.trim();
+      if (!name) { toast("氏名を入力してください", "err"); return; }
+      TMgmt._bracketWrite("/bracket/add-seed",
+        { event: TMgmt.event, name: name, team: teamI.value.trim(), side: sideSel.value, entry_round: parseInt(erSel.value) || 2 },
+        modal, "シードを追加しました");
+    };
+    const foot = h("div", { style: { display: "flex", gap: "8px", justifyContent: "flex-end" } },
+      h("button", { className: "btn btn-sm", onClick: submit }, "追加"));
+    modal = openModal("シードを追加", body, foot);
   },
 };
 

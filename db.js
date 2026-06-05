@@ -6572,6 +6572,41 @@ function syncEntrantsToBracket(tournamentId, event) {
   return { ok: true, updated: changed };
 }
 
+// ダブルスのペア構成を組み替え: 2つのダブルス entrant の「相方(選手2=partner_*)」を交換する。
+// 例: ペアA=(a1,a2) と ペアB=(b1,b2) → A=(a1,b2) / B=(b1,a2)。display_name を再計算し表へ再同期。
+// 選手1(name/team)・seed・entry_round・1回戦の配置(枠/entrant_id)は不変=ペアの中身だけ入替。
+// 取込でダブルスの相方が取り違えられた場合の手修正に使う(ペアではなく個人単位の再編)。
+function swapEntrantPartners(tournamentId, event, aId, bId) {
+  const a = entrantStmts.get.get(aId);
+  const b = entrantStmts.get.get(bId);
+  if (!a || !b) return { error: "対象のエントリーが見つかりません" };
+  if (aId === bId) return { error: "同じペアは指定できません" };
+  if (a.tournament_id !== tournamentId || b.tournament_id !== tournamentId) return { error: "大会が一致しません" };
+  if (a.event !== event || b.event !== event) return { error: "種目が一致しません" };
+  if (!a.is_doubles || !b.is_doubles) return { error: "ダブルスのペアのみ相方を入替できます" };
+  const partnerOf = (e) => ({
+    partner_surname: e.partner_surname || "", partner_given_name: e.partner_given_name || "",
+    partner_furigana: e.partner_furigana || "", partner_team: e.partner_team || "",
+    partner_gender: e.partner_gender || "", partner_player_id: e.partner_player_id || null,
+    partner_name: e.partner_name || "",
+  });
+  const aPartner = partnerOf(a), bPartner = partnerOf(b);
+  const setFuri = sqlite.prepare("UPDATE entrants SET partner_furigana=? WHERE id=?");
+  const tx = sqlite.transaction(() => {
+    updateEntrant(aId, bPartner);   // A は B の相方を得る
+    updateEntrant(bId, aPartner);   // B は A の相方を得る
+    // updateEntrant は partner_furigana を `names.partner_furigana || existing` で確定するため、
+    // 空のふりがなを入替えると旧相方の読みが残る(相方名と読みが別人になる)。空も含め忠実に
+    // 交換するため明示的に上書きする(A←Bの相方ふりがな / B←Aの相方ふりがな)。
+    setFuri.run(bPartner.partner_furigana || "", aId);
+    setFuri.run(aPartner.partner_furigana || "", bId);
+  });
+  tx();
+  // 表示名(ペア構成)が変わったので非正規化名を表へ反映(割当/結果は不変)
+  syncEntrantsToBracket(tournamentId, event);
+  return { ok: true };
+}
+
 // 全ブラケット書き出し（複数event対応）
 // ── クラウド公開ミラーへの一方向同期(本部ローカル=正本 → クラウド) ──
 // 会場WiFi断に無依存なローカル運用の結果を、ネット復帰時にクラウド公開ビューへ反映する。
@@ -8039,7 +8074,7 @@ module.exports = {
   updateEntrySettings, getOpenTournaments,
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
-  getBracketGrid, syncEntrantsToBracket,
+  getBracketGrid, syncEntrantsToBracket, swapEntrantPartners,
   exportPublicSnapshot, applyPublicSnapshot,
   // Entrants (大会参加選手) - マスタDBと分離
   createEntrant, updateEntrant, deleteEntrant, getEntrant, getEntrants,
