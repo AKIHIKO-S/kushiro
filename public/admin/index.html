@@ -1160,6 +1160,7 @@
  <div class="tabs-in">
  <button class="tab active" data-tab="tournaments">大会管理</button>
  <button class="tab" data-tab="operations">進行管理 (LIVE)</button>
+ <button class="tab" data-tab="bracket-mgmt">トーナメント管理</button>
  <button class="tab" data-tab="players">選手データベース</button>
  <button class="tab" data-tab="import">インポート/エクスポート</button>
  <button class="tab" data-tab="api">API連携</button>
@@ -1168,6 +1169,28 @@
 </div>
 
 <div class="container" style="padding-top:16px; padding-bottom:40px">
+
+ <!-- トーナメント管理 -->
+ <div class="tab-panel hidden" id="tab-bracket-mgmt">
+ <div class="card">
+ <div class="card-head"><div class="card-title">トーナメント管理</div></div>
+ <div class="tm-bar">
+ <select id="tmTournamentSel" class="input"></select>
+ <select id="tmEventSel" class="input"></select>
+ <span id="tmStatus" class="muted" style="margin-left:8px"></span>
+ </div>
+ <div id="tmMain"></div>
+ </div>
+ </div>
+ <style>
+ .tm-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+ .tm-bar select{min-width:180px;padding:6px 8px;border:1px solid var(--border,#e2e8f0);border-radius:8px;font:inherit}
+ .tm-split{display:flex;gap:12px;align-items:flex-start}
+ .tm-left{flex:1 1 48%;min-width:340px}
+ .tm-right{flex:1 1 52%;min-width:320px;overflow:auto;background:#f9fafb;border-radius:6px;padding:6px}
+ .tm-empty{padding:24px;text-align:center;color:#64748b}
+ @media(max-width:900px){.tm-split{flex-direction:column}.tm-left,.tm-right{width:100%}}
+ </style>
 
  <!-- 大会管理 -->
  <div class="tab-panel" id="tab-tournaments">
@@ -1480,7 +1503,7 @@ const A = {
      A.showTab("tournaments", true);
    }
  } else {
-   A.showTab(["tournaments","players","operations","entrants"].includes(type) ? type : "tournaments", true);
+   A.showTab(["tournaments","players","operations","entrants","bracket-mgmt"].includes(type) ? type : "tournaments", true);
  }
  },
 
@@ -1506,6 +1529,7 @@ const A = {
  else if (name === "operations") O.init();
  else if (name === "entrants") EnT.init();
  else if (name === "coaches") A.renderCoaches();
+ else if (name === "bracket-mgmt") TMgmt.init();
  },
 
  // 直前のページに戻る (履歴がなければ大会一覧へ)
@@ -9879,7 +9903,8 @@ const O = {
  },
 
  // ─── ビジュアルブラケットの実 DOM 構築 (両側トーナメント) ─────
- renderVisualBracket(bdata) {
+ renderVisualBracket(bdata, opts) {
+ const readOnly = !!(opts && opts.readOnly);   // 読み取り専用(トーナメント管理タブ等): 呼出/入替/編集を一切無効化
  const matches = bdata.matches || [];
  if (!matches.length) {
    return h("div", { className: "empty-state" }, "試合データなし");
@@ -9917,7 +9942,7 @@ const O = {
 
  // 1試合カード (side: left/right/center)
  const makeCard = (m, side) => {
-   const isPreview = !!bdata.preview;   // プレビューは実DBの試合ではないので呼出/入替を一切無効化
+   const isPreview = !!bdata.preview || readOnly;   // プレビュー/読み取り専用は呼出・入替・スロット編集を一切無効化
    const callable = m.status === "pending" && !isPreview;
    const card = h("div", { className: "vb-match" + (callable ? " vb-callable" : ""),
      // 呼出可能(pending)の対戦はカードクリックで呼出フローを開く #トーナメント表から呼出
@@ -9997,7 +10022,7 @@ const O = {
        (m.result.winner_sets || 0) + " - " + (m.result.loser_sets || 0)));
    }
    // ドラッグ&ドロップ等の後付けフック (#167)
-   if (typeof O._decorateBracketCard === "function") O._decorateBracketCard(card, m, bdata, side);
+   if (!readOnly && typeof O._decorateBracketCard === "function") O._decorateBracketCard(card, m, bdata, side);
    return card;
  };
 
@@ -11114,6 +11139,100 @@ const EnT = {
  ]));
  downloadCSV(`entrants_${EnT.filterEvent || "all"}.csv`, rows);
  },
+};
+
+// ── トーナメント管理タブ (TMgmt) ───────────────────────────────
+// 進行管理と選手DBの間。大会/種目を選び、左=エクセル風グリッド(編集)/右=表ツリー(確認)。
+// 表示は O.renderVisualBracket を再利用、編集は既存ブラケットAPIを base_rev(O._bracketRev) ガード付きで再利用。
+const TMgmt = {
+  tournamentId: null,
+  event: null,
+  _entrants: [],
+  _bracket: null,
+
+  async init() {
+    const sel = document.getElementById("tmTournamentSel");
+    if (!sel) return;
+    let ts = (A.state && A.state.tournaments) || [];
+    if (!ts.length) ts = (await api.get("/api/tournaments")) || [];
+    sel.innerHTML = "";
+    sel.appendChild(h("option", { value: "" }, "大会を選択…"));
+    ts.forEach(t => sel.appendChild(h("option", { value: t.id }, t.name)));
+    sel.onchange = () => TMgmt.selectTournament(sel.value);
+    const evSel = document.getElementById("tmEventSel");
+    evSel.onchange = () => TMgmt.selectEvent(evSel.value);
+    if (TMgmt.tournamentId && ts.find(t => t.id === TMgmt.tournamentId)) {
+      sel.value = TMgmt.tournamentId;
+      await TMgmt.selectTournament(TMgmt.tournamentId, TMgmt.event);
+    }
+  },
+
+  async selectTournament(id, keepEvent) {
+    TMgmt.tournamentId = id || null;
+    TMgmt.event = keepEvent || null;
+    const evSel = document.getElementById("tmEventSel");
+    evSel.innerHTML = "";
+    document.getElementById("tmMain").innerHTML = "";
+    document.getElementById("tmStatus").textContent = "";
+    if (!id) return;
+    const ents = (await api.get(`/api/tournaments/${id}/entrants`)) || [];
+    TMgmt._entrants = Array.isArray(ents) ? ents : [];
+    const events = [...new Set(TMgmt._entrants.map(e => e.event).filter(Boolean))];
+    evSel.appendChild(h("option", { value: "" }, "種目を選択…"));
+    events.forEach(ev => evSel.appendChild(h("option", { value: ev }, ev)));
+    if (keepEvent && events.includes(keepEvent)) { evSel.value = keepEvent; await TMgmt.selectEvent(keepEvent); }
+    else if (events.length === 1) { evSel.value = events[0]; await TMgmt.selectEvent(events[0]); }
+  },
+
+  async selectEvent(ev) {
+    TMgmt.event = ev || null;
+    if (!ev) { document.getElementById("tmMain").innerHTML = ""; document.getElementById("tmStatus").textContent = ""; return; }
+    await TMgmt.reload();
+  },
+
+  async reload() {
+    const tid = TMgmt.tournamentId, ev = TMgmt.event;
+    if (!tid || !ev) return;
+    const main = document.getElementById("tmMain");
+    main.innerHTML = "読込中…";
+    try {
+      const ents = (await api.get(`/api/tournaments/${tid}/entrants`)) || [];
+      TMgmt._entrants = (Array.isArray(ents) ? ents : []).filter(e => e.event === ev);
+      const bdata = await api.get(`/api/tournaments/${tid}/bracket/export?event=` + encodeURIComponent(ev));
+      // Phase1は読み取り専用。base_rev を送る編集を行わないので、event名のみキーの共有キャッシュ
+      // O._bracketRev は汚さない(別大会のrevで上書きすると進行管理タブで偽409が起きるため)。
+      TMgmt._bracket = (bdata && bdata.error) ? null : bdata;
+      TMgmt.render();
+    } catch (e) {
+      main.innerHTML = "";
+      main.appendChild(h("div", { className: "tm-empty", style: { color: "#dc2626" } }, "読込失敗: " + e.message));
+    }
+  },
+
+  render() {
+    const main = document.getElementById("tmMain");
+    main.innerHTML = "";
+    const b = TMgmt._bracket;
+    const status = document.getElementById("tmStatus");
+    if (!b || !b.matches || !b.matches.length) {
+      status.textContent = TMgmt._entrants.length ? ("出場 " + TMgmt._entrants.length + "名・表は未作成") : "";
+      main.appendChild(h("div", { className: "tm-empty" },
+        "この種目のトーナメント表はまだありません。",
+        h("div", { style: { marginTop: "8px", fontSize: "13px" } },
+          "「進行管理」または「申込一覧」から表を生成してください（編集グリッドは表の作成後に使えます）。")));
+      return;
+    }
+    status.textContent = "ブラケット" + b.bracket_size + "・" + b.total_rounds + "回戦・出場" + TMgmt._entrants.length + "名";
+    const split = h("div", { className: "tm-split" });
+    const left = h("div", { className: "tm-left" },
+      h("div", { className: "tm-empty", style: { textAlign: "left", color: "#94a3b8" } },
+        "▶ エクセル風 枠グリッド（編集）は次の更新で表示されます。"));
+    const right = h("div", { className: "tm-right" });
+    right.appendChild(O.renderVisualBracket(b, { readOnly: true }));
+    split.appendChild(left);
+    split.appendChild(right);
+    main.appendChild(split);
+  },
 };
 
 // ── オフライン/未送信 インジケータ + 自動再送フック (#202) ──
