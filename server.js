@@ -1335,6 +1335,22 @@ app.post("/api/tournaments/:id/entrants", requireAdmin, (req, res) => {
   const e = db.createEntrant({ ...req.body, tournament_id: req.params.id });
   res.status(201).json(e);
 });
+// 名簿(出場者)の一括削除(取込やり直し用)。?event=種目 で種目単位 / 省略で大会まるごと。
+// 結果入力済みがあれば force 必須。削除前に必ずバックアップを取り、失敗時は中止(復旧点を保証)。
+app.delete("/api/tournaments/:id/entrants", requireAdmin, async (req, res) => {
+  const event = req.query.event || "";
+  const force = req.query.force === "1" || (req.body && req.body.force);
+  const st = db.rosterStats(req.params.id, event);
+  if (st.entrants === 0) return res.status(400).json({ error: "削除対象の出場者がいません" });
+  if (st.completed > 0 && !force) {
+    return res.status(409).json({ needs_force: true, completed: st.completed,
+      error: "結果入力済みの試合が " + st.completed + " 件あります。削除すると結果も失われます。" });
+  }
+  try { await db.createSnapshot("manual"); }
+  catch (e) { return res.status(500).json({ error: "事前バックアップに失敗したため中止しました: " + e.message }); }
+  const r = db.deleteRoster(req.params.id, event);
+  res.json(r);
+});
 // ── 抽選番号 (No.) 一括自動付与 ──
 // POST body: { event?, mode?, force? }
 //   event=指定なし → 全種目

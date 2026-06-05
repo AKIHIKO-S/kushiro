@@ -5257,6 +5257,31 @@ function deleteEventMatches(tournamentId, event) {
   return { ok: true };
 }
 
+// 名簿(出場者)の一括削除。event 指定=その種目, 未指定=大会全種目。entrants と該当 matches(表)を消す。
+// 取込のやり直し用。結果入力済みの有無は呼出側(server)が rosterStats で確認・ガードする。
+function deleteRoster(tournamentId, event) {
+  const run = sqlite.transaction(() => {
+    let m, e;
+    if (event) {
+      m = sqlite.prepare("DELETE FROM matches WHERE tournament_id=? AND event=?").run(tournamentId, event).changes;
+      e = sqlite.prepare("DELETE FROM entrants WHERE tournament_id=? AND event=?").run(tournamentId, event).changes;
+    } else {
+      m = sqlite.prepare("DELETE FROM matches WHERE tournament_id=?").run(tournamentId).changes;
+      e = sqlite.prepare("DELETE FROM entrants WHERE tournament_id=?").run(tournamentId).changes;
+    }
+    return { matches: m, entrants: e };
+  });
+  return { ok: true, ...run() };
+}
+// 削除対象の件数 + 結果入力済み試合数(確認ダイアログ/ガード用)。
+function rosterStats(tournamentId, event) {
+  const w = event ? " AND event=?" : "";
+  const args = event ? [tournamentId, event] : [tournamentId];
+  const entrants = sqlite.prepare("SELECT COUNT(*) c FROM entrants WHERE tournament_id=?" + w).get(...args).c;
+  const completed = sqlite.prepare("SELECT COUNT(*) c FROM matches WHERE tournament_id=?" + w + " AND status='completed'").get(...args).c;
+  return { entrants, completed };
+}
+
 // ═══════════════════════════════════════════════════════
 // 試合検索 (試合結果DB)
 // ═══════════════════════════════════════════════════════
@@ -7823,7 +7848,7 @@ module.exports = {
   getPriorityLockForPlayer, getMatchPriorityBlocks,
   getCallableMatches, getOnTableMatches, getRefereeQueue,
   getOperationState, getOpMatchList, getPlayerLiveStatus, getTeamRosters,
-  getBracket, deleteEventMatches, setCourtLayout,
+  getBracket, deleteEventMatches, deleteRoster, rosterStats, setCourtLayout,
   // 試合検索 / H2H / 選手統計
   searchMatches, countMatchesForSearch, getSearchFilters,
   getPlayerOpponents, getHeadToHead, getPlayerEventStats,

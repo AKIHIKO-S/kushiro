@@ -4766,11 +4766,43 @@ const A = {
      previewBox.appendChild(O.renderVisualBracket(bdata));
    } catch (e) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + (e.message || e) + '</div>'; }
  };
- const previewBtn = h("button", { className: "btn btn-sm btn-ghost", style: { marginTop: "8px" },
+ const previewBtn = h("button", { className: "btn btn-sm btn-ghost",
    onClick: () => { previewOpen = !previewOpen; previewBox.style.display = previewOpen ? "block" : "none";
      previewBtn.textContent = previewOpen ? "▲ 配置プレビューを閉じる" : "🔍 登場回戦の配置をプレビュー"; updatePreview(); } },
    "🔍 登場回戦の配置をプレビュー");
- const body = h("div", {}, summary, qualityBar, tabStrip, ssNote, tableWrap, previewBtn, previewBox);
+ // ① 取込後にシードを直してから、この種目でトーナメント表を生成/再生成
+ const genBtn = h("button", { className: "btn btn-sm",
+   onClick: async () => {
+     if (activeTab === "all") return toast("種目タブを選んでください", "err");
+     const evEnts = entries.filter(e => e.entry_event === activeTab && (e.entry_status || "confirmed") === "confirmed");
+     if (evEnts.length < 2) return toast("承認済みの出場者が2人未満です", "err");
+     if (!confirm(`「${activeTab}」(${evEnts.length}名) でトーナメント表を生成/再生成します。\n既存の対戦は削除されます。よろしいですか？`)) return;
+     const base = { event: activeTab, entrant_ids: evEnts.map(e => e.id), regenerate: true, base_rev: O._bracketRev && O._bracketRev[activeTab] };
+     let r = await api.post(`/api/tournaments/${t.id}/bracket`, base);
+     if (r && r.needs_force) { if (!confirm("⚠ " + r.error + "\n\n結果入力済みも消して作り直しますか？")) return; r = await api.post(`/api/tournaments/${t.id}/bracket`, { ...base, force: true }); }
+     if (r && r.error) return toast(r.error, "err");
+     if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[activeTab] = r.bracket_rev; }
+     toast(`生成しました: ${r.total_matches || 0}試合 / ${r.total_rounds || 0}ラウンド`, "ok");
+     updatePreview();
+   } }, "▶ この種目で生成/再生成");
+ // ② 名簿(出場者)とトーナメント表の一括削除(取込やり直し用)。種目タブ=その種目 / 「すべて」=大会まるごと。
+ const bulkDelBtn = h("button", { className: "btn btn-sm btn-danger",
+   onClick: async () => {
+     const ev = activeTab === "all" ? "" : activeTab;
+     const label = ev ? `「${ev}」` : "この大会の全種目";
+     const qs = ev ? `?event=${encodeURIComponent(ev)}` : "";
+     if (!confirm(`${label} の出場者(名簿)とトーナメント表を削除します。\n取込のやり直し用です。削除前に自動バックアップを取りますが、元の名簿は消えます。\nよろしいですか？`)) return;
+     let r = await api.del(`/api/tournaments/${t.id}/entrants${qs}`);
+     if (r && r.needs_force) {
+       if (!confirm(`⚠ ${r.error}\n\nそれでも削除しますか？`)) return;
+       r = await api.del(`/api/tournaments/${t.id}/entrants${qs}${ev ? "&" : "?"}force=1`);
+     }
+     if (r && r.error) return toast(r.error, "err");
+     toast(`削除しました: 出場者${r.entrants || 0}名 / 試合${r.matches || 0}件`, "ok");
+     await load();
+   } }, "🗑 出場者を一括削除");
+ const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", marginTop: "10px" } }, genBtn, previewBtn, bulkDelBtn);
+ const body = h("div", {}, summary, qualityBar, tabStrip, ssNote, tableWrap, btnBar, previewBox);
  const modalBg = openModal(`申込一覧 — ${t.name}`, body,
    h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
  const box = modalBg && modalBg.querySelector ? modalBg.querySelector(".modal-box") : null;
