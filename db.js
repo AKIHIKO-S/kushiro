@@ -1548,6 +1548,16 @@ function findPlayerByName(name, team, opts) {
 function _genderFromEvent(event) {
   return /女|レディース|ガール/.test(String(event || "")) ? "female" : "male";
 }
+// 種目名→性別の厳密判定。"male" / "female" / "mixed"(混合) / null(性別の記載なし)。
+// マスタDB自動登録の方針: 混合("mixed")は性別が一意に決まらないので自動作成しない(手動)。
+// 男子/女子など性別が明記された種目は、その性別でマスタ登録する。
+function _eventGender(event) {
+  const e = String(event || "");
+  if (/混合|ミックス|mix/i.test(e)) return "mixed";
+  if (/女|レディース|ガール/.test(e)) return "female";
+  if (/男|メンズ|ボーイ/.test(e)) return "male";
+  return null;
+}
 
 // 手動追加の試合データから、master選手DBに未登録の人を自動登録する (#274)。
 // player1_name / player2_name は「氏名 / パートナー」連結のことがあるので分解して個別に登録。
@@ -2598,9 +2608,13 @@ function createPlayerFromEntrant(entrantId, isPartner) {
   if (!name) return null;
   let player = findPlayerByName(name, team);
   if (!player) {
+    // 性別: 明記された種目はその性別。混合/不明は本人/相方の性別を使う(手動連携なので作成自体はする)。
+    const _eg = _eventGender(e.event);
+    const g = (_eg === "male" || _eg === "female") ? _eg
+      : (isPartner ? (e.partner_gender || e.gender || "male") : (e.gender || "male"));
     player = createPlayer({
       name, team,
-      gender: e.gender, category: e.category,
+      gender: g, category: e.category,
       furigana: isPartner ? e.partner_furigana : e.furigana,
     });
   }
@@ -6719,10 +6733,11 @@ function importFromSeedList(tournamentId, data) {
       // マスタに無ければ自動作成 (バリデーションで弾かれたらスキップ)
       if (!linked && names.name && !names.is_doubles) {
         try {
+          const _eg = _eventGender(data.event);   // 性別が明記された種目はその性別でマスタ登録
           linked = createPlayer({
             name: names.name,
             team: entrantData.team || "",
-            gender: entrantData.gender,
+            gender: (_eg === "male" || _eg === "female") ? _eg : entrantData.gender,
             category: entrantData.category,
             furigana: names.furigana || lookupFurigana(names.surname || names.name),
           });
@@ -6859,11 +6874,14 @@ function importFromMatches(tournamentId, data) {
       const p1Team = m.player1_team || "";
       const p2Team = m.player2_team || "";
       let p1Id = null, p2Id = null;
+      // 混合(mixed)は性別が一意に決まらないのでマスタDBへ自動作成しない(手動)。性別明記の種目はその性別で登録。
+      const _eg = _eventGender(data.event);
+      const _autoG = (fb) => (_eg === "male" || _eg === "female") ? _eg : (fb || "male");
       if (p1Name && p1Name !== "BYE") {
         let pp = findPlayerByName(p1Name, p1Team);
-        if (!pp && data.auto_create_players !== false) {
+        if (!pp && data.auto_create_players !== false && _eg !== "mixed") {
           try {
-            pp = createPlayer({ name: p1Name, team: p1Team, gender: m.player1_gender || "male" });
+            pp = createPlayer({ name: p1Name, team: p1Team, gender: _autoG(m.player1_gender) });
             newPlayers++;
           } catch (e) {
             if (e.code !== "INVALID_NAME") throw e;
@@ -6873,9 +6891,9 @@ function importFromMatches(tournamentId, data) {
       }
       if (p2Name && p2Name !== "BYE") {
         let pp = findPlayerByName(p2Name, p2Team);
-        if (!pp && data.auto_create_players !== false) {
+        if (!pp && data.auto_create_players !== false && _eg !== "mixed") {
           try {
-            pp = createPlayer({ name: p2Name, team: p2Team, gender: m.player2_gender || "male" });
+            pp = createPlayer({ name: p2Name, team: p2Team, gender: _autoG(m.player2_gender) });
             newPlayers++;
           } catch (e) {
             if (e.code !== "INVALID_NAME") throw e;
