@@ -4712,12 +4712,15 @@ const A = {
          onChange: async (ev) => { try {
            await api.put(`/api/tournaments/${t.id}/entries/${e.id}/seed`, { seed: parseInt(ev.target.value) || 0 });
            toast("シード更新", "ok"); } catch (err) { toast("失敗", "err"); } } })),
-       h("td", {}, h("input", { type: "number", className: "input-sm", style: { width: "50px" },
-         min: 1, max: 10, value: e.entry_round || 1,
-         title: "登場ラウンド(スーパーシード): 1=1回戦から / R=R回戦から登場(予選免除)。標準配置の生成時に反映。",
+       h("td", {}, h("select", { className: "input-sm", style: { width: "118px" },
+         title: "登場回戦(スーパーシード): 罫線が大きいほど後の回戦から登場。1=1回戦から(通常)。R≧3 はスーパーシード相当。標準配置の生成に反映。",
          onChange: async (ev) => { try {
-           await api.put(`/api/tournaments/${t.id}/entries/${e.id}/entry-round`, { entry_round: parseInt(ev.target.value) || 1 });
-           toast("登場ラウンド更新", "ok"); } catch (err) { toast("失敗", "err"); } } })),
+           const r = parseInt(ev.target.value) || 1;
+           await api.put(`/api/tournaments/${t.id}/entries/${e.id}/entry-round`, { entry_round: r });
+           e.entry_round = r; toast("登場回戦を更新", "ok"); } catch (err) { toast("失敗", "err"); } } },
+         ...[1, 2, 3, 4, 5, 6].map(r => h("option",
+           { value: String(r), selected: (parseInt(e.entry_round) || 1) === r ? "" : null },
+           r === 1 ? "1回戦から(通常)" : r + "回戦から" + (r >= 3 ? "（SS）" : ""))))),
        h("td", { className: "text-xs text-sub" }, e.applied_at ? String(e.applied_at).split(" ")[0] : "—"),
        h("td", { className: "flex gap-1" },
          status !== "confirmed" ? h("button", { className: "btn btn-sm btn-ok", onClick: () => setStatus(e, "confirmed") }, "承認") : null,
@@ -4743,7 +4746,11 @@ const A = {
    if (activeTab !== "all" && !eventsList().includes(activeTab)) activeTab = "all";
    renderQuality(); renderTabs(); renderTable();
  };
- const body = h("div", {}, summary, qualityBar, tabStrip, tableWrap);
+ const ssNote = h("div", { className: "text-xs text-sub", style: { margin: "0 0 8px", padding: "7px 10px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: "7px", lineHeight: "1.6" } },
+   h("b", {}, "登場回戦（スーパーシード）"), "：紙の組合せ表で「罫線が大きい＝後の回戦から登場」。",
+   "取込後はこの表の「登場R」で各選手を ", h("b", {}, "1回戦から（通常）/ 2回戦から / 3回戦から（SS）…"),
+   " に設定できます（標準配置の生成に反映）。スーパーシードは年2回（なごやか亭杯・VICTAS杯）などで使用。");
+ const body = h("div", {}, summary, qualityBar, tabStrip, ssNote, tableWrap);
  const modalBg = openModal(`申込一覧 — ${t.name}`, body,
    h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
  const box = modalBg && modalBg.querySelector ? modalBg.querySelector(".modal-box") : null;
