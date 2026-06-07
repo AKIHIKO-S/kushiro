@@ -11580,7 +11580,10 @@ const TMgmt = {
     const issues = (((TMgmt._issues || {}).items) || []).filter(i => i.event === ev);
     const dups = TMgmt._dupGroups();
     // 実ペア(相方あり・団体でない)のみ。団体種目は event 名で is_doubles=1 になるため除外。
-    const doubles = (TMgmt._entrants || []).filter(e => e.is_doubles && !/団体/.test(e.event || "") && !!(e.partner_name || e.partner_surname || e.partner_given_name));
+    // team_members を持つ entrant はサーバ側 swapDoublesOrder(entrantMembers>0)が入替対象から外すので、
+    // 表示ペア数と実際の入替スコープを一致させるため UI でも除外する。
+    const memberCount = (e) => { try { const a = JSON.parse(e.team_members || "[]"); return Array.isArray(a) ? a.filter(Boolean).length : 0; } catch (_) { return 0; } };
+    const doubles = (TMgmt._entrants || []).filter(e => e.is_doubles && !/団体/.test(e.event || "") && memberCount(e) === 0 && !!(e.partner_name || e.partner_surname || e.partner_given_name));
     const total = issues.length + dups.length;
     const panel = h("div", { className: "tm-integrity" });
     const open = !!TMgmt._integrityOpen;
@@ -11596,8 +11599,12 @@ const TMgmt = {
     const s1 = h("div", { className: "tm-int-sec" }, h("div", { className: "tm-int-h" }, "推定不一致（性別 / カテゴリ / ふりがな）"));
     if (!issues.length) s1.appendChild(h("div", { className: "tm-int-ok" }, "問題なし"));
     else {
-      s1.appendChild(h("div", { style: { margin: "4px 0" } },
-        h("button", { className: "btn btn-sm", onClick: () => TMgmt._bulkFixInference() }, "推定値で一括修正（" + issues.length + "件）")));
+      // 一括修正で実際に直る件数だけを表示する(bulkFixEntrantInference と一致)。
+      // missing_name と推定読みの無い missing_furigana は patch を生まない=fixされないので除外。
+      const fixable = issues.filter(it => it.issues.some(x =>
+        x.code === "gender_mismatch" || x.code === "category_mismatch" || (x.code === "missing_furigana" && x.suggested)));
+      if (fixable.length) s1.appendChild(h("div", { style: { margin: "4px 0" } },
+        h("button", { className: "btn btn-sm", onClick: () => TMgmt._bulkFixInference() }, "推定値で一括修正（" + fixable.length + "件）")));
       issues.slice(0, 60).forEach(it => {
         const row = h("div", { className: "tm-int-row" },
           h("span", { style: { fontWeight: 600 } }, (it.name || "(無名)")),
@@ -11664,16 +11671,12 @@ const TMgmt = {
   },
   async _deleteEntrant(id) {
     if (!confirm("この出場者を削除します。よろしいですか？\n（トーナメント表に配置されている場合、その枠は空きになります）")) return;
-    const tid = TMgmt.tournamentId, ev = TMgmt.event;
     try {
-      // 配置されている枠があれば先に空きにする(削除後にダングリングな枠を残さない)
-      const placed = ((TMgmt._grid && TMgmt._grid.rows) || []).find(r => r.entrant_id === id);
-      if (placed) {
-        const sc = await api.post(`/api/tournaments/${tid}/bracket/set-slot`, { event: ev, pos: placed.pos, slot: placed.slot, mode: "clear", base_rev: TMgmt._gridRev });
-        if (sc && sc.error) { toast(sc.error || "枠の解除に失敗しました", "err"); if (sc.conflict) await TMgmt.reload(); return; }
-        if (sc && sc.bracket_rev) TMgmt._gridRev = sc.bracket_rev;
-      }
-      const r = await api.del(`/api/entrants/${id}`);
+      // サーバ側 deleteEntrant が配置枠(全ラウンド)の氏名/参照を1トランザクションで消すため、
+      // クライアントで枠を先に空ける必要は無い(clear→delの非アトミックな途中失敗を排除)。
+      // base_rev はクエリで送り、他端末が組合せを変更済みなら 409 で弾く。
+      const r = await api.del(`/api/entrants/${id}?base_rev=${encodeURIComponent(TMgmt._gridRev || "")}`);
+      if (r && r.conflict) { toast(r.error || "組合せが他の端末で変更されています", "err"); await TMgmt.reload(); return; }
       if (r && r.error) { toast(r.error, "err"); return; }
       toast("削除しました", "ok");
       await TMgmt.reload();

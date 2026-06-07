@@ -1866,7 +1866,14 @@ app.put("/api/entrants/:id", requireAdmin, (req, res) => {
   res.json(e);
 });
 app.delete("/api/entrants/:id", requireAdmin, (req, res) => {
-  db.deleteEntrant(req.params.id); res.json({ ok: true });
+  // 組合せ画面からの削除は base_rev(クエリ)で楽観ロック。entrant 削除は配置枠も書き換えるため、
+  // 他端末が抽選/組合せを変更済みなら 409 で弾く。base_rev 未指定(従来の一覧からの削除)は通す。
+  const e = db.getEntrant(req.params.id);
+  if (e && req.query && req.query.base_rev && bracketRevStale(e.tournament_id, e.event, req.query)) {
+    return sendBracketConflict(res, e.tournament_id, e.event);
+  }
+  db.deleteEntrant(req.params.id);
+  res.json({ ok: true, bracket_rev: e ? db.bracketRev(e.tournament_id, e.event) : null });
 });
 // マスタDBへのリンク
 app.put("/api/entrants/:id/link", requireAdmin, (req, res) => {

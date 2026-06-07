@@ -2379,11 +2379,19 @@ function getEntrantStats(tournamentId) {
 }
 
 function deleteEntrant(id) {
-  // matches 側の entrant 参照をクリア
-  sqlite.prepare(`UPDATE matches SET player1_entrant_id = NULL WHERE player1_entrant_id = ?`).run(id);
-  sqlite.prepare(`UPDATE matches SET player2_entrant_id = NULL WHERE player2_entrant_id = ?`).run(id);
-  sqlite.prepare(`UPDATE matches SET referee_entrant_id = NULL WHERE referee_entrant_id = ?`).run(id);
-  entrantStmts.delete.run(id);
+  // matches 側の entrant 参照をクリア。未消化(completed以外)の枠は非正規化された氏名/所属も消す:
+  // 進出済み(2回戦以降)の枠には advanceWinnerInline が氏名を焼き込むため、FK だけ外すと削除後に
+  // バッキングの無い「ゴースト名」が残り、表/観戦に出続ける(1回戦のみ操作するUIからは消せない)。
+  // 確定済み(completed)の試合は対戦履歴として氏名を残し、entrant 参照(FK)だけ外す。
+  const tx = sqlite.transaction(() => {
+    sqlite.prepare(`UPDATE matches SET player1_entrant_id=NULL, player1_name='', player1_team='' WHERE player1_entrant_id=? AND status!='completed'`).run(id);
+    sqlite.prepare(`UPDATE matches SET player2_entrant_id=NULL, player2_name='', player2_team='' WHERE player2_entrant_id=? AND status!='completed'`).run(id);
+    sqlite.prepare(`UPDATE matches SET player1_entrant_id=NULL WHERE player1_entrant_id=? AND status='completed'`).run(id);
+    sqlite.prepare(`UPDATE matches SET player2_entrant_id=NULL WHERE player2_entrant_id=? AND status='completed'`).run(id);
+    sqlite.prepare(`UPDATE matches SET referee_entrant_id=NULL WHERE referee_entrant_id=?`).run(id);
+    entrantStmts.delete.run(id);
+  });
+  tx();
 }
 
 function getEntrant(id) { return entrantStmts.get.get(id); }
