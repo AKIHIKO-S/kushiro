@@ -41,11 +41,13 @@
     {v:"elementary",l:"小学生"},{v:"middle",l:"中学生"},{v:"high",l:"高校生"},
     {v:"university",l:"大学生"},{v:"general",l:"一般"},{v:"individual",l:"個人"}
   ];
-  // 値→ラベル (旧 senior 等の後方互換も含めフォールバック)
+  // 値→ラベル。CATS(ドロップダウン用)に無い区分は inferGenderCategory が返す全カテゴリを
+  // ここで一元的にフォールバック(large=ラージ 等。複数画面でのラベル不一致=取違えを防ぐ)。
+  const CAT_EXTRA = { senior: "シニア", junior: "ジュニア", youth: "ユース", large: "ラージ", student: "中高生" };
   function catLabel(v) {
     const f = CATS.find(c => c.v === v);
     if (f) return f.l;
-    if (v === "senior") return "シニア";
+    if (CAT_EXTRA[v]) return CAT_EXTRA[v];
     return v ? v : "未設定";
   }
   const EV_TYPES = ["シングルス","ダブルス","団体戦","混合ダブルス"];

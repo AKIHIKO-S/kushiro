@@ -11573,17 +11573,26 @@ const TMgmt = {
     return groups;
   },
 
-  _catLabel(c) { return ({ general: "一般", high: "高校生", middle: "中学生", elementary: "小学生", university: "大学生", student: "学生", senior: "シニア", junior: "ジュニア", youth: "ユース", large: "一般" })[c] || c; },
+  _catLabel(c) { return TT.catLabel(c); },   // 区分ラベルは共有ヘルパに一元化(large=ラージ 等の取違え防止)
+
+  // 団体 entrant か / 実ダブルスのペアか。サーバ db.isTeamEntrant / isRealDoublesPair と同義。
+  // team_members を持つ entrant は団体扱いで入替対象外(サーバの entrantMembers>0 と一致)。
+  _isTeamEntrant(e) {
+    if (!e) return false;
+    if (/団体/.test(e.event || "")) return true;
+    try { const a = JSON.parse(e.team_members || "[]"); return Array.isArray(a) && a.filter(Boolean).length > 0; } catch (_) { return false; }
+  },
+  _isRealDoublesPair(e) {
+    return !!(e && e.is_doubles) && !TMgmt._isTeamEntrant(e) && !!(e.partner_name || e.partner_surname || e.partner_given_name);
+  },
 
   renderIntegrity(container) {
     const ev = TMgmt.event;
     const issues = (((TMgmt._issues || {}).items) || []).filter(i => i.event === ev);
     const dups = TMgmt._dupGroups();
-    // 実ペア(相方あり・団体でない)のみ。団体種目は event 名で is_doubles=1 になるため除外。
-    // team_members を持つ entrant はサーバ側 swapDoublesOrder(entrantMembers>0)が入替対象から外すので、
-    // 表示ペア数と実際の入替スコープを一致させるため UI でも除外する。
-    const memberCount = (e) => { try { const a = JSON.parse(e.team_members || "[]"); return Array.isArray(a) ? a.filter(Boolean).length : 0; } catch (_) { return 0; } };
-    const doubles = (TMgmt._entrants || []).filter(e => e.is_doubles && !/団体/.test(e.event || "") && memberCount(e) === 0 && !!(e.partner_name || e.partner_surname || e.partner_given_name));
+    // 実ペア(相方あり・団体でない)のみ。サーバ側 db.isRealDoublesPair と同義にして、
+    // 表示ペア数と実際の入替スコープ(swapDoublesOrder)を一致させる。
+    const doubles = (TMgmt._entrants || []).filter(e => TMgmt._isRealDoublesPair(e));
     const total = issues.length + dups.length;
     const panel = h("div", { className: "tm-integrity" });
     const open = !!TMgmt._integrityOpen;
@@ -11654,7 +11663,8 @@ const TMgmt = {
     try {
       const r = await api.post(`/api/tournaments/${tid}/entry-issues/bulk-fix`, { event: TMgmt.event, gender: true, category: true, furigana: true });
       if (r && r.error) { toast(r.error, "err"); return; }
-      await api.post(`/api/tournaments/${tid}/bracket/resync-names`, { event: TMgmt.event });
+      // gender/category/furigana は表の非正規化名(surname/given_name 由来)を変えないため resync-names 不要
+      // (_fixOne も name/team のときだけ resync する。無駄な全試合UPDATEを避ける)。
       toast("一括修正しました（" + ((r && r.fixed) || 0) + "件）", "ok");
       await TMgmt.reload();
     } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); }

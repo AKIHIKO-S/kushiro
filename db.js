@@ -5629,6 +5629,17 @@ function entrantMembers(e) {
   if (fromCol.length) return fromCol;
   return parseTeamMembers(e.note);
 }
+// 「団体 entrant か / 実ダブルスのペアか」の唯一の判定。種目名と入替/品質チェックの両方で使い、
+// 散在した /団体/ 正規表現や entrantMembers チェックの食い違い(=入替スコープと表示のズレ)を防ぐ。
+function isTeamEntrant(e) {
+  return !!e && (/団体/.test(String(e.event || "")) || entrantMembers(e).length > 0);
+}
+function hasPartner(e) {
+  return !!(e && (e.partner_name || e.partner_surname || e.partner_given_name));
+}
+function isRealDoublesPair(e) {
+  return !!(e && e.is_doubles) && !isTeamEntrant(e) && hasPartner(e);
+}
 
 // 申込者本人用トークン: 紛らわしい文字を除いた12桁(4-4-4区切り)。
 // 平文は申込者にのみ返し、DBには SHA-256 ハッシュのみ保持する(漏洩時も逆算不可)。
@@ -6308,7 +6319,7 @@ function findEntrantDataIssues(tournamentId) {
   for (const e of rows) {
     const evName = String(e.event || "");
     const inf = inferGenderCategory(evName, "", "");   // 種目名のみからの推定値
-    const isTeam = /団体/.test(evName) || entrantMembers(e).length > 0;
+    const isTeam = isTeamEntrant(e);   // 種目名=団体 もしくはメンバー配列あり(唯一の判定に集約)
     const issues = [];
 
     // 性別: 種目名に明確な性別語があり entrant.gender と食い違う(mixed は対象外)
@@ -6621,12 +6632,11 @@ function swapEntrantPartners(tournamentId, event, aId, bId) {
 // 結果は不変=ペア内の表示順だけ入替。display_name を再計算し表へ再同期。
 function swapDoublesOrder(tournamentId, event) {
   if (!event) return { error: "event が必要です" };
-  // 実ペア(相方あり・団体でない)のみ対象。団体種目は event 名により buildEntrantNames が
-  // is_doubles=1 を立てる(相方は空)ため、また取込で片側欠落したダブルスも、入替えると実選手が
-  // 空の相方枠へ押し込まれ氏名/所属が消える。これらを除外して構造化列の破壊を防ぐ。
-  const isTeam = /団体/.test(String(event));
+  // 実ペア(相方あり・団体でない)のみ対象(isRealDoublesPair)。団体種目は event 名により
+  // buildEntrantNames が is_doubles=1 を立てる(相方は空)ため、また取込で片側欠落したダブルスも、
+  // 入替えると実選手が空の相方枠へ押し込まれ氏名/所属が消える。これらを除外して構造化列の破壊を防ぐ。
   const all = entrantStmts.listByEvent.all(tournamentId, event).filter(e => e.is_doubles);
-  const ents = isTeam ? [] : all.filter(e => entrantMembers(e).length === 0 && !!(e.partner_name || e.partner_surname || e.partner_given_name));
+  const ents = all.filter(isRealDoublesPair);
   const skipped = all.length - ents.length;
   if (!ents.length) return { ok: true, swapped: 0, skipped };
   // furigana は updateEntrant の `|| existing` フォールバックを迂回して明示交換する。
