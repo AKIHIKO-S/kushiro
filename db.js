@@ -532,6 +532,12 @@ try {
   addMCol("loser_rating_delta", "INTEGER DEFAULT 0");
   // 勝者の entrant_id を保存 (#21: player_id=null・同名のentrantブラケットで冪等ガードが誤短絡しないように)。
   addMCol("winner_entrant_id", "TEXT DEFAULT ''");
+  // op_log に entrant 行スナップショットを追加。matches だけでなく entrants 列を書き換える操作
+  // (ダブルスのペア入替/選手1↔2 入替)も undo できるようにする(undoLastOp が before へ復元)。
+  const ocols = sqlite.prepare("PRAGMA table_info(op_log)").all();
+  if (ocols.length && !ocols.find(c => c.name === "entrants_json")) {
+    sqlite.exec("ALTER TABLE op_log ADD COLUMN entrants_json TEXT DEFAULT ''");
+  }
   // entrants にブロック情報・大会固有番号追加
   const ecols = sqlite.prepare("PRAGMA table_info(entrants)").all();
   const addECol = (col, def) => {
@@ -2217,12 +2223,15 @@ function updateEntrant(id, data) {
     name: names.name,
     surname: names.surname,
     given_name: names.given_name,
-    furigana: names.furigana || existing.furigana,
+    // names.furigana は merged(=existing+data)由来なので、furigana 未指定なら既存値、明示指定(空含む)
+    // ならその値になる。`|| existing` は付けない: 付けると空文字での明示クリア/交換が旧値に巻き戻る
+    // (ダブルスのペア入替で旧相方の読みが残る等)。指定=反映/未指定=保持 を names 側で表現する。
+    furigana: names.furigana,
     team: data.team !== undefined ? normalizeName(data.team) : existing.team,
     partner_name: names.partner_name,
     partner_surname: names.partner_surname,
     partner_given_name: names.partner_given_name,
-    partner_furigana: names.partner_furigana || existing.partner_furigana,
+    partner_furigana: names.partner_furigana,
     partner_team: data.partner_team !== undefined ? normalizeName(data.partner_team) : existing.partner_team,
     category: data.category !== undefined ? data.category : existing.category,
     gender: data.gender !== undefined ? data.gender : existing.gender,
@@ -2257,10 +2266,12 @@ function validateEntrants(tournamentId, event) {
   const errors = [];
   const warnings = [];
 
-  // 重複検出 (同 event 内で name+team 同じ)
+  // 重複検出: 正準キー entrantDupKey(ダブルスは A/B と B/A を同一視・空白畳み)。
+  // クライアント TMgmt._dupKey と同一規則=画面間で重複件数が一致する。氏名空は対象外(null)。
   const byKey = new Map();
   all.forEach(e => {
-    const key = `${e.event}::${e.name}::${e.team}::${e.partner_name || ""}`;
+    const key = entrantDupKey(e);
+    if (!key) return;
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key).push(e);
   });
@@ -5640,6 +5651,23 @@ function hasPartner(e) {
 function isRealDoublesPair(e) {
   return !!(e && e.is_doubles) && !isTeamEntrant(e) && hasPartner(e);
 }
+// 重複エントリー判定の正準キー。サーバ(validateEntrants)とクライアント(TMgmt._dupKey)で
+// 同一規則を使い、画面ごとに重複件数が食い違うのを防ぐ。シングルス=種目+氏名+所属、
+// ダブルス=種目+「2名(氏名@所属)を整列して連結」(A/B と B/A を同一視)。空白は畳む。
+// 氏名が空(ダブルスは両名空)の行は重複対象外として null を返す(別途 missing_name で扱う)。
+function _dupNorm(s) { return String(s == null ? "" : s).replace(/\s+/g, "").trim(); }
+function entrantDupKey(e) {
+  if (!e) return null;
+  const ev = _dupNorm(e.event);
+  if (e.is_doubles) {
+    if (!_dupNorm(e.name) && !_dupNorm(e.partner_name)) return null;
+    const pair = [_dupNorm(e.name) + "@" + _dupNorm(e.team),
+                  _dupNorm(e.partner_name) + "@" + _dupNorm(e.partner_team)].sort().join("|");
+    return "D:" + ev + ":" + pair;
+  }
+  if (!_dupNorm(e.name)) return null;
+  return "S:" + ev + ":" + _dupNorm(e.name) + "@" + _dupNorm(e.team);
+}
 
 // 申込者本人用トークン: 紛らわしい文字を除いた12桁(4-4-4区切り)。
 // 平文は申込者にのみ返し、DBには SHA-256 ハッシュのみ保持する(漏洩時も逆算不可)。
@@ -6611,19 +6639,20 @@ function swapEntrantPartners(tournamentId, event, aId, bId) {
     partner_name: e.partner_name || "",
   });
   const aPartner = partnerOf(a), bPartner = partnerOf(b);
-  const setFuri = sqlite.prepare("UPDATE entrants SET partner_furigana=? WHERE id=?");
+  // undo 用スナップショット(変更前): entrant 行 + 参照先 matches(sync で非正規化名が変わる)。
+  const beforeEntrants = [{ ...a }, { ...b }];
+  const beforeMatches = _matchesReferencingEntrants(tournamentId, [aId, bId]);
   const tx = sqlite.transaction(() => {
+    // partnerOf は partner_furigana を含むので、updateEntrant が空も含め忠実に交換する
+    // (updateEntrant の `|| existing` 撤去後は明示指定がそのまま反映=旧相方の読みが残らない)。
     updateEntrant(aId, bPartner);   // A は B の相方を得る
     updateEntrant(bId, aPartner);   // B は A の相方を得る
-    // updateEntrant は partner_furigana を `names.partner_furigana || existing` で確定するため、
-    // 空のふりがなを入替えると旧相方の読みが残る(相方名と読みが別人になる)。空も含め忠実に
-    // 交換するため明示的に上書きする(A←Bの相方ふりがな / B←Aの相方ふりがな)。
-    setFuri.run(bPartner.partner_furigana || "", aId);
-    setFuri.run(aPartner.partner_furigana || "", bId);
   });
   tx();
   // 表示名(ペア構成)が変わったので非正規化名を表へ反映(割当/結果は不変)
   syncEntrantsToBracket(tournamentId, event);
+  recordOp(tournamentId, "swap_partners", `ダブルスの相方を入替(${event})`,
+    beforeMatches.map(m => m.id), beforeMatches, beforeEntrants);
   return { ok: true };
 }
 
@@ -6639,23 +6668,28 @@ function swapDoublesOrder(tournamentId, event) {
   const ents = all.filter(isRealDoublesPair);
   const skipped = all.length - ents.length;
   if (!ents.length) return { ok: true, swapped: 0, skipped };
-  // furigana は updateEntrant の `|| existing` フォールバックを迂回して明示交換する。
-  const setFuri = sqlite.prepare("UPDATE entrants SET furigana=?, partner_furigana=? WHERE id=?");
+  // undo 用スナップショット(変更前): entrant 行 + 参照先 matches(sync で非正規化名が変わる)。
+  const beforeEntrants = ents.map(e => ({ ...e }));
+  const beforeMatches = _matchesReferencingEntrants(tournamentId, ents.map(e => e.id));
+  // furigana も含め updateEntrant に明示指定して交換する(空指定はクリアとして反映される)。
   let n = 0;
   const tx = sqlite.transaction(() => {
     for (const e of ents) {
       updateEntrant(e.id, {
         surname: e.partner_surname || "", given_name: e.partner_given_name || "",
+        furigana: e.partner_furigana || "",
         team: e.partner_team || "", gender: e.partner_gender || "", player_id: e.partner_player_id || null,
         partner_surname: e.surname || "", partner_given_name: e.given_name || "",
+        partner_furigana: e.furigana || "",
         partner_team: e.team || "", partner_gender: e.gender || "", partner_player_id: e.player_id || null,
       });
-      setFuri.run(e.partner_furigana || "", e.furigana || "", e.id);   // furigana ↔ partner_furigana
       n++;
     }
   });
   tx();
   syncEntrantsToBracket(tournamentId, event);
+  recordOp(tournamentId, "swap_doubles_order", `ダブルス選手1↔2を一括入替(${event}・${n}件)`,
+    beforeMatches.map(m => m.id), beforeMatches, beforeEntrants);
   return { ok: true, swapped: n, skipped };
 }
 
@@ -7530,15 +7564,27 @@ function collectForwardChain(matchId, maxHops = 64) {
   }
   return ids;
 }
+// entrant 群を参照する matches 行(全ラウンド)を取得。ペア入替/選手1↔2 入替は entrant 列を
+// 書き換え→syncEntrantsToBracket が参照先 matches の非正規化名を更新するため、undo 用に
+// 変更前の matches を丸ごとスナップショットしておく(restore で氏名表示も元へ戻る)。
+function _matchesReferencingEntrants(tournamentId, entrantIds) {
+  const ids = (entrantIds || []).filter(Boolean);
+  if (!ids.length) return [];
+  const ph = ids.map(() => "?").join(",");
+  return sqlite.prepare(
+    `SELECT * FROM matches WHERE tournament_id=? AND (player1_entrant_id IN (${ph}) OR player2_entrant_id IN (${ph}))`
+  ).all(tournamentId, ...ids, ...ids);
+}
 const OP_LOG_KEEP = 500;   // 1大会あたり保持する操作ログ件数 (undoは最新のみ使用。履歴は十分すぎる量)
-function recordOp(tournamentId, action, summary, matchIds, beforeRows) {
+function recordOp(tournamentId, action, summary, matchIds, beforeRows, beforeEntrants) {
   try {
     const tid = tournamentId || "";
     sqlite.prepare(
-      `INSERT INTO op_log (tournament_id, action, summary, match_ids, before_json)
-       VALUES (?,?,?,?,?)`
+      `INSERT INTO op_log (tournament_id, action, summary, match_ids, before_json, entrants_json)
+       VALUES (?,?,?,?,?,?)`
     ).run(tid, action || "", summary || "",
-      JSON.stringify(matchIds || []), JSON.stringify(beforeRows || []));
+      JSON.stringify(matchIds || []), JSON.stringify(beforeRows || []),
+      JSON.stringify(beforeEntrants || []));
     // 保持上限 (#24): 最新 OP_LOG_KEEP 件だけ残して古い行を削除し、無制限肥大を防ぐ。
     // idx_oplog_t(tournament_id,id) があるため軽量 (大会あたりの行数は常に上限以下に保たれる)。
     sqlite.prepare(
@@ -7561,6 +7607,12 @@ function _restoreMatchRow(r) {
   const set = cols.map(c => `"${c}"=@${c}`).join(", ");
   sqlite.prepare(`UPDATE matches SET ${set} WHERE id=@id`).run(r);
 }
+function _restoreEntrantRow(r) {
+  const cols = Object.keys(r).filter(k => k !== "id");
+  if (!cols.length) return;
+  const set = cols.map(c => `"${c}"=@${c}`).join(", ");
+  sqlite.prepare(`UPDATE entrants SET ${set} WHERE id=@id`).run(r);
+}
 // 直前(最新の未取消)の操作を取り消す。影響行を before 状態へ復元 (トランザクション)。
 function undoLastOp(tournamentId) {
   const row = sqlite.prepare(
@@ -7571,6 +7623,8 @@ function undoLastOp(tournamentId) {
   try { before = JSON.parse(row.before_json || "[]"); } catch (e) {}
   let matchIds = [];
   try { matchIds = JSON.parse(row.match_ids || "[]"); } catch (e) {}
+  let beforeEntrants = [];
+  try { beforeEntrants = JSON.parse(row.entrants_json || "[]"); } catch (e) {}
   const tx = sqlite.transaction(() => {
     // Elo の巻き戻し (#3/#6): finish/correct は players.rating を増減するが before_json には rating が
     // 含まれない。そこで (1)現在の完了試合に適用済みの差分を引き、(2)行を before へ復元し、
@@ -7580,6 +7634,9 @@ function undoLastOp(tournamentId) {
     for (const id of matchIds) { const cur = stmts.getMatch.get(id); if (cur) reverseEloForMatch(cur); }
     for (const r of before) _restoreMatchRow(r);
     for (const r of before) reapplyEloForMatch(r);
+    // entrants 列を書き換えた操作(ペア入替/選手1↔2 入替)は entrant 行も before へ復元。
+    // 非正規化名は matches スナップショット(before)で一緒に戻るため再 sync は不要。
+    for (const r of beforeEntrants) _restoreEntrantRow(r);
     sqlite.prepare(`UPDATE op_log SET undone=1 WHERE id=?`).run(row.id);
   });
   tx();

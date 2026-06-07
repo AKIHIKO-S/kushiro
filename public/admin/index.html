@@ -9750,7 +9750,8 @@ const O = {
  O.reload();
  },
  _opLogLabel(a) {
- return ({ finish: "結果入力", correct: "結果修正", call: "呼出", uncall: "コートへ戻す" })[a] || a;
+ return ({ finish: "結果入力", correct: "結果修正", call: "呼出", uncall: "コートへ戻す",
+   swap_doubles_order: "ダブルス選手1↔2入替", swap_partners: "ダブルス相方入替" })[a] || a;
  },
  async openOpLog() {
  if (!O.tournamentId) return;
@@ -11556,15 +11557,26 @@ const TMgmt = {
   },
 
   // ── 整合性チェック(取込の不整合を1画面で検出→ワンクリック修正) ─────────────
+  // 重複エントリーの正準キー。サーバ db.entrantDupKey と同一規則(必ず両者を揃える)。
+  // ダブルスは A/B と B/A を同一視、空白は畳む、氏名空は対象外(null)。
+  _dupNorm(s) { return String(s == null ? "" : s).replace(/\s+/g, "").trim(); },
+  _dupKey(e) {
+    if (!e) return null;
+    const ev = TMgmt._dupNorm(e.event);
+    if (e.is_doubles) {
+      if (!TMgmt._dupNorm(e.name) && !TMgmt._dupNorm(e.partner_name)) return null;
+      const pair = [TMgmt._dupNorm(e.name) + "@" + TMgmt._dupNorm(e.team),
+                    TMgmt._dupNorm(e.partner_name) + "@" + TMgmt._dupNorm(e.partner_team)].sort().join("|");
+      return "D:" + ev + ":" + pair;
+    }
+    if (!TMgmt._dupNorm(e.name)) return null;
+    return "S:" + ev + ":" + TMgmt._dupNorm(e.name) + "@" + TMgmt._dupNorm(e.team);
+  },
   _dupGroups() {
     const map = new Map();
     (TMgmt._entrants || []).forEach(e => {
-      let key, blank;
-      if (e.is_doubles) {
-        const m = [(e.name || "") + "@" + (e.team || ""), (e.partner_name || "") + "@" + (e.partner_team || "")].sort().join("|");
-        key = "D:" + m; blank = !(e.name || "").trim() && !(e.partner_name || "").trim();
-      } else { key = "S:" + (e.name || "") + "@" + (e.team || ""); blank = !(e.name || "").trim(); }
-      if (blank) return;
+      const key = TMgmt._dupKey(e);
+      if (!key) return;
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(e);
     });
