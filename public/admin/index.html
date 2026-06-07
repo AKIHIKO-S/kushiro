@@ -1185,13 +1185,20 @@
  <style>
  .tm-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
  .tm-bar select{min-width:180px;padding:6px 8px;border:1px solid var(--border,#e2e8f0);border-radius:8px;font:inherit}
- .tm-split{display:flex;gap:12px;align-items:flex-start}
- .tm-left{flex:1 1 48%;min-width:340px;max-height:80vh;overflow:auto}
- .tm-right{flex:1 1 52%;min-width:320px;max-height:80vh;overflow:auto;background:#f9fafb;border-radius:6px;padding:6px}
+ .tm-tabs{display:flex;gap:4px;margin-bottom:12px;border-bottom:2px solid #e2e8f0}
+ .tm-tab{padding:9px 20px;border:none;background:none;font:inherit;font-weight:700;font-size:14px;color:#64748b;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;border-radius:6px 6px 0 0}
+ .tm-tab:hover{color:#334155;background:#f8fafc}
+ .tm-tab.active{color:#2563eb;border-bottom-color:#2563eb}
+ .tm-grid-pane{max-height:80vh;overflow:auto}
+ .tm-tree-pane{max-height:80vh;overflow:auto;background:#f9fafb;border-radius:6px;padding:6px}
  .tm-empty{padding:24px;text-align:center;color:#64748b}
- .tm-grid{border-collapse:collapse;width:100%;font-size:13px;background:#fff}
- .tm-grid th,.tm-grid td{border:1px solid #e2e8f0;padding:3px 7px;white-space:nowrap;text-align:left;vertical-align:middle}
- .tm-grid th{background:#f1f5f9;position:sticky;top:0;z-index:1;font-weight:700;color:#334155;font-size:12px}
+ .tm-grid{border-collapse:collapse;width:100%;font-size:14px;background:#fff}
+ .tm-grid th,.tm-grid td{border:1px solid #e2e8f0;padding:6px 10px;white-space:nowrap;text-align:left;vertical-align:middle;line-height:1.5}
+ .tm-grid th{background:#eef2f7;position:sticky;top:0;z-index:1;font-weight:700;color:#334155;font-size:13px}
+ .tm-grid tbody tr:hover td{background:#f0f7ff}
+ .tm-grid td.tm-pos{font-weight:800;text-align:center;color:#1e293b;background:#f1f5f9;font-size:15px}
+ .tm-grid tr.tm-row-bye td.tm-pos,.tm-grid tr td.tm-pos.tm-pos-empty{color:#94a3b8;background:#f8fafc}
+ .vb-slotno{display:inline-block;min-width:18px;margin-right:6px;padding:0 5px;background:#1e293b;color:#fff;border-radius:4px;font-size:11px;font-weight:700;text-align:center;vertical-align:middle}
  .tm-grid td.tm-cell-edit{cursor:cell}
  .tm-grid td.tm-cell-edit:hover{background:#eff6ff}
  .tm-grid input{width:100%;min-width:56px;border:1px solid #60a5fa;border-radius:3px;font:inherit;padding:1px 3px;box-sizing:border-box}
@@ -1215,7 +1222,7 @@
  .tm-int-ok{font-size:12px;color:#16a34a}
  .tm-int-row{font-size:13px;padding:3px 0;display:flex;align-items:center;flex-wrap:wrap;gap:2px}
  .btn-xs{font-size:11px;padding:1px 8px;border-radius:6px}
- @media(max-width:900px){.tm-split{flex-direction:column}.tm-left,.tm-right{width:100%;max-height:none}}
+ @media(max-width:900px){.tm-grid-pane,.tm-tree-pane{max-height:none}}
  </style>
 
  <!-- 大会管理 -->
@@ -9998,11 +10005,14 @@ const O = {
    const dndOn = m.bracket_round === 1 && !isPreview; // 1回戦のみ入替可能(プレビューは不可)
    const pos = m.bracket_pos || 0;
    const pRow = (name, team, won, lost, slot) => {
+     // 枠の通し番号バッジ(opts.showSlotNo時・1回戦のみ)。編集グリッドの「枠」番号と突き合わせ可能にする。
+     const slotNo = (opts && opts.showSlotNo && m.bracket_round === 1) ? (pos * 2 + slot) : null;
      const row = h("div", {
        style: { fontWeight: won ? 700 : 500, color: won ? "#15803d" : "#374151",
          padding: "2px 4px",
          opacity: lost ? 0.55 : 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
          borderRadius: "4px" } },
+       slotNo ? h("span", { className: "vb-slotno" }, String(slotNo)) : null,
        // BYE は表示しない(シード/抽選トーナメント): 相手欄を薄いダッシュにし、シードは繰上で進出に見せる(#8)
        (name === "BYE" ? h("span", { style: { color: "#cbd5e1", fontStyle: "italic" } }, "ー") : (name || "—")),
        (team && name !== "BYE") ? h("span", { className: "text-xs text-sub", style: { marginLeft: "4px" } }, "(" + team + ")") : null);
@@ -11258,14 +11268,21 @@ const TMgmt = {
     }
     status.textContent = "ブラケット" + b.bracket_size + "・" + b.total_rounds + "回戦・出場" + TMgmt._entrants.length + "名";
     TMgmt.renderIntegrity(main);
-    const split = h("div", { className: "tm-split" });
-    const left = h("div", { className: "tm-left" });
-    TMgmt.renderGrid(left);
-    const right = h("div", { className: "tm-right" });
-    right.appendChild(O.renderVisualBracket(b, { readOnly: true }));
-    split.appendChild(left);
-    split.appendChild(right);
-    main.appendChild(split);
+    // 左右分割をやめ、「枠の編集」「トーナメント表」のタブ切替で各画面を全幅表示(視認性優先)。
+    const tab = TMgmt._tab === "bracket" ? "bracket" : "grid";
+    const mkTab = (key, label) => h("button",
+      { className: "tm-tab" + (tab === key ? " active" : ""),
+        onClick: () => { TMgmt._tab = key; TMgmt.render(); } }, label);
+    main.appendChild(h("div", { className: "tm-tabs" }, mkTab("grid", "枠の編集"), mkTab("bracket", "トーナメント表")));
+    if (tab === "bracket") {
+      const tree = h("div", { className: "tm-tree-pane" });
+      tree.appendChild(O.renderVisualBracket(b, { readOnly: true, showSlotNo: true }));
+      main.appendChild(tree);
+    } else {
+      const pane = h("div", { className: "tm-grid-pane" });
+      TMgmt.renderGrid(pane);
+      main.appendChild(pane);
+    }
   },
 
   // ── エクセル風 枠グリッド(左ペイン) ──────────────────────────
@@ -11296,17 +11313,18 @@ const TMgmt = {
   },
 
   _appendGridRows(tbody, row) {
-    const posLabel = (row.pos + 1) + (row.slot === 1 ? "上" : "下");
+    // 枠は上から順の通し番号(1上=1,1下=2,2上=3,2下=4…)。ダブルスはペアで1番号。
+    const slotNo = row.pos * 2 + row.slot;
     if (row.is_bye) {
       tbody.appendChild(h("tr", { className: "tm-row-bye" },
-        h("td", {}, posLabel),
+        h("td", { className: "tm-pos tm-pos-empty" }, slotNo),
         h("td", { colSpan: 7, style: { color: "#94a3b8", fontStyle: "italic" } }, "BYE（シード扱い）"),
         TMgmt._menuBtn(row, 1)));
       return;
     }
     if (!row.entrant_id) {
       tbody.appendChild(h("tr", {},
-        h("td", {}, posLabel),
+        h("td", { className: "tm-pos tm-pos-empty" }, slotNo),
         h("td", { colSpan: 7, style: { color: "#cbd5e1" } }, "（空き）"),
         TMgmt._menuBtn(row, 1)));
       return;
@@ -11316,7 +11334,7 @@ const TMgmt = {
     const oppTd = h("td", { rowSpan: row.is_doubles ? 2 : 1, style: { color: "#64748b", fontSize: "12px" } }, row.opponent || "—");
     if (row.is_doubles) {
       tbody.appendChild(h("tr", {},
-        h("td", { rowSpan: 2 }, posLabel, h("div", { style: { fontSize: "10px", color: "#94a3b8" } }, "ﾀﾞﾌﾞﾙｽ")),
+        h("td", { className: "tm-pos", rowSpan: 2 }, slotNo, h("div", { style: { fontSize: "10px", color: "#94a3b8", fontWeight: 400 } }, "ﾀﾞﾌﾞﾙｽ")),
         TMgmt._cell(row.surname, (v) => TMgmt._commitField(row, "surname", v)),
         TMgmt._cell(row.given_name, (v) => TMgmt._commitField(row, "given_name", v)),
         TMgmt._cell(row.team, (v) => TMgmt._commitField(row, "team", v)),
@@ -11330,7 +11348,7 @@ const TMgmt = {
       return;
     }
     tbody.appendChild(h("tr", {},
-      h("td", {}, posLabel),
+      h("td", { className: "tm-pos" }, slotNo),
       TMgmt._cell(row.surname, (v) => TMgmt._commitField(row, "surname", v)),
       TMgmt._cell(row.given_name, (v) => TMgmt._commitField(row, "given_name", v)),
       TMgmt._cell(row.team, (v) => TMgmt._commitField(row, "team", v)),
@@ -11414,15 +11432,15 @@ const TMgmt = {
   // グリッドを再取得して左ペインを再描画。他セル編集中(input開)なら破壊的再描画を避け(打鍵保護)、
   // 取得中に種目/大会が切替わった場合は描画を破棄(stale-guard)。
   async _reloadGridOnly() {
-    const left0 = document.querySelector("#tmMain .tm-left");
-    if (left0 && left0.querySelector("input")) return;   // 編集中: 行はcommit時にその場更新済みなので安全
+    const pane0 = document.querySelector("#tmMain .tm-grid-pane");
+    if (pane0 && pane0.querySelector("input")) return;   // 編集中: 行はcommit時にその場更新済みなので安全
     const tid = TMgmt.tournamentId, ev = TMgmt.event;
     try {
       const grid = await api.get(`/api/tournaments/${tid}/bracket/grid?event=` + encodeURIComponent(ev));
       if (TMgmt.tournamentId !== tid || TMgmt.event !== ev) return;
       if (grid && !grid.error) { TMgmt._grid = grid; TMgmt._gridRev = grid.bracket_rev; }
-      const left = document.querySelector("#tmMain .tm-left");
-      if (left && !left.querySelector("input")) { left.innerHTML = ""; TMgmt.renderGrid(left); }
+      const pane = document.querySelector("#tmMain .tm-grid-pane");   // 表タブ表示中はnull=データ更新のみ(切替時に最新で描画)
+      if (pane && !pane.querySelector("input")) { pane.replaceChildren(); TMgmt.renderGrid(pane); }
     } catch (e) { /* 一時障害は次の編集/再読込で回復 */ }
   },
 
@@ -11437,8 +11455,8 @@ const TMgmt = {
         if (TMgmt.tournamentId !== tid || TMgmt.event !== ev) return;
         if (bdata && !bdata.error) {
           TMgmt._bracket = bdata;
-          const right = document.querySelector("#tmMain .tm-right");
-          if (right) { right.innerHTML = ""; right.appendChild(O.renderVisualBracket(bdata, { readOnly: true })); }
+          const tree = document.querySelector("#tmMain .tm-tree-pane");   // 表タブ表示中のみその場更新(編集タブ時はデータのみ反映)
+          if (tree) { tree.replaceChildren(); tree.appendChild(O.renderVisualBracket(bdata, { readOnly: true, showSlotNo: true })); }
         }
       } catch (e) { /* 一時障害は無視 */ }
     }, 400);
