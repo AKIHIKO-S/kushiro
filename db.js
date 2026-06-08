@@ -6797,6 +6797,9 @@ function swapBracketSlots(tournamentId, event, a, b) {
     entrant_id: m[`player${slot}_entrant_id`] || null,
   });
   const sA = getSlot(mA, slotA), sB = getSlot(mB, slotB);
+  // undo 用: 入替する両試合と前方チェーンを変更前にスナップショット。
+  const chainIds = [...new Set([...collectForwardChain(mA.id), ...collectForwardChain(mB.id)])];
+  const beforeRows = chainIds.map(id => stmts.getMatch.get(id)).filter(Boolean).map(r => ({ ...r }));
   const setSlot = sqlite.transaction(() => {
     const upd = (matchId, slot, s) => sqlite.prepare(
       `UPDATE matches SET player${slot}_id=@pid, player${slot}_name=@pname, player${slot}_team=@pteam, player${slot}_entrant_id=@peid WHERE id=@id`
@@ -6816,6 +6819,7 @@ function swapBracketSlots(tournamentId, event, a, b) {
   //   → 抽選で配置した1回戦を自由に入替できる(byeが完了扱いになって編集をブロックしない)。
   //   進行開始後(実戦の結果あり)は従来どおり、入替で生じたBYEを繰り上げる。
   if (eventResultCount(tournamentId, event) > 0) autoAdvanceByes(tournamentId, event);
+  recordOp(tournamentId, "swap_slot", `選手の位置入替(${event})`, beforeRows.map(r => r.id), beforeRows);
   return { success: true };
 }
 
@@ -6877,6 +6881,8 @@ function setBracketSlot(tournamentId, event, pos, slot, data) {
   }
   const resetSql = `winner_id=NULL,loser_id=NULL,winner_name='',loser_name='',winner_team='',loser_team='',
     sets_json='[]',winner_sets=0,loser_sets=0,is_walkover=0,finished_at=''`;
+  // undo 用: この試合と前方チェーン(次戦への波及)を変更前にスナップショット。
+  const beforeRows = collectForwardChain(m.id).map(id => stmts.getMatch.get(id)).filter(Boolean).map(r => ({ ...r }));
   const tx = sqlite.transaction(() => {
     // 1) この試合が次戦へ送った勝者を取り消す
     if (nm) {
@@ -6908,6 +6914,7 @@ function setBracketSlot(tournamentId, event, pos, slot, data) {
     }
   });
   tx();
+  recordOp(tournamentId, "set_slot", `枠の設定(${event})`, beforeRows.map(r => r.id), beforeRows);
   return { success: true };
 }
 
