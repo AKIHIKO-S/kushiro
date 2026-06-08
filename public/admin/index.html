@@ -1196,6 +1196,8 @@
  .tm-grid th,.tm-grid td{border:1px solid #e2e8f0;padding:6px 10px;white-space:nowrap;text-align:left;vertical-align:middle;line-height:1.5}
  .tm-grid th{background:#eef2f7;position:sticky;top:0;z-index:1;font-weight:700;color:#334155;font-size:13px}
  .tm-grid tbody tr:hover td{background:#f0f7ff}
+ .tm-grid tbody tr.tm-edited td{background:#fef08a}
+ .tm-grid tbody tr.tm-edited:hover td{background:#fde047}
  .tm-grid td.tm-pos{font-weight:800;text-align:center;color:#1e293b;background:#f1f5f9;font-size:15px}
  .tm-psearch{position:absolute;z-index:30;left:0;top:100%;min-width:260px;max-height:260px;overflow:auto;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.14)}
  .tm-psearch-item{padding:7px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9;white-space:nowrap}
@@ -11369,6 +11371,10 @@ const TMgmt = {
   _entrants: [],
   _bracket: null,
 
+  // 直近の選択(大会/種目)を保存・復元。リロードしても大会選択画面に戻らないように。
+  _saveState() { try { localStorage.setItem("tm_state", JSON.stringify({ tid: TMgmt.tournamentId, event: TMgmt.event })); } catch (e) {} },
+  _loadState() { try { return JSON.parse(localStorage.getItem("tm_state") || "null"); } catch (e) { return null; } },
+
   async init() {
     const sel = document.getElementById("tmTournamentSel");
     if (!sel) return;
@@ -11380,6 +11386,8 @@ const TMgmt = {
     sel.onchange = () => TMgmt.selectTournament(sel.value);
     const evSel = document.getElementById("tmEventSel");
     evSel.onchange = () => TMgmt.selectEvent(evSel.value);
+    // メモリに無ければ localStorage から直近選択を復元(リロード対策)。
+    if (!TMgmt.tournamentId) { const s = TMgmt._loadState(); if (s && s.tid) { TMgmt.tournamentId = s.tid; TMgmt.event = s.event || null; } }
     if (TMgmt.tournamentId && ts.find(t => t.id === TMgmt.tournamentId)) {
       sel.value = TMgmt.tournamentId;
       await TMgmt.selectTournament(TMgmt.tournamentId, TMgmt.event);
@@ -11389,6 +11397,7 @@ const TMgmt = {
   async selectTournament(id, keepEvent) {
     TMgmt.tournamentId = id || null;
     TMgmt.event = keepEvent || null;
+    TMgmt._saveState();
     const evSel = document.getElementById("tmEventSel");
     evSel.innerHTML = "";
     document.getElementById("tmMain").innerHTML = "";
@@ -11405,6 +11414,7 @@ const TMgmt = {
 
   async selectEvent(ev) {
     TMgmt.event = ev || null;
+    TMgmt._saveState();
     TMgmt._treeEdit = false;   // 種目切替時は編集モードを安全側(OFF)へ
     if (!ev) { document.getElementById("tmMain").innerHTML = ""; document.getElementById("tmStatus").textContent = ""; return; }
     await TMgmt.reload();
@@ -11535,21 +11545,24 @@ const TMgmt = {
     const seedTd = TMgmt._cell(row.seed || "", (v) => TMgmt._commitSeed(row, v), { numeric: true, rowSpan: row.is_doubles ? 2 : 1 });
     const erTd = h("td", { rowSpan: row.is_doubles ? 2 : 1, style: { textAlign: "center", color: "#64748b" } }, String(row.entry_round || 1));
     const oppTd = h("td", { rowSpan: row.is_doubles ? 2 : 1, style: { color: "#64748b", fontSize: "12px" } }, row.opponent || "—");
+    // 直前に編集した選手(メンバー)の行を黄色で表示。
+    const le = TMgmt._lastEdited;
+    const editedCls = (p) => (le && le.entrant_id === row.entrant_id && le.isPartner === p) ? "tm-edited" : "";
     // 「選手名」は姓名フリー入力をやめ、選手マスタDBから検索して設定する(クリックでセル直下に検索ドロップ)。
     if (row.is_doubles) {
-      tbody.appendChild(h("tr", {},
+      tbody.appendChild(h("tr", { className: editedCls(false) },
         h("td", { className: "tm-pos", rowSpan: 2 }, slotNo, h("div", { style: { fontSize: "10px", color: "#94a3b8", fontWeight: 400 } }, "ﾀﾞﾌﾞﾙｽ")),
         TMgmt._playerSearchCell(row, false),
         TMgmt._teamSearchCell(row, false),
         TMgmt._cell(row.furigana, (v) => TMgmt._commitField(row, "furigana", v)),
         seedTd, erTd, oppTd, TMgmt._menuBtn(row, 2)));
-      tbody.appendChild(h("tr", {},
+      tbody.appendChild(h("tr", { className: editedCls(true) },
         TMgmt._playerSearchCell(row, true),
         TMgmt._teamSearchCell(row, true),
         TMgmt._cell(row.partner_furigana, (v) => TMgmt._commitField(row, "partner_furigana", v))));
       return;
     }
-    tbody.appendChild(h("tr", {},
+    tbody.appendChild(h("tr", { className: editedCls(false) },
       h("td", { className: "tm-pos" }, slotNo),
       TMgmt._playerSearchCell(row, false),
       TMgmt._teamSearchCell(row, false),
@@ -11585,12 +11598,12 @@ const TMgmt = {
         const all = TMgmt._allPlayers || [];
         const items = q ? all.filter(p => ((p.name || "") + (p.furigana || "") + (p.team || "")).includes(q)).slice(0, 12) : [];
         items.forEach(p => list.appendChild(h("div", { className: "tm-psearch-item",
-          onMouseDown: (e) => { e.preventDefault(); TMgmt._applyMemberFromPlayer(row, isPartner, p.id); } },
+          onMouseDown: (e) => { e.preventDefault(); td.replaceChildren(h("span", { style: { color: "#94a3b8" } }, "…")); TMgmt._applyMemberFromPlayer(row, isPartner, p.id); } },
           h("span", { style: { fontWeight: 600 } }, p.name),
           h("span", { className: "text-xs text-sub", style: { marginLeft: "6px" } }, (p.team || "") + (p.furigana ? "  " + p.furigana : "")))));
         if (q && !items.some(p => (p.name || "") === q)) {
           list.appendChild(h("div", { className: "tm-psearch-item tm-psearch-new",
-            onMouseDown: (e) => { e.preventDefault(); TMgmt._applyNewPlayer(row, isPartner, q); } },
+            onMouseDown: (e) => { e.preventDefault(); td.replaceChildren(h("span", { style: { color: "#94a3b8" } }, "…")); TMgmt._applyNewPlayer(row, isPartner, q); } },
             "＋「" + q + "」を選手DBに新規登録"));
         }
       };
@@ -11614,6 +11627,7 @@ const TMgmt = {
         }
       }
       if (r && r.bracket_rev) TMgmt._gridRev = r.bracket_rev;
+      TMgmt._lastEdited = { entrant_id: row.entrant_id, isPartner: !!isPartner };   // 直前に編集した選手=黄色表示
       toast("選手を設定しました" + ((r && r.propagated) ? `（他${r.propagated}件にも反映）` : ""), "ok");
       await TMgmt.reload();
     } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); }
@@ -11655,17 +11669,17 @@ const TMgmt = {
         const all = TMgmt._allTeams || [];
         const items = (q ? all.filter(t => t.includes(q)) : all).slice(0, 40);   // 空欄時は全団体を一覧表示
         items.forEach(t => list.appendChild(h("div", { className: "tm-psearch-item",
-          onMouseDown: (e) => { e.preventDefault(); TMgmt._commitField(row, field, t); } }, t)));
+          onMouseDown: (e) => { e.preventDefault(); td.replaceChildren(h("span", { style: { color: "#94a3b8" } }, "…")); TMgmt._commitField(row, field, t); } }, t)));
         if (q && !all.some(t => t === q)) {
           list.appendChild(h("div", { className: "tm-psearch-item tm-psearch-new",
-            onMouseDown: (e) => { e.preventDefault(); TMgmt._applyNewTeam(row, field, q); } },
+            onMouseDown: (e) => { e.preventDefault(); td.replaceChildren(h("span", { style: { color: "#94a3b8" } }, "…")); TMgmt._applyNewTeam(row, field, q); } },
             "＋「" + q + "」を登録団体に追加して設定"));
         }
       };
       input.addEventListener("input", render);
       input.addEventListener("keydown", (e) => {
         if (e.key === "Escape") showDisp();
-        else if (e.key === "Enter") { e.preventDefault(); TMgmt._commitField(row, field, input.value.trim()); }   // 手入力確定(一覧外も可)
+        else if (e.key === "Enter") { e.preventDefault(); td.replaceChildren(h("span", { style: { color: "#94a3b8" } }, "…")); TMgmt._commitField(row, field, input.value.trim()); }   // 手入力確定(一覧外も可)
       });
       input.addEventListener("blur", () => setTimeout(showDisp, 200));
       render();
@@ -11727,6 +11741,7 @@ const TMgmt = {
     try {
       const r = await api.put(`/api/entrants/${row.entrant_id}`, { [field]: value, base_updated_at: row.updated_at });
       if (!r || r.error || r.conflict) { toast((r && r.error) || "更新に失敗しました", "err"); return TMgmt.reload(); }
+      TMgmt._lastEdited = { entrant_id: row.entrant_id, isPartner: /^partner_/.test(field) };   // 直前に編集した選手=黄色表示
       TMgmt._patchRowFromEntrant(row, r);   // 行をその場更新(連続編集でも updated_at が最新=偽競合を防ぐ)
       // 氏名(姓/名)・所属は表(matches の非正規化名・完了試合の勝敗名)へ再同期。resync は冪等で楽観ロック不要。
       if (/^(surname|given_name|team|partner_surname|partner_given_name|partner_team)$/.test(field)) {
