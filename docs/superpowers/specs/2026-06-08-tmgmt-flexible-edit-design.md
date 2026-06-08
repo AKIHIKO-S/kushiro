@@ -92,6 +92,12 @@
 - undo: set-slot-from-player / swap-match を `undoLastOp` で元に戻せる(matches復元)。
 - 既存 `bracket-concurrency` / `bracket-grid` の回帰が壊れないこと。
 
+## 既知の v1 制限
+
+- `setBracketSlotFromPlayer` で未エントリー選手を選ぶと entrant を自動作成するが、その操作を
+  undo してもスロットは戻る一方、自動作成された entrant は名簿に残る(未配置の出場者として残留)。
+  実害は小さい(運営が手動削除可)。entrant 作成の undo は将来対応。
+
 ## 非目標(やらないこと)
 
 - ブラケットのサイズ変更・回戦数変更(別機能)。

@@ -6841,7 +6841,9 @@ function swapBracketMatches(tournamentId, event, posA, posB) {
       return { error: "進行中または終了した試合は入れ替えできません" };
     }
   }
-  const beforeRows = [mA, mB].map(m => ({ ...m }));
+  // undo 用: 両試合と前方チェーン(autoAdvanceByes が次戦へ波及しうる)を変更前にスナップショット。
+  const chainIds = [...new Set([...collectForwardChain(mA.id), ...collectForwardChain(mB.id)])];
+  const beforeRows = chainIds.map(id => stmts.getMatch.get(id)).filter(Boolean).map(m => ({ ...m }));
   const cols = ["player1_id", "player1_name", "player1_team", "player1_entrant_id",
     "player2_id", "player2_name", "player2_team", "player2_entrant_id", "status"];
   const tx = sqlite.transaction(() => {
@@ -6854,7 +6856,7 @@ function swapBracketMatches(tournamentId, event, posA, posB) {
   tx();
   // 入替で「実選手 vs BYE」が生じうるが、進行開始後のみ自動繰り上げ(編集フェーズは自由入替を優先)。
   if (eventResultCount(tournamentId, event) > 0) autoAdvanceByes(tournamentId, event);
-  recordOp(tournamentId, "swap_match", `試合まるごと入替(${event})`, [mA.id, mB.id], beforeRows);
+  recordOp(tournamentId, "swap_match", `試合まるごと入替(${event})`, beforeRows.map(r => r.id), beforeRows);
   return { success: true };
 }
 

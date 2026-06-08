@@ -9947,8 +9947,9 @@ const O = {
    setRev: (rev) => { O._bracketRev = O._bracketRev || {}; if (rev) O._bracketRev[bdata.event] = rev; },
    reload: () => { if (typeof O._vbReload === "function") O._vbReload(); },
  };
- // 編集可否: opts.editable 明示があれば優先、無ければ従来通り「読み取り専用でなければ編集可」。
- const canEdit = (opts && opts.editable !== undefined) ? !!opts.editable : !readOnly;
+ // 編集可否: プレビュー(未生成の下書き)は常に編集不可。opts.editable 明示があれば優先、
+ // 無ければ従来通り「読み取り専用でなければ編集可」。
+ const canEdit = !bdata.preview && ((opts && opts.editable !== undefined) ? !!opts.editable : !readOnly);
  const matches = bdata.matches || [];
  if (!matches.length) {
    return h("div", { className: "empty-state" }, "試合データなし");
@@ -10184,6 +10185,7 @@ const O = {
  // 取込のズレ修正・選手ごとのシード(BYE)設定をクリック操作で行う
  async _editSlot(ctx, pos, slot, currentName) {
    const event = ctx.event;   // 編集コンテキスト(進行管理 or トーナメント管理)から大会/種目/rev/再描画を受け取る
+   const eventIsDoubles = /ダブルス|団体/.test(event || "");   // ダブルス/団体枠はマスタDB単独選択の対象外(v1)
    const slotLabel = (parseInt(slot) === 2) ? "下の選手" : "上の選手";
    const posLabel = (pos + 1) + "枠目・" + slotLabel;
 
@@ -10335,10 +10337,10 @@ const O = {
        "出場選手から置き換える"),
      searchInput,
      listBox,
-     h("div", { className: "modal-section-title", style: { marginTop: "12px" } },
+     eventIsDoubles ? null : h("div", { className: "modal-section-title", style: { marginTop: "12px" } },
        "選手DBから選択（未エントリーは自動で出場追加）"),
-     dbSearchInput,
-     dbListBox);
+     eventIsDoubles ? null : dbSearchInput,
+     eventIsDoubles ? null : dbListBox);
    const foot = h("button", { className: "btn btn-ghost",
      onClick: () => modal.remove() }, "キャンセル");
    const modal = openModal("1回戦スロットの編集", body, foot);
@@ -10353,12 +10355,14 @@ const O = {
    } catch (e) {
      listBox.innerHTML = '<div style="padding:12px;color:#dc2626">選手の取得に失敗しました</div>';
    }
-   // 選手マスタDBを取得(遅延・ふりがな順)
-   try {
-     const pl = await api.get("/api/players?sort=furigana");
-     dbPlayers = Array.isArray(pl) ? pl : [];
-   } catch (e) { dbPlayers = []; }
-   renderDbList();
+   // 選手マスタDBを取得(遅延・ふりがな順)。ダブルス/団体枠はDB単独選択非対象なので取得しない。
+   if (!eventIsDoubles) {
+     try {
+       const pl = await api.get("/api/players?sort=furigana");
+       dbPlayers = Array.isArray(pl) ? pl : [];
+     } catch (e) { dbPlayers = []; }
+     renderDbList();
+   }
  },
 
  // ── トーナメント生成ダイアログ ──
