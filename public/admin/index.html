@@ -11526,19 +11526,19 @@ const TMgmt = {
       tbody.appendChild(h("tr", {},
         h("td", { className: "tm-pos", rowSpan: 2 }, slotNo, h("div", { style: { fontSize: "10px", color: "#94a3b8", fontWeight: 400 } }, "ﾀﾞﾌﾞﾙｽ")),
         TMgmt._playerSearchCell(row, false),
-        TMgmt._cell(row.team, (v) => TMgmt._commitField(row, "team", v)),
+        TMgmt._teamSearchCell(row, false),
         TMgmt._cell(row.furigana, (v) => TMgmt._commitField(row, "furigana", v)),
         seedTd, erTd, oppTd, TMgmt._menuBtn(row, 2)));
       tbody.appendChild(h("tr", {},
         TMgmt._playerSearchCell(row, true),
-        TMgmt._cell(row.partner_team, (v) => TMgmt._commitField(row, "partner_team", v)),
+        TMgmt._teamSearchCell(row, true),
         TMgmt._cell(row.partner_furigana, (v) => TMgmt._commitField(row, "partner_furigana", v))));
       return;
     }
     tbody.appendChild(h("tr", {},
       h("td", { className: "tm-pos" }, slotNo),
       TMgmt._playerSearchCell(row, false),
-      TMgmt._cell(row.team, (v) => TMgmt._commitField(row, "team", v)),
+      TMgmt._teamSearchCell(row, false),
       TMgmt._cell(row.furigana, (v) => TMgmt._commitField(row, "furigana", v)),
       seedTd, erTd, oppTd, TMgmt._menuBtn(row, 1)));
   },
@@ -11604,6 +11604,56 @@ const TMgmt = {
       TMgmt._allPlayers = null;   // キャッシュを次回更新
       await TMgmt._applyMemberFromPlayer(row, isPartner, p.id);
     } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); }
+  },
+
+  // 登録団体マスタを一度だけ取得(所属の選択用キャッシュ)。
+  async _ensureTeams() {
+    if (TMgmt._allTeams) return;
+    try { TMgmt._allTeams = ((await api.get("/api/registered-teams")) || []).map(t => t.name); }
+    catch (e) { TMgmt._allTeams = []; }
+  },
+  // 所属セル: クリックでセル直下に登録団体の検索ドロップを出し、一覧から選択(または手入力)する。
+  _teamSearchCell(row, isPartner) {
+    const field = isPartner ? "partner_team" : "team";
+    const cur = isPartner ? (row.partner_team || "") : (row.team || "");
+    const td = h("td", { className: "tm-cell-edit" });
+    const showDisp = () => { td.replaceChildren(h("span", {}, cur || "—")); };
+    showDisp();
+    td.onclick = async () => {
+      if (td.querySelector("input")) return;
+      await TMgmt._ensureTeams();
+      const input = h("input", { type: "text", placeholder: "所属を一覧から選択/入力…", value: "" });   // 空start=全団体を一覧表示
+      const list = h("div", { className: "tm-psearch" });
+      const wrap = h("div", { style: { position: "relative" } }, input, list);
+      td.replaceChildren(wrap);
+      input.focus(); try { input.select(); } catch (e) {}
+      const render = () => {
+        const q = input.value.trim();
+        list.replaceChildren();
+        const all = TMgmt._allTeams || [];
+        const items = (q ? all.filter(t => t.includes(q)) : all).slice(0, 40);   // 空欄時は全団体を一覧表示
+        items.forEach(t => list.appendChild(h("div", { className: "tm-psearch-item",
+          onMouseDown: (e) => { e.preventDefault(); TMgmt._commitField(row, field, t); } }, t)));
+        if (q && !all.some(t => t === q)) {
+          list.appendChild(h("div", { className: "tm-psearch-item tm-psearch-new",
+            onMouseDown: (e) => { e.preventDefault(); TMgmt._applyNewTeam(row, field, q); } },
+            "＋「" + q + "」を登録団体に追加して設定"));
+        }
+      };
+      input.addEventListener("input", render);
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") showDisp();
+        else if (e.key === "Enter") { e.preventDefault(); TMgmt._commitField(row, field, input.value.trim()); }   // 手入力確定(一覧外も可)
+      });
+      input.addEventListener("blur", () => setTimeout(showDisp, 200));
+      render();
+    };
+    return td;
+  },
+  async _applyNewTeam(row, field, name) {
+    try { await api.post("/api/registered-teams", { name }); } catch (e) { /* 重複/失敗でも所属は設定 */ }
+    TMgmt._allTeams = null;   // キャッシュ更新
+    TMgmt._commitField(row, field, name);
   },
 
   // 編集可能セル: クリックで input 化、Enter/Tab/blurで確定、Escで取消
