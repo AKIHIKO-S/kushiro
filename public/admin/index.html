@@ -1199,6 +1199,8 @@
  .tm-grid td.tm-pos{font-weight:800;text-align:center;color:#1e293b;background:#f1f5f9;font-size:15px}
  .tm-grid tr.tm-row-bye td.tm-pos,.tm-grid tr td.tm-pos.tm-pos-empty{color:#94a3b8;background:#f8fafc}
  .vb-slotno{display:inline-block;min-width:18px;margin-right:6px;padding:0 5px;background:#1e293b;color:#fff;border-radius:4px;font-size:11px;font-weight:700;text-align:center;vertical-align:middle}
+ .tm-editnote{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:8px}
+ .tm-editwarn{background:#fef3c7;border:1px solid #fcd34d;color:#b45309;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:8px}
  .tm-grid td.tm-cell-edit{cursor:cell}
  .tm-grid td.tm-cell-edit:hover{background:#eff6ff}
  .tm-grid input{width:100%;min-width:56px;border:1px solid #60a5fa;border-radius:3px;font:inherit;padding:1px 3px;box-sizing:border-box}
@@ -9950,6 +9952,12 @@ const O = {
  // 編集可否: プレビュー(未生成の下書き)は常に編集不可。opts.editable 明示があれば優先、
  // 無ければ従来通り「読み取り専用でなければ編集可」。
  const canEdit = !bdata.preview && ((opts && opts.editable !== undefined) ? !!opts.editable : !readOnly);
+ // 編集専用ビュー(トーナメント管理): 進行用要素(呼出/LIVE/結果スコア/進行フック)を一切出さず、
+ // 配置(組み合わせ)の編集だけに特化する。進行管理(O)側は editOnly 未指定=従来通り。
+ const editOnly = !!(opts && opts.editOnly);
+ // ロック=編集不可: 試合中、または「実選手どうしの確定済み」。BYE/不戦勝(シード構造)は編集可能扱い。
+ const _bothReal = (m) => m.player1_name && m.player2_name && m.player1_name !== "BYE" && m.player2_name !== "BYE";
+ const isLocked = (m) => m.status === "on_table" || (m.status === "completed" && _bothReal(m));
  const matches = bdata.matches || [];
  if (!matches.length) {
    return h("div", { className: "empty-state" }, "試合データなし");
@@ -9966,12 +9974,18 @@ const O = {
  rounds.forEach(r => byRound[r].sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0)));
 
  const stateBg = (m) => {
+   if (editOnly) return isLocked(m) ? "#f1f5f9" : "#fff";   // 編集ビュー: 進行色を使わない(ロックのみ淡灰)
    if (m.status === "completed") return "#eef2f7";
    if (m.status === "on_table") return "#fef2f2";
    if (m.status === "pending") return "#fffbeb";
    return "#fff";
  };
  const stateBorder = (m) => {
+   if (editOnly) {
+     if (isLocked(m)) return "#e2e8f0";                       // ロック=淡色(操作対象外)
+     if ((m.bracket_round || 1) === 1) return "#93c5fd";      // 1回戦=編集可(青アクセント)
+     return "#e2e8f0";                                        // 後段=勝ち上がり先(淡色)
+   }
    if (m.status === "completed") return "#9ca3af";
    if (m.status === "on_table") return "#dc2626";
    if (m.status === "pending") return "#f59e0b";
@@ -9988,7 +10002,7 @@ const O = {
  // 1試合カード (side: left/right/center)
  const makeCard = (m, side) => {
    const isPreview = !!bdata.preview || readOnly;   // プレビュー/読み取り専用は呼出・入替・スロット編集を一切無効化
-   const callable = m.status === "pending" && !isPreview;
+   const callable = m.status === "pending" && !isPreview && !editOnly;   // 編集ビューは呼出フローを出さない
    const card = h("div", { className: "vb-match" + (callable ? " vb-callable" : ""),
      // 呼出可能(pending)の対戦はカードクリックで呼出フローを開く #トーナメント表から呼出
      onClick: callable ? ((e) => {
@@ -10007,9 +10021,10 @@ const O = {
    card.appendChild(h("div", {
      style: { fontSize: "11px", color: "#64748b", fontWeight: 700, marginBottom: "2px" } },
      lbl,
-     m.status === "on_table" ? h("span", {
+     // 進行用バッジ(LIVE/✓/呼出)は編集ビューでは出さない。
+     (!editOnly && m.status === "on_table") ? h("span", {
        style: { marginLeft: "6px", color: "#dc2626", fontWeight: 800 } }, "● LIVE") : null,
-     m.status === "completed" ? h("span", {
+     (!editOnly && m.status === "completed") ? h("span", {
        style: { marginLeft: "6px", color: "#16a34a", fontWeight: 800 } }, "✓") : null,
      callable ? h("span", { className: "vb-call-chip" }, "▶ クリックで呼出") : null,
      // 試合まるごと入替(編集可・1回戦・未確定のみ)。2試合の⇄を順に押すと両選手を一括入替。
@@ -10021,15 +10036,18 @@ const O = {
            onClick: (e) => { e.stopPropagation(); O._matchSwapPick(ctx, m.bracket_pos || 0); } }, "⇄ 試合入替")
        : null,
    ));
-   const dndOn = m.bracket_round === 1 && canEdit; // 1回戦のみ入替可能(編集可のときだけ)
+   // 1回戦のみ編集可。編集ビューではロック済み(確定/試合中)に編集UIを付けない(押して弾かれる混乱を防ぐ)。
+   const dndOn = m.bracket_round === 1 && canEdit && !(editOnly && isLocked(m));
    const pos = m.bracket_pos || 0;
    const pRow = (name, team, won, lost, slot) => {
      // 枠の通し番号バッジ(opts.showSlotNo時・1回戦のみ)。編集グリッドの「枠」番号と突き合わせ可能にする。
      const slotNo = (opts && opts.showSlotNo && m.bracket_round === 1) ? (pos * 2 + slot) : null;
+     // 編集ビューは勝敗の強調(緑/薄字)も出さず、配置(氏名)だけをプレーンに見せる。
+     const showWL = !editOnly;
      const row = h("div", {
-       style: { fontWeight: won ? 700 : 500, color: won ? "#15803d" : "#374151",
+       style: { fontWeight: (showWL && won) ? 700 : 500, color: (showWL && won) ? "#15803d" : "#374151",
          padding: "2px 4px",
-         opacity: lost ? 0.55 : 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+         opacity: (showWL && lost) ? 0.55 : 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
          borderRadius: "4px" } },
        slotNo ? h("span", { className: "vb-slotno" }, String(slotNo)) : null,
        // BYE は表示しない(シード/抽選トーナメント): 相手欄を薄いダッシュにし、シードは繰上で進出に見せる(#8)
@@ -10071,14 +10089,14 @@ const O = {
    card.appendChild(pRow(m.player1_name, m.player1_team, p1Won, m.result && !p1Won, 1));
    card.appendChild(h("div", { style: { borderTop: "1px dashed " + stateBorder(m), margin: "1px 0" } }));
    card.appendChild(pRow(m.player2_name, m.player2_team, p2Won, m.result && !p2Won, 2));
-   if (m.result) {
+   if (m.result && !editOnly) {   // 結果スコアは編集ビューでは出さない
      card.appendChild(h("div", {
        style: { fontFamily: "var(--font-mono)", fontSize: "10px", color: "#64748b",
          textAlign: "right", marginTop: "2px" } },
        (m.result.winner_sets || 0) + " - " + (m.result.loser_sets || 0)));
    }
    // ドラッグ&ドロップ等の後付けフック (#167)
-   if (!readOnly && typeof O._decorateBracketCard === "function") O._decorateBracketCard(card, m, bdata, side);
+   if (!readOnly && !editOnly && typeof O._decorateBracketCard === "function") O._decorateBracketCard(card, m, bdata, side);
    return card;
  };
 
@@ -11371,6 +11389,14 @@ const TMgmt = {
     main.appendChild(h("div", { className: "tm-tabs" }, mkTab("grid", "枠の編集"), mkTab("bracket", "トーナメント表")));
     if (tab === "bracket") {
       const editOn = !!TMgmt._treeEdit;
+      // 編集専用ビューであることの明示(呼出・結果入力は進行管理で)。
+      main.appendChild(h("div", { className: "tm-editnote" },
+        "🛠 ここは組み合わせ（配置）の編集専用です。試合の呼出・結果入力・進行は「進行管理(LIVE)」で行います。"));
+      // 進行開始後(実戦の結果あり=不戦勝/BYE除く)の編集は確定試合に影響しうる旨を警告。
+      const hasResults = (b.matches || []).some(m => (m.status === "completed" || m.status === "on_table")
+        && m.player1_name && m.player2_name && m.player1_name !== "BYE" && m.player2_name !== "BYE");
+      if (hasResults) main.appendChild(h("div", { className: "tm-editwarn" },
+        "⚠ この種目はすでに試合結果があります。配置の変更は確定済みの試合に影響することがあります（確定/試合中の枠は編集できません）。"));
       main.appendChild(h("div", { style: { marginBottom: "8px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" } },
         h("button", { className: "btn btn-sm" + (editOn ? "" : " btn-ghost"),
           onClick: () => { TMgmt._treeEdit = !TMgmt._treeEdit; TMgmt.render(); } },
@@ -11378,7 +11404,7 @@ const TMgmt = {
         editOn ? h("span", { style: { fontSize: "12px", color: "#64748b" } },
           "クリックで枠編集 / ドラッグで選手入替 / ⇄で試合まるごと入替") : null));
       const tree = h("div", { className: "tm-tree-pane" });
-      tree.appendChild(O.renderVisualBracket(b, { editable: editOn, showSlotNo: true, ctx: TMgmt._treeCtx() }));
+      tree.appendChild(O.renderVisualBracket(b, { editable: editOn, editOnly: true, showSlotNo: true, ctx: TMgmt._treeCtx() }));
       main.appendChild(tree);
     } else {
       const pane = h("div", { className: "tm-grid-pane" });
@@ -11558,7 +11584,7 @@ const TMgmt = {
         if (bdata && !bdata.error) {
           TMgmt._bracket = bdata;
           const tree = document.querySelector("#tmMain .tm-tree-pane");   // 表タブ表示中のみその場更新(編集タブ時はデータのみ反映)
-          if (tree) { tree.replaceChildren(); tree.appendChild(O.renderVisualBracket(bdata, { editable: !!TMgmt._treeEdit, showSlotNo: true, ctx: TMgmt._treeCtx() })); }
+          if (tree) { tree.replaceChildren(); tree.appendChild(O.renderVisualBracket(bdata, { editable: !!TMgmt._treeEdit, editOnly: true, showSlotNo: true, ctx: TMgmt._treeCtx() })); }
         }
       } catch (e) { /* 一時障害は無視 */ }
     }, 400);
