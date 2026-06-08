@@ -9758,7 +9758,8 @@ const O = {
  },
  _opLogLabel(a) {
  return ({ finish: "結果入力", correct: "結果修正", call: "呼出", uncall: "コートへ戻す",
-   swap_doubles_order: "ダブルス選手1↔2入替", swap_partners: "ダブルス相方入替" })[a] || a;
+   swap_doubles_order: "ダブルス選手1↔2入替", swap_partners: "ダブルス相方入替",
+   set_slot: "枠の設定", swap_slot: "選手位置入替", swap_match: "試合入替" })[a] || a;
  },
  async openOpLog() {
  if (!O.tournamentId) return;
@@ -10010,6 +10011,14 @@ const O = {
      m.status === "completed" ? h("span", {
        style: { marginLeft: "6px", color: "#16a34a", fontWeight: 800 } }, "✓") : null,
      callable ? h("span", { className: "vb-call-chip" }, "▶ クリックで呼出") : null,
+     // 試合まるごと入替(編集可・1回戦・未確定のみ)。2試合の⇄を順に押すと両選手を一括入替。
+     (canEdit && m.bracket_round === 1 && m.status !== "completed" && m.status !== "on_table")
+       ? h("button", { className: "vb-swapmatch",
+           style: { marginLeft: "6px", fontSize: "10px", padding: "0 6px", borderRadius: "4px",
+             border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", cursor: "pointer", fontWeight: 700 },
+           title: "この試合をもう1試合とまるごと入替",
+           onClick: (e) => { e.stopPropagation(); O._matchSwapPick(ctx, m.bracket_pos || 0); } }, "⇄ 試合入替")
+       : null,
    ));
    const dndOn = m.bracket_round === 1 && canEdit; // 1回戦のみ入替可能(編集可のときだけ)
    const pos = m.bracket_pos || 0;
@@ -10138,6 +10147,26 @@ const O = {
  },
 
  // ドラッグ&ドロップで1回戦の選手位置を入れ替え
+ // 試合まるごと入替: 1回目の⇄で入替元を記憶、2回目の⇄で swap-match を実行。
+ _matchSwapPick(ctx, pos) {
+   if (O._swapFrom == null) {
+     O._swapFrom = { tid: ctx.tournamentId, event: ctx.event, pos };
+     toast("入替元を選択しました。もう1試合の「⇄ 試合入替」を押してください", "ok");
+     return;
+   }
+   const from = O._swapFrom; O._swapFrom = null;
+   if (from.tid !== ctx.tournamentId || from.event !== ctx.event) { toast("同じ種目内で選んでください", "err"); return; }
+   if (from.pos === pos) { toast("同じ試合です", "err"); return; }
+   api.post(`/api/tournaments/${ctx.tournamentId}/bracket/swap-match`,
+     { event: ctx.event, posA: from.pos, posB: pos, base_rev: ctx.getRev() })
+     .then(r => {
+       if (r && r.conflict) { toast(r.error || "他の端末で更新されました", "err"); ctx.reload(); return; }
+       if (r && r.error) return toast(r.error, "err");
+       if (r && r.bracket_rev) ctx.setRev(r.bracket_rev);
+       toast("試合をまるごと入れ替えました", "ok"); ctx.reload();
+     }).catch(e => toast("入替に失敗しました: " + (e.message || e), "err"));
+ },
+
  async _dndSwap(ctx, from, to) {
    const event = ctx.event;
    try {
