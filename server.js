@@ -901,6 +901,18 @@ app.get("/api/players/:id", (req, res) => {
   if (!player) return res.status(404).json({ error: "選手が見つかりません" });
   res.json(player);
 });
+// ─── 登録団体マスタ(取込で団体を選手にしない正本リスト) ───────────────
+app.get("/api/registered-teams", requireAdmin, (req, res) => {
+  res.json(db.listRegisteredTeams());
+});
+app.post("/api/registered-teams", requireAdmin, (req, res) => {
+  const r = db.addRegisteredTeam(req.body && req.body.name);
+  if (r && r.error) return res.status(400).json(r);
+  res.status(201).json(r);
+});
+app.delete("/api/registered-teams/:id", requireAdmin, (req, res) => {
+  res.json(db.deleteRegisteredTeam(req.params.id));
+});
 // ─── 楽観ロック(同時編集の衝突検知) ──────────────────────────────
 // 保存時に「他の端末が先に編集したか」を判定し、競合なら 409 を返して後勝ち(変更の黙殺)を防ぐ。
 // 既定=内容ベース: クライアントが base_fields(編集対象フィールドの“編集開始時の値”)を送り、現在値と突き合わせる。
