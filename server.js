@@ -3678,6 +3678,24 @@ app.post("/api/tournaments/:id/bracket/swap-doubles-order", requireAdmin, (req, 
   if (r && r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
+// 試合まるごと入替。body: { event, posA, posB, base_rev }
+app.post("/api/tournaments/:id/bracket/swap-match", requireAdmin, (req, res) => {
+  const event = req.body && req.body.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
+  const r = db.swapBracketMatches(req.params.id, event, req.body.posA, req.body.posB);
+  if (r && r.error) return res.status(400).json(r);
+  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
+});
+// 選手マスタDBから枠へ(未エントリーは自動で出場追加)。body: { event, pos, slot, player_id, base_rev }
+app.post("/api/tournaments/:id/bracket/set-slot-from-player", requireAdmin, (req, res) => {
+  const event = req.body && req.body.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
+  const r = db.setBracketSlotFromPlayer(req.params.id, event, req.body.pos, req.body.slot, req.body.player_id);
+  if (r && r.error) return res.status(400).json(r);
+  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
+});
 
 app.put("/api/tournaments/:id/court-layout", requireAdmin, (req, res) => {
   const r = db.setCourtLayout(req.params.id, req.body || {});
