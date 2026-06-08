@@ -9939,6 +9939,15 @@ const O = {
  // ─── ビジュアルブラケットの実 DOM 構築 (両側トーナメント) ─────
  renderVisualBracket(bdata, opts) {
  const readOnly = !!(opts && opts.readOnly);   // 読み取り専用(トーナメント管理タブ等): 呼出/入替/編集を一切無効化
+ // 編集コンテキスト: 既定は進行管理(O)。トーナメント管理など別画面は opts.ctx で大会/種目/rev/再描画を注入。
+ const ctx = (opts && opts.ctx) || {
+   tournamentId: O.tournamentId, event: bdata.event,
+   getRev: () => (O._bracketRev && O._bracketRev[bdata.event]),
+   setRev: (rev) => { O._bracketRev = O._bracketRev || {}; if (rev) O._bracketRev[bdata.event] = rev; },
+   reload: () => { if (typeof O._vbReload === "function") O._vbReload(); },
+ };
+ // 編集可否: opts.editable 明示があれば優先、無ければ従来通り「読み取り専用でなければ編集可」。
+ const canEdit = (opts && opts.editable !== undefined) ? !!opts.editable : !readOnly;
  const matches = bdata.matches || [];
  if (!matches.length) {
    return h("div", { className: "empty-state" }, "試合データなし");
@@ -10002,7 +10011,7 @@ const O = {
        style: { marginLeft: "6px", color: "#16a34a", fontWeight: 800 } }, "✓") : null,
      callable ? h("span", { className: "vb-call-chip" }, "▶ クリックで呼出") : null,
    ));
-   const dndOn = m.bracket_round === 1 && !isPreview; // 1回戦のみ入替可能(プレビューは不可)
+   const dndOn = m.bracket_round === 1 && canEdit; // 1回戦のみ入替可能(編集可のときだけ)
    const pos = m.bracket_pos || 0;
    const pRow = (name, team, won, lost, slot) => {
      // 枠の通し番号バッジ(opts.showSlotNo時・1回戦のみ)。編集グリッドの「枠」番号と突き合わせ可能にする。
@@ -10033,7 +10042,7 @@ const O = {
          e.preventDefault(); e.stopPropagation(); row.classList.remove("vb-drag-over");
          let from; try { from = JSON.parse(e.dataTransfer.getData("text/plain")); } catch (_) { return; }
          if (from.pos === pos && from.slot === slot) return;
-         O._dndSwap(bdata.event, from, { pos, slot, name });
+         O._dndSwap(ctx, from, { pos, slot, name });
        });
        // クリックで編集 (BYE/空き/置換)
        if (!name || name === "BYE") row.style.cursor = "pointer";
@@ -10042,7 +10051,7 @@ const O = {
          : "クリックで選手を設定";
        row.addEventListener("click", (e) => {
          e.stopPropagation();
-         O._editSlot(bdata.event, pos, slot, name || "");
+         O._editSlot(ctx, pos, slot, name || "");
        });
      }
      return row;
@@ -10129,33 +10138,37 @@ const O = {
  },
 
  // ドラッグ&ドロップで1回戦の選手位置を入れ替え
- async _dndSwap(event, from, to) {
+ async _dndSwap(ctx, from, to) {
+   const event = ctx.event;
    try {
-     const r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/swap`,
-       { event, a: { pos: from.pos, slot: from.slot }, b: { pos: to.pos, slot: to.slot }, base_rev: (O._bracketRev && O._bracketRev[event]) });
+     const r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/swap`,
+       { event, a: { pos: from.pos, slot: from.slot }, b: { pos: to.pos, slot: to.slot }, base_rev: ctx.getRev() });
+     if (r && r.conflict) { toast(r.error || "他の端末で更新されました", "err"); ctx.reload(); return; }
      if (r && r.error) return toast(r.error, "err");
-     if (r && r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[event] = r.bracket_rev; }
+     if (r && r.bracket_rev) ctx.setRev(r.bracket_rev);
      toast(`「${from.name || "選手"}」の位置を入れ替えました`, "ok");
-     if (typeof O._vbReload === "function") O._vbReload();
+     ctx.reload();
    } catch (e) { toast("入れ替えに失敗しました: " + (e.message || e), "err"); }
  },
 
  // 1回戦スロットの手動編集 (#177): BYE化 / 空き / 別選手に置換
  // 取込のズレ修正・選手ごとのシード(BYE)設定をクリック操作で行う
- async _editSlot(event, pos, slot, currentName) {
+ async _editSlot(ctx, pos, slot, currentName) {
+   const event = ctx.event;   // 編集コンテキスト(進行管理 or トーナメント管理)から大会/種目/rev/再描画を受け取る
    const slotLabel = (parseInt(slot) === 2) ? "下の選手" : "上の選手";
    const posLabel = (pos + 1) + "枠目・" + slotLabel;
 
    // 共通: スロット設定を送信して再描画
    const submit = async (payload) => {
      try {
-       const r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/set-slot`,
-         { event, pos, slot, ...payload, base_rev: (O._bracketRev && O._bracketRev[event]) });
+       const r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/set-slot`,
+         { event, pos, slot, ...payload, base_rev: ctx.getRev() });
+       if (r && r.conflict) { toast(r.error || "他の端末で更新されました", "err"); ctx.reload(); return; }
        if (r && r.error) return toast(r.error, "err");
-       if (r && r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[event] = r.bracket_rev; }
+       if (r && r.bracket_rev) ctx.setRev(r.bracket_rev);
        toast("トーナメント表を更新しました", "ok");
        modal.remove();
-       if (typeof O._vbReload === "function") O._vbReload();
+       ctx.reload();
      } catch (e) { toast("更新に失敗しました: " + (e.message || e), "err"); }
    };
 
@@ -10234,14 +10247,14 @@ const O = {
        h("button", { className: "btn btn-sm", style: { background: "#7c3aed", color: "#fff" },
          onClick: async () => {
            if (!confirm(`「${currentName}」を ${seedRoundSel.value}回戦からのシードに繰り上げます。よろしいですか？`)) return;
-           const payload = { event, pos, slot, entry_round: parseInt(seedRoundSel.value) || 2, side: seedSideSel.value, base_rev: (O._bracketRev && O._bracketRev[event]) };
-           let r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/promote-seed`, payload);
-           if (r && r.needs_force) { if (!confirm("⚠ " + r.error + "\n\n結果入力済みも消して作り直しますか？")) return; r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/promote-seed`, { ...payload, force: true }); }
+           const payload = { event, pos, slot, entry_round: parseInt(seedRoundSel.value) || 2, side: seedSideSel.value, base_rev: ctx.getRev() };
+           let r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/promote-seed`, payload);
+           if (r && r.needs_force) { if (!confirm("⚠ " + r.error + "\n\n結果入力済みも消して作り直しますか？")) return; r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/promote-seed`, { ...payload, force: true }); }
            if (r && r.error) return toast(r.error, "err");
-           if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[event] = r.bracket_rev; }
+           if (r.bracket_rev) ctx.setRev(r.bracket_rev);
            toast(`「${currentName}」をシードに繰り上げました`, "ok");
            modal.remove();
-           if (typeof O._vbReload === "function") O._vbReload();
+           ctx.reload();
          } }, "⬆ シードに繰り上げ"))) : null;
 
    const body = h("div", {},
@@ -10261,7 +10274,7 @@ const O = {
 
    // 出場選手 (entrants) を取得して一覧表示
    try {
-     const res = await api.get(`/api/tournaments/${O.tournamentId}/entrants?event=` +
+     const res = await api.get(`/api/tournaments/${ctx.tournamentId}/entrants?event=` +
        encodeURIComponent(event));
      entrants = Array.isArray(res) ? res : [];
      entrants.sort((a, b) => (a.bracket_number || 9999) - (b.bracket_number || 9999));
