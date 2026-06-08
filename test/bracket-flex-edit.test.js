@@ -31,3 +31,31 @@ test("swapBracketMatches: 2試合の両選手を入替(配置以外は不変)", 
   assert.strictEqual(after[0].player2_name, m1.player2_name, "pos0のp2がm1のp2に");
   assert.strictEqual(after[1].player1_name, m0.player1_name, "pos1のp1がm0のp1に");
 });
+
+test("setBracketSlotFromPlayer: 未エントリーのマスタ選手を空き枠へ→entrant自動作成+紐付け", () => {
+  const t = setup4();
+  const p = db.createPlayer({ name: "新規 太郎", furigana: "しんき", team: "新規ク", gender: "male" });
+  db.setBracketSlot(t.id, EV, 0, 2, { mode: "clear" });
+  const before = db.getEntrants(t.id, EV).length;
+  const r = db.setBracketSlotFromPlayer(t.id, EV, 0, 2, p.id);
+  assert.ok(r && r.success, "成功: " + JSON.stringify(r));
+  const ents = db.getEntrants(t.id, EV);
+  assert.strictEqual(ents.length, before + 1, "entrantが1件自動追加");
+  const added = ents.find(e => e.player_id === p.id);
+  assert.ok(added, "player_idで紐づくentrantがある");
+  const m = r1(t)[0];
+  assert.strictEqual(m.player2_name, added.display_name, "枠に選手名が入る: " + m.player2_name);
+  assert.strictEqual(m.player2_entrant_id, added.id, "枠にentrant_idが入る");
+});
+
+test("setBracketSlotFromPlayer: 既存entrantがあるマスタ選手は再利用(増えない)・冪等", () => {
+  const t = setup4();
+  const p = db.createPlayer({ name: "既出 花子", furigana: "きしゅつ", team: "既出ク", gender: "female" });
+  db.setBracketSlot(t.id, EV, 0, 2, { mode: "clear" });
+  db.setBracketSlotFromPlayer(t.id, EV, 0, 2, p.id);     // 1回目: 作成
+  const n1 = db.getEntrants(t.id, EV).length;
+  db.setBracketSlot(t.id, EV, 1, 2, { mode: "clear" });
+  db.setBracketSlotFromPlayer(t.id, EV, 1, 2, p.id);     // 2回目: 同じ選手→再利用
+  const n2 = db.getEntrants(t.id, EV).length;
+  assert.strictEqual(n2, n1, "2回目は entrant を増やさない(player_idで再利用)");
+});
