@@ -11454,6 +11454,10 @@ const TMgmt = {
         h("button", { className: "btn btn-sm" + (editOn ? "" : " btn-ghost"),
           onClick: () => { TMgmt._treeEdit = !TMgmt._treeEdit; TMgmt.render(); } },
           editOn ? "✏ 編集モード: ON" : "✏ 編集モード: OFF"),
+        // ミス編集対策: 直前の編集をその場で取り消す(進行管理の Undo と同じ op_log を使用)。
+        h("button", { className: "btn btn-sm", style: { background: "#fffbeb", color: "#b45309", borderColor: "#fcd34d" },
+          title: "直前の編集（枠の設定・選手入替・試合入替など）を1つ取り消します",
+          onClick: () => TMgmt._undoLast() }, "↶ 直前の編集を取り消す"),
         editOn ? h("span", { style: { fontSize: "12px", color: "#64748b" } },
           "クリックで枠編集 / ドラッグで選手入替 / ⇄で試合まるごと入替") : null));
       const tree = h("div", { className: "tm-tree-pane" });
@@ -11809,6 +11813,19 @@ const TMgmt = {
       setRev: (rev) => { if (rev) TMgmt._gridRev = rev; },
       reload: () => { TMgmt._reloadGridOnly(); TMgmt._scheduleTreeRefresh(); },
     };
+  },
+
+  // 直前の編集を取り消す(枠の設定/選手入替/試合入替など。進行管理と同じ op_log・undoLastOp)。
+  async _undoLast() {
+    const tid = TMgmt.tournamentId;
+    if (!tid) return;
+    if (!confirm("直前の編集を1つ取り消します。よろしいですか？")) return;
+    try {
+      const r = await api.post(`/api/tournaments/${tid}/undo-last`, {});
+      if (r && r.error) return toast(r.error, "err");
+      toast("取り消しました" + (r && r.summary ? "：" + r.summary : ""), "ok");
+      await TMgmt.reload();
+    } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); }
   },
 
   renderIntegrity(container) {
