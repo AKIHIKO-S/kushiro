@@ -399,6 +399,17 @@ sqlite.exec(`
     FOREIGN KEY (coach_id) REFERENCES coach_accounts(id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_cmember_coach ON coach_members(coach_id);
+
+  -- 登録団体マスタ(クラブ・学校)。取込で団体名を選手名に誤判定しないための正本リスト。
+  -- normalized は照合用(全半角統一/空白除去/異体字畳み/ラテン小文字)。管理画面で追加/削除。
+  CREATE TABLE IF NOT EXISTS registered_teams (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    normalized TEXT NOT NULL,
+    active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_regteam_norm ON registered_teams(normalized);
 `);
 
 // 既存DBにカラムがない場合は追加
@@ -1095,8 +1106,121 @@ function looksLikeValidPlayerName(name) {
   if (/^\d+$/.test(s)) {
     return { ok: false, reason: "数値のみは氏名として無効です" };
   }
+  // 登録団体マスタに一致する名は選手名として無効(団体を選手に取り込まない)
+  if (isRegisteredTeam(s)) {
+    return { ok: false, reason: `「${s}」は登録団体(クラブ/学校)です。個人氏名を入力してください。` };
+  }
   return { ok: true };
 }
+
+// ─── 登録団体マスタ(取込で団体名を選手名に誤判定しない) ──────────────────────
+// 初期シード(現状判明分)。空テーブルのときだけ投入し、以降は管理画面で増減する。
+const REGISTERED_TEAMS_SEED = [
+  ".Rball", "AMATAKU", "infinity", "MPC", "Neo俱楽部", "Relier標茶", "TTA.C", "T-Union",
+  "クラブ柏", "サザンクロス", "シニアクラブ", "トウタス", "ひまわり", "ワンスター", "ワンスターTTC",
+  "教育大釧路", "暁クラブ", "釧友会", "釧路公立大", "釧路市役所", "青雲クラブ", "釧路高専",
+  "湖陵高校", "工業高校", "江南高校", "商業高校", "標茶高校", "武修館高校", "北陽高校", "明輝高校",
+  "共栄中学校", "景雲中学校", "桜が丘中学校", "春採中学校", "茶内中学校", "鳥取中学校", "標茶中学校",
+  "浜中中学校", "富原中学校", "幣舞中学校", "北中学校",
+];
+// 照合用の正規化: NFKC(全半角統一)→ 全空白除去 → 既知異体字畳み → ラテン小文字。
+function normalizeTeam(s) {
+  let t = String(s == null ? "" : s);
+  try { t = t.normalize("NFKC"); } catch (_) {}
+  t = t.replace(/\s+/g, "");
+  t = t.replace(/俱/g, "倶");   // 俱(U+4FF1) → 倶(U+5036)
+  t = t.toLowerCase();
+  return t;
+}
+let _regTeamCache = null;   // 正規化文字列の Set(メモリキャッシュ)
+function _invalidateRegTeamCache() { _regTeamCache = null; }
+function registeredTeamSet() {
+  if (_regTeamCache) return _regTeamCache;
+  const set = new Set();
+  try {
+    for (const r of sqlite.prepare("SELECT normalized FROM registered_teams WHERE active=1").all()) {
+      if (r.normalized) set.add(r.normalized);
+    }
+  } catch (_) { /* テーブル未作成等は空扱い=従来動作 */ }
+  _regTeamCache = set;
+  return set;
+}
+function isRegisteredTeam(s) {
+  const n = normalizeTeam(s);
+  return !!n && registeredTeamSet().has(n);
+}
+// 文字列の末尾が登録団体に一致すれば {name, team} に分離(最長一致)。無ければ {name:s, team:""}。
+function splitTrailingTeam(s) {
+  const raw = String(s == null ? "" : s);
+  const norm = normalizeTeam(raw);
+  if (!norm) return { name: raw, team: "" };
+  const set = registeredTeamSet();
+  if (set.has(norm)) return { name: "", team: raw };   // 全体が団体
+  // 末尾から最長一致を探す(元文字列の接尾を切り出して正規化照合)
+  for (let i = 1; i < raw.length; i++) {
+    const tail = raw.slice(i);
+    if (set.has(normalizeTeam(tail))) {
+      return { name: raw.slice(0, i).trim(), team: tail.trim() };
+    }
+  }
+  return { name: raw, team: "" };
+}
+// 取込レコード {name, team, partner_name, partner_team} を整形: 氏名スロットの登録団体を所属へ回す。
+// 戻り値は同じ参照(破壊的)。登録団体が選手名/選手として残らないことを保証するための関所。
+function guardRegisteredTeams(rec) {
+  if (!rec) return rec;
+  const fix = (nameKey, teamKey) => {
+    const nm = rec[nameKey];
+    if (!nm) return;
+    if (isRegisteredTeam(nm)) {
+      // 氏名スロットが丸ごと団体 → 所属へ。所属が空ならそこへ、埋まっていれば破棄。
+      if (!String(rec[teamKey] || "").trim()) rec[teamKey] = nm;
+      rec[nameKey] = "";
+      return;
+    }
+    // 末尾に団体が紛れている("山田太郎北陽高校") → 所属が空のときだけ分離
+    if (!String(rec[teamKey] || "").trim()) {
+      const sp = splitTrailingTeam(nm);
+      if (sp.team) { rec[nameKey] = sp.name; rec[teamKey] = sp.team; }
+    }
+  };
+  fix("name", "team");
+  fix("partner_name", "partner_team");
+  return rec;
+}
+function _seedRegisteredTeams() {
+  try {
+    const n = sqlite.prepare("SELECT COUNT(*) AS c FROM registered_teams").get().c;
+    if (n > 0) return;
+    const ins = sqlite.prepare("INSERT INTO registered_teams (id, name, normalized) VALUES (?,?,?)");
+    const tx = sqlite.transaction(() => {
+      for (const name of REGISTERED_TEAMS_SEED) ins.run(uid(), name, normalizeTeam(name));
+    });
+    tx();
+    _invalidateRegTeamCache();
+  } catch (e) { console.error("registered_teams seed error:", e && e.message); }
+}
+function listRegisteredTeams() {
+  return sqlite.prepare("SELECT id, name, active, created_at FROM registered_teams ORDER BY name").all();
+}
+function addRegisteredTeam(name) {
+  const nm = String(name || "").trim();
+  if (!nm) return { error: "団体名を入力してください" };
+  const norm = normalizeTeam(nm);
+  const dup = sqlite.prepare("SELECT id FROM registered_teams WHERE normalized=?").get(norm);
+  if (dup) return { error: "すでに登録されています", id: dup.id };
+  const id = uid();
+  sqlite.prepare("INSERT INTO registered_teams (id, name, normalized) VALUES (?,?,?)").run(id, nm, norm);
+  _invalidateRegTeamCache();
+  return { ok: true, id, name: nm };
+}
+function deleteRegisteredTeam(id) {
+  sqlite.prepare("DELETE FROM registered_teams WHERE id=?").run(id);
+  _invalidateRegTeamCache();
+  return { ok: true };
+}
+// 初期シードはこの位置で実行(REGISTERED_TEAMS_SEED 等の const 初期化後・空テーブルのみ投入)。
+_seedRegisteredTeams();
 
 function createPlayer(data) {
   // 名前バリデーション (チーム名や項目名が誤って登録されるのを防ぐ)
@@ -7027,6 +7151,8 @@ function importFromSeedList(tournamentId, data) {
       region: p.region || "",
       is_doubles: p.is_doubles,
     };
+    // 登録団体マスタの関所: 氏名/相方名が登録団体なら所属へ回し、選手名としては取り込まない。
+    guardRegisteredTeams(entrantData);
     // 入力時点で名前未指定なら skip
     const names = buildEntrantNames(entrantData);
     if (!names.name && !names.partner_name) return;
@@ -8255,6 +8381,9 @@ module.exports = {
   setEntrantBracketNumber, autoAssignDrawNumbers, buildRosterData,
   linkEntrantToPlayer, suggestPlayerForEntrant, createPlayerFromEntrant,
   validateEntrants, getEntrantStats, resolveBranchChange,
+  // 登録団体マスタ(取込で団体を選手にしない)
+  listRegisteredTeams, addRegisteredTeam, deleteRegisteredTeam,
+  normalizeTeam, isRegisteredTeam, splitTrailingTeam, guardRegisteredTeams,
   // 名前ユーティリティ
   normalizeName, parsePersonName, joinPersonName, buildEntrantNames,
 };
