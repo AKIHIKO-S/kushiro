@@ -1931,6 +1931,9 @@ app.post("/api/tournaments/:id/kumiawase/upload",
   const format = req.body.format;
   const originalName = (req.file.originalname || "").toLowerCase();
   const isPdf = originalName.endsWith(".pdf") || req.file.mimetype === "application/pdf";
+  // 登録団体マスタ(正規化済み)を各パーサへ渡し、団体名を氏名に誤判定しない(発生源で抑止)。
+  let regTeams = [];
+  try { regTeams = db.registeredTeamNormalizedList() || []; } catch (e) { regTeams = []; }
 
   // PDF 経由
   if (isPdf) {
@@ -1942,6 +1945,7 @@ app.post("/api/tournaments/:id/kumiawase/upload",
       const data = await pdfParser.parseWorkbook(filePath, {
         formatHint: format && ["singles", "doubles", "team"].includes(format) ? format : null,
         eventHint: event || null,
+        registeredTeams: regTeams,
       });
       try { fs.unlinkSync(filePath); } catch {}
       if (data.error) return res.status(400).json(data);
@@ -1973,6 +1977,7 @@ app.post("/api/tournaments/:id/kumiawase/upload",
         sheet: sheet || null,
         eventHint: (sheet && event) ? event : null,
         formatHint: (sheet && ["singles", "doubles", "team"].includes(format)) ? format : null,
+        registeredTeams: regTeams,
       });
       const events = (parsed.events || []).filter(ev => (ev.players || []).length >= 2);
       if (events.length) {
@@ -2011,6 +2016,8 @@ app.post("/api/tournaments/:id/kumiawase/upload",
     const pyEnv = Object.assign({}, process.env);
     const pyPaths = [path.join(__dirname, "tools"), path.join(__dirname, ".python-packages")];
     pyEnv.PYTHONPATH = pyPaths.join(path.delimiter) + (pyEnv.PYTHONPATH ? path.delimiter + pyEnv.PYTHONPATH : "");
+    // 登録団体(正規化済み)を env(JSON)で Python パーサへ。長さは防御的に制限。
+    try { const j = JSON.stringify(regTeams); if (j.length < 60000) pyEnv.KTTA_REGISTERED_TEAMS = j; } catch (e) {}
     const pyArgs = ["-m", "bracket_parser", filePath];
     if (sheet) {
       pyArgs.push("--sheet", sheet);

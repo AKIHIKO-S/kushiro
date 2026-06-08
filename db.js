@@ -1149,6 +1149,8 @@ function isRegisteredTeam(s) {
   const n = normalizeTeam(s);
   return !!n && registeredTeamSet().has(n);
 }
+// パーサへ渡す用の正規化済みリスト(配列)。
+function registeredTeamNormalizedList() { return [...registeredTeamSet()]; }
 // 文字列の末尾が登録団体に一致すれば {name, team} に分離(最長一致)。無ければ {name:s, team:""}。
 function splitTrailingTeam(s) {
   const raw = String(s == null ? "" : s);
@@ -8384,6 +8386,7 @@ module.exports = {
   // 登録団体マスタ(取込で団体を選手にしない)
   listRegisteredTeams, addRegisteredTeam, deleteRegisteredTeam,
   normalizeTeam, isRegisteredTeam, splitTrailingTeam, guardRegisteredTeams,
+  registeredTeamNormalizedList,
   // 名前ユーティリティ
   normalizeName, parsePersonName, joinPersonName, buildEntrantNames,
 };

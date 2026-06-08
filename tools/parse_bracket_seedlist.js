@@ -71,9 +71,19 @@ function isRegionToken(s) {
   }
   return false;
 }
+// 登録団体マスタ(正規化済み)。server から opts.registeredTeams で注入。団体を氏名に誤判定しない。
+let _regTeamsSet = null;
+function _normTeam(s) {
+  let t = String(s == null ? '' : s);
+  try { t = t.normalize('NFKC'); } catch (e) {}
+  return t.replace(/\s+/g, '').replace(/俱/g, '倶').toLowerCase();
+}
+function _isRegTeam(s) { return !!(_regTeamsSet && _regTeamsSet.size && _regTeamsSet.has(_normTeam(s))); }
+
 // 氏名らしさ: 日本語を含み、構造語/地区/数字/カッコ単独でなく、適度な長さ
 function looksLikeName(s) {
   if (!s) return false;
+  if (_isRegTeam(s)) return false;   // 登録団体は氏名でない
   if (s.length < 2 || s.length > 24) return false;
   if (isIntStr(s) || isParenTeam(s)) return false;
   if (isRegionToken(s)) return false;
@@ -100,6 +110,7 @@ function cleanTeam(s) {
 const TEAM_HEADER_WORD = /(ダブルス|シングルス|チームカップ|^団体$|相互審判|^審判|初戦|決勝|準決|準々|回戦|ベスト|主催|主管|協賛|得点|会場|組合せ|組み合わせ)/;
 function looksLikeTeamName(s) {
   if (!s) return false;
+  if (_isRegTeam(s)) return true;    // 登録団体は確実に団体
   if (s.length < 1 || s.length > 30) return false;
   if (isIntStr(s)) return false;
   if (/^[\d\/\-:.\s（）()・,，]+$/.test(s)) return false;       // 数字/記号のみ
@@ -345,6 +356,7 @@ function isNoiseSheet(name) {
 
 // メイン: ワークブック → 種目ごとの seed-list
 function parseSeedList(filePath, opts = {}) {
+  _regTeamsSet = new Set(Array.isArray(opts.registeredTeams) ? opts.registeredTeams : []);   // 登録団体(正規化済)
   // PDF/非xlsx を渡されたら XLSX.readFile が不可解なエラーで落ちるため、先頭バイトで明示弾き
   try {
     const fd = fs.openSync(filePath, 'r');

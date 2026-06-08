@@ -8,7 +8,29 @@ tokens.py — セル文字列の種別判定と正規化。
 
 from __future__ import annotations
 import re
+import os
+import json
 import unicodedata
+
+# 登録団体マスタ(正規化済み)。server が env KTTA_REGISTERED_TEAMS(JSON配列)で渡す。団体を氏名に誤判定しない。
+def _norm_team(s) -> str:
+    t = unicodedata.normalize("NFKC", str("" if s is None else s))
+    t = re.sub(r"\s+", "", t).replace("俱", "倶").lower()
+    return t
+
+_REG_TEAMS = None
+def _registered_teams() -> set:
+    global _REG_TEAMS
+    if _REG_TEAMS is None:
+        try:
+            _REG_TEAMS = set(json.loads(os.environ.get("KTTA_REGISTERED_TEAMS") or "[]"))
+        except Exception:
+            _REG_TEAMS = set()
+    return _REG_TEAMS
+
+def is_registered_team(v) -> bool:
+    n = _norm_team(v)
+    return bool(n) and (n in _registered_teams())
 
 # 全角→半角(数字・英字・記号)。氏名の漢字/かなはそのまま。
 def normalize_full_width(s: str) -> str:
@@ -133,6 +155,8 @@ _TEAM_HINTS = (
 def looks_like_name(v) -> bool:
     """日本人氏名らしいか(ペア "A / B" も True)。所属/見出しを弾くための緩い判定。"""
     if v is None:
+        return False
+    if is_registered_team(v):  # 登録団体は氏名でない
         return False
     s = collapse_ws(normalize_full_width(str(v)))
     if s == "" or is_number(s) or is_label_like(s):

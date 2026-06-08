@@ -80,9 +80,19 @@ function isInteger(s) {
   return typeof s === 'string' && /^\d{1,3}$/.test(s.trim());
 }
 
+// 登録団体マスタ(正規化済み)。server から opts.registeredTeams で注入。団体を氏名に誤判定しない。
+let _regTeamsSet = null;
+function _normTeam(s) {
+  let t = String(s == null ? '' : s);
+  try { t = t.normalize('NFKC'); } catch (e) {}
+  return t.replace(/\s+/g, '').replace(/俱/g, '倶').toLowerCase();
+}
+function _isRegTeam(s) { return !!(_regTeamsSet && _regTeamsSet.size && _regTeamsSet.has(_normTeam(s))); }
+
 // 名前らしいか (日本語名 2-15 文字、ラベルでない)
 function looksLikeName(s) {
   const str = String(s || '').trim();
+  if (_isRegTeam(str)) return false;   // 登録団体は氏名でない
   if (!str || str.length < 2 || str.length > 20) return false;
   if (isLabelLike(str)) return false;
   if (KNOWN_REGIONS.has(str)) return false;
@@ -97,10 +107,12 @@ function looksLikeName(s) {
 function looksLikeTeam(s) {
   const str = String(s || '').trim();
   if (!str) return false;
+  if (_isRegTeam(str)) return true;      // 登録団体は確実に団体
   if (PARENS_RE.test(str)) return true;  // (xxx) 形式
   if (TEAM_SUFFIX_RE.test(str)) return true;
   return false;
 }
+function _setRegTeams(opts) { _regTeamsSet = new Set((opts && Array.isArray(opts.registeredTeams)) ? opts.registeredTeams : []); }
 
 // ─── PDF → テキスト要素配列 ─────────────────
 async function extractTextItems(pdfBuffer) {
@@ -480,6 +492,7 @@ function parsePage(items, formatHint, eventHint) {
 // ─── メイン ─────────────────────────────
 async function parsePdfBuffer(pdfBuffer, opts) {
   opts = opts || {};
+  _setRegTeams(opts);
   const items = await extractTextItems(pdfBuffer);
   if (!items.length) {
     return { error: 'PDF からテキストを抽出できませんでした (画像PDFの可能性)。' +
