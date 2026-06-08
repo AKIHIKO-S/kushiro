@@ -10030,6 +10030,19 @@ const O = {
  const finalRound = rounds[rounds.length - 1];
  rounds.forEach(r => byRound[r].sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0)));
 
+ // 枠番号(showSlotNo): 実枠だけに連番。BYEは欠番(番号を振らない)。グリッドの「枠」番号と一致させる。
+ const slotNoMap = {};
+ if (opts && opts.showSlotNo) {
+   let n = 0;
+   (byRound[1] || []).forEach(m => {
+     const pos = m.bracket_pos || 0;
+     [["1", m.player1_name], ["2", m.player2_name]].forEach(([slot, nm]) => {
+       if (nm === "BYE") return;            // 欠番
+       n++; slotNoMap[pos + ":" + slot] = n;
+     });
+   });
+ }
+
  const stateBg = (m) => {
    if (editOnly) return isLocked(m) ? "#f1f5f9" : "#fff";   // 編集ビュー: 進行色を使わない(ロックのみ淡灰)
    if (m.status === "completed") return "#eef2f7";
@@ -10098,7 +10111,7 @@ const O = {
    const pos = m.bracket_pos || 0;
    const pRow = (name, team, won, lost, slot) => {
      // 枠の通し番号バッジ(opts.showSlotNo時・1回戦のみ)。編集グリッドの「枠」番号と突き合わせ可能にする。
-     const slotNo = (opts && opts.showSlotNo && m.bracket_round === 1) ? (pos * 2 + slot) : null;
+     const slotNo = (opts && opts.showSlotNo && m.bracket_round === 1) ? (slotNoMap[pos + ":" + slot] || null) : null;
      // 編集ビューは勝敗の強調(緑/薄字)も出さず、配置(氏名)だけをプレーンに見せる。
      const showWL = !editOnly;
      const row = h("div", {
@@ -11489,7 +11502,9 @@ const TMgmt = {
     tbl.appendChild(h("thead", {}, h("tr", {},
       ["枠", "選手名", "所属", "ふりがな", "シード", "登場R", "相手", "操作"].map(t => h("th", {}, t)))));
     const tbody = h("tbody", {});
-    g.rows.forEach(row => TMgmt._appendGridRows(tbody, row));
+    // 番号は実枠だけに連番(BYEは欠番=番号を振らない)。#1がシード→次の対戦は2から。
+    let _slotN = 0;
+    g.rows.forEach(row => TMgmt._appendGridRows(tbody, row, row.is_bye ? null : (++_slotN)));
     tbl.appendChild(tbody);
     container.appendChild(tbl);
   },
@@ -11501,13 +11516,12 @@ const TMgmt = {
     return td;
   },
 
-  _appendGridRows(tbody, row) {
-    // 枠は上から順の通し番号(1上=1,1下=2,2上=3,2下=4…)。ダブルスはペアで1番号。
-    const slotNo = row.pos * 2 + row.slot;
+  _appendGridRows(tbody, row, slotNo) {
+    // 番号は実枠だけの連番(slotNo)。BYEは欠番(null)=「—」表示で番号を振らない。
     if (row.is_bye) {
       tbody.appendChild(h("tr", { className: "tm-row-bye" },
-        h("td", { className: "tm-pos tm-pos-empty" }, slotNo),
-        h("td", { colSpan: 6, style: { color: "#94a3b8", fontStyle: "italic" } }, "BYE（シード扱い）"),
+        h("td", { className: "tm-pos tm-pos-empty" }, "—"),
+        h("td", { colSpan: 6, style: { color: "#94a3b8", fontStyle: "italic" } }, "BYE（欠番・シード不戦勝）"),
         TMgmt._menuBtn(row, 1)));
       return;
     }
