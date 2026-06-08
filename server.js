@@ -1877,6 +1877,14 @@ app.put("/api/entrants/:id", requireAdmin, (req, res) => {
   if (!e) return res.status(404).json({ error: "エントリーが見つかりません" });
   res.json(e);
 });
+// 枠の編集グリッドのDB検索編集: 既存 entrant のメンバー(本人/相方)を選手マスタにリンク上書き。
+app.post("/api/entrants/:id/member-from-player", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const r = db.setEntrantMemberFromPlayer(req.params.id, !!b.is_partner, b.player_id);
+  if (r && r.error) return res.status(400).json(r);
+  const e = db.getEntrant(req.params.id);
+  res.json({ ...r, bracket_rev: e ? db.bracketRev(e.tournament_id, e.event) : null });
+});
 app.delete("/api/entrants/:id", requireAdmin, (req, res) => {
   // 組合せ画面からの削除は base_rev(クエリ)で楽観ロック。entrant 削除は配置枠も書き換えるため、
   // 他端末が抽選/組合せを変更済みなら 409 で弾く。base_rev 未指定(従来の一覧からの削除)は通す。

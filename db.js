@@ -7066,6 +7066,31 @@ function setBracketSlotFromPlayer(tournamentId, event, pos, slot, playerId) {
       entrant_id: ent.id, player_id: playerId });
 }
 
+// 既存 entrant のメンバー(本人 or 相方)を、選手マスタDBの選手にリンクして上書きする。
+// 枠の編集グリッドのDB検索編集用。氏名・所属・ふりがなをマスタからコピーし player_id を紐付け、
+// 表(matches)の表示名を再同期する。配置・seed は不変(誰がどこ、は変えず「誰か」を差し替え)。
+function setEntrantMemberFromPlayer(entrantId, isPartner, playerId) {
+  const e = entrantStmts.get.get(entrantId);
+  if (!e) return { error: "エントリーが見つかりません" };
+  const player = stmts.getPlayer.get(playerId);
+  if (!player) return { error: "選手が見つかりません" };
+  const pn = parsePersonName(player.name);
+  const patch = {};
+  if (isPartner) {
+    patch.partner_surname = pn.surname; patch.partner_given_name = pn.given_name;
+    patch.partner_team = player.team || ""; patch.partner_furigana = player.furigana || "";
+    patch.partner_player_id = playerId; patch.is_doubles = 1;
+  } else {
+    patch.surname = pn.surname; patch.given_name = pn.given_name;
+    patch.team = player.team || ""; patch.furigana = player.furigana || "";
+    patch.player_id = playerId;
+  }
+  const updated = updateEntrant(entrantId, patch);
+  if (!updated) return { error: "更新に失敗しました" };
+  syncEntrantsToBracket(e.tournament_id, e.event);
+  return { ok: true, entrant: updated };
+}
+
 // インポート: 形式自動判別
 function importBracket(tournamentId, data) {
   if (!data) return { error: "データが空です" };
@@ -8375,7 +8400,7 @@ module.exports = {
   updateEntrySettings, getOpenTournaments,
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
-  swapBracketMatches, setBracketSlotFromPlayer,
+  swapBracketMatches, setBracketSlotFromPlayer, setEntrantMemberFromPlayer,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,
   // Entrants (大会参加選手) - マスタDBと分離

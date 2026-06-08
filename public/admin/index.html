@@ -1197,6 +1197,10 @@
  .tm-grid th{background:#eef2f7;position:sticky;top:0;z-index:1;font-weight:700;color:#334155;font-size:13px}
  .tm-grid tbody tr:hover td{background:#f0f7ff}
  .tm-grid td.tm-pos{font-weight:800;text-align:center;color:#1e293b;background:#f1f5f9;font-size:15px}
+ .tm-psearch{position:absolute;z-index:30;left:0;top:100%;min-width:260px;max-height:260px;overflow:auto;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.14)}
+ .tm-psearch-item{padding:7px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9;white-space:nowrap}
+ .tm-psearch-item:hover{background:#eff6ff}
+ .tm-psearch-new{color:#16a34a;font-weight:700}
  .tm-grid tr.tm-row-bye td.tm-pos,.tm-grid tr td.tm-pos.tm-pos-empty{color:#94a3b8;background:#f8fafc}
  .vb-slotno{display:inline-block;min-width:18px;margin-right:6px;padding:0 5px;background:#1e293b;color:#fff;border-radius:4px;font-size:11px;font-weight:700;text-align:center;vertical-align:middle}
  .tm-editnote{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:8px}
@@ -11483,7 +11487,7 @@ const TMgmt = {
         "セルをクリックで編集(Enter/Tab確定・Esc取消)。⋮で枠の操作(選手置換/BYE/登場回戦/相方入替)。")));
     const tbl = h("table", { className: "tm-grid" });
     tbl.appendChild(h("thead", {}, h("tr", {},
-      ["枠", "姓", "名", "所属", "ふりがな", "シード", "登場R", "相手", "操作"].map(t => h("th", {}, t)))));
+      ["枠", "選手名", "所属", "ふりがな", "シード", "登場R", "相手", "操作"].map(t => h("th", {}, t)))));
     const tbody = h("tbody", {});
     g.rows.forEach(row => TMgmt._appendGridRows(tbody, row));
     tbl.appendChild(tbody);
@@ -11503,42 +11507,103 @@ const TMgmt = {
     if (row.is_bye) {
       tbody.appendChild(h("tr", { className: "tm-row-bye" },
         h("td", { className: "tm-pos tm-pos-empty" }, slotNo),
-        h("td", { colSpan: 7, style: { color: "#94a3b8", fontStyle: "italic" } }, "BYE（シード扱い）"),
+        h("td", { colSpan: 6, style: { color: "#94a3b8", fontStyle: "italic" } }, "BYE（シード扱い）"),
         TMgmt._menuBtn(row, 1)));
       return;
     }
     if (!row.entrant_id) {
       tbody.appendChild(h("tr", {},
         h("td", { className: "tm-pos tm-pos-empty" }, slotNo),
-        h("td", { colSpan: 7, style: { color: "#cbd5e1" } }, "（空き）"),
+        h("td", { colSpan: 6, style: { color: "#cbd5e1" } }, "（空き）"),
         TMgmt._menuBtn(row, 1)));
       return;
     }
     const seedTd = TMgmt._cell(row.seed || "", (v) => TMgmt._commitSeed(row, v), { numeric: true, rowSpan: row.is_doubles ? 2 : 1 });
     const erTd = h("td", { rowSpan: row.is_doubles ? 2 : 1, style: { textAlign: "center", color: "#64748b" } }, String(row.entry_round || 1));
     const oppTd = h("td", { rowSpan: row.is_doubles ? 2 : 1, style: { color: "#64748b", fontSize: "12px" } }, row.opponent || "—");
+    // 「選手名」は姓名フリー入力をやめ、選手マスタDBから検索して設定する(クリックでセル直下に検索ドロップ)。
     if (row.is_doubles) {
       tbody.appendChild(h("tr", {},
         h("td", { className: "tm-pos", rowSpan: 2 }, slotNo, h("div", { style: { fontSize: "10px", color: "#94a3b8", fontWeight: 400 } }, "ﾀﾞﾌﾞﾙｽ")),
-        TMgmt._cell(row.surname, (v) => TMgmt._commitField(row, "surname", v)),
-        TMgmt._cell(row.given_name, (v) => TMgmt._commitField(row, "given_name", v)),
+        TMgmt._playerSearchCell(row, false),
         TMgmt._cell(row.team, (v) => TMgmt._commitField(row, "team", v)),
         TMgmt._cell(row.furigana, (v) => TMgmt._commitField(row, "furigana", v)),
         seedTd, erTd, oppTd, TMgmt._menuBtn(row, 2)));
       tbody.appendChild(h("tr", {},
-        TMgmt._cell(row.partner_surname, (v) => TMgmt._commitField(row, "partner_surname", v)),
-        TMgmt._cell(row.partner_given_name, (v) => TMgmt._commitField(row, "partner_given_name", v)),
+        TMgmt._playerSearchCell(row, true),
         TMgmt._cell(row.partner_team, (v) => TMgmt._commitField(row, "partner_team", v)),
         TMgmt._cell(row.partner_furigana, (v) => TMgmt._commitField(row, "partner_furigana", v))));
       return;
     }
     tbody.appendChild(h("tr", {},
       h("td", { className: "tm-pos" }, slotNo),
-      TMgmt._cell(row.surname, (v) => TMgmt._commitField(row, "surname", v)),
-      TMgmt._cell(row.given_name, (v) => TMgmt._commitField(row, "given_name", v)),
+      TMgmt._playerSearchCell(row, false),
       TMgmt._cell(row.team, (v) => TMgmt._commitField(row, "team", v)),
       TMgmt._cell(row.furigana, (v) => TMgmt._commitField(row, "furigana", v)),
       seedTd, erTd, oppTd, TMgmt._menuBtn(row, 1)));
+  },
+
+  // 選手マスタDBを一度だけ取得(検索用キャッシュ)。
+  async _ensurePlayers() {
+    if (TMgmt._allPlayers) return;
+    try { TMgmt._allPlayers = (await api.get("/api/players?sort=furigana")) || []; }
+    catch (e) { TMgmt._allPlayers = []; }
+  },
+  // 選手名セル: クリックでセル直下にDB検索ドロップを出し、選手マスタから選んで設定する。
+  _playerSearchCell(row, isPartner) {
+    const curName = isPartner
+      ? ((row.partner_surname || "") + " " + (row.partner_given_name || "")).trim()
+      : ((row.surname || "") + " " + (row.given_name || "")).trim();
+    const td = h("td", { className: "tm-cell-edit" });
+    const showDisp = () => { td.replaceChildren(h("span", {}, curName || "（クリックで選手DB検索）")); };
+    showDisp();
+    td.onclick = async () => {
+      if (td.querySelector("input")) return;
+      await TMgmt._ensurePlayers();
+      const input = h("input", { type: "text", placeholder: "氏名・所属・ふりがなで検索…", value: "" });
+      const list = h("div", { className: "tm-psearch" });
+      const wrap = h("div", { style: { position: "relative" } }, input, list);
+      td.replaceChildren(wrap);
+      input.focus();
+      const render = () => {
+        const q = input.value.trim();
+        list.replaceChildren();
+        const all = TMgmt._allPlayers || [];
+        const items = q ? all.filter(p => ((p.name || "") + (p.furigana || "") + (p.team || "")).includes(q)).slice(0, 12) : [];
+        items.forEach(p => list.appendChild(h("div", { className: "tm-psearch-item",
+          onMouseDown: (e) => { e.preventDefault(); TMgmt._applyMemberFromPlayer(row, isPartner, p.id); } },
+          h("span", { style: { fontWeight: 600 } }, p.name),
+          h("span", { className: "text-xs text-sub", style: { marginLeft: "6px" } }, (p.team || "") + (p.furigana ? "  " + p.furigana : "")))));
+        if (q && !items.some(p => (p.name || "") === q)) {
+          list.appendChild(h("div", { className: "tm-psearch-item tm-psearch-new",
+            onMouseDown: (e) => { e.preventDefault(); TMgmt._applyNewPlayer(row, isPartner, q); } },
+            "＋「" + q + "」を選手DBに新規登録"));
+        }
+      };
+      input.addEventListener("input", render);
+      input.addEventListener("keydown", (e) => { if (e.key === "Escape") showDisp(); });
+      input.addEventListener("blur", () => setTimeout(showDisp, 200));
+      render();
+    };
+    return td;
+  },
+  async _applyMemberFromPlayer(row, isPartner, playerId) {
+    try {
+      const r = await api.post(`/api/entrants/${row.entrant_id}/member-from-player`, { is_partner: isPartner, player_id: playerId });
+      if (r && r.error) { toast(r.error, "err"); return; }
+      if (r && r.bracket_rev) TMgmt._gridRev = r.bracket_rev;
+      toast("選手を設定しました", "ok");
+      await TMgmt.reload();
+    } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); }
+  },
+  async _applyNewPlayer(row, isPartner, name) {
+    try {
+      const p = await api.post("/api/players", { name, gender: "male", category: "general" });
+      if (p && p.error) { toast(p.error, "err"); return; }   // 登録団体名等は弾かれる
+      if (!p || !p.id) { toast("選手の作成に失敗しました", "err"); return; }
+      TMgmt._allPlayers = null;   // キャッシュを次回更新
+      await TMgmt._applyMemberFromPlayer(row, isPartner, p.id);
+    } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); }
   },
 
   // 編集可能セル: クリックで input 化、Enter/Tab/blurで確定、Escで取消

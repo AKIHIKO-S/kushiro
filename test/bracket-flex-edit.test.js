@@ -88,3 +88,28 @@ test("undo: swapBracketSlots(選手単位) を undoLastOp で元に戻せる", (
   assert.ok(u && u.ok, "undo成功");
   assert.deepStrictEqual(r1(t).map(m => [m.player1_name, m.player2_name]), before, "undoで配置が戻る");
 });
+
+test("setEntrantMemberFromPlayer: メンバーを選手マスタDBにリンク上書き(本人/相方)", () => {
+  const t = db.createTournament({ name: "member" + (++_seq), date: "2027-12-30" });
+  const DV = "混合ダブルス";
+  const ent = db.createEntrant({ tournament_id: t.id, event: DV, is_doubles: 1,
+    surname: "旧", given_name: "太", team: "旧A",
+    partner_surname: "旧二", partner_given_name: "花", partner_team: "旧B", status: "confirmed" });
+  db.generateBracket(t.id, DV, { regenerate: true });
+  const p1 = db.createPlayer({ name: "桐山 慶次郎", furigana: "きりやま", team: "釧友会", gender: "male" });
+  const p2 = db.createPlayer({ name: "難波 心愛", furigana: "なんば", team: "ワンスターTTC", gender: "female" });
+
+  let r = db.setEntrantMemberFromPlayer(ent.id, false, p1.id);
+  assert.ok(r && r.ok, "本人リンク成功: " + JSON.stringify(r));
+  r = db.setEntrantMemberFromPlayer(ent.id, true, p2.id);
+  assert.ok(r && r.ok, "相方リンク成功: " + JSON.stringify(r));
+
+  const e2 = db.getEntrants(t.id, DV).find(x => x.id === ent.id);
+  assert.strictEqual(e2.surname, "桐山", "本人姓=桐山");
+  assert.strictEqual(e2.team, "釧友会", "本人所属=釧友会");
+  assert.strictEqual(e2.furigana, "きりやま", "本人ふりがな");
+  assert.strictEqual(e2.player_id, p1.id, "本人player_id 紐付け");
+  assert.strictEqual(e2.partner_surname, "難波", "相方姓=難波");
+  assert.strictEqual(e2.partner_team, "ワンスターTTC", "相方所属=ワンスターTTC");
+  assert.strictEqual(e2.partner_player_id, p2.id, "相方player_id 紐付け");
+});
