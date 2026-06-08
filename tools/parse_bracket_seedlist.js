@@ -223,7 +223,9 @@ function extractDoubles(ws, band) {
       else if (looksLikeName(cellStr(ws, r, c - 2))) { dir = -1; n1c = c - 2; }
       else continue;
       const name1 = cellStr(ws, r, n1c);
-      let name2 = '', team = '', region = '';
+      // team=選手1の所属, pteam=選手2の所属。所属の違うペア(桐山/釧友会・難波/ワンスターTTC)を
+      // 結合せず各メンバーに分離して持つ(結合 "A / B" だと両者が同じ所属になり取違える)。
+      let name2 = '', team = '', pteam = '', region = '';
       // 判定順が重要: 所属名(スマイルクラブ等)も looksLikeName を通るため、
       //  ① 横ペア(男子): 氏名2の直後が「(所属)」カッコ → これを最優先で確定
       //  ② 縦ペア(女子): 相方が直下の行
@@ -235,11 +237,11 @@ function extractDoubles(ws, band) {
         const below = cellStr(ws, r + 1, n1c); // 相方(縦)
         if (looksLikeName(next) && isParenTeam(next2)) {        // ① 横ペア
           name2 = next;
-          team = mkTeam(next2, cellStr(ws, r, c + 4));
+          team = cleanTeam(next2); pteam = cleanTeam(cellStr(ws, r, c + 4));
           region = regAmong(cellStr(ws, r, c + 4), cellStr(ws, r, c + 5));
         } else if (looksLikeName(below)) {                      // ② 縦ペア
           name2 = below;
-          team = mkTeam(cellStr(ws, r, c + 2), cellStr(ws, r + 1, c + 2));
+          team = cleanTeam(cellStr(ws, r, c + 2)); pteam = cleanTeam(cellStr(ws, r + 1, c + 2));
           region = regAmong(cellStr(ws, r, c + 3), cellStr(ws, r + 1, c + 3));
         } else if (looksLikeName(next)) {                       // ③ 横ペア(カッコ無し)
           name2 = next; team = cleanTeam(next2);
@@ -252,11 +254,11 @@ function extractDoubles(ws, band) {
         const below = cellStr(ws, r + 1, n1c); // 相方(縦)
         if (looksLikeName(prev) && isParenTeam(prevTeam)) {     // ① 横ペア(鏡像)
           name2 = prev;
-          team = mkTeam(prevTeam, cellStr(ws, r, c - 4));
+          team = cleanTeam(prevTeam); pteam = cleanTeam(cellStr(ws, r, c - 4));
           region = regAmong(cellStr(ws, r, c - 4), cellStr(ws, r, c - 5));
         } else if (looksLikeName(below)) {                      // ② 縦ペア(鏡像)
           name2 = below;
-          team = mkTeam(cellStr(ws, r, c - 1), cellStr(ws, r + 1, c - 1));
+          team = cleanTeam(cellStr(ws, r, c - 1)); pteam = cleanTeam(cellStr(ws, r + 1, c - 1));
         } else if (looksLikeName(prev)) {                       // ③ 横ペア(カッコ無し)
           name2 = prev; team = cleanTeam(prevTeam);
         } else {
@@ -268,7 +270,8 @@ function extractDoubles(ws, band) {
       seenName.add(key);
       // ペアは name(選手1)/partner_name(選手2) を分離して保持する。"A / B" 結合だと
       // importer(buildEntrantNames)が1名扱いし、相方の脱落・氏名に "/" 混入が起きるため。
-      cand.push({ seed, name: name1, partner_name: name2 || '', team, region, _r: r, _c: n1c, _seedCol: c });
+      // partner_team は選手2の所属。空(同一所属/単一セル)なら選手1の所属と同じ扱いに既定する。
+      cand.push({ seed, name: name1, partner_name: name2 || '', team, partner_team: (pteam || team), region, _r: r, _c: n1c, _seedCol: c });
     }
   }
   // リーフseed列のみ採用(孤立整数=勝ち上がり位置を除外)
@@ -385,7 +388,7 @@ function parseSeedList(filePath, opts = {}) {
     const gender = guessGender(eventName);
     const playersOut = ordered.map((p, i) => {
       const rec = { name: p.name, team: p.team || '', seed: i + 1 };
-      if (p.partner_name) { rec.partner_name = p.partner_name; rec.partner_team = p.team || ''; rec.is_doubles = true; }
+      if (p.partner_name) { rec.partner_name = p.partner_name; rec.partner_team = p.partner_team || p.team || ''; rec.is_doubles = true; }
       if (p.region) rec.region = p.region;
       if (gender) rec.gender = gender;
       rec.category = 'general';

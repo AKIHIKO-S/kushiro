@@ -217,3 +217,30 @@ test("PDF入力は明示エラー(無言クラッシュしない)", () => {
     assert.throws(() => P.parseSeedList(fp), /PDF入力/, "PDFは明示エラー");
   } finally { try { fs.rmSync(fp, { force: true }); } catch (e) {} }
 });
+
+test("extractDoubles: 所属の違う縦ペアは各メンバーに所属を分離(結合しない)", () => {
+  // 桐山慶次郎(釧友会) / 難波心愛(ワンスターTTC) のような所属違いの縦ペアを、
+  // "釧友会 / ワンスターTTC" と結合せず、選手1=釧友会・選手2=ワンスターTTC に分離する。
+  const sheet = ws([
+    ["混合ダブルス", "", "", ""],
+    [1, "桐山 慶次郎", "釧友会", ""],
+    ["", "難波 心愛", "ワンスターTTC", ""],
+    [2, "飯島 悦孝", "ポラリスTTC", ""],
+    ["", "佐藤 花子", "ポラリスTTC", ""],   // 同一所属ペア(両者ポラリスTTC)
+    [3, "田中 一郎", "A中学校", ""],
+    ["", "鈴木 二郎", "B高校", ""],
+  ]);
+  const pairs = P.extractDoubles(sheet, null);
+  const byS = bySeed(pairs);
+  assert.ok(byS[1], "seed1 が取れる");
+  assert.strictEqual(byS[1].name, "桐山 慶次郎");
+  assert.strictEqual(byS[1].team, "釧友会", "選手1の所属=釧友会: " + byS[1].team);
+  assert.strictEqual(byS[1].partner_name, "難波 心愛");
+  assert.strictEqual(byS[1].partner_team, "ワンスターTTC", "選手2の所属=ワンスターTTC(結合しない): " + byS[1].partner_team);
+  // 同一所属ペアは両者同じ所属(回帰防止)
+  assert.strictEqual(byS[2].team, "ポラリスTTC");
+  assert.strictEqual(byS[2].partner_team, "ポラリスTTC", "同一所属ペアは両者同じ: " + byS[2].partner_team);
+  // 別所属ペア
+  assert.strictEqual(byS[3].team, "A中学校");
+  assert.strictEqual(byS[3].partner_team, "B高校");
+});
