@@ -1880,7 +1880,7 @@ app.put("/api/entrants/:id", requireAdmin, (req, res) => {
 // 枠の編集グリッドのDB検索編集: 既存 entrant のメンバー(本人/相方)を選手マスタにリンク上書き。
 app.post("/api/entrants/:id/member-from-player", requireAdmin, (req, res) => {
   const b = req.body || {};
-  const r = db.setEntrantMemberFromPlayer(req.params.id, !!b.is_partner, b.player_id);
+  const r = db.setEntrantMemberFromPlayer(req.params.id, !!b.is_partner, b.player_id, { applyNameMatches: !!b.apply_name_matches });
   if (r && r.error) return res.status(400).json(r);
   const e = db.getEntrant(req.params.id);
   res.json({ ...r, bracket_rev: e ? db.bracketRev(e.tournament_id, e.event) : null });

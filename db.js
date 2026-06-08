@@ -7069,26 +7069,57 @@ function setBracketSlotFromPlayer(tournamentId, event, pos, slot, playerId) {
 // 既存 entrant のメンバー(本人 or 相方)を、選手マスタDBの選手にリンクして上書きする。
 // 枠の編集グリッドのDB検索編集用。氏名・所属・ふりがなをマスタからコピーし player_id を紐付け、
 // 表(matches)の表示名を再同期する。配置・seed は不変(誰がどこ、は変えず「誰か」を差し替え)。
-function setEntrantMemberFromPlayer(entrantId, isPartner, playerId) {
+function setEntrantMemberFromPlayer(entrantId, isPartner, playerId, opts) {
+  opts = opts || {};
   const e = entrantStmts.get.get(entrantId);
   if (!e) return { error: "エントリーが見つかりません" };
   const player = stmts.getPlayer.get(playerId);
   if (!player) return { error: "選手が見つかりません" };
+  const tournamentId = e.tournament_id;
   const pn = parsePersonName(player.name);
-  const patch = {};
-  if (isPartner) {
-    patch.partner_surname = pn.surname; patch.partner_given_name = pn.given_name;
-    patch.partner_team = player.team || ""; patch.partner_furigana = player.furigana || "";
-    patch.partner_player_id = playerId; patch.is_doubles = 1;
-  } else {
-    patch.surname = pn.surname; patch.given_name = pn.given_name;
-    patch.team = player.team || ""; patch.furigana = player.furigana || "";
-    patch.player_id = playerId;
-  }
-  const updated = updateEntrant(entrantId, patch);
+  // 1メンバー枠(本人/相方)を選手 player に統一(氏名/所属/ふりがな + player_id)。
+  const applyTo = (id, asPartner) => {
+    const patch = asPartner
+      ? { partner_surname: pn.surname, partner_given_name: pn.given_name,
+          partner_team: player.team || "", partner_furigana: player.furigana || "",
+          partner_player_id: playerId, is_doubles: 1 }
+      : { surname: pn.surname, given_name: pn.given_name,
+          team: player.team || "", furigana: player.furigana || "", player_id: playerId };
+    return updateEntrant(id, patch);
+  };
+  const eventsToSync = new Set();
+  const updated = applyTo(entrantId, isPartner);
   if (!updated) return { error: "更新に失敗しました" };
-  syncEntrantsToBracket(e.tournament_id, e.event);
-  return { ok: true, entrant: updated };
+  eventsToSync.add(e.event);
+
+  // 同じ選手が出ている他のメンバー枠(同大会内)を探す。
+  //  ・player_id 連携済み(同一確実) → 自動反映。
+  //  ・未連携で氏名完全一致(同姓同名) → name_matches に返し、UIの確認後に apply_name_matches で反映。
+  const tgtNorm = normalizeName(player.name);
+  const memNorm = (sur, giv, full) => normalizeName(joinPersonName(sur || "", giv || "") || full || "");
+  let propagated = 0;
+  const nameMatches = [];
+  for (const x of entrantStmts.listByTournament.all(tournamentId)) {
+    // 本人スロット(target 自身は除く)
+    if (!(x.id === entrantId && !isPartner)) {
+      if (x.player_id && x.player_id === playerId) { applyTo(x.id, false); eventsToSync.add(x.event); propagated++; }
+      else if (memNorm(x.surname, x.given_name, x.name) === tgtNorm && tgtNorm) {
+        nameMatches.push({ entrant_id: x.id, is_partner: false, event: x.event, label: x.display_name || x.name || "" });
+      }
+    }
+    // 相方スロット(target 自身は除く・ダブルスのみ)
+    if (x.is_doubles && !(x.id === entrantId && isPartner)) {
+      if (x.partner_player_id && x.partner_player_id === playerId) { applyTo(x.id, true); eventsToSync.add(x.event); propagated++; }
+      else if (memNorm(x.partner_surname, x.partner_given_name, x.partner_name) === tgtNorm && tgtNorm) {
+        nameMatches.push({ entrant_id: x.id, is_partner: true, event: x.event, label: x.display_name || x.partner_name || "" });
+      }
+    }
+  }
+  if (opts.applyNameMatches) {
+    for (const nm of nameMatches) { applyTo(nm.entrant_id, nm.is_partner); eventsToSync.add(nm.event); propagated++; }
+  }
+  for (const ev of eventsToSync) syncEntrantsToBracket(tournamentId, ev);
+  return { ok: true, entrant: updated, propagated, name_matches: opts.applyNameMatches ? [] : nameMatches };
 }
 
 // インポート: 形式自動判別

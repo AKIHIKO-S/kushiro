@@ -11589,10 +11589,18 @@ const TMgmt = {
   },
   async _applyMemberFromPlayer(row, isPartner, playerId) {
     try {
-      const r = await api.post(`/api/entrants/${row.entrant_id}/member-from-player`, { is_partner: isPartner, player_id: playerId });
+      let r = await api.post(`/api/entrants/${row.entrant_id}/member-from-player`, { is_partner: isPartner, player_id: playerId });
       if (r && r.error) { toast(r.error, "err"); return; }
+      // 同じ氏名の他エントリー(他ペア/種目)があれば、同じ選手として一括反映するか確認。
+      if (r && Array.isArray(r.name_matches) && r.name_matches.length) {
+        const evs = [...new Set(r.name_matches.map(m => m.event))].join("・");
+        if (confirm(`他に ${r.name_matches.length}件 の同じ氏名のエントリー（${evs}）があります。\n同じ選手として全て同じに更新しますか？\n（別人の同姓同名なら「キャンセル」してください）`)) {
+          r = await api.post(`/api/entrants/${row.entrant_id}/member-from-player`, { is_partner: isPartner, player_id: playerId, apply_name_matches: true });
+          if (r && r.error) { toast(r.error, "err"); }
+        }
+      }
       if (r && r.bracket_rev) TMgmt._gridRev = r.bracket_rev;
-      toast("選手を設定しました", "ok");
+      toast("選手を設定しました" + ((r && r.propagated) ? `（他${r.propagated}件にも反映）` : ""), "ok");
       await TMgmt.reload();
     } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); }
   },
