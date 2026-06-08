@@ -11236,6 +11236,7 @@ const TMgmt = {
 
   async selectEvent(ev) {
     TMgmt.event = ev || null;
+    TMgmt._treeEdit = false;   // 種目切替時は編集モードを安全側(OFF)へ
     if (!ev) { document.getElementById("tmMain").innerHTML = ""; document.getElementById("tmStatus").textContent = ""; return; }
     await TMgmt.reload();
   },
@@ -11288,8 +11289,15 @@ const TMgmt = {
         onClick: () => { TMgmt._tab = key; TMgmt.render(); } }, label);
     main.appendChild(h("div", { className: "tm-tabs" }, mkTab("grid", "枠の編集"), mkTab("bracket", "トーナメント表")));
     if (tab === "bracket") {
+      const editOn = !!TMgmt._treeEdit;
+      main.appendChild(h("div", { style: { marginBottom: "8px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" } },
+        h("button", { className: "btn btn-sm" + (editOn ? "" : " btn-ghost"),
+          onClick: () => { TMgmt._treeEdit = !TMgmt._treeEdit; TMgmt.render(); } },
+          editOn ? "✏ 編集モード: ON" : "✏ 編集モード: OFF"),
+        editOn ? h("span", { style: { fontSize: "12px", color: "#64748b" } },
+          "クリックで枠編集 / ドラッグで選手入替 / ⇄で試合まるごと入替") : null));
       const tree = h("div", { className: "tm-tree-pane" });
-      tree.appendChild(O.renderVisualBracket(b, { readOnly: true, showSlotNo: true }));
+      tree.appendChild(O.renderVisualBracket(b, { editable: editOn, showSlotNo: true, ctx: TMgmt._treeCtx() }));
       main.appendChild(tree);
     } else {
       const pane = h("div", { className: "tm-grid-pane" });
@@ -11469,7 +11477,7 @@ const TMgmt = {
         if (bdata && !bdata.error) {
           TMgmt._bracket = bdata;
           const tree = document.querySelector("#tmMain .tm-tree-pane");   // 表タブ表示中のみその場更新(編集タブ時はデータのみ反映)
-          if (tree) { tree.replaceChildren(); tree.appendChild(O.renderVisualBracket(bdata, { readOnly: true, showSlotNo: true })); }
+          if (tree) { tree.replaceChildren(); tree.appendChild(O.renderVisualBracket(bdata, { editable: !!TMgmt._treeEdit, showSlotNo: true, ctx: TMgmt._treeCtx() })); }
         }
       } catch (e) { /* 一時障害は無視 */ }
     }, 400);
@@ -11627,6 +11635,17 @@ const TMgmt = {
   },
   _isRealDoublesPair(e) {
     return !!(e && e.is_doubles) && !TMgmt._isTeamEntrant(e) && !!(e.partner_name || e.partner_surname || e.partner_given_name);
+  },
+
+  // トーナメント表の編集コンテキスト(renderVisualBracket に注入)。rev は種目スコープの _gridRev、
+  // 再描画はグリッド/表の両方を最新化。進行管理(O)の状態には依存しない。
+  _treeCtx() {
+    return {
+      tournamentId: TMgmt.tournamentId, event: TMgmt.event,
+      getRev: () => TMgmt._gridRev,
+      setRev: (rev) => { if (rev) TMgmt._gridRev = rev; },
+      reload: () => { TMgmt._reloadGridOnly(); TMgmt._scheduleTreeRefresh(); },
+    };
   },
 
   renderIntegrity(container) {
