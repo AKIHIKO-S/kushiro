@@ -6819,6 +6819,41 @@ function swapBracketSlots(tournamentId, event, a, b) {
   return { success: true };
 }
 
+// 試合まるごと入替: 2つの1回戦試合(posA/posB)の両スロットを丸ごと入れ替える。
+// 選手単位の swapBracketSlots を両スロットに適用したのと同じ結果。完了/試合中はガード。op_log記録。
+function swapBracketMatches(tournamentId, event, posA, posB) {
+  if (!event) return { error: "event が必要です" };
+  const pA = parseInt(posA), pB = parseInt(posB);
+  if (!Number.isInteger(pA) || !Number.isInteger(pB)) return { error: "位置が不正です" };
+  if (pA === pB) return { error: "同じ試合です" };
+  const round1 = sqlite.prepare(
+    `SELECT * FROM matches WHERE tournament_id=? AND event=? AND bracket_round=1`
+  ).all(tournamentId, event);
+  const mA = round1.find(m => (m.bracket_pos || 0) === pA);
+  const mB = round1.find(m => (m.bracket_pos || 0) === pB);
+  if (!mA || !mB) return { error: "対象の試合が見つかりません" };
+  for (const m of [mA, mB]) {
+    if (m.status === "completed" || m.status === "on_table" || m.winner_name) {
+      return { error: "進行中または終了した試合は入れ替えできません" };
+    }
+  }
+  const beforeRows = [mA, mB].map(m => ({ ...m }));
+  const cols = ["player1_id", "player1_name", "player1_team", "player1_entrant_id",
+    "player2_id", "player2_name", "player2_team", "player2_entrant_id", "status"];
+  const tx = sqlite.transaction(() => {
+    const set = cols.map(c => `${c}=@${c}`).join(", ");
+    const upd = sqlite.prepare(`UPDATE matches SET ${set} WHERE id=@id`);
+    const pick = (m) => { const o = {}; cols.forEach(c => o[c] = m[c]); return o; };
+    upd.run({ ...pick(mB), id: mA.id });
+    upd.run({ ...pick(mA), id: mB.id });
+  });
+  tx();
+  // 入替で「実選手 vs BYE」が生じうるが、進行開始後のみ自動繰り上げ(編集フェーズは自由入替を優先)。
+  if (eventResultCount(tournamentId, event) > 0) autoAdvanceByes(tournamentId, event);
+  recordOp(tournamentId, "swap_match", `試合まるごと入替(${event})`, [mA.id, mB.id], beforeRows);
+  return { success: true };
+}
+
 // 1回戦の1スロットを設定 (BYE化/空き/別選手に置換)。取込ズレ・シードの手動修正用。
 // data = { mode: "bye"|"clear"|"player", name, team, player_id, entrant_id }
 function setBracketSlot(tournamentId, event, pos, slot, data) {
@@ -6874,6 +6909,26 @@ function setBracketSlot(tournamentId, event, pos, slot, data) {
   });
   tx();
   return { success: true };
+}
+
+// 選手マスタDBの選手をこの種目の枠へ。entrantを player_id で解決(無ければ master からコピーして
+// 自動作成)し、当該1回戦スロットに設定する。氏名一致では解決せず player_id 一致のみ(取り違え防止)。
+function setBracketSlotFromPlayer(tournamentId, event, pos, slot, playerId) {
+  if (!event) return { error: "event が必要です" };
+  if (!playerId) return { error: "選手が指定されていません" };
+  const player = stmts.getPlayer.get(playerId);
+  if (!player) return { error: "選手が見つかりません" };
+  // 既存entrant(同 player_id・同 event)があれば再利用。無ければ master からコピーして作成。
+  let ent = entrantStmts.listByEvent.all(tournamentId, event).find(e => e.player_id === playerId);
+  if (!ent) {
+    ent = createEntrant({ tournament_id: tournamentId, event,
+      name: player.name, furigana: player.furigana || "", team: player.team || "",
+      gender: player.gender || "male", player_id: playerId, status: "confirmed" });
+  }
+  // 既存 setBracketSlot を mode:"player" で流用(スロット設定・状態再計算・op_logを一元化)。
+  return setBracketSlot(tournamentId, event, pos, slot,
+    { mode: "player", name: ent.display_name || ent.name, team: ent.team || "",
+      entrant_id: ent.id, player_id: playerId });
 }
 
 // インポート: 形式自動判別
@@ -8183,6 +8238,7 @@ module.exports = {
   updateEntrySettings, getOpenTournaments,
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
+  swapBracketMatches, setBracketSlotFromPlayer,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,
   // Entrants (大会参加選手) - マスタDBと分離
