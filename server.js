@@ -2006,6 +2006,7 @@ app.post("/api/tournaments/:id/kumiawase/upload",
             regenerate: true,
             auto_link_to_players: true,
             auto_create_players: true,
+            placement: "as_drawn",   // 紙の並びそのまま(上から順)に配置。標準シード再配置で飛ばさない。
           });
           imported.push({ event: ev.event, format: ev.format, count: ev.players.length, result: r });
         }
