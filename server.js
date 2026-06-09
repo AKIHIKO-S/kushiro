@@ -3597,7 +3597,12 @@ app.get("/api/tournaments/:id/bracket/export", (req, res) => {
   const event = req.query.event;
   if (event) {
     const data = db.exportBracket(req.params.id, event);
-    if (!data) return res.status(404).json({ error: "ブラケットが見つかりません" });
+    if (!data) {
+      // 大会が無い=404。大会はあるが表が未生成=200(error文言で呼出元が「未作成」表示)。
+      // 「未生成」を404にすると正常運用でもブラウザのコンソールが404で汚れるため200で返す。
+      if (!db.getTournament(req.params.id)) return res.status(404).json({ error: "大会が見つかりません" });
+      return res.json({ error: "この種目のトーナメント表はまだありません", no_bracket: true });
+    }
     if (data && typeof data === "object" && !Array.isArray(data)) data.bracket_rev = db.bracketRev(req.params.id, event);
     res.json(data);
   } else {
@@ -3611,7 +3616,12 @@ app.get("/api/public/tournaments/:id/bracket/export", (req, res) => {
   const event = req.query.event;
   if (event) {
     const data = db.exportBracket(req.params.id, event);
-    if (!data) return res.status(404).json({ error: "ブラケットが見つかりません" });
+    if (!data) {
+      // 大会が無い=404。大会はあるが表が未生成=200(error文言で呼出元が「未作成」表示)。
+      // 「未生成」を404にすると正常運用でもブラウザのコンソールが404で汚れるため200で返す。
+      if (!db.getTournament(req.params.id)) return res.status(404).json({ error: "大会が見つかりません" });
+      return res.json({ error: "この種目のトーナメント表はまだありません", no_bracket: true });
+    }
     if (data && typeof data === "object" && !Array.isArray(data)) data.bracket_rev = db.bracketRev(req.params.id, event);
     res.json(data);
   } else {
