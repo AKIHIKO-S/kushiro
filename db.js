@@ -4564,6 +4564,35 @@ function getPlayerSurvivalByEvent(playerId, tournamentId, ctx) {
   return byEvent;
 }
 
+// 全 matches から選手別の survival(byEvent) を1パスで構築する(getPlayerSurvivalByEvent と同一ロジック)。
+// 多数 callable で per-player に _survivalStmt を撃つ(O(選手数×全件走査))のを回避する高速化。
+// ※ _survivalStmt の WHERE と同じく player1/2_id・winner/loser_id・referee_id の5ロールのみ対象
+//   (partner_player_id は対象外＝既存挙動と完全一致)。返り値は Map<playerId, byEvent>。
+function _buildSurvivalIndex(matches) {
+  const map = new Map();
+  const slot = (pid, ev) => {
+    let be = map.get(pid); if (!be) { be = {}; map.set(pid, be); }
+    if (!be[ev]) be[ev] = { eliminated: false, has_active_match: false, has_referee_duty: false, has_future_match: false };
+    return be[ev];
+  };
+  for (const m of matches) {
+    const ev = m.event || "";
+    const pids = new Set([m.player1_id, m.player2_id, m.winner_id, m.loser_id, m.referee_id].filter(x => x != null));
+    for (const pid of pids) {
+      const e = slot(pid, ev);
+      if (m.status === "completed") { if (m.loser_id === pid) e.eliminated = true; }
+      else if (m.status === "on_table") {
+        if (m.player1_id === pid || m.player2_id === pid) e.has_active_match = true;
+        if (m.referee_id === pid) e.has_referee_duty = true;
+      } else if (m.status === "pending" || m.status === "waiting") {
+        if (m.player1_id === pid || m.player2_id === pid) e.has_future_match = true;
+        if (m.referee_id === pid && m.status === "pending") e.has_referee_duty = true;
+      }
+    }
+  }
+  return map;
+}
+
 // 「この選手は下位種目の試合に呼べる状態か?」判定
 // 上位種目で:
 //   - 試合中 (has_active_match)
@@ -5202,6 +5231,9 @@ function getOperationState(tournamentId) {
   }
   // per-call メモ化コンテキスト: 種目優先順位の拘束判定で全matches走査を pending件ごとに繰り返さない (二乗化回避)
   const _opsCtx = { survival: new Map(), lockedByPriority: new Map(), matchKeys: new Map(), universe: null, refUniverse: null };
+  // survival を allMatches から1パスで事前構築(per-player の _survivalStmt 多発を排除。出力不変)。
+  // enforce 時のみ使うのでその時だけ構築。
+  if (enforce) { const _sv = _buildSurvivalIndex(allMatches); for (const [pid, be] of _sv) _opsCtx.survival.set(pid, be); }
   const callable = callableRaw.map(m => {
     const blocks = [];
     if (enforce) {
