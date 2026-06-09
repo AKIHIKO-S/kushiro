@@ -3706,6 +3706,16 @@ app.post("/api/tournaments/:id/bracket/swap-doubles-order", requireAdmin, (req, 
   if (r && r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
+// 紙どおりのシード: 1ペアの登場回戦を設定し再構築。body: { entrant_id, entry_round, base_rev, force }
+app.post("/api/tournaments/:id/bracket/set-seed-round", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const e = db.getEntrant(b.entrant_id);
+  if (!e) return res.status(400).json({ error: "エントリーが見つかりません" });
+  if (bracketRevStale(req.params.id, e.event, b)) return sendBracketConflict(res, req.params.id, e.event);
+  const r = db.setEntrantSeedRound(b.entrant_id, b.entry_round, { force: !!b.force });
+  if (r && r.error) return res.status(r.needs_force ? 200 : 400).json(r);
+  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, e.event) });
+});
 // 試合まるごと入替。body: { event, posA, posB, base_rev }
 app.post("/api/tournaments/:id/bracket/swap-match", requireAdmin, (req, res) => {
   const event = req.body && req.body.event;

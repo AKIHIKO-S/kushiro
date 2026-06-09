@@ -3072,6 +3072,43 @@ function promoteToSeed(tournamentId, event, pos, slot, opts) {
   });
 }
 
+// ── 紙どおりのシード(登場回戦)配置 ──────────────────────────────
+// as_drawn の紙順を保ったまま、各 entrant の entry_round に従って「seed＋BYE区画(2^(R-1)枚)」を
+// その位置に展開して再構築する。→ シードは1回戦なしで登場回戦に直接(BYE上がりで進出)、
+// 巡目をまたぐスーパーシードも同様。紙の並びを崩さず、他者への巻き込みBYEも作らない。
+function rebuildSeededBracket(tournamentId, event, opts) {
+  opts = opts || {};
+  if (!event) return { error: "event が必要です" };
+  const g = _destructiveGuard(tournamentId, event, opts.force, "シード配置の再構築");
+  if (g) return g;
+  // 出場(entrant)を紙順(seed=取込時の登場番号)で安定整列。BYE は entrant ではないので対象外。
+  const ents = entrantStmts.listByEvent.all(tournamentId, event)
+    .filter(e => !e.is_bye)
+    .sort((a, b) => ((a.seed || 99999) - (b.seed || 99999)) || String(a.id).localeCompare(String(b.id)));
+  if (ents.length < 2) return { error: "出場が2名未満です" };
+  const leaves = [];
+  for (const e of ents) {
+    const R = Math.max(1, Math.min(8, parseInt(e.entry_round) || 1));
+    leaves.push(e);
+    for (let i = 1; i < Math.pow(2, R - 1); i++) leaves.push(null);   // この区画のBYE(=シードの不戦勝上がり)
+  }
+  let size = Math.pow(2, Math.ceil(Math.log2(Math.max(2, leaves.length))));
+  if (size > 2048) return { error: "ブラケットが大きすぎます。登場回戦を下げてください。", bracket_size: size };
+  while (leaves.length < size) leaves.push(null);
+  // no_auto_advance は付けない=BYE自動進行でシードが登場回戦の枠まで上がる(表示が紙どおりになる)。
+  return generateBracket(tournamentId, event, { regenerate: true, force: true, fixedLeaves: leaves });
+}
+
+// 1ペア(entrant)の登場回戦を設定し、紙順を保ったまま再構築する。
+//  entryRound=1: 通常(1回戦から) / 2: シード(2回戦から) / 3以上: スーパーシード。
+function setEntrantSeedRound(entrantId, entryRound, opts) {
+  const e = entrantStmts.get.get(entrantId);
+  if (!e) return { error: "エントリーが見つかりません" };
+  const R = Math.max(1, Math.min(8, parseInt(entryRound) || 1));
+  sqlite.prepare("UPDATE entrants SET entry_round=? WHERE id=?").run(R, entrantId);
+  return rebuildSeededBracket(e.tournament_id, e.event, opts || {});
+}
+
 function generateBracket(tournamentId, event, options) {
   options = options || {};
   // 破壊的再生成ガード: 結果入力済みの試合がある種目を force 無しで再生成しない(当日の不可逆データ破壊防止)。
@@ -8432,6 +8469,7 @@ module.exports = {
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
   swapBracketMatches, setBracketSlotFromPlayer, setEntrantMemberFromPlayer,
+  setEntrantSeedRound, rebuildSeededBracket,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,
   // Entrants (大会参加選手) - マスタDBと分離
