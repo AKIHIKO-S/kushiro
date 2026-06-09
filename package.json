@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "node server.js",
     "start": "NODE_ENV=production node server.js",
-    "test": "node --test test/*.test.js",
+    "test": "NODE_OPTIONS='--require ./test/_setup.js' node --test test/*.test.js",
     "build": "echo 'No build step needed - static files served directly'",
     "backup": "bash deploy/backup.sh"
   },
