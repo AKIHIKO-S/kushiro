@@ -2883,7 +2883,8 @@ function slimPublicState(st) {
     player1_main_name: m.player1_main_name, player2_main_name: m.player2_main_name,
     player1_partner_id: m.player1_partner_id, player2_partner_id: m.player2_partner_id,
     player1_partner_name: m.player1_partner_name, player2_partner_name: m.player2_partner_name,
-    blocks: m.blocks, is_blocked: m.is_blocked,
+    // 待機理由(観戦live/viewerで表示)。内部の locked_by_match(試合UUID) は観戦に不要なので落とす。
+    blocks: (m.blocks || []).map(({ locked_by_match, ...b }) => b), is_blocked: m.is_blocked,
   }));
   return {
     // on_table / recent_finished は callable と違いフル row が素通しだった(内部の

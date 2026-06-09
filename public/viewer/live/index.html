@@ -637,6 +637,7 @@
     font-size: 13px;
   }
   .lv-next-content .vs-sep { color: var(--lv-sub); margin: 0 7px; font-size: 11px; }
+  .lv-next-reason { font-size: 12px; color: var(--lv-warn); margin-top: 4px; line-height: 1.4; font-weight: 700; }
 
   /* ─── 検索 (コンパクト) ─── */
   .lv-search {
@@ -1377,7 +1378,12 @@ const LV = {
               h("span", { className: "vs-sep" }, "VS"),
               p2Num && p2Num > 0
                 ? h("span", { className: "lv-pnum" }, "#" + p2Num) : null,
-              h("span", {}, m.player2_name || "?")),
+              h("span", {}, m.player2_name || "?"),
+              // 待機理由(呼べない理由)を簡潔に。種目＋理由のラベル(選手名は出さない=メインviewerと同方針・PII最小)。
+              (() => {
+                const labels = [...new Set((m.blocks || []).map(b => b && b.label).filter(Boolean))];
+                return labels.length ? h("div", { className: "lv-next-reason" }, "⏳ 待機: " + labels.join(" / ")) : null;
+              })()),
           ));
         });
       }
