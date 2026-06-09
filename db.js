@@ -3985,6 +3985,29 @@ function summarizeTie(tieResults) {
   };
 }
 
+// 団体戦の「勝者指定(winner_slot/winner_id)」と「星取内訳(tie_results)」の矛盾を検出する防御。
+// クライアントは内訳から勝者を導くため通常一致するが、入力ミスや別経路だとブラケット進出と
+// 対戦詳細/順位表が恒久的に食い違う。矛盾時はエラー文字列を返し、呼出側が書込み前に reject する。
+// 引分/未確定(home_wins===away_wins)や winner未解決のときは null(=本体の勝者解決に委ねる)。
+// home=slot1=player1 / away=slot2=player2。
+function tieWinnerConflict(m, data) {
+  if (!data || data.tie_results === undefined) return null;
+  const arr = typeof data.tie_results === "string"
+    ? _parseTieResults(data.tie_results)
+    : (Array.isArray(data.tie_results) ? data.tie_results : []);
+  if (!Array.isArray(arr) || !arr.length) return null;          // 直接チームスコア([])は対象外
+  const sum = summarizeTie(arr);
+  if (!sum || sum.home_wins === sum.away_wins) return null;     // 引分/未確定は winner_slot に委ねる
+  const tieSlot = sum.home_wins > sum.away_wins ? 1 : 2;
+  const slot = data.winner_slot === 1 ? 1 : data.winner_slot === 2 ? 2 :
+    (data.winner_id != null && data.winner_id === m.player1_id) ? 1 :
+    (data.winner_id != null && data.winner_id === m.player2_id) ? 2 : 0;
+  if (!slot || slot === tieSlot) return null;
+  const nm = s => (s === 1 ? (m.player1_name || "home") : (m.player2_name || "away"));
+  return "団体戦の星取(内訳)と勝者指定が矛盾しています(内訳=" + nm(tieSlot) +
+    "の勝ち / 指定=" + nm(slot) + "の勝ち)。内訳または勝者を見直してください。";
+}
+
 // 率(取得/失)の降順比較。a が上位なら負、b が上位なら正(Array.sort 準拠)。0除算を安全に扱う。
 // 規約: 失0 かつ 取得>0 = ∞(最上位)。失0 かつ 取得0 = 0-0(データ無し=最下位)。∞同士・0-0同士は同率(0)。
 // これにより「未消化(0-0)チームが実際に戦って負けたチームより上位」「∞同士が同率にならない」を防ぐ。
@@ -4280,6 +4303,10 @@ function finishMatchInternal(matchId, data) {
   // m.player1_id===winner.id が null===null で誤判定するため、解決済みの winner 参照そのもので判定する。
   const winnerIsP1 = (winner === p1);
 
+  // 団体戦: 星取内訳と勝者指定が矛盾するなら書込み前に弾く(ブラケットと表示の恒久的な食い違いを防ぐ)。
+  const tieErr = tieWinnerConflict(m, data);
+  if (tieErr) return { error: tieErr, tie_mismatch: true };
+
   // 冪等ガード: 既に「同じ勝者」で完了済みなら何もしない。連打/オフライン再送で finish が
   // 2回適用されると二重Elo・勝者の再進出が起きるため(op_id は呼出ごとに新規=連打を防げない)。
   // correctResult は status を pending/on_table に戻してから呼ぶので、ここには該当しない。
@@ -4434,26 +4461,35 @@ function correctResult(matchId, data) {
     return { error: "勝者を特定できません (winner_slot か winner_id が必要です)" };
   }
 
+  // 団体戦: 星取内訳と勝者指定が矛盾するなら reset 前に弾く(部分適用を防ぐ)。
+  const tieErr = tieWinnerConflict(m, data);
+  if (tieErr) return { error: tieErr, tie_mismatch: true };
+
   // 完了済みかどうかチェック
   const wasCompleted = m.status === "completed";
-  if (wasCompleted && m.next_match_id) {
-    const nm = stmts.getMatch.get(m.next_match_id);
-    if (nm && nm.status === "completed") {
-      return {
-        error: "次の試合 (" + (nm.match_label || nm.match_no) + " " +
-          (nm.round || "") + ") が既に完了しています。" +
-          "先に次の試合の結果を取り消してから修正してください。",
-        next_match_id: nm.id,
-        next_match_label: nm.match_label || nm.match_no,
-      };
-    }
-    if (nm && nm.status === "on_table") {
-      return {
-        error: "次の試合 (" + (nm.match_label || nm.match_no) + ") が進行中です。" +
-          "進行中の試合は先にコートから戻してから修正してください。",
-        next_match_id: nm.id,
-        next_match_label: nm.match_label || nm.match_no,
-      };
+  // 直近 next だけでなく前方チェーン全体を見る。下流(C,D..)が完了/進行中のまま修正すると、
+  // クリアするのは直近 next のみで下流の進出が古い勝者のまま残り、ブラケットが恒久的に不整合になる。
+  if (wasCompleted) {
+    for (const cid of collectForwardChain(matchId)) {
+      if (cid === matchId) continue;
+      const cm = stmts.getMatch.get(cid);
+      if (cm && cm.status === "completed") {
+        return {
+          error: "この先の試合 (" + (cm.match_label || cm.match_no) + " " +
+            (cm.round || "") + ") が既に完了しています。" +
+            "先にその試合の結果を取り消してから修正してください。",
+          next_match_id: cm.id,
+          next_match_label: cm.match_label || cm.match_no,
+        };
+      }
+      if (cm && cm.status === "on_table") {
+        return {
+          error: "この先の試合 (" + (cm.match_label || cm.match_no) + ") が進行中です。" +
+            "進行中の試合は先にコートから戻してから修正してください。",
+          next_match_id: cm.id,
+          next_match_label: cm.match_label || cm.match_no,
+        };
+      }
     }
   }
 

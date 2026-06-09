@@ -106,3 +106,73 @@ test("tie結果を correct でやり直すと内訳・勝者が更新される",
   assert.strictEqual(saved.winner_name, away, "訂正後は away が勝者");
   assert.strictEqual(saved.tie_results.length, 2, "内訳が訂正後の内容に置換");
 });
+
+// ── 整合性ガード: 星取内訳と勝者指定の矛盾を弾く ──
+function firstRealMatch(tid) {
+  return db.getOpMatchList(tid).matches.find(
+    x => x.player1_name && x.player2_name && x.player1_name !== "BYE" && x.player2_name !== "BYE");
+}
+
+test("finish: 星取内訳(home勝ち)と勝者指定(away)が矛盾すると弾かれ保存されない", () => {
+  const t = teamTournament();
+  ["甲", "乙", "丙", "丁"].forEach(n => addTeam(t.id, n, [n + "1", n + "2", n + "3"]));
+  db.generateBracket(t.id, EV, {});
+  const m = firstRealMatch(t.id);
+  // 内訳は home 2-1 勝ちなのに winner_slot は away(2) を指定 = 矛盾
+  const res = db.finishMatchOp(m.id, { winner_slot: 2, winner_sets: 2, loser_sets: 1,
+    tie_results: [{ slot: "S1", winner: "home" }, { slot: "S2", winner: "home" }, { slot: "S3", winner: "away" }] });
+  assert.ok(res && res.error && res.tie_mismatch, "矛盾は tie_mismatch エラー: " + JSON.stringify(res).slice(0, 100));
+  const saved = db.getMatch(m.id);
+  assert.notStrictEqual(saved.status, "completed", "矛盾時は保存されない(未完了のまま)");
+  assert.ok(!saved.winner_name, "勝者は書き込まれていない");
+});
+
+test("correct: 矛盾する勝者指定は弾かれ元の結果が保たれる", () => {
+  const t = teamTournament();
+  ["甲", "乙", "丙", "丁"].forEach(n => addTeam(t.id, n, [n + "1", n + "2", n + "3"]));
+  db.generateBracket(t.id, EV, {});
+  const m = firstRealMatch(t.id);
+  const home = m.player1_name;
+  // 正しく home 勝ちで確定
+  db.finishMatchOp(m.id, { winner_slot: 1, winner_sets: 2, loser_sets: 1,
+    tie_results: [{ slot: "S1", winner: "home" }, { slot: "S2", winner: "home" }, { slot: "S3", winner: "away" }] });
+  // 内訳は依然 home 勝ちのまま winner_slot だけ away に = 矛盾 correct
+  const c = db.correctResult(m.id, { winner_slot: 2, winner_sets: 2, loser_sets: 1,
+    tie_results: [{ slot: "S1", winner: "home" }, { slot: "S2", winner: "home" }, { slot: "S3", winner: "away" }] });
+  assert.ok(c && c.error && c.tie_mismatch, "矛盾 correct は弾かれる");
+  const saved = db.getMatch(m.id);
+  assert.strictEqual(saved.status, "completed", "元の確定が保たれる");
+  assert.strictEqual(saved.winner_name, home, "勝者は元の home のまま(reset されない)");
+});
+
+test("finish: 内訳が引分(1-1)なら winner_slot 指定で確定できる(ガードは通過)", () => {
+  const t = teamTournament();
+  ["甲", "乙", "丙", "丁"].forEach(n => addTeam(t.id, n, [n + "1", n + "2", n + "3"]));
+  db.generateBracket(t.id, EV, {});
+  const m = firstRealMatch(t.id);
+  const home = m.player1_name;
+  const res = db.finishMatchOp(m.id, { winner_slot: 1, winner_sets: 1, loser_sets: 1,
+    tie_results: [{ slot: "S1", winner: "home" }, { slot: "S2", winner: "away" }] });
+  assert.ok(res && !res.error, "引分内訳は勝者指定に委ね確定: " + JSON.stringify(res).slice(0, 80));
+  assert.strictEqual(db.getMatch(m.id).winner_name, home, "winner_slot 通りに home 勝ち");
+});
+
+test("correct: 下流の試合が完了していると修正をブロックする", () => {
+  const t = teamTournament();
+  ["甲", "乙", "丙", "丁"].forEach(n => addTeam(t.id, n, [n + "1", n + "2", n + "3"]));
+  db.generateBracket(t.id, EV, {});
+  const r1 = db.getOpMatchList(t.id).matches
+    .filter(x => x.player1_name && x.player2_name && x.player1_name !== "BYE" && x.player2_name !== "BYE")
+    .map(x => db.getMatch(x.id))
+    .filter(x => x.next_match_id);
+  assert.ok(r1.length >= 2, "決勝へ送る1回戦が2つ");
+  // 1回戦2つ → 決勝 を全て確定
+  r1.forEach(m => db.finishMatchOp(m.id, { winner_slot: 1, winner_sets: 3, loser_sets: 0, tie_results: [] }));
+  const final = db.getMatch(r1[0].next_match_id);
+  db.finishMatchOp(final.id, { winner_slot: 1, winner_sets: 3, loser_sets: 0, tie_results: [] });
+  assert.strictEqual(db.getMatch(final.id).status, "completed", "決勝が完了");
+  // 1回戦を修正しようとする → 下流(決勝)が完了済みのためブロック
+  const c = db.correctResult(r1[0].id, { winner_slot: 2, winner_sets: 3, loser_sets: 1, tie_results: [] });
+  assert.ok(c && c.error && !c.tie_mismatch, "下流完了でブロック: " + JSON.stringify(c).slice(0, 100));
+  assert.ok(c.next_match_id, "ブロック理由に対象試合IDを含む");
+});

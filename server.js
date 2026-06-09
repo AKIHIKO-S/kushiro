@@ -3334,6 +3334,7 @@ app.post("/api/matches/:id/finish", requireAdmin, (req, res) => {
   const r = db.finishMatchOp(req.params.id, req.body || {});
   if (!r) return res.status(404).json({ error: "試合が見つかりません" });
   if (r.conflict) return res.status(409).json(r);   // 同時編集の衝突: 別端末が先に別結果で確定済み
+  if (r.error) return res.status(400).json(r);      // 入力不整合(団体戦 星取×勝者指定の矛盾 等)
   if (!r.error && pre) db.recordOp(pre.tournament_id, "finish",
     `結果入力: ${r.winner_name || ""} ${r.winner_sets || 0}-${r.loser_sets || 0} ${r.loser_name || ""}（${pre.event || ""} ${pre.round || ""}）`,
     ids, before);
