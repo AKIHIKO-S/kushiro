@@ -5247,8 +5247,16 @@ function getOperationState(tournamentId) {
   });
 
   // 台ごとに割り当て (numbering_origin に応じてdisplay順とtable_noを対応付け)
-  const rows = tournament.court_rows || 4;
-  const cols = tournament.court_cols || 11;
+  let rows = tournament.court_rows || 4;
+  let cols = tournament.court_cols || 11;
+  // 既定レイアウト(4×11=44)のままで court_count が 44 以外なら、court_count から実コート数の
+  // グリッドを導出する(小規模大会の観戦ライブで空き44台が並ぶ不具合の解消)。
+  // ※ admin のレイアウト編集で明示設定したレイアウトは rows/cols が既定と異なるため尊重される。
+  const _cc = parseInt(tournament.court_count) || 0;
+  if (rows === 4 && cols === 11 && _cc && _cc !== 44) {
+    cols = _cc <= 11 ? _cc : Math.ceil(_cc / Math.ceil(_cc / 11));  // 1行最大11、超えたら均等折返し
+    rows = Math.ceil(_cc / cols);
+  }
   const origin = tournament.numbering_origin || "bottom-right";
   const tables = [];
   // display_row=1..rows (top→bottom), display_col=1..cols (left→right) で描画される順に table_no を計算
