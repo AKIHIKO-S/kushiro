@@ -116,6 +116,70 @@ test("分散より配置可能性を優先(所属が偏っても全員配置)", 
   assert.strictEqual(new Set(leaves.filter(Boolean).map(e => e.id)).size, 16, "重複なし");
 });
 
+test("実規模・分離可能(64枠/最大所属8名)でR1同所属0件(実大会分布の退行防止)", () => {
+  // 実ファイル(ヤサカ一般 男子シングルス 59名)の所属分布を模した規模で、分離可能なら必ず0件。
+  //   大所属: 8,5,5,5,4,4,3,3 + 単独22 = 59名 / 64枠。
+  const build = () => {
+    const a = []; let id = 0;
+    [["P", 8], ["Q", 5], ["R", 5], ["S", 5], ["T", 4], ["U", 4], ["V", 3], ["W", 3]].forEach(([k, n]) => {
+      for (let i = 0; i < n; i++) a.push({ id: "x" + (id++), display_name: k + i, seed: 0, team: k });
+    });
+    for (let i = 0; i < 22; i++) a.push({ id: "u" + (id++), display_name: "U" + i, seed: 0, team: "uniq" + i });
+    return a;
+  };
+  for (let s = 1; s <= 80; s++) {
+    const list = build();
+    const { leaves, r1_same_club } = db.computeDrawLeaves(list, 64, mulberry32(s * 7 + 3), { separateBy: "team" });
+    assert.strictEqual(leaves.filter(Boolean).length, 59, "全59名配置 seed" + s);
+    let r1 = 0;
+    for (let i = 0; i < 64; i += 2) if (leaves[i] && leaves[i + 1] && leaves[i].team === leaves[i + 1].team) r1++;
+    assert.strictEqual(r1, 0, "実規模・分離可能なのにR1同所属=" + r1 + " (seed" + s + ")");
+    assert.strictEqual(r1_same_club, 0, "返り値 r1_same_club も0 (seed" + s + ")");
+  }
+});
+
+test("分離不能でも理論最小に最適化(過半クラブ: R1同所属 = max(0, B - size/2))", () => {
+  // 1クラブB人を size枠(=size/2 試合)に。B>size/2 なら B-size/2 件の同所属対戦は不可避。
+  // アルゴリズムはその「理論最小」ちょうどまで減らす(超えない)ことを断定する(全員配置・非クラッシュ)。
+  const cases = [{ size: 32, big: 20, floor: 4 }, { size: 16, big: 12, floor: 4 }, { size: 64, big: 40, floor: 8 }];
+  for (const c of cases) {
+    const uniq = c.size - c.big;   // 残りは全員別所属(満枠=BYE無し)
+    for (let s = 1; s <= 40; s++) {
+      const a = []; let id = 0;
+      for (let i = 0; i < c.big; i++) a.push({ id: "b" + (id++), display_name: "B" + i, seed: 0, team: "BIG" });
+      for (let i = 0; i < uniq; i++) a.push({ id: "u" + (id++), display_name: "U" + i, seed: 0, team: "u" + i });
+      const { leaves, r1_same_club } = db.computeDrawLeaves(a, c.size, mulberry32(s * 11 + 5), { separateBy: "team" });
+      assert.strictEqual(leaves.filter(Boolean).length, c.size, `全員配置 size${c.size} seed${s}`);
+      let r1 = 0;
+      for (let i = 0; i < c.size; i += 2) if (leaves[i] && leaves[i + 1] && leaves[i].team === leaves[i + 1].team) r1++;
+      assert.strictEqual(r1, c.floor, `size${c.size} big${c.big}: R1同所属=${r1} 期待(理論最小)=${c.floor} seed${s}`);
+      assert.strictEqual(r1_same_club, c.floor, `r1_same_club も理論最小 (size${c.size} seed${s})`);
+    }
+  }
+});
+
+test("ダブルス: 所属集合(team+partner_team)で分離可能ならR1同所属0件(実規模)", () => {
+  // ダブルスは本人/相方の2所属を集合で扱う。混合ダブルス規模(28組/32枠)で分離可能なら0件。
+  const build = () => {
+    const a = []; let id = 0;
+    // 大所属の本人 + 単独相方(集合に大所属を1つ含む組を複数)
+    const teams = ["P", "P", "P", "P", "Q", "Q", "Q", "R", "R", "R"];
+    teams.forEach((t, i) => a.push({ id: "d" + (id++), display_name: "ペア" + i, seed: 0, is_doubles: 1, team: t, partner_team: "p" + i }));
+    for (let i = 0; i < 12; i++) a.push({ id: "x" + (id++), display_name: "他" + i, seed: 0, is_doubles: 1, team: "t" + i, partner_team: "s" + i });
+    return a;  // 22組
+  };
+  const clubsOf = (e) => { const o = []; const a = (e.team || "").trim(); const b = (e.partner_team || "").trim(); if (a) o.push(a); if (b && b !== a) o.push(b); return o; };
+  const overlap = (x, y) => x.some(v => y.includes(v));
+  for (let s = 1; s <= 60; s++) {
+    const list = build();
+    const { leaves } = db.computeDrawLeaves(list, 32, mulberry32(s * 9 + 1), { separateBy: "team" });
+    assert.strictEqual(leaves.filter(Boolean).length, 22, "全22組配置 seed" + s);
+    let r1 = 0;
+    for (let i = 0; i < 32; i += 2) { const x = leaves[i], y = leaves[i + 1]; if (x && y && overlap(clubsOf(x), clubsOf(y))) r1++; }
+    assert.strictEqual(r1, 0, "ダブルス所属集合・分離可能なのにR1同所属=" + r1 + " (seed" + s + ")");
+  }
+});
+
 test("再現性の土台: id整列すれば入力の物理順に依存せず同一配置", () => {
   // 旧バグ: listByEvent は ORDER BY seed,surname。同姓・seed=0 だと SQLite 物理順に依存し、
   // 同じ draw_seed でも並びが変わりうる(=『同種=同並び』が静かに破綻)。drawSingleBracket は
