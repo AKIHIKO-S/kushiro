@@ -223,6 +223,11 @@ function extractDoubles(ws, band) {
       else if (looksLikeName(cellStr(ws, r, c - 2))) { dir = -1; n1c = c - 2; }
       else continue;
       const name1 = cellStr(ws, r, n1c);
+      // 横/縦の判定アンカー: 直下のseed列に番号があれば「1行=1ペア(横並び)」、無ければ
+      // 「2行=1ペア(縦並び・相方は直下)」。所属がカッコ無し(infinity 等)だと相方名が所属に化け、
+      //  さらに直下行(次ペアの選手1)を相方に誤結合する事故を、この信号で確実に防ぐ。
+      const sBelow = cellStr(ws, r + 1, c);
+      const hasSeedBelow = isIntStr(sBelow) && +sBelow >= 1 && +sBelow <= 600;
       // team=選手1の所属, pteam=選手2の所属。所属の違うペア(桐山/釧友会・難波/ワンスターTTC)を
       // 結合せず各メンバーに分離して持つ(結合 "A / B" だと両者が同じ所属になり取違える)。
       let name2 = '', team = '', pteam = '', region = '';
@@ -235,16 +240,19 @@ function extractDoubles(ws, band) {
         const next = cellStr(ws, r, c + 2);    // 氏名2(横) or 所属(縦)
         const next2 = cellStr(ws, r, c + 3);   // (所属)(横) or 空(縦)
         const below = cellStr(ws, r + 1, n1c); // 相方(縦)
-        if (looksLikeName(next) && isParenTeam(next2)) {        // ① 横ペア
+        if (looksLikeName(next) && isParenTeam(next2)) {        // ① 横ペア(所属カッコ付き)
           name2 = next;
           team = cleanTeam(next2); pteam = cleanTeam(cellStr(ws, r, c + 4));
           region = regAmong(cellStr(ws, r, c + 4), cellStr(ws, r, c + 5));
-        } else if (looksLikeName(below)) {                      // ② 縦ペア
+        } else if (looksLikeName(next) && hasSeedBelow) {       // ②' 横ペア(所属カッコ無し: seed|名1|名2|所属1|所属2)
+          name2 = next; team = cleanTeam(next2); pteam = cleanTeam(cellStr(ws, r, c + 4));
+          region = regAmong(cellStr(ws, r, c + 4), cellStr(ws, r, c + 5));
+        } else if (looksLikeName(below) && !hasSeedBelow) {     // ② 縦ペア(相方は直下。直下にseedが無いとき)
           name2 = below;
           team = cleanTeam(cellStr(ws, r, c + 2)); pteam = cleanTeam(cellStr(ws, r + 1, c + 2));
           region = regAmong(cellStr(ws, r, c + 3), cellStr(ws, r + 1, c + 3));
-        } else if (looksLikeName(next)) {                       // ③ 横ペア(カッコ無し)
-          name2 = next; team = cleanTeam(next2);
+        } else if (looksLikeName(next)) {                       // ③ 横ペア(カッコ無し・直下seed無し=単一帯)
+          name2 = next; team = cleanTeam(next2); pteam = cleanTeam(cellStr(ws, r, c + 4));
         } else {                                                // ④ 単独(保険)
           team = cleanTeam(next);
         }
@@ -252,15 +260,17 @@ function extractDoubles(ws, band) {
         const prev = cellStr(ws, r, c - 3);    // 氏名2(横)
         const prevTeam = cellStr(ws, r, c - 1);// (所属)(横)
         const below = cellStr(ws, r + 1, n1c); // 相方(縦)
-        if (looksLikeName(prev) && isParenTeam(prevTeam)) {     // ① 横ペア(鏡像)
+        if (looksLikeName(prev) && isParenTeam(prevTeam)) {     // ① 横ペア(鏡像・所属カッコ付き)
           name2 = prev;
           team = cleanTeam(prevTeam); pteam = cleanTeam(cellStr(ws, r, c - 4));
           region = regAmong(cellStr(ws, r, c - 4), cellStr(ws, r, c - 5));
-        } else if (looksLikeName(below)) {                      // ② 縦ペア(鏡像)
+        } else if (looksLikeName(prev) && hasSeedBelow) {       // ②' 横ペア(鏡像・所属カッコ無し)
+          name2 = prev; team = cleanTeam(prevTeam); pteam = cleanTeam(cellStr(ws, r, c - 4));
+        } else if (looksLikeName(below) && !hasSeedBelow) {     // ② 縦ペア(鏡像・直下にseed無し)
           name2 = below;
           team = cleanTeam(cellStr(ws, r, c - 1)); pteam = cleanTeam(cellStr(ws, r + 1, c - 1));
-        } else if (looksLikeName(prev)) {                       // ③ 横ペア(カッコ無し)
-          name2 = prev; team = cleanTeam(prevTeam);
+        } else if (looksLikeName(prev)) {                       // ③ 横ペア(鏡像・カッコ無し・単一帯)
+          name2 = prev; team = cleanTeam(prevTeam); pteam = cleanTeam(cellStr(ws, r, c - 4));
         } else {
           team = cleanTeam(prevTeam);
         }
@@ -289,7 +299,25 @@ function extractDoubles(ws, band) {
     const k = pairKey(p);
     if (!byPair[k] || p.seed < byPair[k].seed) byPair[k] = p;
   });
-  return Object.values(byPair).sort((a, b) => a.seed - b.seed);
+  let pairs = Object.values(byPair).sort((a, b) => a.seed - b.seed);
+  // 結合単独セルの除去: 同一シートに「分割ペア(名1+相方名で2名)」と
+  // 「結合単独セル(『大野・馬場』のように2姓を1セルに結合・相方名なし)」が併存する旧式
+  // (なごやか亭/ヤサカ杯男子ミックスはブラケット配置セルが氏名を結合表記し、別途クリーンな
+  //  シードリストを併載)では、結合単独セルは分割側の冗長な再掲=過大計上。分割ペアが在るときだけ
+  //  結合単独セル(相方名なし & 名前に ・/／ を含む)を落とす。分割が皆無なら結合側を正本として温存。
+  // 結合単独セル = 氏名に ・/／ を含み(2姓結合) かつ 相方欄が「無い or 所属の断片
+  // (カッコ始まり/区切り記号入りのチーム表記)」のもの。相方名が実在する分割ペアは除外しない。
+  const isCombinedCell = (p) => {
+    if (!/[・／/]/.test(String(p.name || ''))) return false;
+    const pn = String(p.partner_name || '');
+    return !pn || /^[（(]/.test(pn) || /[・／/]/.test(pn);
+  };
+  const hasSplit = pairs.some(p => p.partner_name && !isCombinedCell(p));
+  if (hasSplit) {
+    const cleaned = pairs.filter(p => !isCombinedCell(p));
+    if (cleaned.length >= 2) pairs = cleaned;
+  }
+  return pairs;
 }
 
 // 種目名・形式の推定
