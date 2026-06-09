@@ -739,6 +739,10 @@
     この <style> は viewer ドキュメント専用なので admin には影響しない。 */
  body{
    --kt-accent:#c01526; --kt-accent-d:#9c0f1c; --kt-accent-l:#fdecee;
+   /* common.css は --accent:var(--kt-accent) を :root で定義するため、body での --kt-accent 上書きは
+      --accent に伝播しない(変数は使用箇所でなく定義箇所の値で確定)。--accent 系を直接上書きして
+      viewer 全体を真の丹頂レッド #c01526 にする(これまで #dc2626 のままだった)。 */
+   --accent:#c01526; --accent-l:#9c0f1c; --accent-bg:#fdecee; --accent-d:#9c0f1c;
    --bg:#ffffff; --border:#e9e9ec; --border-strong:#dcdce0;
    --radius:7px; --radius-lg:12px; --radius-xl:16px;
    --shadow-sm:0 1px 2px rgba(20,16,12,.05);
@@ -758,6 +762,48 @@
  /* カードを少しソフトに(選手DBのトーンへ) */
  .container .card{ border-radius:var(--radius-lg); box-shadow:var(--shadow); border-color:var(--border); }
  /* タブのアクティブ下線などは --accent 経由で自動的に丹頂レッドへ */
+
+ /* ═══════════ 丹頂エディトリアル: 大会 一覧・詳細・結果(明色ムラの追補) ═══════════
+    紺(--pri)/灰グラデ/汎用緑赤のままだった大会系ビューを、白基調＋丹頂レッドの
+    編集的トーン(赤ドット見出し・赤縦棒・細罫・タブラー数字)へ統一する。 */
+ /* 大会カード: 紺の影 → ソフト影＋ホバーで持ち上げ。アイコン/矢印は丹頂赤 */
+ .tournament-card{ border-radius:var(--radius-lg); box-shadow:var(--shadow-sm);
+   transition:box-shadow .15s ease, transform .15s ease, border-color .15s ease; }
+ .tournament-card:hover{ border-color:var(--border-strong); box-shadow:var(--shadow); transform:translateY(-1px); }
+ .tournament-icon{ background:var(--accent-bg); color:var(--accent); }
+ .tournament-arrow{ color:var(--accent); }
+
+ /* 大会詳細ヘッダ: 上端に丹頂赤の細帯。タイトルに赤い縦棒(編集的) */
+ #tournamentDetail > .card.fi{ border-top:3px solid var(--accent); }
+ #tournamentDetail > .card.fi .flex-1 > div:first-child{ position:relative; padding-left:14px; }
+ #tournamentDetail > .card.fi .flex-1 > div:first-child::before{ content:"";
+   position:absolute; left:0; top:.14em; bottom:.14em; width:4px; border-radius:2px; background:var(--accent); }
+ #tournamentDetail .stat-num{ font-variant-numeric:tabular-nums; font-weight:700; }
+ #tournamentDetail .stat-box{ background:#fff; border:1px solid var(--border); border-radius:var(--radius); }
+
+ /* 種目アコーディオン: 灰グラデ見出し → 白＋丹頂赤ドット＋細罫 */
+ .mr-acc{ border-radius:var(--radius-lg); border-color:var(--border); }
+ .mr-acc-head{ background:#fff; }
+ .mr-acc-head:hover{ background:var(--accent-bg); }
+ .mr-acc-title{ position:relative; padding-left:16px; }
+ .mr-acc-title::before{ content:""; position:absolute; left:0; top:50%; width:7px; height:7px;
+   margin-top:-3.5px; border-radius:50%; background:var(--accent); }
+ .mr-acc-count{ font-variant-numeric:tabular-nums; background:var(--accent-bg); color:var(--accent-l); }
+ .mr-acc-head::after{ color:var(--accent); }
+
+ /* ラウンド見出し: 赤ドット＋右へ伸びる細罫 */
+ .mr-round-label{ display:flex; align-items:center; gap:9px; color:var(--txt); letter-spacing:.02em; }
+ .mr-round-label::before{ content:""; width:5px; height:5px; border-radius:50%; background:var(--accent); flex:none; }
+ .mr-round-label::after{ content:""; flex:1; height:1px; background:var(--border); }
+
+ /* 結果行: 勝者=丹頂緑 / 敗者×=丹頂赤 / スコア=タブラー */
+ .mr-win .mr-pname{ color:var(--lg-win); }
+ .mr-lose .mr-pname::after{ color:var(--accent); }
+ .mr-vs{ font-variant-numeric:tabular-nums; }
+
+ /* ステータスバッジ: 進行中=丹頂赤で主役級に / 予定=墨グレー */
+ .badge.status-ongoing, .status-ongoing{ background:var(--accent-bg); color:var(--accent-l); }
+ .badge.status-scheduled, .status-scheduled{ background:var(--ink-100); color:var(--ink-700); }
 </style>
 </head>
 <body>
