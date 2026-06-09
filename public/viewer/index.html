@@ -843,6 +843,13 @@
  .player-avatar{ background:var(--accent-bg); color:var(--accent); }
  .live-court-wrap{ background:var(--ink-100); }
  .live-court-cell.active{ background:linear-gradient(135deg,#fff5f5 0%,var(--accent-bg) 100%); }
+ /* a11y: キーボードフォーカスの可視化(role=button化したカード/チップ・各種操作要素)。
+    マウス操作では出さない(:focus-visible)ので見た目を乱さない。 */
+ [role="button"]:focus-visible, .tcard:focus-visible, .pdb-card:focus-visible,
+ .player-card:focus-visible, .entry-event-chip:focus-visible, a:focus-visible,
+ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+   outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
+ }
 </style>
 </head>
 <body>
@@ -963,6 +970,13 @@ const V = {
  activeTab: "tournaments",
  _navStack: [], _lastHash: undefined, _navBack: false,   // 戻る用の履歴スタック
  state: { tournaments: [], players: [], stats: null, currentTournament: null, currentPlayer: null },
+
+ // a11y: クリック専用 div をキーボード操作可能なボタンにする属性セット(role/tabindex/Enter・Space)。
+ // h() の属性に `...V._kbtn(fn)` で展開して使う。
+ _kbtn(onAct) {
+   return { role: "button", tabindex: "0", onClick: onAct,
+     onKeyDown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onAct(e); } } };
+ },
 
  async init() {
  // タブクリック
@@ -1100,7 +1114,7 @@ const V = {
  ];
  if (t.player_count) meta.push(h("span", { className: "meta-chip" }, h("span", { className: "ic" }, "👤"), t.player_count + "名"));
  if (mc) meta.push(h("span", { className: "meta-chip" }, h("span", { className: "ic" }, "🏓"), mc + "試合"));
- return h("div", { className: "tcard is-" + st, onClick: () => V.openTournament(t.id) },
+ return h("div", { className: "tcard is-" + st, "aria-label": (t.name || "大会") + " を開く", ...V._kbtn(() => V.openTournament(t.id)) },
  h("div", { className: "tcard-accent" }),
  h("div", { className: "tcard-body" },
  h("div", { className: "tcard-top" },
@@ -1111,7 +1125,7 @@ const V = {
  (st === "ongoing" && mc > 0) ? h("div", { className: "wr-bar", style: { marginTop: "10px" },
    title: `${done}/${mc} 試合完了` }, h("span", { style: { width: progress + "%" } })) : null,
  ),
- h("div", { className: "tcard-arrow" }, "›"),
+ h("div", { className: "tcard-arrow", "aria-hidden": "true" }, "›"),
  );
  };
 
@@ -1539,7 +1553,8 @@ const V = {
  else if (medalCount > 0) stats.push(h("span", { className: "pdb-stat medal" }, "入賞" + medalCount));
  const _bAccent = TT.branchColor(p.branch || p.team);   // 支部色を左罫線に
  return h("div", { className: "pdb-card " + gClass,
- style: { animationDelay: (Math.min(i, 14) * 0.028) + "s", borderLeft: "5px solid " + _bAccent.fg }, onClick: () => V.openPlayer(p.id) },
+ style: { animationDelay: (Math.min(i, 14) * 0.028) + "s", borderLeft: "5px solid " + _bAccent.fg },
+ "aria-label": (p.name || "選手") + " の詳細", ...V._kbtn(() => V.openPlayer(p.id)) },
  h("div", { className: "pdb-avatar" }, V._initials(p.name)),
  h("div", { className: "pdb-info" },
  h("div", { className: "pdb-name" }, p.name || "(無名)"),
@@ -2105,10 +2120,10 @@ const EN = {
  let selected = new Set();
  const eventChips = h("div", { className: "entry-events-list" });
  events.forEach(e => {
- const chip = h("div", { className: "entry-event-chip", onClick: () => {
- if (selected.has(e)) { selected.delete(e); chip.classList.remove("selected"); }
- else { selected.add(e); chip.classList.add("selected"); }
- } }, e);
+ const chip = h("div", { className: "entry-event-chip", "aria-pressed": "false", ...V._kbtn(() => {
+ if (selected.has(e)) { selected.delete(e); chip.classList.remove("selected"); chip.setAttribute("aria-pressed", "false"); }
+ else { selected.add(e); chip.classList.add("selected"); chip.setAttribute("aria-pressed", "true"); }
+ }) }, e);
  eventChips.appendChild(chip);
  });
 
@@ -2984,7 +2999,8 @@ const MP = {
  players.slice(0, 10).forEach(p => {
  results.appendChild(h("div", {
  className: "player-card",
- onClick: () => MP.selectPlayer(p.id, p.name),
+ "aria-label": (p.name || "選手") + " を選択",
+ ...V._kbtn(() => MP.selectPlayer(p.id, p.name)),
  style: { marginBottom: "6px" }
  },
  h("div", { className: "player-avatar " +
