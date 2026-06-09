@@ -750,6 +750,7 @@
    --shadow-lg:0 14px 34px -18px rgba(20,16,12,.22);
    /* 団体リーグ星取表(TT.leagueTableEl)を丹頂トンマナに */
    --lg-win:#1a7a45; --lg-lose:#c01526; --lg-head:#faf7f5; --lg-line:#ece7e3; --lg-self:#f3efeb; --lg-bg:#ffffff;
+   --lg-win-bg:#e9f5ee;   /* 勝利の淡い背景(汎用 #f0fdf4/#dcfce7 の丹頂harmonized置換) */
    background:#ffffff;
  }
  /* 緑(ティール)ヘッダー → 白の丹頂ヘッダー(下端に墨の罫) */
@@ -807,6 +808,41 @@
  /* ステータスバッジ: 進行中=丹頂赤で主役級に / 予定=墨グレー */
  .badge.status-ongoing, .status-ongoing{ background:var(--accent-bg); color:var(--accent-l); }
  .badge.status-scheduled, .status-scheduled{ background:var(--ink-100); color:var(--ink-700); }
+
+ /* ═══════════ 丹頂: 選手プロフィール/H2H/ランキング/進行の総仕上げ ═══════════
+    紺(--pri)・旧赤(#dc2626)・汎用緑赤(#15803d/#16a34a/#b91c1c)・汎用灰(#f1f5f9)のまま
+    だった残りのビューを丹頂トークンへ統一する。元CSSは触らず後勝ちで上書き。 */
+ /* (a) 選手プロフィール・戦績 */
+ .profile-head{ background:#ffffff; color:var(--txt); border-top:3px solid var(--accent); }
+ .profile-avatar{ background:var(--accent-bg); color:var(--accent); }
+ .pm-row.win{ border-left:5px solid var(--lg-win); background:var(--lg-win-bg); }
+ .pm-row.loss{ border-left:5px solid var(--accent); background:var(--accent-bg); }
+ .pm-row.win .pm-result{ background:var(--lg-win); }
+ .pm-row.loss .pm-result{ background:var(--accent); }
+ .pm-row.win .pm-score{ color:var(--lg-win); }
+ .pm-row.loss .pm-score{ color:var(--accent); }
+ /* (b) H2H(対戦相手別戦績) */
+ .h2h-c-row:hover{ border-color:var(--accent); }
+ .h2h-c-record .w{ color:var(--lg-win); }
+ .h2h-c-record .l{ color:var(--accent); }
+ .h2h-c-verdict.lead{ background:var(--lg-win-bg); color:var(--lg-win); }
+ .h2h-c-verdict.behind{ background:var(--accent-bg); color:var(--accent); }
+ .h2h-table th{ background:var(--ink-100); }
+ /* (c) ランキング */
+ .rank-rating{ color:var(--accent); }
+ /* (d) 進行(ライブコート)・その他 */
+ .event-title{ background:var(--accent); }
+ .breadcrumb a{ color:var(--accent); }
+ .live-court-hq{ background:var(--accent); }
+ .next-callable{ border-color:var(--accent); }
+ .ms-table thead{ background:var(--accent); }
+ .event-stat-title{ color:var(--accent); }
+ .entry-event-chip.selected{ background:var(--accent); border-color:var(--accent); }
+ .tab-court{ color:var(--accent); }
+ .player-card:hover{ border-color:var(--accent-l); }
+ .player-avatar{ background:var(--accent-bg); color:var(--accent); }
+ .live-court-wrap{ background:var(--ink-100); }
+ .live-court-cell.active{ background:linear-gradient(135deg,#fff5f5 0%,var(--accent-bg) 100%); }
 </style>
 </head>
 <body>
