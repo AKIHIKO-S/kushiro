@@ -23,6 +23,15 @@
     --lv-blue: #2563eb;       /* 青 (待機) */
     --lv-purple: #7c3aed;     /* 紫 (団体追加コート) */
     --lv-header: #191917;     /* ヘッダー墨(ink) */
+    /* 仕上げ: 部分ハードコードのトークン化(見た目は実質同等・トンマナ統一) */
+    --lv-ok-2: #22c55e;       /* 緑(明) 進捗バーのグラデ上端 */
+    --lv-ok-d: #15803d;       /* 緑(暗) 進捗の数字 */
+    --lv-disabled: #9ca3af;   /* 空コートの文字(無彩) */
+    --lv-disabled-2: #a1a1aa; /* 空コートhover文字 */
+    --lv-border-weak: #d4d4d8;/* 空コートの破線罫 */
+    --lv-warn-bg: #fef3c7; --lv-warn-fg: #92400e; --lv-warn-line: #f59e0b;   /* 再コール cc1 黄 */
+    --lv-warn2-bg: #fed7aa; --lv-warn2-fg: #7c2d12; --lv-warn2-line: #ea580c;/* 再コール cc2 橙 */
+    --lv-danger-bg: #fecaca; --lv-danger-fg: #7f1d1d; --lv-danger-line: #dc2626;/* 再コール cc3+ 赤 */
   }
   html { background: var(--lv-bg); }
   body {
@@ -159,18 +168,18 @@
   }
   .lv-progress-title { font-size: 14px; font-weight: 700; }
   .lv-progress-figure { font-size: 13px; color: var(--lv-sub); }
-  .lv-progress-figure strong { color: #16a34a; font-size: 17px; }
+  .lv-progress-figure strong { color: var(--lv-ok); font-size: 17px; }
   .lv-progress-bar {
     height: 24px; border-radius: 12px; background: var(--lv-line);
     overflow: hidden;
   }
   .lv-progress-fill {
     height: 100%; border-radius: 12px;
-    background: linear-gradient(90deg, #22c55e, #16a34a);
+    background: linear-gradient(90deg, var(--lv-ok-2), var(--lv-ok));
     display: flex; align-items: center; justify-content: flex-end;
     transition: width .5s ease;
   }
-  .lv-progress-fill.done { background: linear-gradient(90deg, #16a34a, #15803d); }
+  .lv-progress-fill.done { background: linear-gradient(90deg, var(--lv-ok), var(--lv-ok-d)); }
   .lv-progress-eta { margin-top: 7px; font-size: 14px; font-weight: 700; color: var(--lv-sub); text-align: right; }
   .lv-progress-pct { color: #fff; font-size: 12px; font-weight: 800; padding-right: 10px; }
 
@@ -329,18 +338,18 @@
 
   /* 空きコート: 白背景(種目色=特に男子D緑 との混同を避ける。空きは無彩色+破線で非アクティブ感) */
   .lv-court.empty {
-    background: #ffffff;
-    border-color: #d4d4d8;
+    background: var(--lv-bg);
+    border-color: var(--lv-border-weak);
     border-style: dashed;
-    color: #9ca3af;
+    color: var(--lv-disabled);
   }
   .lv-court.empty:hover {
-    border-color: #a1a1aa;
-    background: #fafafa;
+    border-color: var(--lv-disabled-2);
+    background: var(--lv-surface-2);
   }
   .lv-court.empty .lv-court-header { background: rgba(0,0,0,.04); }
-  .lv-court.empty .lv-court-header .ev { color: #9ca3af; font-weight: 700; }
-  .lv-court.empty .lv-court-footer { background: rgba(0,0,0,.03); color: #9ca3af; }
+  .lv-court.empty .lv-court-header .ev { color: var(--lv-disabled); font-weight: 700; }
+  .lv-court.empty .lv-court-footer { background: rgba(0,0,0,.03); color: var(--lv-disabled); }
 
   /* 進行中: 赤背景・白文字・脈動アニメ */
   .lv-court.active {
@@ -382,7 +391,7 @@
     text-align: center;
     text-shadow: 0 1px 2px rgba(0,0,0,.15);
   }
-  .lv-court.empty .lv-court-p { text-shadow: none; color: #9ca3af; }
+  .lv-court.empty .lv-court-p { text-shadow: none; color: var(--lv-disabled); }
   /* 選手名→個人DBリンク (#266) */
   .lv-name-link { color: inherit; text-decoration: underline; text-decoration-style: dotted;
     text-underline-offset: 2px; cursor: pointer; }
@@ -663,9 +672,9 @@
   /* コート (コート) セル内の選手名直下に表示 */
   .lv-call-badge {
     display: inline-block;
-    background: #fef3c7;
-    color: #92400e;
-    border: 1px solid #f59e0b;
+    background: var(--lv-warn-bg);
+    color: var(--lv-warn-fg);
+    border: 1px solid var(--lv-warn-line);
     font-family: var(--font-display);
     font-size: 8px; font-weight: 800;
     padding: 0px 4px;
@@ -677,15 +686,15 @@
     vertical-align: middle;
   }
   .lv-call-badge.warning {
-    background: #fed7aa;
-    color: #7c2d12;
-    border-color: #ea580c;
+    background: var(--lv-warn2-bg);
+    color: var(--lv-warn2-fg);
+    border-color: var(--lv-warn2-line);
     animation: lvCallPulse 1.5s infinite;
   }
   .lv-call-badge.critical {
-    background: #fecaca;
-    color: #7f1d1d;
-    border-color: #dc2626;
+    background: var(--lv-danger-bg);
+    color: var(--lv-danger-fg);
+    border-color: var(--lv-danger-line);
     animation: lvCallPulse 1s infinite;
   }
   @keyframes lvCallPulse {
@@ -693,15 +702,15 @@
     50%      { opacity: .55; }
   }
   .lv-court.active .lv-call-badge {
-    background: #fef3c7;  /* 赤背景でも黄バッジが視認できるよう維持 */
+    background: var(--lv-warn-bg);  /* 赤背景でも黄バッジが視認できるよう維持 */
     box-shadow: 0 1px 3px rgba(0,0,0,.25);
   }
   /* 進行中ロー用 (選手名 inline) */
   .lv-match-call-badge {
     display: inline-block;
-    background: #fef3c7;
-    color: #92400e;
-    border: 1px solid #f59e0b;
+    background: var(--lv-warn-bg);
+    color: var(--lv-warn-fg);
+    border: 1px solid var(--lv-warn-line);
     font-family: var(--font-display);
     font-size: 9px; font-weight: 800;
     padding: 1px 5px;
@@ -712,11 +721,11 @@
     white-space: nowrap;
   }
   .lv-match-call-badge.warning {
-    background: #fed7aa; color: #7c2d12; border-color: #ea580c;
+    background: var(--lv-warn2-bg); color: var(--lv-warn2-fg); border-color: var(--lv-warn2-line);
     animation: lvCallPulse 1.5s infinite;
   }
   .lv-match-call-badge.critical {
-    background: #fecaca; color: #7f1d1d; border-color: #dc2626;
+    background: var(--lv-danger-bg); color: var(--lv-danger-fg); border-color: var(--lv-danger-line);
     animation: lvCallPulse 1s infinite;
   }
 
@@ -937,7 +946,9 @@
   /* 小型スマホ */
   @media (max-width: 380px) {
     .lv-stats { grid-template-columns: repeat(2, 1fr); }
-    .lv-court-p { font-size: 9px; }
+    /* 9px は観客に読みづらいため底上げ(選手名11px/所属9px)。レイアウトは維持 */
+    .lv-court-p { font-size: 11px; }
+    .lv-court-team { font-size: 9px; }
     .lv-tab { padding: 9px 8px; font-size: 11px; }
   }
 </style>
@@ -1018,6 +1029,13 @@ const LV = {
     // 全画面状態を body.lv-fs に反映 (#185 終了ボタンの表示制御)
     document.addEventListener("fullscreenchange", () => {
       document.body.classList.toggle("lv-fs", !!document.fullscreenElement);
+    });
+    // Esc で詳細/QRモーダルを閉じる(init で1回だけ登録)。
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        const ov = document.getElementById("lvOverlay");
+        if (ov && ov.childElementCount) ov.replaceChildren();
+      }
     });
   },
 
@@ -1106,6 +1124,10 @@ const LV = {
     const _ae = document.activeElement;
     const _searchFocused = !!(_ae && _ae.id === "lvSearchInput");
     const _caret = _searchFocused ? _ae.selectionStart : null;
+    // ライブ更新の全再描画でスクロール位置が失われるのを防ぐ(コート盤面の横/ページの縦)。
+    const _boardEl = main.querySelector(".lv-board-inner");
+    const _boardScroll = _boardEl ? _boardEl.scrollLeft : 0;
+    const _winY = window.scrollY || window.pageYOffset || 0;
     clear(main);
 
     // 大会タイトル+メタ
@@ -1133,10 +1155,12 @@ const LV = {
         h("div", { className: "lv-progress-fill" + (lvPct >= 100 ? " done" : ""),
           style: { width: lvPct + "%" } },
           lvPct >= 12 ? h("span", { className: "lv-progress-pct" }, lvPct + "%") : null)),
-      // 閲覧ビューは大会終了時刻の目安のみ表示 (平均/残試合は出さない) #282
-      (s.progress && s.progress.eta_text && lvPct < 100)
-        ? h("div", { className: "lv-progress-eta" }, "終了予定 " + s.progress.eta_text + " ごろ（目安）")
-        : null,
+      // 全試合終了は明示。それ以外は終了時刻の目安のみ表示 (平均/残試合は出さない) #282
+      (totalMatches > 0 && lvPct >= 100)
+        ? h("div", { className: "lv-progress-eta", style: { color: "var(--lv-ok)" } }, "🏁 全試合終了")
+        : (s.progress && s.progress.eta_text)
+          ? h("div", { className: "lv-progress-eta" }, "終了予定 " + s.progress.eta_text + " ごろ（目安）")
+          : null,
     ));
     main.appendChild(h("div", { className: "lv-stats" },
       h("div", { className: "lv-stat highlight-red" },
@@ -1190,6 +1214,12 @@ const LV = {
         try { const p = (_caret == null ? inp.value.length : _caret); inp.setSelectionRange(p, p); } catch (e) {}
       }
     }
+    // スクロール位置の復元(コート盤面の横スクロール・ページ縦位置)。再構築直後に rAF で適用。
+    if (_boardScroll) {
+      const nb = main.querySelector(".lv-board-inner");
+      if (nb) requestAnimationFrame(() => { nb.scrollLeft = _boardScroll; });
+    }
+    if (_winY) requestAnimationFrame(() => { window.scrollTo(0, _winY); });
   },
 
   renderCourtBoard(s) {
