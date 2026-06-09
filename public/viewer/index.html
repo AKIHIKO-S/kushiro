@@ -796,6 +796,9 @@
  .mr-round-label::before{ content:""; width:5px; height:5px; border-radius:50%; background:var(--accent); flex:none; }
  .mr-round-label::after{ content:""; flex:1; height:1px; background:var(--border); }
 
+ /* 対戦者未確定の将来戦をまとめた控えめな注記 */
+ .mr-undetermined{ font-size:11px; color:var(--sub-l); padding:5px 8px 7px;
+   font-style:italic; letter-spacing:.01em; }
  /* 結果行: 勝者=丹頂緑 / 敗者×=丹頂赤 / スコア=タブラー */
  .mr-win .mr-pname{ color:var(--lg-win); }
  .mr-lose .mr-pname::after{ color:var(--accent); }
@@ -1192,8 +1195,16 @@ const V = {
  Object.entries(byRound).sort((a, b) =>
    (a[1][0].round_order || 99) - (b[1][0].round_order || 99)
  ).forEach(([round, rms]) => {
+   // 両者とも対戦者未確定の将来戦(? vs ?)は情報ゼロの骨組み。取込直後は大量に並んでノイズになるため、
+   // 完了済み・対戦カード確定(片側でも選手が入っている)分だけ表示し、未確定は件数に畳む(情報は失わない)。
+   const known = (nm) => nm && nm !== "BYE";
+   const shown = rms.filter(m => (m.status === "completed" && m.winner_name) || known(m.player1_name) || known(m.player2_name));
+   const undetermined = rms.length - shown.length;
+   if (!shown.length && !undetermined) return;
    bodyEl.appendChild(h("div", { className: "mr-round-label" }, round + " (" + rms.length + ")"));
-   rms.forEach(m => bodyEl.appendChild(V.renderMatchResultRow(m)));
+   shown.forEach(m => bodyEl.appendChild(V.renderMatchResultRow(m)));
+   if (undetermined) bodyEl.appendChild(h("div", { className: "mr-undetermined" },
+     `他 ${undetermined} 試合 — 対戦者未確定`));
  });
 
  acc.appendChild(head); acc.appendChild(bodyEl);
