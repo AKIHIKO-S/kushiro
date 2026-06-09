@@ -7230,6 +7230,10 @@ function importFromSeedList(tournamentId, data) {
   // 自動DB連携: デフォルト ON。「氏名+所属」の完全一致でリンク。
   // false 明示時のみ無効化。
   const autoLink = data.auto_link_to_players !== false;
+  // 団体戦は「チーム名=entrant名」。登録団体ガード(団体名を選手名から弾く)を通すと、
+  // 釧友会・武修館高校 等の登録団体チームが entrant 名を剥がされブラケットから消える。
+  // また団体は選手ではないので選手マスタ連携/作成もしない。種目名で判定(parser の guessFormat と同基準)。
+  const isTeamEvt = /団体|チーム.?カップ|団体戦/.test(data.event || "");
 
   data.players.forEach(p => {
     // 入力データから名前構造を構築
@@ -7255,14 +7259,16 @@ function importFromSeedList(tournamentId, data) {
       is_doubles: p.is_doubles,
     };
     // 登録団体マスタの関所: 氏名/相方名が登録団体なら所属へ回し、選手名としては取り込まない。
-    guardRegisteredTeams(entrantData);
+    // 団体戦はチーム名が entrant 名なのでガードしない(登録団体チームを消さない)。
+    if (!isTeamEvt) guardRegisteredTeams(entrantData);
     // 入力時点で名前未指定なら skip
     const names = buildEntrantNames(entrantData);
     if (!names.name && !names.partner_name) return;
 
     // 氏名一致 → マスタDB 自動連携 (auto_link デフォルト ON)
     // ※ 取込時は妥当な選手のみマスタに登録/連携 (チーム名と判定された名前は弾く)
-    if (autoLink) {
+    // ※ 団体戦はチーム=entrantで選手ではないため連携/作成しない。
+    if (autoLink && !isTeamEvt) {
       const _eg = _eventGender(data.event);   // 女子/男子と明記された種目はマスタ性別の正本
       // 混合は性別不定(既定 male)で先に作られることがある。処理順で混合が女子選手を先に male で
       // 作り、後続の女子種目では更新されず誤性別が残っていた。性別明記種目で既存選手の性別を訂正する。
