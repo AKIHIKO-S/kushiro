@@ -1172,11 +1172,25 @@ const V = {
 
  // 大会結果: 横並び「○勝者 — スコア — 敗者×」(どっちが勝ったか明快)
  renderMatchResultRow(m) {
- const isBye = !m.loser_name || m.loser_name === "BYE";
  const nameEl = (id, name) => id
    ? h("a", { href: "#player/" + id,
        onClick: (e) => { e.preventDefault(); e.stopPropagation(); V.openPlayer(id); } }, name || "?")
    : h("span", {}, name || "?");
+ // 未対戦(将来の試合): 勝者未確定。"不戦勝"ではなく「選手 vs 選手(予定)」で表示する。
+ //   旧実装は isBye=!loser_name としており、まだ行われていない試合を一律「不戦勝」と誤表示していた
+ //   (取込直後は全将来戦が不戦勝表示になる)。完了済みのみ結果/不戦勝として扱う。
+ const done = m.status === "completed" && !!m.winner_name;
+ if (!done) {
+   const slot = (nm) => (nm && nm !== "BYE") ? nm : "?";
+   return h("div", { className: "mr-row mr-pending" },
+     h("div", { className: "mr-win" },
+       h("div", { className: "mr-pname", style: { color: "var(--sub)", fontWeight: 500 } }, slot(m.player1_name))),
+     h("div", { className: "mr-vs", style: { fontSize: "11px", color: "var(--sub-l)" } }, "vs"),
+     h("div", { className: "mr-lose" },
+       h("div", { className: "mr-pname", style: { color: "var(--sub)", fontWeight: 500 } }, slot(m.player2_name))));
+ }
+ // 完了済みで敗者なし(=不戦勝/BYE。通常は呼出元で除外済みだが防御的に)
+ const isBye = m.is_walkover || !m.loser_name || m.loser_name === "BYE";
  if (isBye) {
    return h("div", { className: "mr-row" },
      h("div", { className: "mr-win" },
