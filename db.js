@@ -7263,11 +7263,17 @@ function importFromSeedList(tournamentId, data) {
     // 氏名一致 → マスタDB 自動連携 (auto_link デフォルト ON)
     // ※ 取込時は妥当な選手のみマスタに登録/連携 (チーム名と判定された名前は弾く)
     if (autoLink) {
+      const _eg = _eventGender(data.event);   // 女子/男子と明記された種目はマスタ性別の正本
+      // 混合は性別不定(既定 male)で先に作られることがある。処理順で混合が女子選手を先に male で
+      // 作り、後続の女子種目では更新されず誤性別が残っていた。性別明記種目で既存選手の性別を訂正する。
+      const _fixGender = (pid) => {
+        if (pid && (_eg === "male" || _eg === "female"))
+          sqlite.prepare("UPDATE players SET gender=? WHERE id=? AND COALESCE(gender,'')<>?").run(_eg, pid, _eg);
+      };
       let linked = findPlayerByName(names.name, entrantData.team);
       // マスタに無ければ自動作成 (バリデーションで弾かれたらスキップ)
       if (!linked && names.name && !names.is_doubles) {
         try {
-          const _eg = _eventGender(data.event);   // 性別が明記された種目はその性別でマスタ登録
           linked = createPlayer({
             name: names.name,
             team: entrantData.team || "",
@@ -7282,6 +7288,7 @@ function importFromSeedList(tournamentId, data) {
       }
       if (linked) {
         entrantData.player_id = linked.id;
+        _fixGender(linked.id);
         linkedPlayers.push(linked.id);
       }
       // ダブルスのパートナーも自動連携
@@ -7302,6 +7309,7 @@ function importFromSeedList(tournamentId, data) {
         }
         if (linkedP) {
           entrantData.partner_player_id = linkedP.id;
+          _fixGender(linkedP.id);
           linkedPlayers.push(linkedP.id);
         }
       }
