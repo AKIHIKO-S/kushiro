@@ -86,6 +86,9 @@ function looksLikeName(s) {
   if (_isRegTeam(s)) return false;   // 登録団体は氏名でない
   if (s.length < 2 || s.length > 24) return false;
   if (isIntStr(s) || isParenTeam(s)) return false;
+  // カッコを含む文字列は氏名でない。複数行に折り返した所属カッコの断片(「Neo倶楽部）」「（釧路市役所・」)が
+  // 罫線トーナメント表のセルに残り、氏名として誤読されるのを防ぐ(所属はカッコを剥がして別途扱う)。
+  if (/[（）()]/.test(s)) return false;
   if (isRegionToken(s)) return false;
   if (STRUCT_WORDS.test(s)) return false;
   // 日付/スコア/記号のみは除外

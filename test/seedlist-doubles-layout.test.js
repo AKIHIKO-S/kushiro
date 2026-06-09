@@ -7,7 +7,17 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const XLSX = require("xlsx");
-const { extractDoubles } = require("../tools/parse_bracket_seedlist.js");
+const { extractDoubles, looksLikeName } = require("../tools/parse_bracket_seedlist.js");
+
+test("カッコを含む文字列は氏名と判定しない(複数行所属カッコの断片を弾く)", () => {
+  // Nittaku杯/なごやか亭の罫線表は所属カッコが複数行に折返し、閉じ括弧の断片がセルに残る。
+  assert.strictEqual(looksLikeName("Neo倶楽部）"), false, "閉じ括弧つきの所属断片は氏名でない");
+  assert.strictEqual(looksLikeName("（釧路市役所・"), false, "開き括弧つきの所属断片は氏名でない");
+  assert.strictEqual(looksLikeName("ワンスターTTC）"), false, "団体名＋）は氏名でない");
+  // 通常の氏名は従来どおり氏名と判定される
+  assert.strictEqual(looksLikeName("桐山 慶次郎"), true, "通常の氏名は氏名");
+  assert.strictEqual(looksLikeName("難波 心愛"), true);
+});
 
 function sheetFromAoa(aoa) {
   return XLSX.utils.aoa_to_sheet(aoa, { cellDates: false });
