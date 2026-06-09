@@ -1992,7 +1992,7 @@ app.post("/api/tournaments/:id/kumiawase/upload",
         if (dryRun) {
           try { fs.unlinkSync(filePath); } catch {}
           return res.json({
-            preview: { events: events.map(e => ({ event: e.event, format: e.format, count: e.players.length, players: e.players })) },
+            preview: { events: events.map(e => ({ event: e.event, format: e.format, count: e.players.length, players: e.players, notices: e.notices || [] })) },
             message: `解析プレビュー: ${events.length}種目 / 計${events.reduce((s, e) => s + e.players.length, 0)}人 (まだ取込されていません)`,
             used_parser: "parse_bracket_seedlist.js",
           });
@@ -2008,7 +2008,7 @@ app.post("/api/tournaments/:id/kumiawase/upload",
             auto_create_players: true,
             placement: "as_drawn",   // 紙の並びそのまま(上から順)に配置。標準シード再配置で飛ばさない。
           });
-          imported.push({ event: ev.event, format: ev.format, count: ev.players.length, result: r });
+          imported.push({ event: ev.event, format: ev.format, count: ev.players.length, notices: ev.notices || [], result: r });
         }
         try { fs.unlinkSync(filePath); } catch {}
         return res.json({ ok: true, source: "kumiawase_seedlist", used_parser: "parse_bracket_seedlist.js", imported });

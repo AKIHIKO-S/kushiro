@@ -3766,13 +3766,19 @@ const A = {
  }
  if (dryRun && r.preview) {
  // 視覚的ファクトチェック モーダル
- A.showImportPreview(r.preview, tournamentId);
+ // seed-list パーサ(主経路)は複数種目を preview.events で返す → 専用プレビューへ。
+ // 旧 python パーサは preview.matches/players を返す → 従来の showImportPreview。
+ if (Array.isArray(r.preview.events)) A.showSeedListPreview(r.preview, tournamentId);
+ else A.showImportPreview(r.preview, tournamentId);
  document.querySelector(".modal-bg")?.remove();
  return;
  }
  const total = r.total_matches || (r.imported && r.imported[0]?.total_matches) || 0;
- toast(`組合せ表を取込: ${total} 試合生成`, "ok");
+ // 取込後に品質警告(相方欠落/重複/組番号欠番)があれば operator に提示(黙って取り込まない)。
+ const allNotices = (r.imported || []).flatMap(im => (im.notices || []).map(n => ({ event: im.event, ...n })));
  document.querySelector(".modal-bg")?.remove();
+ if (allNotices.length) A.showImportQualityNotices(allNotices, total);
+ else toast(`組合せ表を取込: ${total} 試合生成`, "ok");
  await A.openTournament(tournamentId);
  } catch (e) {
  toast("通信エラー: " + e.message, "err");
@@ -3783,6 +3789,109 @@ const A = {
 
  // ── 取込結果ファクトチェック モーダル ──
  // parse_kumiawase_chart.py / parse_jtta_excel.py の preview 結果を視覚化
+ // ── seed-list(主経路)複数種目プレビュー: 種目ごとに解析結果＋品質警告を出し、確認後に取込 ──
+ // 取込前のファクトチェック。各種目の出場者(氏名/所属/相方)を一覧し、相方欠落・氏名重複・
+ // 組番号欠番などを目立つバナーで提示する。読み取り違いに operator が気づける状態で取り込む。
+ showSeedListPreview(preview, tournamentId) {
+   const events = Array.isArray(preview.events) ? preview.events : [];
+   const noticeStyle = (type) => type === "seed_gap"
+     ? { bg: "#fffbeb", border: "#f59e0b", color: "#92400e", icon: "ℹ" }   // 欠番は良性のことが多い
+     : { bg: "#fef2f2", border: "#dc2626", color: "#991b1b", icon: "⚠" };  // 相方欠落/重複は要確認
+   const totalCount = events.reduce((s, e) => s + (e.count || (e.players || []).length), 0);
+   const totalNotices = events.reduce((s, e) => s + (e.notices || []).length, 0);
+
+   const head = h("div", { style: { padding: "10px 14px", background: "#eff6ff",
+     borderLeft: "4px solid #3b82f6", borderRadius: "0 4px 4px 0", marginBottom: "12px" } },
+     h("div", { className: "font-bold", style: { fontSize: "16px" } }, "組合せ表 取込プレビュー（ファクトチェック）"),
+     h("div", { className: "text-sm text-sub mt-1" },
+       `${events.length}種目 ・ 計${totalCount}名/組` + (totalNotices ? ` ・ ⚠ 要確認 ${totalNotices}件` : " ・ 警告なし")),
+     h("div", { className: "text-xs text-sub mt-1" },
+       "下の内容で取り込みます（表の並び順そのまま=as_drawn）。読み取り違いがあれば取込後にトーナメント管理で修正できます。"));
+
+   const evCards = events.map(ev => {
+     const isD = ev.format === "doubles" || (ev.players || []).some(p => p.is_doubles || p.partner_name);
+     const card = h("div", { className: "card", style: { padding: "10px 14px", marginBottom: "10px" } });
+     card.appendChild(h("div", { className: "font-bold mb-1", style: { fontSize: "14px",
+       borderBottom: "2px solid #1e2a4a", paddingBottom: "4px", display: "inline-block" } },
+       `${ev.event}（${isD ? "ダブルス" : "シングルス"} ・ ${(ev.players || []).length}${isD ? "組" : "名"}）`));
+     // 品質警告バナー
+     (ev.notices || []).forEach(n => {
+       const st = noticeStyle(n.type);
+       card.appendChild(h("div", { style: { margin: "6px 0", padding: "8px 12px", background: st.bg,
+         border: "1px solid " + st.border, borderRadius: "6px", fontSize: "12px", color: st.color, fontWeight: 600 } },
+         `${st.icon} ${n.detail || n.type}`));
+     });
+     if (!(ev.notices || []).length) {
+       card.appendChild(h("div", { style: { margin: "6px 0", padding: "6px 12px", background: "#d1fae5",
+         border: "1px solid #10b981", borderRadius: "6px", fontSize: "12px", color: "#065f46", fontWeight: 600 } },
+         "✓ 警告なし"));
+     }
+     // 出場者テーブル
+     const tblWrap = h("div", { style: { overflow: "auto", maxHeight: "260px", marginTop: "6px" } });
+     const tbl = h("table", { className: "tbl", style: { fontSize: "12px" } });
+     tbl.appendChild(h("thead", {}, h("tr", {},
+       h("th", { style: { width: "36px" } }, "#"),
+       h("th", {}, "氏名"), h("th", { style: { width: "26%" } }, "所属"),
+       isD ? h("th", {}, "パートナー") : null,
+       isD ? h("th", { style: { width: "26%" } }, "パートナー所属") : null)));
+     const tb = h("tbody", {});
+     (ev.players || []).forEach((p, i) => {
+       const noPartner = isD && !(p.partner_name || "").trim();
+       tb.appendChild(h("tr", { style: noPartner ? { background: "#fef2f2" } : {} },
+         h("td", { style: { textAlign: "center", color: "#64748b" } }, String(i + 1)),
+         h("td", { style: { fontWeight: 700 } }, p.name || h("span", { className: "text-sub" }, "(空)")),
+         h("td", { style: { color: "#475569" } }, p.team || ""),
+         isD ? h("td", {}, p.partner_name || h("span", { style: { color: "#dc2626" } }, "(相方なし)")) : null,
+         isD ? h("td", { style: { color: "#475569" } }, p.partner_team || "") : null));
+     });
+     tbl.appendChild(tb); tblWrap.appendChild(tbl); card.appendChild(tblWrap);
+     return card;
+   });
+
+   const body = h("div", { style: { maxHeight: "70vh", overflow: "auto", padding: "0 4px" } }, head, ...evCards);
+   const foot = h("div", { className: "flex gap-2" },
+     h("button", { className: "btn", onClick: async () => {
+       if (!confirm(`${events.length}種目を取り込みますか？\n(既存の同種目の試合は削除されます)`)) return;
+       const fails = [];
+       for (const ev of events) {
+         const r = await api.post(`/api/tournaments/${tournamentId}/bracket/import`, {
+           format: "tabletennis-seed-list-v1", event: ev.event, players: ev.players,
+           regenerate: true, auto_link_to_players: true, auto_create_players: true, placement: "as_drawn",
+         });
+         if (r && r.error) fails.push(`${ev.event}: ${r.error}`);
+       }
+       document.querySelector(".modal-bg")?.remove();
+       if (fails.length) toast("一部失敗: " + fails.join(" / "), "err");
+       else toast(`${events.length}種目を取込 - 出場選手DBに自動連携しました`, "ok");
+       await A.openTournament(tournamentId);
+     } }, "この内容で取込"),
+     h("button", { className: "btn btn-ghost",
+       onClick: () => document.querySelector(".modal-bg")?.remove() }, "キャンセル"));
+   openModal("組合せ表 取込プレビュー（ファクトチェック）", body, foot);
+ },
+
+ // ── 取込後の品質警告提示(直接取込でプレビューを省いた場合の安全網) ──
+ showImportQualityNotices(noticeList, total) {
+   const st = (type) => type === "seed_gap"
+     ? { bg: "#fffbeb", border: "#f59e0b", color: "#92400e", icon: "ℹ" }
+     : { bg: "#fef2f2", border: "#dc2626", color: "#991b1b", icon: "⚠" };
+   const body = h("div", { style: { maxHeight: "60vh", overflow: "auto", padding: "0 4px" } },
+     h("div", { style: { padding: "10px 14px", background: "#eff6ff", borderLeft: "4px solid #3b82f6",
+       borderRadius: "0 4px 4px 0", marginBottom: "12px" } },
+       h("div", { className: "font-bold", style: { fontSize: "15px" } }, `取込完了（${total}試合生成）— 確認推奨`),
+       h("div", { className: "text-xs text-sub mt-1" },
+         "取り込みは完了しています。下記は読み取り精度の確認ポイントです。必要ならトーナメント管理で修正してください。")),
+     ...noticeList.map(n => {
+       const s = st(n.type);
+       return h("div", { style: { margin: "6px 0", padding: "8px 12px", background: s.bg,
+         border: "1px solid " + s.border, borderRadius: "6px", fontSize: "12px", color: s.color } },
+         h("span", { style: { fontWeight: 700 } }, `[${n.event}] `), `${s.icon} ${n.detail || n.type}`);
+     }));
+   const foot = h("div", { className: "flex gap-2" },
+     h("button", { className: "btn", onClick: () => document.querySelector(".modal-bg")?.remove() }, "確認しました"));
+   openModal("取込の品質確認", body, foot);
+ },
+
  showImportPreview(preview, tournamentId) {
  const matches = preview.matches || [];
  const players = preview.players || [];
