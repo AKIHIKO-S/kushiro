@@ -1431,6 +1431,7 @@
 
 <script src="/shared/common.js"></script>
 <script src="/shared/tournament-templates.js"></script>
+<script src="/shared/tie-order.js"></script>
 <script>
 const { h, esc, api, toast, ratingBadge, fmtDate, fmtDateShort, clear,
  parsePaste, downloadCSV, downloadJSON, openModal, EV_TYPES, ROUNDS, CATS } = TT;
@@ -9278,9 +9279,20 @@ const O = {
  const slotState = fmt.slots.map((s) => {
    const ex = existing.find(e => e && e.slot === s.key) || {};
    const gamesStr = Array.isArray(ex.games) ? ex.games.map(g => g[0] + "-" + g[1]).join(" ") : "";
-   return { slot: s.key, type: s.type, label: s.label, winner: ex.winner || "", gamesStr, wo: !!ex.walkover };
+   return { slot: s.key, type: s.type, label: s.label, winner: ex.winner || "", gamesStr, wo: !!ex.walkover,
+     homePlayers: Array.isArray(ex.home_players) ? ex.home_players.slice() : [],
+     awayPlayers: Array.isArray(ex.away_players) ? ex.away_players.slice() : [] };
  });
  let mode = fmt.slots.length ? "slots" : "score";   // slots: 試合ごと / score: チームスコア直接
+ // オーダー(出場選手)の記録は任意。既存データに選手名があれば開いた状態で復元(訂正時)。
+ let showOrder = slotState.some(st => st.homePlayers.length || st.awayPlayers.length);
+ // 選手候補は団体名簿(entrant_id 優先、無ければ正規化チーム名)。名簿外も自由入力可。
+ const homeRoster = (O.teamRosterByEid || {})[m.player1_entrant_id] || (O.teamRosterMap || {})[O._normTeam(m.player1_name)] || [];
+ const awayRoster = (O.teamRosterByEid || {})[m.player2_entrant_id] || (O.teamRosterMap || {})[O._normTeam(m.player2_name)] || [];
+ // 連続マッチ禁止のライブ判定(入力中の選手割当のみで判定。勝敗は無関係)
+ const orderEntries = () => slotState.map(st => ({ slot: st.slot,
+   home_players: (st.homePlayers || []).map(x => String(x || "").trim()).filter(Boolean),
+   away_players: (st.awayPlayers || []).map(x => String(x || "").trim()).filter(Boolean) }));
  let hScore = 0, aScore = 0;
  const container = h("div", {});
  // "11-9 11-7 9-11" → [[11,9],[11,7],[9,11]] (区切りは空白/カンマ/読点)
@@ -9317,6 +9329,21 @@ const O = {
  h("span", { style: { fontSize: "26px", fontWeight: 800 } }, `${sc.home} - ${sc.away}`),
  h("span", { className: "text-xs text-sub", style: { marginLeft: "8px" } },
  `${fmt.threshold}勝で確定` + (decided ? " ✓" : ""))));
+ // オーダー(出場選手)の記録 — 任意。コートで決まったオーダーを入力する(事前確定・公開はしない)。
+ const orderViolations = showOrder ? TTTieOrder.validateTieOrder(ev && ev.tie_format, orderEntries()) : [];
+ container.appendChild(h("div", { style: { margin: "0 0 8px" } },
+ h("button", { className: "btn btn-sm" + (showOrder ? "" : " btn-ghost"),
+ onClick: () => { showOrder = !showOrder; render(); } },
+ (showOrder ? "▾" : "▸") + " オーダー(出場選手)を記録 — 任意"),
+ showOrder && orderViolations.length
+ ? h("div", { style: { marginTop: "6px", padding: "6px 8px", borderRadius: "6px",
+   background: "#fef2f2", color: "#b91c1c", fontSize: "12px", fontWeight: 700 } },
+   ...orderViolations.map(v => h("div", {}, "⚠ " + TTTieOrder.describeViolation(v))))
+ : null));
+ if (showOrder) {
+ container.appendChild(h("datalist", { id: "tieRosterHome" }, ...homeRoster.map(n => h("option", { value: n }))));
+ container.appendChild(h("datalist", { id: "tieRosterAway" }, ...awayRoster.map(n => h("option", { value: n }))));
+ }
  slotState.forEach((st, i) => {
  const ss = summary.slots[i] || {};                 // 集計後(ゲーム得点/不戦勝から導出されたセット/勝者)
  const gderived = !st.wo && parseGames(st.gamesStr).length > 0;
@@ -9341,7 +9368,30 @@ const O = {
    style: { flex: "1", padding: "5px 7px", fontSize: "12px" },
    onInput: (e) => { st.gamesStr = e.target.value; }, onChange: () => render() }),
    gderived ? h("span", { className: "text-xs", style: { fontWeight: 700, minWidth: "56px", textAlign: "right" } },
-   `${ss.home_sets}-${ss.away_sets}` + (ss.winner ? (ss.winner === "home" ? " ◀" : " ▶") : "")) : null)));
+   `${ss.home_sets}-${ss.away_sets}` + (ss.winner ? (ss.winner === "home" ? " ◀" : " ▶") : "")) : null),
+ // オーダー入力: S/G=各1名, D=各2名。違反に関与する選手は赤枠でハイライト。
+ showOrder ? h("div", { className: "flex gap-1", style: { alignItems: "center", marginTop: "4px" } },
+   ...(() => {
+     const cnt = st.type === "D" ? 2 : 1;
+     const inMatchNo = TTTieOrder.slotKeysFor(ev && ev.tie_format).indexOf(st.slot) + 1;
+     const bad = (side, name) => orderViolations.some(v => v.side === side &&
+       TTTieOrder.normName(v.player) === TTTieOrder.normName(name) &&
+       (v.type === "same_pair" ? v.match === inMatchNo : v.matches.indexOf(inMatchNo) >= 0));
+     const mk = (side, idx) => {
+       const arr2 = side === "home" ? st.homePlayers : st.awayPlayers;
+       const val = arr2[idx] || "";
+       return h("input", { className: "input", type: "text", value: val,
+         placeholder: side === "home" ? home : away, list: side === "home" ? "tieRosterHome" : "tieRosterAway",
+         style: Object.assign({ flex: "1", minWidth: "0", padding: "4px 6px", fontSize: "12px" },
+           val && bad(side, val) ? { borderColor: "#dc2626", background: "#fef2f2" } : {}),
+         onInput: (e) => { arr2[idx] = e.target.value; }, onChange: () => render() });
+     };
+     const els = [h("span", { className: "text-xs text-sub", style: { width: "44px" } }, "出場")];
+     for (let k = 0; k < cnt; k++) els.push(mk("home", k));
+     els.push(h("span", { className: "text-xs text-sub" }, "vs"));
+     for (let k = 0; k < cnt; k++) els.push(mk("away", k));
+     return els;
+   })()) : null));
  });
  container.appendChild(h("div", { className: "score-hint" },
  isLeague
@@ -9369,13 +9419,19 @@ const O = {
  let winnerSlot, ws, ls, tie_results;
  if (mode === "slots") {
  const summary = TT.summarizeTie(slotsForSummary());
- // 勝者が決まった slot、またはゲーム得点が入力された slot を保存(セット率/得点率の母数欠落を防ぐ)。
- tie_results = summary.slots.filter(s => s.winner || (Array.isArray(s.games) && s.games.length)).map(s => {
+ // 勝者/得点が入った slot に加え、オーダー(出場選手)だけ記録した slot も保存する
+ // (オーダー交換済みだが未消化の試合=消化試合の記録を落とさない)。
+ const orders = orderEntries();
+ tie_results = summary.slots.map((s, i) => {
    const o = { slot: s.slot, type: s.type, winner: s.winner, home_sets: s.home_sets, away_sets: s.away_sets, score: s.home_sets + "-" + s.away_sets };
    if (Array.isArray(s.games) && s.games.length) o.games = s.games;
    if (s.walkover) o.walkover = true;
+   if (showOrder && orders[i]) {   // 選手割当は空配列ならキー自体を付けない(紙運用データを汚さない)
+     if (orders[i].home_players.length) o.home_players = orders[i].home_players;
+     if (orders[i].away_players.length) o.away_players = orders[i].away_players;
+   }
    return o;
- });
+ }).filter(s => s.winner || (Array.isArray(s.games) && s.games.length) || s.home_players || s.away_players);
  if (summary.home_wins === summary.away_wins) return toast("勝敗が決していません(各試合の勝者かゲーム得点を入力)", "err");
  winnerSlot = summary.home_wins > summary.away_wins ? 1 : 2;
  ws = Math.max(summary.home_wins, summary.away_wins); ls = Math.min(summary.home_wins, summary.away_wins);
@@ -9385,10 +9441,18 @@ const O = {
  if (hScore === aScore) return toast("チームスコアが同じです。勝ちチームを決めてください", "err");
  winnerSlot = hScore > aScore ? 1 : 2; ws = Math.max(hScore, aScore); ls = Math.min(hScore, aScore); tie_results = [];
  }
- const r = await api.opSend("POST", `/api/matches/${m.id}/${isCorrect ? "correct" : "finish"}`,
- { winner_slot: winnerSlot, sets: [], winner_sets: ws, loser_sets: ls, tie_results }, { tag: m.id });
+ const body = { winner_slot: winnerSlot, sets: [], winner_sets: ws, loser_sets: ls, tie_results };
+ let r = await api.opSend("POST", `/api/matches/${m.id}/${isCorrect ? "correct" : "finish"}`, body, { tag: m.id });
  if (r.queued) { document.querySelector(".modal-bg")?.remove();
  return toast("オフライン: 結果を保存しました(接続復帰後に自動送信)", "warn"); }
+ // 連続マッチ禁止違反 → 確認のうえ force で再送(オーダーはコート上の事実なので記録自体は許す)
+ if (r.error && r.needs_force) {
+ if (!confirm("オーダーが連続マッチ禁止に違反しています:\n" + r.error + "\n\nこのまま強制保存しますか？")) return;
+ r = await api.opSend("POST", `/api/matches/${m.id}/${isCorrect ? "correct" : "finish"}`,
+   Object.assign({ force: true }, body), { tag: m.id });
+ if (r.queued) { document.querySelector(".modal-bg")?.remove();
+ return toast("オフライン: 結果を保存しました(接続復帰後に自動送信)", "warn"); }
+ }
  if (r.error) return toast(r.error + (r.next_match_label ? "\n次の試合: " + r.next_match_label : ""), "err");
  toast(`団体戦の結果を${isCorrect ? "修正" : "記録"}: ${r.winner_name} ${r.winner_sets}-${r.loser_sets}`, "ok");
  document.querySelector(".modal-bg")?.remove();
