@@ -1,5 +1,5 @@
 // 団体リーグ(総当たり)の生成と順位算出の不変条件テスト。
-// 順位: 勝敗数 → セット率(Σ取得/Σ失セット) → 得点率(Σ取得/Σ失点) → 同率は抽選フラグ。
+// 順位(KTTAルール): 勝敗数 → セット得失差(Σ取得-Σ失) → 総得点(Σ取得点) → 同率は抽選フラグ。直接対決は不使用。
 // 実行: node --test test/team-league.test.js
 process.env.DB_PATH = "/tmp/ktta_league_" + process.pid + ".db";
 const { test, after } = require("node:test");
@@ -76,25 +76,25 @@ test("順位: 勝敗数で並ぶ(A全勝→D全敗)", () => {
   assert.deepStrictEqual(st.map(s => s.rank), [1, 2, 3, 4], "順位 1..4");
 });
 
-test("タイブレーク: 勝敗同数ならセット率で上位、なお同率なら得点率", () => {
-  // 3チーム総当たり、全員1勝1敗(三つ巴)。セット率と得点率で差をつける。
+test("タイブレーク: 勝敗同数ならセット得失差で上位、なお同率なら総得点", () => {
+  // 3チーム総当たり、全員1勝1敗(三つ巴)。セット得失差と総得点で差をつける。
   const t = setup(["X", "Y", "Z"]);
   db.generateTeamLeague(t.id, EV, { num_blocks: 1 });
   const ms = leagueMatches(t);
   const find = (a, b) => ms.find(m => [m.player1_name, m.player2_name].sort().join() === [a, b].sort().join());
-  // 三つ巴: X>Y, Y>Z, Z>X。X の勝ちは大差(3-0)、負けは僅差(2-3) → X のセット率を最上位に。
+  // 三つ巴: X>Y, Y>Z, Z>X。X の勝ちは大差(3-0)、負けは僅差(2-3) → X のセット得失差を最上位に。
   recordTie(t, find("X", "Y").id, "X", find("X", "Y"), 3, 0);  // X 3-0 Y
   recordTie(t, find("Y", "Z").id, "Y", find("Y", "Z"), 3, 1);  // Y 3-1 Z
   recordTie(t, find("Z", "X").id, "Z", find("Z", "X"), 3, 2);  // Z 3-2 X
   const st = db.computeLeagueStandings(t.id, EV, "A");
-  // 全員 1勝1敗。セット得失: X=3勝0負(対Y)+2勝3負(対Z)=5-3, Y=0-3+3-1=3-4, Z=1-3+3-2=4-5
+  // 全員 1勝1敗。セット得失差: X=(5-3)=+2, Y=(3-4)=-1, Z=(4-5)=-1
   assert.deepStrictEqual(st.map(s => s.wins), [1, 1, 1], "全員1勝");
-  assert.strictEqual(st[0].team_name, "X", "セット率最上位=X(5-3)");
-  // X:5/3=1.667, Z:4/5=0.8, Y:3/4=0.75 → X,Z,Y
-  assert.deepStrictEqual(st.map(s => s.team_name), ["X", "Z", "Y"], "セット率降順 X>Z>Y");
+  assert.strictEqual(st[0].team_name, "X", "セット得失差最上位=X(+2)");
+  // X:+2 → 1位確定。Z(-1)と Y(-1)は同得失差なので総得点で比較: Z>Y → X,Z,Y
+  assert.deepStrictEqual(st.map(s => s.team_name), ["X", "Z", "Y"], "セット得失差→総得点 降順 X>Z>Y");
 });
 
-test("抽選フラグ: 勝敗数・セット率・得点率すべて同率なら tiebreak='抽選'", () => {
+test("抽選フラグ: 勝敗数・セット得失差・総得点がすべて同率なら tiebreak='抽選'", () => {
   // 2チームが完全対称になるよう、2人ブロック×... ではなく、対称な4チームを作る。
   // 単純化: A vs B のみのブロックで両者が同じ成績にはならない(必ず勝敗つく)。
   // 代わりに、全試合同一スコアの3チーム三つ巴(完全対称)で抽選を誘発。
@@ -108,7 +108,7 @@ test("抽選フラグ: 勝敗数・セット率・得点率すべて同率なら
   recordTie(t, find("R", "P").id, "R", find("R", "P"), 3, 2);
   const st = db.computeLeagueStandings(t.id, EV, "A");
   assert.deepStrictEqual(st.map(s => s.wins), [1, 1, 1], "全員1勝1敗");
-  // 各チーム: セット 3+2=5 取得, 2+3=5 失 → 率1.0、得点も対称 → 全員同率
+  // 各チーム: セット 3+2=5 取得, 2+3=5 失 → 得失差0、得点も完全対称 → 全員同率
   assert.ok(st.every(s => s.tiebreak === "抽選"), "完全同率は全員 抽選フラグ");
   assert.ok(st.every(s => s.rank === 1), "同率は同順位(1位)");
 });
@@ -144,8 +144,10 @@ function recAB(m, teamA, aSlots) {
   return recExplicit(m.id, aSlots.map(([aWon, g]) => p1IsA ? [aWon, g] : [!aWon, g.map(x => [x[1], x[0]])]));
 }
 
-test("得点率タイブレーク: 勝敗・セット率が同じでも得点率で順位が決まる", () => {
-  // 3チーム三つ巴。全員1勝1敗、各対戦2-1でセット率も全員1.0。得点の大小だけで P>Q>R。
+test("総得点タイブレーク: 勝敗・セット得失差が同じでも総得点で順位が決まる", () => {
+  // 3チーム三つ巴。全員1勝1敗、各対戦2-1でセット得失差も全員0。総得点(pts_won)の大小で P>R>Q。
+  // 得点率(pts_won/pts_lost)だと P>R>Q と同じ順になるが、
+  // 同じ得点率でも率と総得点が乖離するケースは後続テストで確認。
   const t = setup(["P", "Q", "R"]);
   db.generateTeamLeague(t.id, EV, { num_blocks: 1 });
   const ms = leagueMatches(t);
@@ -155,10 +157,36 @@ test("得点率タイブレーク: 勝敗・セット率が同じでも得点率
   recAB(find("R", "P"), "R", [[true, [[11, 9]]], [true, [[11, 9]]], [false, [[1, 11]]]]); // R 僅勝・大敗
   const st = db.computeLeagueStandings(t.id, EV, "A");
   assert.deepStrictEqual(st.map(s => s.wins), [1, 1, 1], "全員1勝");
-  // セット率は全員 3-3=1.0
-  assert.ok(st.every(s => s.sets_won === 3 && s.sets_lost === 3), "セット率は全員 3-3");
-  assert.deepStrictEqual(st.map(s => s.team_name), ["P", "Q", "R"], "得点率降順 P>Q>R");
-  assert.ok(st[0].pts_rate > st[1].pts_rate && st[1].pts_rate > st[2].pts_rate, "得点率が厳密に降順");
+  // セット得失差: 全員 3-3=0
+  assert.ok(st.every(s => s.sets_won === 3 && s.sets_lost === 3), "セット得失差は全員 0(3-3)");
+  // 総得点: P=60 > R=44 > Q=42(計算: P:31+29=60, R:21+23=44, Q:13+29=42)
+  assert.deepStrictEqual(st.map(s => s.team_name), ["P", "R", "Q"], "総得点降順 P>R>Q");
+  assert.ok(st[0].pts_won > st[1].pts_won && st[1].pts_won > st[2].pts_won, "pts_won が厳密に降順");
+});
+
+test("セット率と総得点で順位が逆転するケース: 率と差は乖離する(KTTAルールは差優先)", () => {
+  // 3チーム三つ巴。全員1勝1敗・セット得失差0(3-3)だが総得点の差で順位が決まる。
+  // 旧ルール(セット率)では P(1.31)>R(1.12)>Q(0.68) だが、
+  // KTTAルール(総得点)では R(57)>P(51)>Q(39) に逆転する。
+  const t = setup(["P", "Q", "R"]);
+  db.generateTeamLeague(t.id, EV, { num_blocks: 1 });
+  const ms = leagueMatches(t);
+  const find = (a, b) => ms.find(m => [m.player1_name, m.player2_name].sort().join() === [a, b].sort().join());
+  // P>Q 3-0(P:11/game, Q:2/game), Q>R 3-0(Q:11/game, R:8/game), R>P 3-0(R:11/game, P:6/game)
+  recAB(find("P", "Q"), "P", [[true, [[11, 2]]], [true, [[11, 2]]], [true, [[11, 2]]]]);
+  recAB(find("Q", "R"), "Q", [[true, [[11, 8]]], [true, [[11, 8]]], [true, [[11, 8]]]]);
+  recAB(find("R", "P"), "R", [[true, [[11, 6]]], [true, [[11, 6]]], [true, [[11, 6]]]]);
+  const st = db.computeLeagueStandings(t.id, EV, "A");
+  assert.deepStrictEqual(st.map(s => s.wins), [1, 1, 1], "全員1勝1敗");
+  // 得失差: 全員 3-3=0
+  assert.ok(st.every(s => st[0].set_diff === 0), "セット得失差は全員0");
+  // 総得点: R(33+24=57) > P(33+18=51) > Q(6+33=39)
+  assert.deepStrictEqual(st.map(s => s.team_name), ["R", "P", "Q"], "総得点降順 R>P>Q");
+  assert.ok(st[0].pts_won > st[1].pts_won && st[1].pts_won > st[2].pts_won, "pts_won 厳密降順");
+  // 確認: 旧方式(セット率)ならP>R>Q になるが KTTAルールは総得点優先
+  const rateP = st.find(s => s.team_name === "P").pts_rate;
+  const rateR = st.find(s => s.team_name === "R").pts_rate;
+  assert.ok(rateP > rateR, "得点率はP>Rだが KTTAルール(総得点)ではR>P に逆転");
 });
 
 test("訂正(correctResult): 勝者反転してもゲーム得点(games)が保持され順位に反映", () => {

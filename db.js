@@ -4141,7 +4141,7 @@ function importBracketRoundtrip(tournamentId, rows, opts) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// 団体リーグ(総当たり) — round-robin 生成 + 順位算出(勝敗数→セット率→得点率)
+// 団体リーグ(総当たり) — round-robin 生成 + 順位算出(勝敗数→セット得失差→総得点)
 // ════════════════════════════════════════════════════════════════════
 
 // tie_results(個別試合の配列)から各試合のセット数・得点と tie 全体の集計を導出する。
@@ -4221,15 +4221,16 @@ function tieOrderViolations(m, data) {
   return v.length ? v : null;
 }
 
-// 率(取得/失)の降順比較。a が上位なら負、b が上位なら正(Array.sort 準拠)。0除算を安全に扱う。
-// 規約: 失0 かつ 取得>0 = ∞(最上位)。失0 かつ 取得0 = 0-0(データ無し=最下位)。∞同士・0-0同士は同率(0)。
-// これにより「未消化(0-0)チームが実際に戦って負けたチームより上位」「∞同士が同率にならない」を防ぐ。
-function cmpRateDesc(aw, al, bw, bl) {
-  const aInf = al === 0, bInf = bl === 0;
-  if (aInf && bInf) return (bw > 0 ? 1 : 0) - (aw > 0 ? 1 : 0); // ∞>0-0、∞同士・0-0同士は同率
-  if (aInf) return aw > 0 ? -1 : 1;            // a が失0: 取得>0なら∞=上位、0-0なら下位
-  if (bInf) return bw > 0 ? 1 : -1;            // b が失0: 取得>0なら∞=上位、0-0なら下位
-  return (bw * al) - (aw * bl);                // 双方失あり: bw/bl - aw/al の符号(降順)
+// 得失差(取得-失)の降順比較。KTTA正式規則のタイブレーク用。
+// 取得0・失0(=未消化チーム)は実際に戦って負けたチームより下位に置く。
+// 未消化同士は 0(同率)として次のタイブレーク(総得点)へ委ねる。
+function cmpDiffDesc(aw, al, bw, bl) {
+  const aNone = aw === 0 && al === 0;
+  const bNone = bw === 0 && bl === 0;
+  if (aNone && bNone) return 0;
+  if (aNone) return 1;    // a が未消化 → 下位
+  if (bNone) return -1;   // b が未消化 → 下位
+  return (bw - bl) - (aw - al);   // 得失差の降順
 }
 
 // 円卓法で総当たりの巡(round)を生成。各巡は [home,away] ペアの配列。奇数はBYE。
@@ -4315,8 +4316,8 @@ function generateTeamLeague(tournamentId, event, opts = {}) {
 }
 
 // 団体リーグの順位を算出(派生・読取専用。matches を集計するだけで行は変更しない)。
-// 順位: 勝敗数(勝った対戦数) → セット率(Σ取得/Σ失セット) → 得点率(Σ取得/Σ失点) → 同率は抽選フラグ。
-// block 省略時は全ブロックを返す(blocks:{A:[…],B:[…]})。
+// 順位(KTTAルール): 勝敗数(勝った対戦数) → セット得失差(Σ取得-Σ失) → 総得点(Σ取得点) → 同率は抽選フラグ。
+// 直接対決は使用しない。block 省略時は全ブロックを返す(blocks:{A:[…],B:[…]})。
 function computeLeagueStandings(tournamentId, event, block) {
   const blocksStmt = block
     ? sqlite.prepare("SELECT DISTINCT league_block AS b FROM matches WHERE tournament_id=? AND event=? AND league_block=?")
@@ -4362,14 +4363,14 @@ function computeLeagueStandings(tournamentId, event, block) {
     }));
     arr.sort((a, b) =>
       (b.wins - a.wins) ||
-      cmpRateDesc(a.sets_won, a.sets_lost, b.sets_won, b.sets_lost) ||
-      cmpRateDesc(a.pts_won, a.pts_lost, b.pts_won, b.pts_lost) ||
+      cmpDiffDesc(a.sets_won, a.sets_lost, b.sets_won, b.sets_lost) ||
+      (b.pts_won - a.pts_won) ||
       String(a.team_name).localeCompare(String(b.team_name), "ja"));
-    // 同順位: 勝敗数・セット率・得点率がすべて同じ。抽選フラグは「両者とも1試合以上消化」のときだけ付ける
+    // 同順位: 勝敗数・セット得失差・総得点がすべて同じ。抽選フラグは「両者とも1試合以上消化」のときだけ付ける
     // (未消化 0-0 同士に「順位は抽選」と公開表示してしまうのを防ぐ)。
     const sameKey = (x, y) => (x.wins === y.wins) &&
-      cmpRateDesc(x.sets_won, x.sets_lost, y.sets_won, y.sets_lost) === 0 &&
-      cmpRateDesc(x.pts_won, x.pts_lost, y.pts_won, y.pts_lost) === 0;
+      cmpDiffDesc(x.sets_won, x.sets_lost, y.sets_won, y.sets_lost) === 0 &&
+      x.pts_won === y.pts_won;
     let rank = 0;
     arr.forEach((t, i) => { if (i === 0 || !sameKey(t, arr[i - 1])) rank = i + 1; t.rank = rank; });
     arr.forEach((t) => {
