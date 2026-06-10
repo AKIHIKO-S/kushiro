@@ -1343,10 +1343,16 @@ const V = {
      ...m.tie_results.map(r => {
        const winName = r.winner === "home" ? (m.player1_name || "ホーム")
          : r.winner === "away" ? (m.player2_name || "アウェイ") : "—";
-       return h("div", { className: "flex", style: { justifyContent: "space-between", fontSize: "13px", padding: "3px 0", borderBottom: "1px solid #eef2f7" } },
-         h("span", { className: "text-sub", style: { width: "52px" } }, r.slot || ""),
-         h("span", { className: "font-bold", style: { flex: "1" } }, winName, r.winner ? " ○" : ""),
-         r.score ? h("span", { className: "text-sub", style: { fontFamily: "monospace" } }, r.score) : null);
+       // オーダー(出場選手)が記録されていれば2行目に表示 (例: 山田・佐藤 vs 鈴木)
+       const hp = Array.isArray(r.home_players) ? r.home_players.filter(Boolean) : [];
+       const ap = Array.isArray(r.away_players) ? r.away_players.filter(Boolean) : [];
+       return h("div", { style: { padding: "3px 0", borderBottom: "1px solid #eef2f7" } },
+         h("div", { className: "flex", style: { justifyContent: "space-between", fontSize: "13px" } },
+           h("span", { className: "text-sub", style: { width: "52px" } }, r.slot || ""),
+           h("span", { className: "font-bold", style: { flex: "1" } }, winName, r.winner ? " ○" : ""),
+           r.score ? h("span", { className: "text-sub", style: { fontFamily: "monospace" } }, r.score) : null),
+         (hp.length || ap.length) ? h("div", { className: "text-sub", style: { fontSize: "11.5px", paddingLeft: "52px" } },
+           (hp.join("・") || "—") + " vs " + (ap.join("・") || "—")) : null);
      })) : null,
    m.loser_name ? h("div", { style: { padding: "10px", marginTop: "8px", background: "#f8fafc", borderRadius: "8px" } },
      h("div", { className: "text-sub" }, "" + m.loser_name,
