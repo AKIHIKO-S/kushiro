@@ -4,6 +4,7 @@
 **独立ライブラリ**。本体(server.js / db.js)にはロジックを置かず、
 subprocess(`python3 -m bracket_parser FILE.xlsx`)で疎結合に呼ぶ前提で設計。
 依存は **openpyxl のみ**(罫線=セル境界線を読めるのが SheetJS に対する決定的優位)。
+インストールは `pip install -r tools/bracket_parser/requirements.txt`。
 
 ## 実測精度(VICTAS杯 2026 / 正解JSON突合)
 

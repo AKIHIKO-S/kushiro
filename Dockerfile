@@ -1,5 +1,5 @@
 # Dockerfile (Fly.io / Railway / Docker Compose 等で利用可能)
-FROM node:20-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 
