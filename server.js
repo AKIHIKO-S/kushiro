@@ -703,12 +703,6 @@ app.get("/api/public/players/:id/opponents", (req, res) => {
 app.get("/api/public/players/:id/event-stats", (req, res) => {
   res.json(db.getPlayerEventStats(req.params.id));
 });
-app.get("/api/public/head-to-head", publicSearchRateLimit, (req, res) => {
-  const { p1, p2 } = req.query;
-  if (!p1 || !p2) return res.status(400).json({ error: "p1 と p2 が必要です" });
-  res.json(db.getHeadToHead(p1, p2));
-});
-
 // ── 公開申込 (大会への申込) ─────────────────────────
 app.get("/api/public/open-tournaments", (req, res) => {
   res.json(db.getOpenTournaments().map(sanitizeTournamentPublic));
@@ -3855,7 +3849,6 @@ app.post("/api/sync/tournament", requireAdmin, (req, res) => {
 
 // ═══ インポート/エクスポート ══════════════════════════
 app.get("/api/export/all", requireOwner, (req, res) => { auditOwner(req, "export_all", ""); res.json(db.exportAllData()); });
-app.get("/api/export/players", requireOwner, (req, res) => { auditOwner(req, "export_players", ""); res.json(db.exportAllData()); });
 app.post("/api/import/players", requireAdmin, (req, res) => {
   res.json(db.importPlayers(req.body.players || []));
 });

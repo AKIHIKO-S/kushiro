@@ -5781,19 +5781,6 @@ function getPlayerOpponents(playerId) {
   })).sort((a, b) => b.total - a.total);
 }
 
-function getHeadToHead(p1Id, p2Id) {
-  const matches = sqlite.prepare(`
-    SELECT m.*, t.name AS tournament_name, t.date AS tournament_date
-    FROM matches m LEFT JOIN tournaments t ON m.tournament_id = t.id
-    WHERE m.status = 'completed' AND COALESCE(m.is_walkover,0) = 0 AND
-      ((m.winner_id = ? AND m.loser_id = ?) OR (m.winner_id = ? AND m.loser_id = ?))
-    ORDER BY t.date DESC, m.created_at DESC
-  `).all(p1Id, p2Id, p2Id, p1Id).map(m => ({ ...m, sets: JSON.parse(m.sets_json || "[]") }));
-  const p1Wins = matches.filter(m => m.winner_id === p1Id).length;
-  const p2Wins = matches.filter(m => m.winner_id === p2Id).length;
-  return { p1_id: p1Id, p2_id: p2Id, p1_wins: p1Wins, p2_wins: p2Wins, total: matches.length, matches };
-}
-
 // 選手の種目別統計
 function getPlayerEventStats(playerId) {
   const stats = sqlite.prepare(`
@@ -8510,7 +8497,7 @@ module.exports = {
   // 操作ログ + Undo
   snapshotMatchRows, collectForwardChain, recordOp, getOpLog, undoLastOp,
   // ベスト8 (準々決勝進出者)
-  getEventBest8, getAllBest8,
+  getAllBest8,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
   mergePlayers, findDuplicatePlayerCandidates,
   // 監督・顧問モード (#285)
@@ -8546,7 +8533,7 @@ module.exports = {
   getBracket, deleteEventMatches, deleteRoster, rosterStats, setCourtLayout,
   // 試合検索 / H2H / 選手統計
   searchMatches, countMatchesForSearch, getSearchFilters,
-  getPlayerOpponents, getHeadToHead, getPlayerEventStats,
+  getPlayerOpponents, getPlayerEventStats,
   // 個別戦績 (手動)
   createManualMatch, getPlayerMatchesForEdit,
   // 申込
