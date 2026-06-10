@@ -39,13 +39,12 @@
 
 ## 2. 推奨ホスティング構成
 
-### A. お試し (初期費用ほぼ0円)
-- **Render.com 無料プラン** または **Railway.app**
-- 月100時間まで無料 (大会日数分なら十分)
-- HTTPS 自動付与・自動デプロイ
-- 注意: 15分アクセス無いとスリープ (起動に5秒)
+### A. 現行の本番構成 (Oracle Cloud Always Free・¥0/月)
+- **Oracle Cloud** 上で systemd `ktta.service` + nginx (構築は ORACLE_CLOUD_DEPLOY.md)
+- main へ push → GitHub Actions がテスト→自動デプロイ
+- 常時起動・カスタムドメイン・HTTPS (certbot)
 
-### B. 本番安定運用 (¥500〜¥1,500/月)
+### B. 代替 (¥500〜¥1,500/月)
 - **Vultr/Sakura クラウド/Lightsail VPS** 1GB プラン
 - 常時起動・カスタムドメイン対応
 - 月¥500〜
@@ -137,14 +136,12 @@
 
 ### ステップ2: KTTA Platform サーバー設定 (30分)
 
-#### Render.com 編 (推奨初期構成)
-1. GitHub に `kttatakkyu/tabletennis` を private push
-2. Render.com → New → Web Service → 上記リポを選択
-3. Environment 設定:
-   - `NODE_ENV=production`
-   - `ADMIN_KEY=ランダムな20文字`
-   - `PORT=10000` (Render既定)
-4. Deploy 完了 → URL コピー (例: `https://ktta.onrender.com`)
+#### Oracle Cloud 編 (現行の本番構成)
+ORACLE_CLOUD_DEPLOY.md の手順どおり。要点:
+1. GitHub にリポジトリを push (GitHub Actions の Secrets に ORACLE_HOST/ORACLE_SSH_KEY/ORACLE_USER)
+2. サーバーで `deploy/install.sh` を実行 (Node/nginx/systemd を構成)
+3. `/etc/ktta.env` に `NODE_ENV=production` `ADMIN_KEY=ランダムな20文字` 等を設定
+4. main へ push すると自動デプロイ → URL を確認
 
 #### VPS 編 (Vultr 1GB 例)
 ```bash
@@ -165,7 +162,7 @@ sudo certbot --nginx -d kttatakkyu.example.com
 ### ステップ3: 管理画面 初期設定 (10分)
 
 1. `https://yourdomain/admin/` を開く
-2. 管理キー入力 (Render: 環境変数 / VPS: settings 画面)
+2. 管理キー入力 (本番: `/etc/ktta.env` の ADMIN_KEY / VPS: settings 画面)
 3. 設定アイコン (⚙) → 印鑑画像アップロード
 4. 「本番URL設定」 → 公開ドメイン入力
 5. **「登録団体マスタ（取込で団体を選手にしない）」** に、よく出る団体（クラブ・学校）名を登録しておく

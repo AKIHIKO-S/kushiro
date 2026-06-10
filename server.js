@@ -4055,7 +4055,7 @@ app.use("/widget", cacheMw, express.static(path.join(publicDir, "widget"), stati
 app.use("/ref", cacheMw, express.static(path.join(publicDir, "ref"), staticOpts)); // 審判結果入力ページ
 
 // 運用マニュアル (Markdown)
-for (const docName of ["OPERATIONS.md", "RENDER_DEPLOY.md", "UPDATE_WORKFLOW.md", "HOSTING.md",
+for (const docName of ["OPERATIONS.md", "UPDATE_WORKFLOW.md",
                        "ORACLE_CLOUD_DEPLOY.md", "ORACLE_BEGINNER.md", "CLOUDFLARE_SETUP.md"]) {
   app.get("/" + docName, (req, res) => {
     const f = path.join(__dirname, docName);
