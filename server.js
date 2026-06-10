@@ -980,7 +980,9 @@ app.post("/api/players/normalize-categories", requireAdmin, (req, res) => {
 });
 
 app.delete("/api/players/:id", requireAdmin, (req, res) => {
-  db.deletePlayer(req.params.id); res.json({ ok: true });
+  const r = db.deletePlayer(req.params.id);
+  if (r && r.error) return res.status(409).json(r);   // 統合済み/リダイレクト先は削除不可
+  res.json({ ok: true });
 });
 // 全選手削除の素の経路もオーナーへ隔離(UIは確認付きの /api/owner/players/delete-all を使う)。
 app.delete("/api/players", requireOwner, (req, res) => {
@@ -992,9 +994,23 @@ app.get("/api/player-merge/candidates", requireAdmin, (req, res) => {
   res.json(db.findDuplicatePlayerCandidates());
 });
 app.post("/api/players/:id/merge", requireOwner, (req, res) => {
-  const r = db.mergePlayers(req.params.id, (req.body || {}).duplicate_id);
+  const operator = (req.body || {}).operator || ownerOperator(req);
+  const r = db.mergePlayers(req.params.id, (req.body || {}).duplicate_id, { operator });
   if (r.error) return res.status(400).json(r);
-  auditOwner(req, "players_merge", "survivor=" + req.params.id + " dup=" + ((req.body || {}).duplicate_id || ""));
+  auditOwner(req, "players_merge", "survivor=" + req.params.id + " dup=" + ((req.body || {}).duplicate_id || "") +
+    " merge_id=" + (r.merge_id || ""));
+  res.json(r);
+});
+// マージ履歴 + 取り消し (リダイレクト方式: 統合元IDは merged_into で残るため正確に分離できる)
+app.get("/api/player-merges", requireOwner, (req, res) => {
+  res.json({ merges: db.listPlayerMerges(req.query.limit) });
+});
+app.post("/api/player-merges/:id/undo", requireOwner, (req, res) => {
+  const operator = (req.body || {}).operator || ownerOperator(req);
+  const r = db.unmergePlayers(req.params.id, { operator });
+  if (r.error) return res.status(400).json(r);
+  auditOwner(req, "players_merge_undo", "merge_id=" + req.params.id +
+    " survivor=" + (r.survivor_id || "") + " dup=" + (r.dup_id || ""));
   res.json(r);
 });
 

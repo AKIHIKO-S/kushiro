@@ -411,6 +411,21 @@ sqlite.exec(`
     created_at TEXT DEFAULT (datetime('now','localtime'))
   );
   CREATE INDEX IF NOT EXISTS idx_regteam_norm ON registered_teams(normalized);
+
+  -- 選手マージの台帳 (リダイレクト方式 #275改)。refs_json=付け替えた行IDの台帳(テーブル.列ごと)、
+  -- survivor_before_json=空欄補完前の survivor フィールド。unmerge(取り消し)が正確に戻すための機械可読状態。
+  -- 証跡(いつ/誰が)は owner_audit と二重記録(役割分担: audit=証跡 / 本テーブル=undo用状態)。
+  CREATE TABLE IF NOT EXISTS player_merges (
+    id TEXT PRIMARY KEY,
+    survivor_id TEXT NOT NULL,
+    dup_id TEXT NOT NULL,
+    operator TEXT DEFAULT '',
+    refs_json TEXT DEFAULT '{}',
+    survivor_before_json TEXT DEFAULT '{}',
+    merged_at TEXT DEFAULT (datetime('now','localtime')),
+    undone_at TEXT DEFAULT '',
+    undo_operator TEXT DEFAULT ''
+  );
 `);
 
 // 既存DBにカラムがない場合は追加
@@ -421,6 +436,10 @@ try {
   }
   if (!pcols.find(c => c.name === "branch")) {
     sqlite.exec("ALTER TABLE players ADD COLUMN branch TEXT DEFAULT ''");
+  }
+  // 選手マージのリダイレクト (NULL=現役 / 値=統合先の選手ID。統合済み行は一覧から除外される)
+  if (!pcols.find(c => c.name === "merged_into")) {
+    sqlite.exec("ALTER TABLE players ADD COLUMN merged_into TEXT");
   }
   const tcols = sqlite.prepare("PRAGMA table_info(tournaments)").all();
   if (!tcols.find(c => c.name === "status")) {
@@ -817,10 +836,11 @@ const stmts = {
       WHERE loser_name!='BYE' AND winner_name!='BYE' AND COALESCE(is_walkover,0)=0
       GROUP BY loser_id
     ) ml ON ml.pid = p.id
+    WHERE p.merged_into IS NULL
   `),
   getPlayer: sqlite.prepare(`SELECT * FROM players WHERE id = ?`),
   // 集計を伴わない軽量版 (バルク取込の重複判定用 #5)。getPlayers の 3 LEFT JOIN+GROUP BY を避ける。
-  getPlayersLite: sqlite.prepare(`SELECT id, name, furigana, team, branch, gender, category, note, appearances, rating FROM players`),
+  getPlayersLite: sqlite.prepare(`SELECT id, name, furigana, team, branch, gender, category, note, appearances, rating FROM players WHERE merged_into IS NULL`),
   getAchievements: sqlite.prepare(`SELECT * FROM achievements WHERE player_id = ? ORDER BY year DESC`),
   insertPlayer: sqlite.prepare(`
     INSERT INTO players (id, name, furigana, team, branch, gender, category, note, appearances, rating)
@@ -933,8 +953,8 @@ const stmts = {
   clearTournamentPlayers: sqlite.prepare(`DELETE FROM tournament_players WHERE tournament_id=?`),
 
   // 統計
-  countPlayers: sqlite.prepare(`SELECT COUNT(*) AS count FROM players`),
-  countTeams: sqlite.prepare(`SELECT COUNT(DISTINCT team) AS count FROM players WHERE team != ''`),
+  countPlayers: sqlite.prepare(`SELECT COUNT(*) AS count FROM players WHERE merged_into IS NULL`),
+  countTeams: sqlite.prepare(`SELECT COUNT(DISTINCT team) AS count FROM players WHERE team != '' AND merged_into IS NULL`),
   countAchievements: sqlite.prepare(`SELECT COUNT(*) AS count FROM achievements`),
   countMatches: sqlite.prepare(`SELECT COUNT(*) AS count FROM matches`),
   countTournaments: sqlite.prepare(`SELECT COUNT(*) AS count FROM tournaments`),
@@ -946,8 +966,9 @@ const stmts = {
       (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id) AS total,
       ${MATCH_WL_SUBQ}
     FROM players p
-    WHERE (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id) > 0
-       OR (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id OR m.loser_id=p.id) > 0
+    WHERE p.merged_into IS NULL AND (
+         (SELECT COUNT(*) FROM achievements a WHERE a.player_id=p.id) > 0
+      OR (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id OR m.loser_id=p.id) > 0)
     ORDER BY total DESC, match_wins DESC
     LIMIT 20
   `),
@@ -955,7 +976,8 @@ const stmts = {
     SELECT p.id, p.name, p.team, p.rating, p.gender, p.category,
       ${MATCH_WL_SUBQ}
     FROM players p
-    WHERE (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id OR m.loser_id=p.id) > 0
+    WHERE p.merged_into IS NULL
+      AND (SELECT COUNT(*) FROM matches m WHERE m.winner_id=p.id OR m.loser_id=p.id) > 0
     ORDER BY rating DESC LIMIT 50
   `),
 };
@@ -988,15 +1010,32 @@ function getPlayers({ search, gender, category, team, sort } = {}) {
   return rows;
 }
 
+// 統合(マージ)済みの選手IDを統合先へ解決する (A→B→C のチェーン対応・最大10段)。
+// 「IDで選手を引く」共通経路はここを通すことで、旧IDのリンク/QR/ブックマークが切れない。
+function resolvePlayerId(id) {
+  let cur = id, hops = 0;
+  while (cur && hops < 10) {
+    const row = sqlite.prepare("SELECT merged_into FROM players WHERE id = ?").get(cur);
+    if (!row || !row.merged_into) return cur;
+    cur = row.merged_into; hops++;
+  }
+  return cur;
+}
+
 function getPlayer(id) {
-  const player = stmts.getPlayer.get(id);
+  let player = stmts.getPlayer.get(id);
+  if (player && player.merged_into) {
+    // 統合済みID → 統合先(正)の選手を返す。redirected_from で旧ID経由だと分かるようにする。
+    const resolved = stmts.getPlayer.get(resolvePlayerId(id));
+    if (resolved) { player = resolved; player.redirected_from = id; }
+  }
   if (!player) return null;
-  player.achievements = stmts.getAchievements.all(id);
-  player.matches = stmts.getMatchesByPlayer.all(id, id).map(m => ({
+  player.achievements = stmts.getAchievements.all(player.id);
+  player.matches = stmts.getMatchesByPlayer.all(player.id, player.id).map(m => ({
     ...m, sets: JSON.parse(m.sets_json || "[]")
   }));
   // 大会レベル別の勝敗内訳 (全道/全国の戦績を別記録)
-  player.level_stats = getPlayerLevelStats(id);
+  player.level_stats = getPlayerLevelStats(player.id);
   return player;
 }
 
@@ -1272,6 +1311,7 @@ function createPlayer(data) {
 function updatePlayer(id, data) {
   const existing = stmts.getPlayer.get(id);
   if (!existing) return null;
+  if (existing.merged_into) return null;   // 統合済み行は編集不可 (リダイレクト/undo の正確性を守る)
   stmts.updatePlayer.run({
     id,
     name: data.name ?? existing.name,
@@ -1287,34 +1327,91 @@ function updatePlayer(id, data) {
   return getPlayer(id);
 }
 
-function deletePlayer(id) { stmts.deletePlayer.run(id); }
+function deletePlayer(id) {
+  const p = stmts.getPlayer.get(id);
+  if (p && p.merged_into) {
+    return { error: "統合済みの選手は削除できません。先にマージを取り消してください" };
+  }
+  // この選手を統合先とする旧ID(リダイレクト)が残っている間は削除不可 (リンク切れ防止)
+  if (sqlite.prepare("SELECT 1 FROM players WHERE merged_into = ? LIMIT 1").get(id)) {
+    return { error: "この選手には統合済みの旧IDがあります。先にマージを取り消してください" };
+  }
+  stmts.deletePlayer.run(id);
+  return { ok: true };
+}
 function deleteAllPlayers() { stmts.deleteAllPlayers.run(); }
 
-// ── 選手の重複結合 (マージ) #275 ──
-// dupId を survivorId に統合し、戦績(matches)・入賞(achievements)・申込(entrants)・
-// 出場(tournament_players)・通知(push)の参照をすべて付け替えてから dup を削除する。
-// 戦績の勝敗数は winner_id/loser_id から算出されるため、ID付け替えで自動的に正しくなる。
-function mergePlayers(survivorId, dupId) {
+// ── 選手の重複結合 (マージ) #275 → リダイレクト方式 ──
+// dupId の参照(下の MERGE_REPOINT + 複合PKテーブル)をすべて survivorId へ付け替え、
+// dup 行は削除せず merged_into=survivorId の「統合済み(リダイレクト)」として残す。
+// 付け替えた行は player_merges.refs_json に台帳として記録し、unmergePlayers で正確に取り消せる。
+// ドメインルール: 残す側は「古いID(先に登録された方)」が既定。消える側のIDは物理削除しない。
+// rating は dup 行に凍結し合算しない(Elo の post-rating 再計算禁止規約)。
+// ※ 選手IDを参照するテーブルを増やしたら、必ず MERGE_REPOINT(単純列) か
+//    mergePlayers/unmergePlayers の複合PK処理に追加すること(回帰: test/player-merge.test.js)。
+const MERGE_REPOINT = [
+  ["matches", "winner_id"], ["matches", "loser_id"], ["matches", "referee_id"],
+  ["matches", "player1_id"], ["matches", "player2_id"],
+  ["achievements", "player_id"],
+  ["entrants", "player_id"], ["entrants", "partner_player_id"],
+  ["player_requests", "player_id"],
+];
+function mergePlayers(survivorId, dupId, opts = {}) {
   if (!survivorId || !dupId) return { error: "結合する2名を指定してください" };
   if (survivorId === dupId) return { error: "同一の選手は結合できません" };
   const survivor = stmts.getPlayer.get(survivorId);
   const dup = stmts.getPlayer.get(dupId);
   if (!survivor || !dup) return { error: "選手が見つかりません" };
+  if (survivor.merged_into) return { error: "統合先の選手が既に別の選手へ統合済みです。先にそのマージを取り消してください" };
+  if (dup.merged_into) return { error: "統合元の選手は既に統合済みです。先にそのマージを取り消してください" };
+  const mergeId = uid();
   const tx = sqlite.transaction(() => {
-    const repoint = [
-      ["matches", "winner_id"], ["matches", "loser_id"], ["matches", "referee_id"],
-      ["matches", "player1_id"], ["matches", "player2_id"],
-      ["achievements", "player_id"],
-      ["entrants", "player_id"], ["entrants", "partner_player_id"],
-      ["push_subscriptions", "player_id"],
-    ];
-    for (const [tbl, col] of repoint) {
+    const refs = {};
+    // 単純列(各行は TEXT PRIMARY KEY の id を持つ): 付け替えた行IDを台帳に記録してから UPDATE
+    for (const [tbl, col] of MERGE_REPOINT) {
+      const ids = sqlite.prepare(`SELECT id FROM ${tbl} WHERE ${col} = ?`).all(dupId).map(r => r.id);
+      if (!ids.length) continue;
+      refs[tbl + "." + col] = ids;
       sqlite.prepare(`UPDATE ${tbl} SET ${col} = ? WHERE ${col} = ?`).run(survivorId, dupId);
     }
-    // tournament_players は (tournament_id, player_id, event) が主キー。
-    // 両者が同一大会・同一種目に居ると衝突するため OR IGNORE。残りは下の dup 削除で CASCADE 消去。
-    sqlite.prepare(`UPDATE OR IGNORE tournament_players SET player_id = ? WHERE player_id = ?`).run(survivorId, dupId);
-    // survivor の空欄を dup の値で補完 + 出場回数を合算
+    // push_subscriptions: PK は endpoint
+    const eps = sqlite.prepare(`SELECT endpoint FROM push_subscriptions WHERE player_id = ?`).all(dupId).map(r => r.endpoint);
+    if (eps.length) {
+      refs["push_subscriptions.player_id"] = eps;
+      sqlite.prepare(`UPDATE push_subscriptions SET player_id = ? WHERE player_id = ?`).run(survivorId, dupId);
+    }
+    // tournament_players (tournament_id, player_id, event) 複合PK:
+    // survivor 側と衝突する行はスナップショット保存のうえ削除、残りは付け替え(旧実装の OR IGNORE+CASCADE 任せを置換)
+    const tpConf = sqlite.prepare(`SELECT * FROM tournament_players tp WHERE tp.player_id = ? AND EXISTS (
+      SELECT 1 FROM tournament_players s WHERE s.player_id = ? AND s.tournament_id = tp.tournament_id AND s.event = tp.event)`)
+      .all(dupId, survivorId);
+    if (tpConf.length) {
+      refs["tournament_players.deleted"] = tpConf;
+      const del = sqlite.prepare(`DELETE FROM tournament_players WHERE tournament_id=? AND player_id=? AND event=?`);
+      tpConf.forEach(r => del.run(r.tournament_id, dupId, r.event));
+    }
+    const tpMoved = sqlite.prepare(`SELECT tournament_id, event FROM tournament_players WHERE player_id = ?`).all(dupId);
+    if (tpMoved.length) {
+      refs["tournament_players.moved"] = tpMoved;
+      sqlite.prepare(`UPDATE tournament_players SET player_id = ? WHERE player_id = ?`).run(survivorId, dupId);
+    }
+    // coach_players (coach_id, player_id) 複合PK: 監督のマイ選手リンク(旧実装は付け替え漏れ=CASCADEで消失していた)
+    const cpConf = sqlite.prepare(`SELECT * FROM coach_players WHERE player_id = ? AND coach_id IN (
+      SELECT coach_id FROM coach_players WHERE player_id = ?)`).all(dupId, survivorId);
+    if (cpConf.length) {
+      refs["coach_players.deleted"] = cpConf;
+      const del = sqlite.prepare(`DELETE FROM coach_players WHERE coach_id=? AND player_id=?`);
+      cpConf.forEach(r => del.run(r.coach_id, dupId));
+    }
+    const cpMoved = sqlite.prepare(`SELECT coach_id FROM coach_players WHERE player_id = ?`).all(dupId).map(r => r.coach_id);
+    if (cpMoved.length) {
+      refs["coach_players.moved"] = cpMoved;
+      sqlite.prepare(`UPDATE coach_players SET player_id = ? WHERE player_id = ?`).run(survivorId, dupId);
+    }
+    // survivor の空欄を dup の値で補完 + 出場回数を合算 (undo 用に補完前の値を記録)
+    const before = { furigana: survivor.furigana || "", team: survivor.team || "",
+      branch: survivor.branch || "", note: survivor.note || "",
+      added_appearances: dup.appearances || 0 };
     sqlite.prepare(`UPDATE players SET
       furigana = CASE WHEN COALESCE(furigana,'')='' THEN ? ELSE furigana END,
       team     = CASE WHEN COALESCE(team,'')=''     THEN ? ELSE team END,
@@ -1323,10 +1420,101 @@ function mergePlayers(survivorId, dupId) {
       appearances = COALESCE(appearances,0) + ?,
       updated_at  = datetime('now','localtime')
       WHERE id = ?`).run(dup.furigana || "", dup.team || "", dup.branch || "", dup.note || "", dup.appearances || 0, survivorId);
-    stmts.deletePlayer.run(dupId);   // 残参照は ON DELETE CASCADE / SET NULL
+    // dup は削除せず「統合済み」として残す (旧IDのリンク温存 + 取り消し可能 + 改姓前表記の証跡)
+    sqlite.prepare(`UPDATE players SET merged_into = ?, updated_at = datetime('now','localtime') WHERE id = ?`)
+      .run(survivorId, dupId);
+    sqlite.prepare(`INSERT INTO player_merges (id, survivor_id, dup_id, operator, refs_json, survivor_before_json)
+      VALUES (?,?,?,?,?,?)`)
+      .run(mergeId, survivorId, dupId, String(opts.operator || ""), JSON.stringify(refs), JSON.stringify(before));
   });
   tx();
-  return { ok: true, survivor: getPlayer(survivorId), merged_name: dup.name };
+  return { ok: true, merge_id: mergeId, survivor: getPlayer(survivorId), merged_name: dup.name };
+}
+
+// マージの取り消し(分離)。refs_json の台帳に記録された行「だけ」を dup へ戻すため、
+// マージ後に survivor へ新規蓄積した戦績は影響を受けない(設計上の正しい挙動)。
+// LIFO 制約: 当該2選手が関与する、より新しい未取消マージがあれば先にそちらを取り消す。
+function unmergePlayers(mergeId, opts = {}) {
+  const log = sqlite.prepare(`SELECT * FROM player_merges WHERE id = ?`).get(mergeId);
+  if (!log) return { error: "マージ記録が見つかりません" };
+  if (log.undone_at) return { error: "このマージは既に取り消し済みです" };
+  const dup = stmts.getPlayer.get(log.dup_id);
+  const survivor = stmts.getPlayer.get(log.survivor_id);
+  if (!dup || !survivor || dup.merged_into !== log.survivor_id) {
+    return { error: "統合元の状態がマージ時と一致しません(取り消し不可)" };
+  }
+  const newer = sqlite.prepare(`SELECT id FROM player_merges
+    WHERE undone_at = '' AND rowid > (SELECT rowid FROM player_merges WHERE id = ?)
+      AND (survivor_id IN (?,?) OR dup_id IN (?,?)) LIMIT 1`)
+    .get(mergeId, log.survivor_id, log.dup_id, log.survivor_id, log.dup_id);
+  if (newer) {
+    return { error: "この選手が関与する、より新しいマージがあります。新しい方から順に取り消してください",
+      blocking_merge_id: newer.id };
+  }
+  let refs = {}, before = {};
+  try { refs = JSON.parse(log.refs_json || "{}") || {}; } catch (_) {}
+  try { before = JSON.parse(log.survivor_before_json || "{}") || {}; } catch (_) {}
+  const skipped = [];   // マージ後に手修正されて survivor を指さなくなった行(触らない)
+  const tx = sqlite.transaction(() => {
+    for (const [tbl, col] of MERGE_REPOINT) {
+      for (const id of refs[tbl + "." + col] || []) {
+        const r = sqlite.prepare(`UPDATE ${tbl} SET ${col} = ? WHERE id = ? AND ${col} = ?`)
+          .run(log.dup_id, id, log.survivor_id);
+        if (!r.changes) skipped.push(tbl + "." + col + ":" + id);
+      }
+    }
+    for (const ep of refs["push_subscriptions.player_id"] || []) {
+      const r = sqlite.prepare(`UPDATE push_subscriptions SET player_id = ? WHERE endpoint = ? AND player_id = ?`)
+        .run(log.dup_id, ep, log.survivor_id);
+      if (!r.changes) skipped.push("push_subscriptions:" + ep);
+    }
+    for (const m of refs["tournament_players.moved"] || []) {
+      const r = sqlite.prepare(`UPDATE tournament_players SET player_id = ? WHERE tournament_id = ? AND event = ? AND player_id = ?`)
+        .run(log.dup_id, m.tournament_id, m.event, log.survivor_id);
+      if (!r.changes) skipped.push("tournament_players:" + m.tournament_id + "/" + m.event);
+    }
+    for (const row of refs["tournament_players.deleted"] || []) {
+      sqlite.prepare(`INSERT OR IGNORE INTO tournament_players (tournament_id, player_id, event, seed) VALUES (?,?,?,?)`)
+        .run(row.tournament_id, log.dup_id, row.event, row.seed || 0);
+    }
+    for (const cid of refs["coach_players.moved"] || []) {
+      const r = sqlite.prepare(`UPDATE coach_players SET player_id = ? WHERE coach_id = ? AND player_id = ?`)
+        .run(log.dup_id, cid, log.survivor_id);
+      if (!r.changes) skipped.push("coach_players:" + cid);
+    }
+    for (const row of refs["coach_players.deleted"] || []) {
+      sqlite.prepare(`INSERT OR IGNORE INTO coach_players (coach_id, player_id) VALUES (?,?)`)
+        .run(row.coach_id, log.dup_id);
+    }
+    // 空欄補完の取り消し: 「マージで dup の値が入った(=元は空欄で、今も dup の値のまま)」フィールドだけ空欄へ戻す。
+    // マージ後に手で書き換えた値は温存する。
+    const cur = stmts.getPlayer.get(log.survivor_id);
+    const undoFill = f => (before[f] === "" && (cur[f] || "") === (dup[f] || "")) ? "" : (cur[f] || "");
+    sqlite.prepare(`UPDATE players SET furigana=?, team=?, branch=?, note=?,
+      appearances = MAX(0, COALESCE(appearances,0) - ?),
+      updated_at = datetime('now','localtime') WHERE id = ?`)
+      .run(undoFill("furigana"), undoFill("team"), undoFill("branch"), undoFill("note"),
+        before.added_appearances || 0, log.survivor_id);
+    sqlite.prepare(`UPDATE players SET merged_into = NULL, updated_at = datetime('now','localtime') WHERE id = ?`)
+      .run(log.dup_id);
+    sqlite.prepare(`UPDATE player_merges SET undone_at = datetime('now','localtime'), undo_operator = ? WHERE id = ?`)
+      .run(String(opts.operator || ""), mergeId);
+  });
+  tx();
+  return { ok: true, merge_id: mergeId, survivor_id: log.survivor_id, dup_id: log.dup_id,
+    skipped: skipped.length ? skipped : undefined };
+}
+
+// マージ履歴 (オーナーパネルの一覧/取り消し用)
+function listPlayerMerges(limit = 50) {
+  return sqlite.prepare(`SELECT pm.id, pm.survivor_id, pm.dup_id, pm.operator, pm.merged_at,
+      pm.undone_at, pm.undo_operator,
+      s.name AS survivor_name, s.team AS survivor_team,
+      d.name AS dup_name, d.team AS dup_team
+    FROM player_merges pm
+    LEFT JOIN players s ON s.id = pm.survivor_id
+    LEFT JOIN players d ON d.id = pm.dup_id
+    ORDER BY pm.rowid DESC LIMIT ?`).all(Math.min(parseInt(limit) || 50, 500));
 }
 
 function _normName(s) { return String(s == null ? "" : s).replace(/[\s　]+/g, ""); }
@@ -1337,7 +1525,8 @@ function findDuplicatePlayerCandidates() {
   const players = getPlayers();   // match_wins/match_losses/total_achievements を含む
   const slim = p => ({ id: p.id, name: p.name, team: p.team || "", furigana: p.furigana || "",
     gender: p.gender, appearances: p.appearances || 0, wins: p.match_wins || 0,
-    losses: p.match_losses || 0, achievements: p.total_achievements || 0 });
+    losses: p.match_losses || 0, achievements: p.total_achievements || 0,
+    created_at: p.created_at || "" });   // 既定の残存者=「古いID(先に登録)」の判定用
   const groups = [];
   const seen = new Set();
   const add = (reason, arr) => {
@@ -5499,6 +5688,7 @@ function getOpMatchList(tournamentId) {
 // 選手個人の試合状況 (マイ番号ポータル用)
 // 進行中の試合・次の試合・直近結果を返す
 function getPlayerLiveStatus(playerId, tournamentId) {
+  playerId = resolvePlayerId(playerId);   // 統合済み旧IDのマイ選手登録/QRを生かす
   const player = stmts.getPlayer.get(playerId);
   if (!player) return null;
 
@@ -5787,6 +5977,7 @@ function getSearchFilters() {
 // 対戦相手別戦績 (Head-to-Head)
 // ═══════════════════════════════════════════════════════
 function getPlayerOpponents(playerId) {
+  playerId = resolvePlayerId(playerId);
   const wins = sqlite.prepare(`
     SELECT loser_id AS opp_id, loser_name AS opp_name, loser_team AS opp_team,
       COUNT(*) AS count
@@ -5821,6 +6012,7 @@ function getPlayerOpponents(playerId) {
 
 // 選手の種目別統計
 function getPlayerEventStats(playerId) {
+  playerId = resolvePlayerId(playerId);
   const stats = sqlite.prepare(`
     SELECT event,
       SUM(CASE WHEN winner_id = ? THEN 1 ELSE 0 END) AS wins,
@@ -8537,7 +8729,7 @@ module.exports = {
   // ベスト8 (準々決勝進出者)
   getAllBest8,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
-  mergePlayers, findDuplicatePlayerCandidates,
+  mergePlayers, unmergePlayers, listPlayerMerges, resolvePlayerId, findDuplicatePlayerCandidates,
   // 監督・顧問モード (#285)
   createCoachAccount, getCoachAccount, listCoachAccounts, updateCoachAccount,
   regenerateCoachCode, setCoachCode, deleteCoachAccount, coachByCode,
