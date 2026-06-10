@@ -6,6 +6,7 @@ const path = require("path");
 const crypto = require("crypto");
 const fs = require("fs");
 const { mulberry32, shuffle, randomSeed } = require("./lib/rng");
+const TTTieOrder = require("./public/shared/tie-order");   // 団体戦オーダー検証 (admin と同一実装)
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "tournament.db");
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -4008,6 +4009,29 @@ function tieWinnerConflict(m, data) {
     "の勝ち / 指定=" + nm(slot) + "の勝ち)。内訳または勝者を見直してください。";
 }
 
+// 団体戦オーダー(出場選手)の連続マッチ禁止検証 (KTTAルール: 同一選手は隣接2マッチに連続出場不可)。
+// tie_results に home_players/away_players が1件でも入っているときだけ判定する
+// (選手名なし=紙運用は従来どおり素通し)。force 指定時はスキップ(運営の最終判断を残す)。
+// 違反があれば violations 配列を返す。なければ null。
+function tieOrderViolations(m, data) {
+  if (data.tie_results === undefined || data.force === true) return null;
+  const arr = typeof data.tie_results === "string"
+    ? _parseTieResults(data.tie_results)
+    : (Array.isArray(data.tie_results) ? data.tie_results : []);
+  if (!arr.some(e => e && ((Array.isArray(e.home_players) && e.home_players.length) ||
+                           (Array.isArray(e.away_players) && e.away_players.length)))) return null;
+  const t = stmts.getTournament.get(m.tournament_id);
+  let cfg = [];
+  try {
+    const c = typeof (t && t.event_config) === "string"
+      ? JSON.parse(t.event_config || "[]") : ((t && t.event_config) || []);
+    cfg = Array.isArray(c) ? c : [];
+  } catch (_) { /* 壊れた設定は判定不能=スキップ */ }
+  const evCfg = cfg.find(e => e && e.name === m.event);
+  const v = TTTieOrder.validateTieOrder(evCfg ? evCfg.tie_format : "", arr);
+  return v.length ? v : null;
+}
+
 // 率(取得/失)の降順比較。a が上位なら負、b が上位なら正(Array.sort 準拠)。0除算を安全に扱う。
 // 規約: 失0 かつ 取得>0 = ∞(最上位)。失0 かつ 取得0 = 0-0(データ無し=最下位)。∞同士・0-0同士は同率(0)。
 // これにより「未消化(0-0)チームが実際に戦って負けたチームより上位」「∞同士が同率にならない」を防ぐ。
@@ -4307,6 +4331,13 @@ function finishMatchInternal(matchId, data) {
   const tieErr = tieWinnerConflict(m, data);
   if (tieErr) return { error: tieErr, tie_mismatch: true };
 
+  // 団体戦: オーダーの連続マッチ禁止違反は書込み前に弾く(force で強制保存可)。
+  const orderV = tieOrderViolations(m, data);
+  if (orderV) {
+    return { error: orderV.map(TTTieOrder.describeViolation).join(" / ") +
+      "。オーダーを見直すか、強制保存してください。", needs_force: true, violations: orderV };
+  }
+
   // 冪等ガード: 既に「同じ勝者」で完了済みなら何もしない。連打/オフライン再送で finish が
   // 2回適用されると二重Elo・勝者の再進出が起きるため(op_id は呼出ごとに新規=連打を防げない)。
   // correctResult は status を pending/on_table に戻してから呼ぶので、ここには該当しない。
@@ -4464,6 +4495,13 @@ function correctResult(matchId, data) {
   // 団体戦: 星取内訳と勝者指定が矛盾するなら reset 前に弾く(部分適用を防ぐ)。
   const tieErr = tieWinnerConflict(m, data);
   if (tieErr) return { error: tieErr, tie_mismatch: true };
+
+  // 団体戦: オーダーの連続マッチ禁止も reset 前に弾く(force で強制可)。
+  const orderV = tieOrderViolations(m, data);
+  if (orderV) {
+    return { error: orderV.map(TTTieOrder.describeViolation).join(" / ") +
+      "。オーダーを見直すか、強制保存してください。", needs_force: true, violations: orderV };
+  }
 
   // 完了済みかどうかチェック
   const wasCompleted = m.status === "completed";
