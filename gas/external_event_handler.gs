@@ -239,8 +239,6 @@ function _buildEmailBody(cfg, data, singles, doubles, rowNum) {
 
   lines.push("");
   lines.push("━━━━━━━━━━━━━━━━━━━━━━━");
-  lines.push(`合計金額: ¥${(data.total_amount || 0).toLocaleString("ja-JP")}`);
-  lines.push("（参加料は試合当日払い）");
 
   if (data.note) {
     lines.push("");
