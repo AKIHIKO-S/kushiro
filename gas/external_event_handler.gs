@@ -46,7 +46,7 @@ const FORM_CONFIG = {
 };
 
 const SHEET_HEADERS = [
-  "受付日時", "大会名", "支部名", "責任者", "連絡先",
+  "受付日時", "大会名", "責任者", "連絡先",
   "シングルス人数", "ダブルス組数", "合計金額",
   "90歳代有", "備考", "内容詳細(JSON)",
 ];
@@ -69,9 +69,6 @@ function doPost(e) {
     const cfg = FORM_CONFIG[data.form_type];
     if (!cfg) {
       return _json({ ok: false, error: "不明なフォーム種別: " + (data.form_type || "") });
-    }
-    if (!String(data.branch_name || "").trim()) {
-      return _json({ ok: false, error: "支部名が未入力です" });
     }
     if (!String(data.contact_name || "").trim()) {
       return _json({ ok: false, error: "責任者名が未入力です" });
@@ -108,7 +105,7 @@ function _writeToSheet(ss, cfg, data, singles, doubles) {
       .setBackground("#1e2a4a")
       .setFontColor("#fff");
     sh.setFrozenRows(1);
-    sh.setColumnWidth(11, 300); // JSON列
+    sh.setColumnWidth(10, 300); // JSON列
   }
 
   const ts = new Date();
@@ -116,7 +113,6 @@ function _writeToSheet(ss, cfg, data, singles, doubles) {
   const row = [
     ts,
     cfg.name,
-    data.branch_name || "",
     data.contact_name || "",
     data.contact_tel || "",
     singles.length,
@@ -130,7 +126,7 @@ function _writeToSheet(ss, cfg, data, singles, doubles) {
   const rowNum = sh.getLastRow();
 
   // 金額列を数値フォーマット
-  sh.getRange(rowNum, 8).setNumberFormat("¥#,##0");
+  sh.getRange(rowNum, 7).setNumberFormat("¥#,##0");
   // 受付日時フォーマット
   sh.getRange(rowNum, 1).setNumberFormat("yyyy/MM/dd HH:mm");
 
@@ -142,7 +138,7 @@ function _writeToSheet(ss, cfg, data, singles, doubles) {
 // ════════════════════════════════════════════
 
 function _sendNotifications(cfg, data, singles, doubles, rowNum) {
-  const subject = `【申込】${cfg.name} / ${data.branch_name}`;
+  const subject = `【申込】${cfg.name} / ${data.contact_name}`;
   const body = _buildEmailBody(cfg, data, singles, doubles, rowNum);
 
   NOTIFY_EMAILS.forEach(email => {
@@ -163,7 +159,6 @@ function _buildEmailBody(cfg, data, singles, doubles, rowNum) {
   lines.push(`受付番号: #${String(rowNum).padStart(4, "0")}`);
   lines.push(`受付日時: ${ts}`);
   lines.push("━━━━━━━━━━━━━━━━━━━━━━━");
-  lines.push(`支　部: ${data.branch_name || ""}`);
   lines.push(`責任者: ${data.contact_name || ""}`);
   lines.push(`連絡先: ${data.contact_tel || ""}`);
 
@@ -249,7 +244,6 @@ function _testMasters() {
     postData: {
       contents: JSON.stringify({
         form_type: "masters_2026",
-        branch_name: "釧路支部",
         contact_name: "山田 太郎",
         contact_tel: "0154-XX-XXXX",
         has_over90: false,
@@ -279,7 +273,6 @@ function _testLargeball() {
     postData: {
       contents: JSON.stringify({
         form_type: "largeball_national_2026",
-        branch_name: "釧路支部",
         contact_name: "山田 太郎",
         contact_tel: "0154-XX-XXXX",
         note: "",
