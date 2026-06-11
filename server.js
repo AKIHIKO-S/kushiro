@@ -41,6 +41,7 @@ const QRCode = require("qrcode");     // ローカルQR生成(会場オフライ
 const db = require("./db");
 const reports = require("./reports");
 const entryForm = require("./entry_form");
+const externalForms = require("./external_forms");
 const mailer = require("./mailer");
 const { conditional } = require("./lib/http-cache");          // 条件付きGET(ETag/304)で未変化ポーリングを軽量化
 const { installServerHardening } = require("./lib/lifecycle"); // HTTPタイムアウト調整 + graceful shutdown
@@ -4073,6 +4074,25 @@ for (const docName of ["OPERATIONS.md", "UPDATE_WORKFLOW.md",
     res.sendFile(f);
   });
 }
+
+// ── 外部大会申込フォーム (公開) ───────────────────────────
+// GAS_EXTERNAL_URL 環境変数に GAS Web App URL を設定して運用。
+const _gasExtUrl = () => process.env.GAS_EXTERNAL_URL || "";
+app.get("/forms/masters2026", (req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(externalForms.buildMasters2026FormHTML({ gas_url: _gasExtUrl() }));
+});
+app.get("/forms/largeball-national2026", (req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(externalForms.buildLargeballNational2026FormHTML({ gas_url: _gasExtUrl() }));
+});
+app.get("/forms/largeball-alljapan2026", (req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(externalForms.buildLargeballAllJapan2026FormHTML({ gas_url: _gasExtUrl() }));
+});
 
 // ── Phase4: 申込者本人の閲覧ページ /entry/status?token=… ───
 // 申込番号(トークン)で自分の申込内容を確認する(閲覧のみ)。:id ルートより前に置く。
