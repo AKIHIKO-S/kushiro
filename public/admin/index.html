@@ -1163,6 +1163,7 @@
  <button class="tab" data-tab="bracket-mgmt">トーナメント管理</button>
  <button class="tab" data-tab="players">選手データベース</button>
  <button class="tab" data-tab="import">インポート/エクスポート</button>
+ <button class="tab" data-tab="external-forms">外部申込フォーム</button>
  <button class="tab" data-tab="api">API連携</button>
  <button class="tab" data-tab="coaches">監督・申請 <span id="coachReqBadge" class="tab-badge" style="display:none"></span></button>
  </div>
@@ -1368,6 +1369,30 @@
  </div>
 
  <!-- API連携 -->
+ <div class="tab-panel hidden" id="tab-external-forms">
+ <div class="card">
+ <div class="card-head"><div class="card-title">外部大会 申込フォーム</div></div>
+ <p class="text-sm mb-3">各フォームは新しいタブで開きます。</p>
+ <div style="display:flex;flex-direction:column;gap:12px;max-width:480px;">
+   <a href="/forms/masters2026" target="_blank" rel="noopener"
+      style="display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;text-decoration:none;color:inherit;font-weight:700;">
+     <span style="font-size:20px;">🏓</span>
+     <span>2026北海道卓球選手権大会（マスターズの部）</span>
+   </a>
+   <a href="/forms/largeball-national2026" target="_blank" rel="noopener"
+      style="display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;text-decoration:none;color:inherit;font-weight:700;">
+     <span style="font-size:20px;">🏓</span>
+     <span>第39回全国ラージボール卓球大会 北海道予選</span>
+   </a>
+   <a href="/forms/largeball-alljapan2026" target="_blank" rel="noopener"
+      style="display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;text-decoration:none;color:inherit;font-weight:700;">
+     <span style="font-size:20px;">🏓</span>
+     <span>第9回全日本ラージボール卓球選手権大会 北海道予選</span>
+   </a>
+ </div>
+ </div>
+ </div>
+
  <div class="tab-panel hidden" id="tab-api">
  <div class="card">
  <div class="card-head"><div class="card-title">外部の大会進行運営アプリとつなぐ（技術者向け）</div></div>
