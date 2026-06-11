@@ -253,6 +253,7 @@ function extractDoubles(ws, band) {
         } else if (looksLikeName(below) && !hasSeedBelow) {     // ② 縦ペア(相方は直下。直下にseedが無いとき)
           name2 = below;
           team = cleanTeam(cellStr(ws, r, c + 2)); pteam = cleanTeam(cellStr(ws, r + 1, c + 2));
+          if (!team && pteam) team = pteam; // 共通所属が2行目のみに記載の場合
           region = regAmong(cellStr(ws, r, c + 3), cellStr(ws, r + 1, c + 3));
         } else if (looksLikeName(next)) {                       // ③ 横ペア(カッコ無し・直下seed無し=単一帯)
           name2 = next; team = cleanTeam(next2); pteam = cleanTeam(cellStr(ws, r, c + 4));
@@ -272,6 +273,7 @@ function extractDoubles(ws, band) {
         } else if (looksLikeName(below) && !hasSeedBelow) {     // ② 縦ペア(鏡像・直下にseed無し)
           name2 = below;
           team = cleanTeam(cellStr(ws, r, c - 1)); pteam = cleanTeam(cellStr(ws, r + 1, c - 1));
+          if (!team && pteam) team = pteam;
         } else if (looksLikeName(prev)) {                       // ③ 横ペア(鏡像・カッコ無し・単一帯)
           name2 = prev; team = cleanTeam(prevTeam); pteam = cleanTeam(cellStr(ws, r, c - 4));
         } else {
