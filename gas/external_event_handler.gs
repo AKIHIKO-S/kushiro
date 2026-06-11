@@ -181,7 +181,6 @@ function _buildEmailBody(cfg, data, singles, doubles, rowNum) {
       label += s.name || "";
       if (s.age) label += `（${s.age}歳）`;
       if (s.birthdate) label += ` 生${s.birthdate}`;
-      if (s.branch) label += ` / ${s.branch}支部`;
       if (s.team) label += ` / ${s.team}`;
       if (s.note) label += ` ※${s.note}`;
       lines.push(label);
@@ -197,9 +196,7 @@ function _buildEmailBody(cfg, data, singles, doubles, rowNum) {
       const catLabel = d.category_label ? `[${d.category_label}] ` : "";
       const ageSum = d.combined_age ? ` (合計${d.combined_age}歳)` : "";
       lines.push(`  ${i + 1}. ${catLabel}${d.name1 || ""}（${d.age1 || ""}歳）/ ${d.name2 || ""}（${d.age2 || ""}歳）${ageSum}`);
-      const team1 = [d.branch1, d.team1].filter(Boolean).join(" ");
-      const team2 = [d.branch2, d.team2].filter(Boolean).join(" ");
-      if (team1 || team2) lines.push(`       ${team1 || "—"}  /  ${team2 || "—"}`);
+      if (d.team1 || d.team2) lines.push(`       ${d.team1 || "—"}  /  ${d.team2 || "—"}`);
       // Masters furigana
       if (d.furigana1 || d.furigana2) lines.push(`       ${d.furigana1 || ""}  /  ${d.furigana2 || ""}`);
     });

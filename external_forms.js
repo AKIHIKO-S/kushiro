@@ -633,8 +633,7 @@ function _buildLargeballFormHTML(cfg, gasUrl) {
   <h2>混合ダブルス申込 <span class="cbadge" id="doublesCount">0&nbsp;組</span></h2>
   <div class="fnote">1組 ¥2,400（参加料は6月13日・ヤサカ杯にて集金）</div>
   <div class="notice">
-    ・カテゴリは2名の年齢合計で選択してください。<br>
-    ・支部をまたいでペアを組む場合は、所属支部・チーム名の間違いにご注意ください。
+    ・カテゴリは2名の年齢合計で選択してください。
   </div>
   <div id="doublesContainer"></div>
   <button type="button" class="btn-add" id="btnAddD">＋ ペアを1組追加</button>
@@ -680,11 +679,9 @@ function addSingles(){
   top.style.marginBottom='10px'; row.appendChild(top);
   var nm=_inp('text','name','田中 一郎'); nm.addEventListener('input',recalcTotal);
   var ag=_inp('number','age','62','1','100'); ag.addEventListener('input',recalcTotal);
-  var br=_inp('text','branch','釧路支部'); br.addEventListener('input',recalcTotal);
   var tm=_inp('text','team','○○クラブ'); tm.addEventListener('input',recalcTotal);
-  row.appendChild(_grid('2fr 1fr 1.5fr 2fr',[
-    _cellR('氏名',nm),_cell('年齢',ag),
-    _cell('支部',br),_cell('所属チーム',tm)
+  row.appendChild(_grid('2fr 1fr 2fr',[
+    _cellR('氏名',nm),_cell('年齢',ag),_cell('所属チーム',tm)
   ]));
   c.appendChild(row); recalcTotal();
 }
@@ -706,21 +703,17 @@ function addDoubles(){
   var n1=_inp('text','name1','田中 一郎'); n1.addEventListener('input',recalcTotal);
   var a1=_inp('number','age1','65','1','100');
   a1.addEventListener('input',function(){ updateCombinedAge(row); recalcTotal(); });
-  var b1=_inp('text','branch1','釧路支部'); b1.addEventListener('input',recalcTotal);
   var t1=_inp('text','team1','○○クラブ'); t1.addEventListener('input',recalcTotal);
-  row.appendChild(_grid('2fr 1fr 1.5fr 2fr',[
-    _cellR('氏名',n1),_cell('年齢',a1),
-    _cell('支部',b1),_cell('所属チーム',t1)
+  row.appendChild(_grid('2fr 1fr 2fr',[
+    _cellR('氏名',n1),_cell('年齢',a1),_cell('所属チーム',t1)
   ]));
   row.appendChild(_sep('女子選手'));
   var n2=_inp('text','name2','佐藤 花子'); n2.addEventListener('input',recalcTotal);
   var a2=_inp('number','age2','58','1','100');
   a2.addEventListener('input',function(){ updateCombinedAge(row); recalcTotal(); });
-  var b2=_inp('text','branch2','釧路支部'); b2.addEventListener('input',recalcTotal);
   var t2=_inp('text','team2','△△クラブ'); t2.addEventListener('input',recalcTotal);
-  row.appendChild(_grid('2fr 1fr 1.5fr 2fr',[
-    _cellR('氏名',n2),_cell('年齢',a2),
-    _cell('支部',b2),_cell('所属チーム',t2)
+  row.appendChild(_grid('2fr 1fr 2fr',[
+    _cellR('氏名',n2),_cell('年齢',a2),_cell('所属チーム',t2)
   ]));
   c.appendChild(row); recalcTotal();
 }
@@ -738,7 +731,6 @@ function gatherData(){
       gender:gSel.value, gender_label:gSel.options[gSel.selectedIndex].text,
       category:cSel.value, category_label:(cSel.options[cSel.selectedIndex].dataset.label||cSel.value),
       name:name, age:parseInt(row.querySelector('[data-field="age"]').value)||'',
-      branch:(row.querySelector('[data-field="branch"]').value||'').trim(),
       team:(row.querySelector('[data-field="team"]').value||'').trim(), fee:SINGLES_FEE,
     });
   });
@@ -752,10 +744,8 @@ function gatherData(){
     doubles.push({
       category:cs.value, category_label:(cs.options[cs.selectedIndex].dataset.label||cs.value),
       name1:n1, age1:a1||'',
-      branch1:(row.querySelector('[data-field="branch1"]').value||'').trim(),
       team1:(row.querySelector('[data-field="team1"]').value||'').trim(),
       name2:n2, age2:a2||'',
-      branch2:(row.querySelector('[data-field="branch2"]').value||'').trim(),
       team2:(row.querySelector('[data-field="team2"]').value||'').trim(),
       combined_age:a1+a2||'', fee:DOUBLES_FEE,
     });
@@ -776,7 +766,7 @@ function buildSummary(data){
   if(data.singles.length){
     ls.push('■ シングルス（'+data.singles.length+'名）');
     data.singles.forEach(function(s,i){
-      ls.push('  '+(i+1)+'. ['+s.gender_label+' '+s.category_label+'] '+s.name+(s.age?'('+s.age+'歳)':'')+(s.branch?' / '+s.branch:'')+(s.team?' / '+s.team:''));
+      ls.push('  '+(i+1)+'. ['+s.gender_label+' '+s.category_label+'] '+s.name+(s.age?'('+s.age+'歳)':'')+(s.team?' / '+s.team:''));
     });
   }
   if(data.doubles.length){
@@ -784,7 +774,7 @@ function buildSummary(data){
     ls.push('■ 混合ダブルス（'+data.doubles.length+'組）');
     data.doubles.forEach(function(d,i){
       ls.push('  '+(i+1)+'. ['+d.category_label+'] '+d.name1+'('+d.age1+'歳) / '+d.name2+'('+d.age2+'歳) 合計'+d.combined_age+'歳');
-      if(d.team1||d.team2) ls.push('       '+[d.branch1,d.team1].filter(Boolean).join(' ')+' / '+[d.branch2,d.team2].filter(Boolean).join(' '));
+      if(d.team1||d.team2) ls.push('       '+(d.team1||'—')+' / '+(d.team2||'—'));
     });
   }
   ls.push('');
