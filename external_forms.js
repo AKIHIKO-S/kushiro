@@ -560,8 +560,8 @@ function buildSummary(data){
     });
   }
   ls.push('');
-  ls.push('合計: \xa5'+data.total_amount.toLocaleString('ja-JP')+'（6/13 ヤサカ杯にて集金）');
-  return ls.join('\n');
+  ls.push('合計: ¥'+data.total_amount.toLocaleString('ja-JP')+'（6/13 ヤサカ杯にて集金）');
+  return ls.join('\\n');
 }
 document.getElementById('mainForm').addEventListener('submit', submitForm);
 document.getElementById('btnAddS').addEventListener('click', addSingles);
@@ -788,8 +788,8 @@ function buildSummary(data){
     });
   }
   ls.push('');
-  ls.push('合計: \xa5'+data.total_amount.toLocaleString('ja-JP')+'（6/13 ヤサカ杯にて集金）');
-  return ls.join('\n');
+  ls.push('合計: ¥'+data.total_amount.toLocaleString('ja-JP')+'（6/13 ヤサカ杯にて集金）');
+  return ls.join('\\n');
 }
 document.getElementById('mainForm').addEventListener('submit', submitForm);
 document.getElementById('btnAddS').addEventListener('click', addSingles);
