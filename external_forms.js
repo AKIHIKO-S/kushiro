@@ -311,8 +311,8 @@ function submitForm(e){
   .then(function(resp){
     if(timer) clearTimeout(timer);
     return resp.text().then(function(txt){
-      var r; try{ r=JSON.parse(txt); }catch(_){ r={ok:resp.ok}; }
-      if(r.ok||resp.ok){ showSuccess(buildSummary(data)); }
+      var r; try{ r=JSON.parse(txt); }catch(_){ r={ok:false,error:'HTTP '+resp.status}; }
+      if(r.ok){ showSuccess(buildSummary(data)); }
       else{ showMsg('送信できませんでした: '+(r.error||('HTTP '+resp.status)),'err'); }
     });
   }).catch(function(err){
