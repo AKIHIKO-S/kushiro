@@ -120,7 +120,7 @@ function _writeToSheet(ss, cfg, data, singles, doubles) {
     data.total_amount || 0,
     hasOver90 ? "有" : "",
     data.note || "",
-    JSON.stringify({ singles, doubles }),
+    _formatDetails(cfg, singles, doubles),
   ];
   sh.appendRow(row);
   const rowNum = sh.getLastRow();
@@ -131,6 +131,41 @@ function _writeToSheet(ss, cfg, data, singles, doubles) {
   sh.getRange(rowNum, 1).setNumberFormat("yyyy/MM/dd HH:mm");
 
   return rowNum;
+}
+
+// ════════════════════════════════════════════
+// 内容詳細の整形(シート用)
+// ════════════════════════════════════════════
+
+function _formatDetails(cfg, singles, doubles) {
+  const lines = [];
+  if (singles.length > 0) {
+    lines.push(`【シングルス】${singles.length}名`);
+    singles.forEach((s, i) => {
+      let line = `  ${i + 1}. `;
+      if (s.gender_label || s.category_label) line += `[${[s.gender_label, s.category_label].filter(Boolean).join(" ")}] `;
+      if (s.furigana) line += `${s.furigana} `;
+      line += s.name || "";
+      if (s.age) line += `（${s.age}歳）`;
+      if (s.birthdate) line += ` 生${s.birthdate}`;
+      if (s.team) line += ` / ${s.team}`;
+      if (s.note) line += ` ※${s.note}`;
+      lines.push(line);
+    });
+  }
+  if (doubles.length > 0) {
+    const dblLabel = cfg.name.includes("マスターズ") ? "ダブルス" : "混合ダブルス";
+    lines.push(`【${dblLabel}】${doubles.length}組`);
+    doubles.forEach((d, i) => {
+      const cat = d.category_label ? `[${d.category_label}] ` : "";
+      const ageSum = d.combined_age ? `（合計${d.combined_age}歳）` : "";
+      lines.push(`  ${i + 1}. ${cat}${d.name1 || ""}（${d.age1 || ""}歳） / ${d.name2 || ""}（${d.age2 || ""}歳）${ageSum}`);
+      const t1 = [d.furigana1, d.team1].filter(Boolean).join(" ");
+      const t2 = [d.furigana2, d.team2].filter(Boolean).join(" ");
+      if (t1 || t2) lines.push(`       ${t1 || "—"} / ${t2 || "—"}`);
+    });
+  }
+  return lines.join("\n");
 }
 
 // ════════════════════════════════════════════
