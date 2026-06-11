@@ -4078,6 +4078,42 @@ for (const docName of ["OPERATIONS.md", "UPDATE_WORKFLOW.md",
 // ── 外部大会申込フォーム (公開) ───────────────────────────
 // GAS_EXTERNAL_URL 環境変数に GAS Web App URL を設定して運用。
 const _gasExtUrl = () => process.env.GAS_EXTERNAL_URL || "";
+
+// フォーム送信プロキシ: フロント→ /api/forms/submit → GAS
+// GAS URL をブラウザ側 HTML に埋め込まない。env 未設定時は 503 を返す。
+app.post("/api/forms/submit", async (req, res) => {
+  const gasUrl = _gasExtUrl();
+  if (!gasUrl) return res.status(503).json({ ok: false, error: "GAS URL が設定されていません(GAS_EXTERNAL_URL)" });
+  const body = JSON.stringify(req.body);
+  const https = require("https");
+  const url = new URL(gasUrl);
+  const opt = {
+    hostname: url.hostname,
+    path: url.pathname + url.search,
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8", "Content-Length": Buffer.byteLength(body) },
+  };
+  let responded = false;
+  const proxyReq = https.request(opt, (proxyRes) => {
+    let raw = "";
+    proxyRes.on("data", (c) => (raw += c));
+    proxyRes.on("end", () => {
+      if (responded) return;
+      responded = true;
+      try { res.status(proxyRes.statusCode).json(JSON.parse(raw)); }
+      catch (_) { res.status(proxyRes.statusCode).json({ ok: proxyRes.statusCode < 400 }); }
+    });
+  });
+  proxyReq.setTimeout(22000, () => {
+    if (!responded) { responded = true; res.status(504).json({ ok: false, error: "GAS通信タイムアウト" }); }
+    proxyReq.destroy();
+  });
+  proxyReq.on("error", (err) => {
+    if (!responded) { responded = true; res.status(502).json({ ok: false, error: "GAS通信エラー: " + err.message }); }
+  });
+  proxyReq.write(body);
+  proxyReq.end();
+});
 app.get("/forms/masters2026", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");

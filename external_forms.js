@@ -306,7 +306,7 @@ function submitForm(e){
   btn.appendChild(_el('span','btn-spinner'));
   var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
   var timer=ctrl?setTimeout(function(){ ctrl.abort(); },25000):null;
-  fetch(GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
+  fetch('/api/forms/submit',{method:'POST',headers:{'Content-Type':'application/json;charset=utf-8'},
     body:JSON.stringify(data),signal:ctrl?ctrl.signal:undefined})
   .then(function(resp){
     if(timer) clearTimeout(timer);
@@ -418,7 +418,7 @@ function buildMasters2026FormHTML(opts) {
 </div>
 
 <script>
-var GAS_URL='${gasUrl}', SINGLES_FEE=2000, DOUBLES_FEE=2400;
+var SINGLES_FEE=2000, DOUBLES_FEE=2400;
 var FORM_TYPE='masters_2026', FORM_NAME='2026北海道卓球選手権大会（マスターズの部フィフティ以上）兼全日本予選会';
 var MASTERS_SINGLES_CATS=${sCatsJs};
 var MASTERS_DOUBLES_CATS=${dCatsJs};
@@ -660,7 +660,7 @@ function _buildLargeballFormHTML(cfg, gasUrl) {
 </div>
 
 <script>
-var GAS_URL='${gasUrlJs}', SINGLES_FEE=2000, DOUBLES_FEE=2400;
+var SINGLES_FEE=2000, DOUBLES_FEE=2400;
 var FORM_TYPE='${ftJs}', FORM_NAME='${fnJs}';
 var LARGEBALL_SINGLES_CATS=${sCatsJs};
 var LARGEBALL_DOUBLES_CATS=${dCatsJs};
