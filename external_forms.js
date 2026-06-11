@@ -368,7 +368,6 @@ function buildMasters2026FormHTML(opts) {
 
 <div class="fsec">
   <h2>シングルス申込 <span class="cbadge" id="singlesCount">0&nbsp;名</span></h2>
-  <div class="fnote">1名 ¥2,000（参加料は6月13日・ヤサカ杯にて集金）</div>
   <div class="notice">
     ・性別・種目（年齢区分）を選択してください。年齢は2027年4月1日時点。<br>
     ・各シングルス種目への参加は1人1種目です。<br>
@@ -381,7 +380,6 @@ function buildMasters2026FormHTML(opts) {
 
 <div class="fsec">
   <h2>ダブルス申込 <span class="cbadge" id="doublesCount">0&nbsp;組</span></h2>
-  <div class="fnote">1組 ¥2,400（参加料は6月13日・ヤサカ杯にて集金）</div>
   <div class="notice">
     ・男子ダブルス・女子ダブルスのみ（混合不可）。50歳以上が出場可能。<br>
     ・カテゴリは2名の年齢合計で選択してください。
@@ -391,11 +389,7 @@ function buildMasters2026FormHTML(opts) {
 </div>
 
 <div class="fsec">
-  <h2>合計・確認</h2>
-  <div class="total-box">
-    <div class="tl">参加料合計（目安）</div>
-    <div class="ta">¥&thinsp;<span id="totalAmount">0</span></div>
-  </div>
+  <h2>確認・送信</h2>
   <div class="check-row">
     <input type="checkbox" id="has_over90">
     <label for="has_over90">
@@ -559,8 +553,6 @@ function buildSummary(data){
       ls.push('  '+(i+1)+'. ['+d.pair_gender_label+' '+d.category_label+'] '+d.name1+'('+d.age1+'歳) / '+d.name2+'('+d.age2+'歳) 合計'+d.combined_age+'歳');
     });
   }
-  ls.push('');
-  ls.push('合計: ¥'+data.total_amount.toLocaleString('ja-JP')+'（6/13 ヤサカ杯にて集金）');
   return ls.join('\\n');
 }
 document.getElementById('mainForm').addEventListener('submit', submitForm);
@@ -618,7 +610,6 @@ function _buildLargeballFormHTML(cfg, gasUrl) {
 
 <div class="fsec">
   <h2>シングルス申込 <span class="cbadge" id="singlesCount">0&nbsp;名</span></h2>
-  <div class="fnote">1名 ¥2,000（参加料は6月13日・ヤサカ杯にて集金）</div>
   <div class="notice">
     ・性別・種目（年齢区分）を選択してください。年齢は2027年4月1日時点。<br>
     ・シングルスと混合ダブルスの両種目に出場できます。<br>
@@ -631,7 +622,6 @@ function _buildLargeballFormHTML(cfg, gasUrl) {
 
 <div class="fsec">
   <h2>混合ダブルス申込 <span class="cbadge" id="doublesCount">0&nbsp;組</span></h2>
-  <div class="fnote">1組 ¥2,400（参加料は6月13日・ヤサカ杯にて集金）</div>
   <div class="notice">
     ・カテゴリは2名の年齢合計で選択してください。
   </div>
@@ -640,11 +630,7 @@ function _buildLargeballFormHTML(cfg, gasUrl) {
 </div>
 
 <div class="fsec">
-  <h2>合計・確認</h2>
-  <div class="total-box">
-    <div class="tl">参加料合計（目安）</div>
-    <div class="ta">¥&thinsp;<span id="totalAmount">0</span></div>
-  </div>
+  <h2>確認・送信</h2>
   <div style="margin-top:12px;">
     <label style="display:block;font-size:12px;font-weight:800;color:var(--ink2);margin-bottom:5px;">備考・連絡事項</label>
     <textarea id="note" rows="3" placeholder="連絡事項があればご記入ください"
@@ -777,8 +763,6 @@ function buildSummary(data){
       if(d.team1||d.team2) ls.push('       '+(d.team1||'—')+' / '+(d.team2||'—'));
     });
   }
-  ls.push('');
-  ls.push('合計: ¥'+data.total_amount.toLocaleString('ja-JP')+'（6/13 ヤサカ杯にて集金）');
   return ls.join('\\n');
 }
 document.getElementById('mainForm').addEventListener('submit', submitForm);
