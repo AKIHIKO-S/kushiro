@@ -350,7 +350,7 @@ function buildMasters2026FormHTML(opts) {
   <h1><span class="seal">参加申込</span>2026北海道卓球選手権大会（マスターズの部 フィフティ以上）<br>兼 全日本予選会</h1>
   <div class="meta">2026年8月8日(土)〜9日(日) · 苫小牧市総合体育館 · 申込締切: 2026年7月10日(金)</div>
 </div>
-<form id="mainForm" onsubmit="return submitForm(event)">
+<form id="mainForm">
 
 <div class="fsec">
   <h2>申込責任者</h2>
@@ -530,7 +530,7 @@ function gatherData(){
     });
   });
   if(!singles.length&&!doubles.length){
-    showMsg('少なくとㅧ1名（シングルス）または1組（ダブルス）を入力してください。','err');
+    showMsg('少なくとも1名（シングルス）または1組（ダブルス）を入力してください。','err');
     return null;
   }
   return{form_type:FORM_TYPE,form_name:FORM_NAME,
@@ -563,6 +563,7 @@ function buildSummary(data){
   ls.push('合計: \xa5'+data.total_amount.toLocaleString('ja-JP')+'（6/13 ヤサカ杯にて集金）');
   return ls.join('\n');
 }
+document.getElementById('mainForm').addEventListener('submit', submitForm);
 document.getElementById('btnAddS').addEventListener('click', addSingles);
 document.getElementById('btnAddS5').addEventListener('click', function(){ addSinglesN(5); });
 document.getElementById('btnAddD').addEventListener('click', addDoubles);
@@ -599,7 +600,7 @@ function _buildLargeballFormHTML(cfg, gasUrl) {
   <h1><span class="seal">参加申込</span>${title}</h1>
   <div class="meta">${subtitle}</div>
 </div>
-<form id="mainForm" onsubmit="return submitForm(event)">
+<form id="mainForm">
 
 <div class="fsec">
   <h2>申込責任者</h2>
@@ -760,7 +761,7 @@ function gatherData(){
     });
   });
   if(!singles.length&&!doubles.length){
-    showMsg('少なくとㅧ1名または1組を入力してください。','err'); return null;
+    showMsg('少なくとも1名または1組を入力してください。','err'); return null;
   }
   return{form_type:FORM_TYPE,form_name:FORM_NAME,
     contact_name:cname,contact_tel:ctel,
@@ -790,6 +791,7 @@ function buildSummary(data){
   ls.push('合計: \xa5'+data.total_amount.toLocaleString('ja-JP')+'（6/13 ヤサカ杯にて集金）');
   return ls.join('\n');
 }
+document.getElementById('mainForm').addEventListener('submit', submitForm);
 document.getElementById('btnAddS').addEventListener('click', addSingles);
 document.getElementById('btnAddS5').addEventListener('click', function(){ addSinglesN(5); });
 document.getElementById('btnAddD').addEventListener('click', addDoubles);
