@@ -225,11 +225,17 @@
    font-size: 9px; font-weight: 800;
    margin-left: 4px; vertical-align: middle;
  }
+ .pdb-card .pdb-meta .pdb-sex {
+   font-size: 11px; border: 1px solid var(--border);
+   border-radius: 4px; padding: 0 4px; color: var(--sub);
+ }
  .pdb-card .pdb-actions {
    display: flex; flex-direction: column; gap: 2px;
    opacity: 0; transition: opacity .12s;
  }
  .pdb-card:hover .pdb-actions { opacity: 1; }
+ .pdb-card:focus-within .pdb-actions { opacity: 1; }
+ @media (hover: none) { .pdb-card .pdb-actions { opacity: 1; } }
  .pdb-card .pdb-actions button {
    background: none; border: none; font-size: 11px;
    cursor: pointer; padding: 2px 6px;
@@ -434,7 +440,7 @@
  .op-stat.s-ongoing { border-top-color: #16a34a; background: linear-gradient(180deg,#f0fdf4,#fff); }
  .op-stat.s-callable { border-top-color: #d97706; background: linear-gradient(180deg,#fffbeb,#fff); }
  .op-stat.s-waiting { border-top-color: #2563eb; background: linear-gradient(180deg,#eff6ff,#fff); }
- .op-stat.s-done { border-top-color: #a1a1aa; }
+ .op-stat.s-done { border-top-color: var(--sub); }
  .op-stat.s-total { border-top-color: var(--ink-700); }
  /* ツール折りたたみ (右寄せ・縦並びドロップダウン) #278 */
  .op-tools { display: inline-block; margin-left: auto; position: relative; }
@@ -612,7 +618,7 @@
  .callable-row.announced .call-chk { color: #15803d; }
  /* 拘束/試合中などの状態ラベル: 高齢者でも読める大きさ・高コントラスト #221 */
  .lock-line { display: flex; align-items: center; gap: 7px; margin-top: 6px; flex-wrap: wrap; }
- .lock-tag { background: var(--accent); color: #fff; font-size: 13px; font-weight: 800;
+ .lock-tag { background: var(--accent); color: #fff; font-size: 14px; font-weight: 800;
    border-radius: 6px; padding: 2px 10px; flex: 0 0 auto; }
  .lock-text { font-size: 15px; font-weight: 700; color: #b91c1c; line-height: 1.4; }
  /* 大会運営ガイド (5ステップ導線) #195 */
@@ -1194,7 +1200,7 @@
  .tm-tree-pane{max-height:80vh;overflow:auto;background:#f9fafb;border-radius:6px;padding:6px}
  .tm-empty{padding:24px;text-align:center;color:#64748b}
  .tm-grid{border-collapse:collapse;width:100%;font-size:14px;background:#fff}
- .tm-grid th,.tm-grid td{border:1px solid #e2e8f0;padding:6px 10px;white-space:nowrap;text-align:left;vertical-align:middle;line-height:1.5}
+ .tm-grid th,.tm-grid td{border:1px solid #e2e8f0;padding:8px 10px;white-space:nowrap;text-align:left;vertical-align:middle;line-height:1.5}
  .tm-grid th{background:#eef2f7;position:sticky;top:0;z-index:1;font-weight:700;color:#334155;font-size:13px}
  .tm-grid tbody tr:hover td{background:#f0f7ff}
  .tm-grid tbody tr.tm-edited td{background:#fef08a}
@@ -1206,13 +1212,13 @@
  .tm-psearch-new{color:#16a34a;font-weight:700}
  .tm-grid tr.tm-row-bye td.tm-pos,.tm-grid tr td.tm-pos.tm-pos-empty{color:#94a3b8;background:#f8fafc}
  .vb-slotno{display:inline-block;min-width:18px;margin-right:6px;padding:0 5px;background:#1e293b;color:#fff;border-radius:4px;font-size:11px;font-weight:700;text-align:center;vertical-align:middle}
- .vb-seedbtn{margin-left:6px;border:1px solid #fcd34d;background:#fffbeb;color:#b45309;border-radius:4px;font-size:11px;font-weight:700;padding:0 5px;cursor:pointer;line-height:1.4}
+ .vb-seedbtn{margin-left:6px;border:1px solid #fcd34d;background:#fffbeb;color:#b45309;border-radius:4px;font-size:12px;font-weight:700;padding:4px 8px;cursor:pointer;line-height:1.4}
  .vb-seedbtn:hover{background:#fef3c7}
  .tm-editnote{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:8px}
  .tm-editwarn{background:#fef3c7;border:1px solid #fcd34d;color:#b45309;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:8px}
  .tm-grid td.tm-cell-edit{cursor:cell}
  .tm-grid td.tm-cell-edit:hover{background:#eff6ff}
- .tm-grid input{width:100%;min-width:56px;border:1px solid #60a5fa;border-radius:3px;font:inherit;padding:1px 3px;box-sizing:border-box}
+ .tm-grid input{width:100%;min-width:56px;border:2px solid #2563eb;border-radius:3px;font:inherit;padding:4px 6px;min-height:32px;box-sizing:border-box}
  .tm-grid tr.tm-row-bye td{background:#f8fafc}
  .tm-menu-btn{border:1px solid #cbd5e1;background:#fff;border-radius:6px;cursor:pointer;font-size:15px;line-height:1;padding:2px 8px;color:#475569}
  .tm-menu-btn:hover{background:#eff6ff;border-color:#60a5fa}
@@ -2405,7 +2411,7 @@ const A = {
  ),
  h("hr", { style: { margin: "10px 0", border: "none", borderTop: "1px solid var(--border)" } }),
  h("div", { className: "field" },
- h("label", { className: "field-label" }, "大会名 *"),
+ h("label", { className: "field-label" }, "大会名（必須）"),
  h("input", { className: "input", id: "tName", placeholder: "第◯回卓球大会" })),
  h("div", { className: "two-col" },
  h("div", { className: "field" },
@@ -4097,7 +4103,7 @@ const A = {
            onInput: (e) => { p.name = e.target.value; },
          }),
          isSurnameOnly ? h("div", {
-           style: { fontSize: "10px", color: "#d97706", marginTop: "2px" } },
+           style: { fontSize: "11px", color: "#d97706", marginTop: "2px" } },
            "苗字のみの可能性") : null),
        h("td", {},
          h("input", { className: "input input-sm",
@@ -6366,6 +6372,8 @@ const A = {
  p.furigana ? h("div", { className: "pdb-furi" }, p.furigana) : null,
  h("div", { className: "pdb-meta" },
  h("span", { className: "pdb-cat" }, TT.catLabel(p.category)),
+ (p.gender === "female" || p.gender === "male")
+   ? h("span", { className: "pdb-sex" }, p.gender === "female" ? "女" : "男") : null,
  p.branch ? (function(){ const _bc = TT.branchColor(p.branch);
    return h("span", { className: "pdb-branch", style: { background: _bc.bg, color: _bc.fg } }, TT.normalizeBranch(p.branch)); })() : null,
  p.team || "—",
@@ -6803,7 +6811,7 @@ const A = {
                toast("削除しました", "ok");
              } catch (err) { toast("削除失敗: " + err.message, "err"); }
            } }, "×")
-       : h("span", { style: { marginLeft: "auto", fontSize: "9px", color: "#a8a29e" },
+       : h("span", { style: { marginLeft: "auto", fontSize: "11px", color: "#a8a29e" },
            title: "大会データの試合は進行管理から修正してください" }, "大会"),
    );
  },
@@ -7625,7 +7633,7 @@ const O = {
  // ── 呼べる対戦 (次に呼ぶ — 最頻アクションを上に) ──
  if (_opTab === "callable") {
  const prioDot = (c, label) => h("span", { style: { display: "inline-flex", alignItems: "center",
-   gap: "3px", fontSize: "10px", color: "var(--ink-600)" } },
+   gap: "3px", fontSize: "11px", color: "var(--ink-600)" } },
    h("span", { className: "ev-priority", style: { background: c, marginRight: "0" } }), label);
  const callCard = h("div", { className: "card" },
  h("div", { className: "card-head", style: { flexWrap: "wrap", gap: "8px" } },
@@ -7634,10 +7642,10 @@ const O = {
  h("div", { className: "card-title-sub" }, `${O.state.callable.length}試合`),
  ),
  h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center" } },
- h("span", { style: { fontSize: "10px", color: "var(--sub)" } }, "優先:"),
+ h("span", { style: { fontSize: "11px", color: "var(--sub)" } }, "優先:"),
  prioDot("#7c3aed", "団体"), prioDot("#db2777", "混合D"),
  prioDot("#2563eb", "男D"), prioDot("#dc2626", "女D"),
- prioDot("#a1a1aa", "シングルス")),
+ prioDot("var(--sub)", "シングルス")),
  ),
  );
  // 氏名で絞り込み (再描画せずDOM表示/非表示でフォーカス維持) #220
@@ -7699,7 +7707,7 @@ const O = {
          padding: "5px 10px", background: "#faf5ff", border: "1px solid #e9d5ff",
          borderRadius: "8px", fontSize: "12px", lineHeight: "1.3" } },
          h("span", { style: { fontWeight: "700" } }, O._surname(r.loser_name)),
-         r.loser_team ? h("span", { style: { fontSize: "9px", color: "var(--sub)" } }, r.loser_team) : null))),
+         r.loser_team ? h("span", { style: { fontSize: "11px", color: "var(--sub)" } }, r.loser_team) : null))),
    ));
  });
  main.appendChild(refCard);
@@ -8350,7 +8358,7 @@ const O = {
  } else {
  cell.appendChild(h("div", { style: { fontSize: "11px", color: "var(--sub-l)", marginTop: "6px" } }, "空き"));
  cell.appendChild(h("div", { style: { color: "#2563eb", marginTop: "3px",
-   fontSize: "10px", fontWeight: 700 } }, "+ 試合を置く"));
+   fontSize: "11px", fontWeight: 700 } }, "+ 試合を置く"));
  }
  grid.appendChild(cell);
  });
@@ -8404,7 +8412,7 @@ const O = {
  const num2 = m.player2_bracket_number || m.entrant2_bracket_number;
  // 選手別 再コール ボタン (色は当該選手の cc レベル)
  const recallBtn = (slot, c, pname) => h("button", { className: "btn btn-sm",
-   style: { padding: "2px 8px", fontSize: "10px",
+   style: { padding: "2px 8px", fontSize: "11px",
      background: c >= 2 ? "#dc2626" : (c >= 1 ? "#d97706" : "var(--ink-700)"),
      color: "#fff", whiteSpace: "nowrap" },
    title: pname + " を再コール (+1)",
@@ -8437,13 +8445,13 @@ const O = {
  ? h("span", {}, "審判: " + m.referee_name)
  : h("span", {}, "審判: 未指定"),
  h("button", { className: "btn btn-sm btn-ghost",
- style: { padding: "2px 8px", fontSize: "10px" },
+ style: { padding: "2px 8px", fontSize: "11px" },
  onClick: () => O.openChangeReferee(m) }, "変更"),
  // 選手別 再コールボタン (どっちか分かりやすく)
  recallBtn(1, cc1, m.player1_name),
  recallBtn(2, cc2, m.player2_name),
  cc > 0 ? h("button", { className: "btn btn-sm btn-ghost",
- style: { padding: "2px 8px", fontSize: "10px" },
+ style: { padding: "2px 8px", fontSize: "11px" },
  onClick: () => O.setCallCount(m, 0) }, "クリア") : null,
  ),
  ),
@@ -8610,7 +8618,7 @@ const O = {
    if (/団体|チーム/.test(ev)) return "#7c3aed";
    if (/混合|ミックス/.test(ev)) return "#db2777";
    if (/ダブルス/.test(ev)) return /女/.test(ev) ? "#dc2626" : "#2563eb";
-   return "#a1a1aa";
+   return "var(--sub)";
  },
  // 姓のみ抽出
  _surname(full) { return (full || "").split(/[\s　]/)[0] || full || ""; },
@@ -9743,7 +9751,7 @@ const O = {
      onClick: () => A.editPlayer({ id: x.id }) },
      (x.name || "選手") + " ▸",
      hasPush(x.id) ? h("span", { title: "マイ番号(プッシュ通知)登録済み — 呼出が届きます",
-       style: { marginLeft: "4px", fontSize: "9px", fontWeight: 800, color: "#166534", background: "#dcfce7", borderRadius: "6px", padding: "1px 5px" } }, "通知ON") : null)));
+       style: { marginLeft: "4px", fontSize: "11px", fontWeight: 800, color: "#166534", background: "#dcfce7", borderRadius: "6px", padding: "1px 5px" } }, "通知ON") : null)));
  },
 
  async uncallMatch(id) {
@@ -10344,7 +10352,7 @@ const O = {
      // 試合まるごと入替(編集可・1回戦・未確定のみ)。2試合の⇄を順に押すと両選手を一括入替。
      (canEdit && m.bracket_round === 1 && m.status !== "completed" && m.status !== "on_table")
        ? h("button", { className: "vb-swapmatch",
-           style: { marginLeft: "6px", fontSize: "10px", padding: "0 6px", borderRadius: "4px",
+           style: { marginLeft: "6px", fontSize: "11px", padding: "0 6px", borderRadius: "4px",
              border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", cursor: "pointer", fontWeight: 700 },
            title: "この試合をもう1試合とまるごと入替",
            onClick: (e) => { e.stopPropagation(); O._matchSwapPick(ctx, m.bracket_pos || 0); } }, "⇄ 試合入替")
@@ -10410,7 +10418,7 @@ const O = {
    card.appendChild(pRow(m.player2_name, m.player2_team, p2Won, m.result && !p2Won, 2));
    if (m.result && !editOnly) {   // 結果スコアは編集ビューでは出さない
      card.appendChild(h("div", {
-       style: { fontFamily: "var(--font-mono)", fontSize: "10px", color: "#64748b",
+       style: { fontFamily: "var(--font-mono)", fontSize: "11px", color: "#64748b",
          textAlign: "right", marginTop: "2px" } },
        (m.result.winner_sets || 0) + " - " + (m.result.loser_sets || 0)));
    }
@@ -11831,7 +11839,7 @@ const TMgmt = {
     // 「選手名」は姓名フリー入力をやめ、選手マスタDBから検索して設定する(クリックでセル直下に検索ドロップ)。
     if (row.is_doubles) {
       tbody.appendChild(h("tr", { className: editedCls(false) },
-        h("td", { className: "tm-pos", rowSpan: 2 }, slotNo, h("div", { style: { fontSize: "10px", color: "#94a3b8", fontWeight: 400 } }, "ﾀﾞﾌﾞﾙｽ")),
+        h("td", { className: "tm-pos", rowSpan: 2 }, slotNo, h("div", { style: { fontSize: "11px", color: "#94a3b8", fontWeight: 400 } }, "ﾀﾞﾌﾞﾙｽ")),
         TMgmt._playerSearchCell(row, false),
         TMgmt._teamSearchCell(row, false),
         TMgmt._cell(row.furigana, (v) => TMgmt._commitField(row, "furigana", v)),
