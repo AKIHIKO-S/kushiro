@@ -289,7 +289,7 @@ function buildEntryFormHTML(tournament, events, opts) {
   }
   .form-row label .required {
     background: var(--red); color: #fff;
-    font-size: 9.5px; padding: 2px 7px; border-radius: 3px;
+    font-size: 11px; padding: 2px 7px; border-radius: 3px;
     margin-left: 7px; letter-spacing: .12em; vertical-align: 1px;
   }
   .form-row input[type="text"],
@@ -309,7 +309,8 @@ function buildEntryFormHTML(tournament, events, opts) {
     box-shadow: 0 0 0 4px rgba(192,21,38,.12);
     background: #fff;
   }
-  .form-row input::placeholder, .form-row textarea::placeholder { color: #b3a892; }
+  .form-row input::placeholder, .form-row textarea::placeholder { color: #8a7a64; }
+  input:user-invalid { border-color: var(--red); background: #fff7f7; }
 
   /* ── 追加ボタン / カウント ── */
   .btn-add {
@@ -383,7 +384,7 @@ function buildEntryFormHTML(tournament, events, opts) {
     font-family:inherit; transition:border-color .15s, box-shadow .15s;
   }
   .entry-row input[type="text"]:focus { outline:none; border-color:var(--red); box-shadow:0 0 0 3px rgba(192,21,38,.13); }
-  .entry-row input[type="text"]::placeholder { color:#b3a892; }
+  .entry-row input[type="text"]::placeholder { color:#8a7a64; }
 
   /* ── 参加区分セグメント (一般 / 中学生 / 高校生) ── */
   .div-seg {
@@ -609,6 +610,7 @@ function buildEntryFormHTML(tournament, events, opts) {
     .form-header-art { width: 150px; height: 80px; opacity: .8; }
     .form-section { padding: 22px 17px; }
     .form-row { grid-template-columns: 1fr; gap: 12px; margin-bottom: 13px; }
+    .entry-grid { grid-template-columns: 1fr; }
     .total-box { padding: 16px 18px; }
     .total-box .amount { font-size: 30px; }
     .div-seg .seg span { font-size: 12.5px; }
@@ -829,24 +831,24 @@ function addEntry(eventIdx) {
     '<button type="button" class="btn-del" onclick="removeEntry(this, ' + eventIdx + ')">削除</button></div>';
 
   if (isTeam) {
-    html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_name" placeholder="チーム名" oninput="recalcTotal()" style="margin-bottom:9px;" />';
+    html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_name" placeholder="チーム名" aria-label="チーム名" oninput="recalcTotal()" style="margin-bottom:9px;" />';
     const per = ev.per_team || 6;
     html += '<div class="entry-grid">';
     for (let i = 0; i < per; i++) {
-      html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_m' + i + '" placeholder="メンバー' + (i + 1) + ' 氏名" oninput="recalcTotal()" />';
+      html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_m' + i + '" placeholder="メンバー' + (i + 1) + ' 氏名" aria-label="メンバー' + (i + 1) + ' 氏名" oninput="recalcTotal()" />';
     }
     html += '</div>';
   } else if (isDoubles) {
     html += '<div class="entry-grid">' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n1" placeholder="選手1 氏名" oninput="recalcTotal()" />' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t1" placeholder="選手1 所属" oninput="recalcTotal()" />' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n2" placeholder="選手2 氏名" oninput="recalcTotal()" />' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t2" placeholder="選手2 所属" oninput="recalcTotal()" />' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n1" placeholder="選手1 氏名" aria-label="選手1 氏名" oninput="recalcTotal()" />' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t1" placeholder="選手1 所属" aria-label="選手1 所属" oninput="recalcTotal()" />' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n2" placeholder="選手2 氏名" aria-label="選手2 氏名" oninput="recalcTotal()" />' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t2" placeholder="選手2 所属" aria-label="選手2 所属" oninput="recalcTotal()" />' +
       '</div>';
   } else {
     html += '<div class="entry-grid">' +
-      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_name" placeholder="氏名 (フルネーム)" oninput="recalcTotal()" />' +
-      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_team" placeholder="所属" oninput="recalcTotal()" />' +
+      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_name" placeholder="氏名 (フルネーム)" aria-label="氏名 (フルネーム)" oninput="recalcTotal()" />' +
+      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_team" placeholder="所属" aria-label="所属" oninput="recalcTotal()" />' +
       '</div>';
   }
   html += divSeg;
