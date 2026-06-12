@@ -35,7 +35,7 @@
  display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
  }
  .hero-title { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
- .hero-sub { font-size: 11px; opacity: .8; }
+ .hero-sub { font-size: 12px; opacity: .8; }
  .live-indicator {
  display: inline-flex; align-items: center; gap: 6px;
  background: rgba(255,255,255,.06);
@@ -90,7 +90,7 @@
  .player-avatar.female { background: #fce7f3; color: #be185d; }
  .player-info { flex: 1; min-width: 0; }
  .player-name { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
- .player-meta { font-size: 11px; color: var(--sub); display: flex; gap: 6px; }
+ .player-meta { font-size: 12px; color: var(--sub); display: flex; gap: 6px; }
 
  /* 大会一覧 */
  .tournament-card {
@@ -180,14 +180,14 @@
  .mr-lose .mr-pname::after { content: " ×"; font-size: 11px; color: #b91c1c; }
  .mr-pname a { color: inherit; text-decoration: none; }
  .mr-pname a:hover { text-decoration: underline; }
- .mr-pteam { font-size: 10px; color: var(--sub-l); }
+ .mr-pteam { font-size: 11px; color: var(--sub-l); }
  .mr-vs {
    font-family: var(--font-mono); font-weight: 800; font-size: 16px;
    color: var(--ink-800); white-space: nowrap; padding: 2px 8px;
    background: var(--ink-50); border-radius: 6px; text-align: center;
  }
  @media (max-width: 480px) {
-   .mr-pname { font-size: 13px; } .mr-vs { font-size: 14px; padding: 2px 5px; }
+   .mr-pname { font-size: 13px; white-space: normal; line-height: 1.3; } .mr-vs { font-size: 14px; padding: 2px 5px; }
  }
 
  /* ★ 選手視点の試合行 (初心者向け・○勝ち/×負け) */
@@ -207,20 +207,20 @@
  .pm-row.win  .pm-result { background: #16a34a; color: #fff; }
  .pm-row.loss .pm-result { background: #dc2626; color: #fff; }
  .pm-opp { min-width: 0; }
- .pm-opp-label { font-size: 10px; color: var(--sub); }
+ .pm-opp-label { font-size: 11px; color: var(--sub); }
  .pm-opp-name { font-size: 15px; font-weight: 700; color: var(--ink-900);
    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
  .pm-opp-name a { color: var(--ink-900); text-decoration: none; }
  .pm-opp-name a:hover { text-decoration: underline; }
  .pm-opp-team { font-size: 11px; color: var(--sub); font-weight: 400; }
- .pm-opp-ev { font-size: 10px; color: var(--sub); margin-top: 1px; }
+ .pm-opp-ev { font-size: 11px; color: var(--sub); margin-top: 1px; }
  .pm-score {
    text-align: right; font-family: var(--font-mono);
    font-size: 20px; font-weight: 800; white-space: nowrap;
  }
  .pm-row.win  .pm-score { color: #15803d; }
  .pm-row.loss .pm-score { color: #b91c1c; }
- .pm-score .pm-score-sets { font-size: 10px; color: var(--sub); font-weight: 400; display: block; }
+ .pm-score .pm-score-sets { font-size: 11px; color: var(--sub); font-weight: 400; display: block; }
 
  /* H2H 平易版 */
  .h2h-clean { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
@@ -293,7 +293,8 @@
  }
  .live-stat {
  background: #fff; border: 1px solid var(--border);
- border-radius: var(--radius); padding: 10px; text-align: center;
+ border-radius: var(--radius); padding: 12px 10px; text-align: center;
+ min-height: 56px;
  }
  .live-stat-num { font-size: 22px; font-weight: 700; line-height: 1; }
  /* 進行状態タブ (サマリカードをタブ化) */
@@ -306,18 +307,19 @@
  /* タブ内 試合行 (待機中/終了/総試合) */
  .tab-empty { text-align: center; color: var(--sub); padding: 26px 10px; font-size: 14px; }
  .tab-note { font-size: 11px; color: var(--sub); margin: 2px 0 8px; }
+ .term-note { font-size: 12px; color: var(--sub); margin: 4px 0 8px; }
  .tab-row { background: #fff; border: 1px solid var(--border); border-radius: 10px;
    padding: 8px 11px; margin-bottom: 6px; }
  .tab-row-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 3px; }
  .tab-ev { font-size: 11px; color: var(--sub); font-weight: 700; }
- .tab-mlabel { font-size: 10px; color: var(--sub-l); font-family: monospace; }
- .tab-chip { font-size: 10px; font-weight: 700; border-radius: 6px; padding: 1px 7px; }
+ .tab-mlabel { font-size: 11px; color: var(--sub-l); font-family: monospace; }
+ .tab-chip { font-size: 11px; font-weight: 700; border-radius: 6px; padding: 1px 7px; }
  .tab-row-body { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
  .tab-row-body.result .tab-win { font-weight: 700; color: var(--ink-900); }
  .tab-row-body.result .tab-score { font-weight: 700; font-family: monospace; color: var(--accent); }
  .tab-row-body.result .tab-lose { color: var(--sub); }
  .tab-p { font-weight: 600; }
- .tab-bnum { display: inline-block; font-size: 10px; font-weight: 700; color: #fff;
+ .tab-bnum { display: inline-block; font-size: 11px; font-weight: 700; color: #fff;
    background: var(--ink-500, #64748b); border-radius: 5px; padding: 0 4px; margin-right: 4px; }
  .tab-vs { font-size: 11px; color: var(--sub); font-weight: 700; }
  .tab-pteam { font-size: 11px; color: var(--sub); font-weight: 400; margin-left: 3px; }
@@ -347,7 +349,7 @@
  .live-court-cell {
  background: #fff; border: 2px solid var(--border-strong);
  border-radius: 8px; padding: 20px 6px 6px;
- min-height: 72px; width: 96px;
+ min-height: 72px; width: 104px;
  display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
  font-size: 11px; position: relative;
  box-sizing: border-box;
@@ -364,7 +366,7 @@
  }
  .live-court-no {
  position: absolute; top: 3px; left: 0; right: 0;
- font-size: 10px; color: #fff; background: var(--sub);
+ font-size: 11px; color: #fff; background: var(--sub);
  font-weight: 700; text-align: center;
  padding: 1px 0; border-radius: 6px 6px 0 0;
  }
@@ -374,7 +376,7 @@
  color: var(--accent); line-height: 1.25; margin-top: 2px;
  width: 100%; word-break: keep-all; overflow-wrap: normal;
  }
- .live-court-elapsed { font-size: 9px; color: var(--sub); font-weight: 700; margin-top: 2px; }
+ .live-court-elapsed { font-size: 10px; color: var(--sub); font-weight: 700; margin-top: 2px; }
  .live-court-hq {
  margin-top: 10px; padding: 10px; background: var(--pri); color: #fff;
  border-radius: 6px; text-align: center; font-weight: 700; font-size: 13px;
@@ -1164,7 +1166,7 @@ const V = {
  TT.showLoading();
  try {
  const t = await api.get("/api/public/tournaments/" + id);
- if (t.error) { toast("大会が見つかりません", "err"); return; }
+ if (t.error) { toast("大会が見つかりませんでした。一覧から選び直してください", "err"); return; }
  const matches = await api.get(`/api/public/tournaments/${id}/matches`);
  V.state.currentTournament = t;
  V.renderTournamentDetail(t, matches || []);
@@ -1219,6 +1221,9 @@ const V = {
  const e = m.event || "その他";
  (byEvent[e] = byEvent[e] || []).push(m);
  });
+
+ // 用語の凡例 (初めて見る人向け)
+ el.appendChild(h("div", { className: "term-note" }, "「不戦勝(BYE)」= 相手がいない枠。次の試合へ自動で進みます"));
 
  // 種目アコーディオン (種目が多くてもスクロールを抑制。最初の種目だけ開く)
  const eventNames = Object.keys(byEvent);
@@ -1302,7 +1307,7 @@ const V = {
      h("div", { className: "mr-win" },
        h("div", { className: "mr-pname" }, nameEl(m.winner_id, m.winner_name),
          m.winner_team ? h("span", { className: "mr-pteam" }, " (" + m.winner_team + ")") : null)),
-     h("div", { className: "mr-vs", style: { fontSize: "11px" } }, "不戦勝"),
+     h("div", { className: "mr-vs", style: { fontSize: "11px" }, title: "対戦相手がいないため、次の試合へ自動で進みます" }, "不戦勝"),
      h("div", { className: "mr-lose" }, h("div", { className: "mr-pname", style: { color: "var(--sub-l)" } }, "—")));
  }
  return h("div", { className: "mr-row", style: { cursor: "pointer" },
@@ -1311,9 +1316,9 @@ const V = {
      h("div", { className: "mr-pname" }, nameEl(m.winner_id, m.winner_name)),
      m.winner_team ? h("div", { className: "mr-pteam" }, m.winner_team) : null),
    h("div", { className: "mr-vs" }, TT.fmtScore(m.winner_sets, m.loser_sets),
-     m.result_source === "referee" ? h("div", { style: { fontSize: "8px", color: "#b45309",
+     m.result_source === "referee" ? h("div", { style: { fontSize: "10px", color: "#b45309",
        fontWeight: 700, marginTop: "1px" }, title: "審判による速報値（本部確認待ち）" }, "速報") : null,
-     m.duration_sec ? h("div", { style: { fontSize: "9px", color: "var(--sub)", fontWeight: "400", marginTop: "2px" } },
+     m.duration_sec ? h("div", { style: { fontSize: "10px", color: "var(--sub)", fontWeight: "400", marginTop: "2px" } },
        TT.fmtDuration(m.duration_sec)) : null),
    h("div", { className: "mr-lose" },
      h("div", { className: "mr-pname" }, nameEl(m.loser_id, m.loser_name)),
@@ -1511,7 +1516,7 @@ const V = {
  list.style.display = "grid";
  list.appendChild(h("div", { className: "empty-state", style: { gridColumn: "1/-1" } },
  document.getElementById("searchInput").value
- ? "該当する選手が見つかりません。"
+ ? "該当する選手が見つかりませんでした。姓と名の間の空白を外す・ひらがなで試すなど、表記を変えてお試しください。"
  : "選手名・所属で検索してください（例：佐藤、卓球クラブ）"));
  return;
  }
@@ -2233,7 +2238,7 @@ const CO = {
  const go = async () => {
  const code = inp.value.trim().toLowerCase(); if (!code) return toast("コードを入力してください", "err");
  const r = await fetch("/api/coach/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) }).then(x => x.json()).catch(() => ({}));
- if (!r.ok) return toast(r.error || "コードが無効です", "err");
+ if (!r.ok) return toast(r.error || "コードが確認できませんでした。配布された監督コードをもう一度確認して入力してください", "err");
  CO.code = code; CO.coach = r.coach; localStorage.setItem("kttaCoachCode", code); CO.render();
  };
  return h("div", { className: "card", style: { maxWidth: "460px", margin: "8px auto", padding: "18px" } },
@@ -2764,7 +2769,7 @@ const L = {
  } else if (isBye) {
    body = h("div", { className: "tab-row-body" },
      h("span", { className: "tab-p" }, (m.winner_name && m.winner_name !== "BYE") ? m.winner_name : (m.player1_name || "?")),
-     h("span", { className: "tab-bye" }, "不戦勝 / BYE"));
+     h("span", { className: "tab-bye", title: "対戦相手がいないため、次の試合へ自動で進みます" }, "不戦勝 / BYE"));
  } else {
    body = h("div", { className: "tab-row-body" },
      h("span", { className: "tab-p" }, num(m.player1_bracket_number), m.player1_name || "?", team(m.player1_team)),
@@ -2777,7 +2782,7 @@ const L = {
 
  renderCourtGrid(s) {
  const { court_rows, court_cols, hq_position } = s.tournament;
- const CELL_W = 96, GAP = 8;
+ const CELL_W = 104, GAP = 8;
  const gridW = court_cols * CELL_W + (court_cols - 1) * GAP;
  const wrap = h("div", { className: "live-court-wrap" });
  // 横スクロール案内 (オーバーフロー時のみ JS で表示)
@@ -2804,7 +2809,7 @@ const L = {
  cell.appendChild(h("div", { className: "live-court-match",
    style: { color: ec.border } },
  h("div", {}, t.match.player1_name),
- h("div", { style: { fontSize: "9px", color: "var(--sub)" } }, "vs"),
+ h("div", { style: { fontSize: "10px", color: "var(--sub)" } }, "vs"),
  h("div", {}, t.match.player2_name),
  ));
  const since = t.match.called_at || t.match.started_at || "";
@@ -2998,7 +3003,7 @@ const MP = {
  const players = await api.get("/api/public/players?search=" + encodeURIComponent(q));
  if (!players.length) {
  results.appendChild(h("div", { className: "empty-state" },
- "該当する選手が見つかりません"));
+ "該当する選手が見つかりませんでした。姓と名の間の空白を外す・ひらがなで試すなど、表記を変えてお試しください"));
  return;
  }
  players.slice(0, 10).forEach(p => {
@@ -3225,11 +3230,10 @@ const MP = {
  // iPhone/iPad: ホーム画面追加が必須
  return withHowto(h("div", { className: "card", style: { background: "#eff6ff", borderColor: "#3b82f6", padding: "12px 14px" } },
    h("div", { className: "font-bold", style: { marginBottom: "6px", color: "#1e40af" } }, "iPhone・iPad で通知を受け取るには"),
-   h("ol", { style: { margin: "0 0 0 18px", padding: 0, fontSize: "13px", lineHeight: "1.9" } },
-     h("li", {}, "画面下の「共有」ボタン（□に↑のマーク）をタップ"),
-     h("li", {}, "「ホーム画面に追加」を選ぶ"),
-     h("li", {}, "追加されたアイコンから開き直す"),
-     h("li", {}, "もう一度この画面で「通知をオンにする」")),
+   h("ol", { style: { margin: "0", padding: 0, listStyle: "none", fontSize: "13px", lineHeight: "1.9" } },
+     h("li", {}, "① 画面下の「共有」ボタン（□に↑）をタップ"),
+     h("li", {}, "② 「ホーム画面に追加」をタップ"),
+     h("li", {}, "③ ホーム画面の「マイ番号」から開き直して「通知をオンにする」")),
    h("div", { className: "text-xs text-sub", style: { marginTop: "6px" } },
      "※ iPhoneはホーム画面に追加したアプリからのみ通知を受け取れます (Apple仕様)。")));
  }
