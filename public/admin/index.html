@@ -6576,6 +6576,34 @@ const A = {
  h("label", { className: "field-label" }, "備考"),
  h("textarea", { id: "plNote", rows: 2 }, p.note || "")),
 
+ // ─── 所属履歴 (#298): players.team は現所属キャッシュ、正本はこの履歴 ───
+ !isNew ? h("div", { className: "field" },
+ h("label", { className: "field-label" }, "所属履歴 (現所属＝緑・複数可。クラブ変更/卒業は「締める」で履歴化)"),
+ h("div", { className: "ach-list", id: "affList" },
+   h("div", { style: { fontSize: "12px", color: "#a8a29e", padding: "6px" } }, "読込中...")),
+ h("div", { style: { display: "grid",
+   gridTemplateColumns: "1fr 96px 140px auto", gap: "5px", marginTop: "6px", alignItems: "center" } },
+ h("input", { className: "input", id: "affTeam", placeholder: "所属(団体名)", list: "plTeamList",
+   style: { padding: "6px", fontSize: "12px" } }),
+ h("select", { className: "input", id: "affKind", style: { padding: "6px", fontSize: "12px" } },
+   h("option", { value: "" }, "種別 未指定"),
+   h("option", { value: "elementary" }, "小学"),
+   h("option", { value: "middle" }, "中学"),
+   h("option", { value: "high" }, "高校"),
+   h("option", { value: "university" }, "大学"),
+   h("option", { value: "general" }, "一般"),
+   h("option", { value: "club" }, "クラブ")),
+ h("input", { className: "input", id: "affStart", type: "date", title: "開始日(任意)",
+   style: { padding: "6px", fontSize: "12px" } }),
+ h("button", { className: "btn btn-sm", type: "button",
+   style: { padding: "6px 10px", fontSize: "12px" },
+   onClick: () => A._addAffiliation(p.id) }, "追加")),
+ h("div", { className: "text-xs text-sub", style: { marginTop: "4px" } },
+   "※「追加」で即保存。種別は未指定なら所属名から自動推定。過去大会は当時の所属で表示されます")) :
+ h("div", { className: "text-xs text-sub",
+   style: { padding: "8px", background: "#f8fafc", borderRadius: "6px" } },
+   "所属履歴は、選手を保存してから登録できます"),
+
  // ─── 通算戦績 (読み取り専用・自動集計) ───
  !isNew && totalM > 0 ? h("div", { className: "field" },
  h("label", { className: "field-label" }, "通算戦績 (試合データから自動集計)"),
@@ -6683,7 +6711,7 @@ const A = {
  );
  // 既存選手なら試合一覧を非同期ロード
  if (!isNew && p.id) {
-   setTimeout(() => A._loadMatchRecords(p.id), 120);
+   setTimeout(() => { A._loadAffiliations(p.id); A._loadMatchRecords(p.id); }, 120);
  }
  const foot = h("button", { className: "btn", onClick: async () => {
  const data = {
@@ -6768,6 +6796,77 @@ const A = {
          } catch (err) { toast("削除失敗: " + err.message, "err"); }
        } }, "×"),
    );
+ },
+ // ─── 所属履歴 (#298) ヘルパー ───
+ _affKindLabel(k) {
+   return ({ elementary: "小", middle: "中", high: "高", university: "大", general: "一般", club: "クラブ" })[k] || "";
+ },
+ async _loadAffiliations(playerId) {
+   const box = document.getElementById("affList");
+   if (!box) return;
+   try {
+     const r = await api.get("/api/players/" + playerId + "/affiliations");
+     const affs = (r && r.affiliations) || [];
+     box.replaceChildren();
+     if (!affs.length) {
+       box.appendChild(h("div", { style: { fontSize: "12px", color: "#a8a29e", padding: "6px" } },
+         "所属履歴がまだありません"));
+       return;
+     }
+     affs.forEach(a => box.appendChild(A._renderAffItem(playerId, a)));
+   } catch (e) {
+     box.replaceChildren(h("div", { style: { fontSize: "12px", color: "#dc2626" } },
+       "読込失敗: " + e.message));
+   }
+ },
+ _renderAffItem(playerId, a) {
+   const current = !a.end_date;
+   const kindL = A._affKindLabel(a.kind);
+   const period = (a.start_date || "?") + " 〜 " + (a.end_date || "現在");
+   return h("div", { className: "ach-item",
+     style: { background: current ? "#f0fdf4" : "#f8fafc",
+       borderColor: current ? "#86efac" : "#e7e5e4" } },
+     h("span", { className: "ach-place",
+       style: { background: current ? "#16a34a" : "#a8a29e", color: "#fff" } }, current ? "現所属" : "履歴"),
+     h("span", { style: { fontWeight: "600" } }, a.team || ""),
+     kindL ? h("span", { style: { color: "#78716c", fontSize: "11px" } }, kindL) : null,
+     h("span", { style: { color: "#78716c", fontSize: "11px" } }, period),
+     current ? h("button", { className: "btn btn-sm btn-ghost", type: "button",
+       title: "この所属を締める(クラブ変更・卒業)。当時所属の表示に使われます",
+       style: { marginLeft: "auto", padding: "2px 8px", fontSize: "11px" },
+       onClick: async () => {
+         const d = prompt("締める日 (YYYY-MM-DD)。空欄で本日。", "");
+         if (d === null) return;
+         try {
+           const r = await api.post("/api/affiliations/" + a.id + "/end", { end_date: d.trim() });
+           if (r.error) return toast(r.error, "err");
+           toast("締めました", "ok"); A._loadAffiliations(playerId);
+         } catch (e) { toast("失敗: " + e.message, "err"); }
+       } }, "締める") : null,
+     h("button", { className: "ach-del", type: "button", title: "削除(誤登録の訂正)",
+       onClick: async (e) => {
+         e.stopPropagation();
+         if (!confirm("この所属履歴を削除しますか?")) return;
+         try {
+           await api.del("/api/affiliations/" + a.id);
+           A._loadAffiliations(playerId); toast("削除しました", "ok");
+         } catch (err) { toast("削除失敗: " + err.message, "err"); }
+       } }, "×"),
+   );
+ },
+ async _addAffiliation(playerId) {
+   const team = document.getElementById("affTeam").value.trim();
+   const kind = document.getElementById("affKind").value;
+   const start_date = document.getElementById("affStart").value;
+   if (!team) return toast("所属(団体名)を入力してください", "err");
+   try {
+     const r = await api.post("/api/players/" + playerId + "/affiliations", { team, kind, start_date });
+     if (r.error) return toast(r.error, "err");
+     A._loadAffiliations(playerId);
+     document.getElementById("affTeam").value = "";
+     document.getElementById("affStart").value = "";
+     toast("所属を追加しました", "ok");
+   } catch (e) { toast("追加失敗: " + e.message, "err"); }
  },
  // ─── 個別戦績 (試合) ヘルパー ───
  async _loadMatchRecords(playerId) {

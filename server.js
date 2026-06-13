@@ -1251,8 +1251,8 @@ app.post("/api/players/:id/affiliations", requireAdmin, (req, res) => {
   if (r.error) return res.status(400).json(r);
   res.status(201).json(r);
 });
-// 所属を締める(クラブ変更・卒業)。body: { end_date }
-app.patch("/api/affiliations/:id/end", requireAdmin, (req, res) => {
+// 所属を締める(クラブ変更・卒業)。body: { end_date } (空=本日)
+app.post("/api/affiliations/:id/end", requireAdmin, (req, res) => {
   const r = db.endAffiliation(req.params.id, (req.body || {}).end_date);
   if (r.error) return res.status(400).json(r);
   res.json(r);
