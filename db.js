@@ -428,6 +428,26 @@ sqlite.exec(`
   );
 `);
 
+// 所属履歴 (#298): players.team は「現所属キャッシュ」、正本はこの履歴。上書きせず期間で持つ。
+//   end_date='' = 現所属(現役)。同時に複数の現所属を許す(部活+クラブの二重所属など)。
+//   過去大会の成績は affiliationAt(playerId, 大会日付) で「当時の所属」を逆引きできる。
+//   選手IDを参照するため MERGE_REPOINT に登録済み(マージで survivor へ付替・undo で復元)。
+const AFFILIATIONS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS affiliations (
+    id TEXT PRIMARY KEY,
+    player_id TEXT NOT NULL,
+    team TEXT NOT NULL DEFAULT '',
+    kind TEXT DEFAULT '',
+    start_date TEXT DEFAULT '',
+    end_date TEXT DEFAULT '',
+    note TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_affiliations_player ON affiliations(player_id);
+`;
+sqlite.exec(AFFILIATIONS_SCHEMA);
+
 // 既存DBにカラムがない場合は追加
 try {
   const pcols = sqlite.prepare("PRAGMA table_info(players)").all();
@@ -1036,6 +1056,7 @@ function getPlayer(id) {
   }));
   // 大会レベル別の勝敗内訳 (全道/全国の戦績を別記録)
   player.level_stats = getPlayerLevelStats(player.id);
+  player.affiliations = listAffiliations(player.id);   // 所属履歴 (#298)
   return player;
 }
 
@@ -1305,6 +1326,11 @@ function createPlayer(data) {
       });
     }
   }
+  // 所属履歴の初期1件を team から作る (#298)。空 team は履歴を作らない。
+  if (String(data.team || "").trim()) {
+    sqlite.prepare(`INSERT INTO affiliations (id, player_id, team, kind, start_date) VALUES (?,?,?,?,?)`)
+      .run(uid(), id, data.team, detectSchoolCategory(data.team, data.category) || "", "");
+  }
   return getPlayer(id);
 }
 
@@ -1341,6 +1367,70 @@ function deletePlayer(id) {
 }
 function deleteAllPlayers() { stmts.deleteAllPlayers.run(); }
 
+// ── 所属履歴 (#298) ──────────────────────────────────────
+// players.team は現所属キャッシュ。正本はこの affiliations(期間つき履歴)。読みは redirect 解決。
+function listAffiliations(playerId) {
+  const pid = resolvePlayerId(playerId);
+  return sqlite.prepare(`SELECT * FROM affiliations WHERE player_id = ?
+    ORDER BY (CASE WHEN COALESCE(end_date,'')='' THEN 0 ELSE 1 END),
+             COALESCE(start_date,'') DESC, rowid DESC`).all(pid);
+}
+function currentAffiliations(playerId) {
+  const pid = resolvePlayerId(playerId);
+  return sqlite.prepare(`SELECT * FROM affiliations WHERE player_id = ? AND COALESCE(end_date,'')=''
+    ORDER BY rowid`).all(pid);
+}
+// 指定日に有効だった所属(複数可)。過去大会の「当時の所属」表示に使う。
+function affiliationAt(playerId, date) {
+  const pid = resolvePlayerId(playerId);
+  const d = String(date || "").slice(0, 10);
+  return sqlite.prepare(`SELECT * FROM affiliations WHERE player_id = ?
+    AND (COALESCE(start_date,'')='' OR start_date <= ?)
+    AND (COALESCE(end_date,'')='' OR end_date > ?)
+    ORDER BY rowid`).all(pid, d, d);
+}
+function addAffiliation(playerId, data = {}) {
+  const pid = resolvePlayerId(playerId);
+  const p = stmts.getPlayer.get(pid);
+  if (!p) return { error: "選手が見つかりません" };
+  if (p.merged_into) return { error: "統合済みの選手には追加できません" };
+  const team = String(data.team || "").trim();
+  if (!team) return { error: "所属(団体名)を指定してください" };
+  const id = uid();
+  const kind = data.kind || detectSchoolCategory(team) || "";
+  sqlite.prepare(`INSERT INTO affiliations (id, player_id, team, kind, start_date, end_date, note)
+    VALUES (?,?,?,?,?,?,?)`)
+    .run(id, pid, team, kind, data.start_date || "", data.end_date || "", data.note || "");
+  return { ok: true, id, affiliations: listAffiliations(pid) };
+}
+// 所属を締める(クラブ変更・卒業など)。現所属(end_date='')のみ締められる。
+function endAffiliation(affId, endDate) {
+  const end = String(endDate || "").slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const r = sqlite.prepare(`UPDATE affiliations SET end_date = ? WHERE id = ? AND COALESCE(end_date,'')=''`)
+    .run(end, affId);
+  return r.changes ? { ok: true, id: affId, end_date: end } : { error: "対象の現所属が見つかりません" };
+}
+function deleteAffiliation(affId) {
+  const r = sqlite.prepare(`DELETE FROM affiliations WHERE id = ?`).run(affId);
+  return r.changes ? { ok: true } : { error: "対象が見つかりません" };
+}
+// 既存選手の team から所属履歴の初期1件を生成(冪等)。履歴が1件も無い選手のみ対象。
+function backfillAffiliations() {
+  const players = sqlite.prepare(`SELECT id, team, category FROM players
+    WHERE merged_into IS NULL AND COALESCE(team,'') != ''
+      AND NOT EXISTS (SELECT 1 FROM affiliations a WHERE a.player_id = players.id)`).all();
+  const ins = sqlite.prepare(`INSERT INTO affiliations (id, player_id, team, kind, start_date) VALUES (?,?,?,?,?)`);
+  let created = 0;
+  const tx = sqlite.transaction(() => {
+    for (const p of players) {
+      ins.run(uid(), p.id, p.team, detectSchoolCategory(p.team, p.category) || "", "");
+      created++;
+    }
+  });
+  tx();
+  return { ok: true, created };
+}
+
 // ── 選手の重複結合 (マージ) #275 → リダイレクト方式 ──
 // dupId の参照(下の MERGE_REPOINT + 複合PKテーブル)をすべて survivorId へ付け替え、
 // dup 行は削除せず merged_into=survivorId の「統合済み(リダイレクト)」として残す。
@@ -1355,6 +1445,7 @@ const MERGE_REPOINT = [
   ["achievements", "player_id"],
   ["entrants", "player_id"], ["entrants", "partner_player_id"],
   ["player_requests", "player_id"],
+  ["affiliations", "player_id"],   // 所属履歴 (#298): マージで survivor へ付替・undo で復元
 ];
 function mergePlayers(survivorId, dupId, opts = {}) {
   if (!survivorId || !dupId) return { error: "結合する2名を指定してください" };
@@ -2678,11 +2769,26 @@ function resolveBranchChange(entrantId, playerId, newTeam) {
   const e = entrantStmts.get.get(entrantId);
   const p = stmts.getPlayer.get(playerId);
   if (!e || !p) return { error: "対象が見つかりません" };
-  // マスタの所属を新所属へ更新
-  updatePlayer(playerId, { team: (newTeam != null ? newTeam : e.team) || "" });
-  // entrant をこの選手にリンク
-  entrantStmts.setPlayerLink.run(playerId, entrantId);
-  return { ok: true, player_id: playerId, team: (newTeam != null ? newTeam : e.team) || "" };
+  const team = (newTeam != null ? newTeam : e.team) || "";
+  const tx = sqlite.transaction(() => {
+    // 所属履歴 (#298): 転校/クラブ変更として履歴を積む(上書きしない)。
+    // team が変わるとき: 異なる現所属を今日付けで締め、同 team の現所属が無ければ追加。
+    if (team && team !== (p.team || "")) {
+      const today = new Date().toISOString().slice(0, 10);
+      sqlite.prepare(`UPDATE affiliations SET end_date = ?
+        WHERE player_id = ? AND COALESCE(end_date,'')='' AND team != ?`).run(today, playerId, team);
+      const exists = sqlite.prepare(`SELECT 1 FROM affiliations
+        WHERE player_id = ? AND team = ? AND COALESCE(end_date,'')='' LIMIT 1`).get(playerId, team);
+      if (!exists) {
+        sqlite.prepare(`INSERT INTO affiliations (id, player_id, team, kind, start_date) VALUES (?,?,?,?,?)`)
+          .run(uid(), playerId, team, detectSchoolCategory(team) || "", today);
+      }
+    }
+    updatePlayer(playerId, { team });    // 現所属キャッシュも更新
+    entrantStmts.setPlayerLink.run(playerId, entrantId);
+  });
+  tx();
+  return { ok: true, player_id: playerId, team };
 }
 
 // イベント内 entrant 統計 (admin UI 用)
@@ -8731,6 +8837,8 @@ module.exports = {
   getAllBest8,
   getPlayers, getPlayer, createPlayer, updatePlayer, deletePlayer, deleteAllPlayers,
   mergePlayers, unmergePlayers, listPlayerMerges, resolvePlayerId, findDuplicatePlayerCandidates,
+  // 所属履歴 (#298)
+  listAffiliations, currentAffiliations, affiliationAt, addAffiliation, endAffiliation, deleteAffiliation, backfillAffiliations,
   // 監督・顧問モード (#285)
   createCoachAccount, getCoachAccount, listCoachAccounts, updateCoachAccount,
   regenerateCoachCode, setCoachCode, deleteCoachAccount, coachByCode,

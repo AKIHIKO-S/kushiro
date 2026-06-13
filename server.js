@@ -1242,6 +1242,31 @@ app.delete("/api/achievements/:id", requireAdmin, (req, res) => {
   db.deleteAchievement(req.params.id); res.json({ ok: true });
 });
 
+// ── 所属履歴 (#298): players.team は現所属キャッシュ、正本はこの履歴 ──
+app.get("/api/players/:id/affiliations", requireAdmin, (req, res) => {
+  res.json({ affiliations: db.listAffiliations(req.params.id) });
+});
+app.post("/api/players/:id/affiliations", requireAdmin, (req, res) => {
+  const r = db.addAffiliation(req.params.id, req.body || {});
+  if (r.error) return res.status(400).json(r);
+  res.status(201).json(r);
+});
+// 所属を締める(クラブ変更・卒業)。body: { end_date }
+app.patch("/api/affiliations/:id/end", requireAdmin, (req, res) => {
+  const r = db.endAffiliation(req.params.id, (req.body || {}).end_date);
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
+app.delete("/api/affiliations/:id", requireAdmin, (req, res) => {
+  const r = db.deleteAffiliation(req.params.id);
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
+});
+// 既存選手の team から所属履歴を一括生成(冪等・初回移行用)。
+app.post("/api/affiliations/backfill", requireOwner, (req, res) => {
+  res.json(db.backfillAffiliations());
+});
+
 // ── 個別戦績 (試合) の手動入力・削除 ──
 // 選手の試合一覧 (編集用・手動フラグ付き)
 app.get("/api/players/:id/match-records", requireAdmin, (req, res) => {
