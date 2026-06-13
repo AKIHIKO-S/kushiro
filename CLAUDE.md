@@ -33,7 +33,7 @@ public/
   ├─ viewer/index.html  公開閲覧+選手ポータル (V/L/MP/CO モジュール、SSEでライブ更新)
   ├─ admin/index.html   運営コンソール (A/BR/EF モジュール)
   └─ shared/common.js   TT名前空間: api(オフラインキュー付fetch), h(), esc(), createPoller(), toast()
-tools/   Excel/PDF→JSON ブラケットパーサ (Python bracket_parser パッケージ + JS版、subprocessで疎結合)
+tools/   Excel/PDF→JSON ブラケットパーサ。組合せ表取込(/kumiawase/upload)は Python bracket_parser(openpyxlで罫線読取)が主系統・JS版(parse_bracket_seedlist.js)が副系統・旧parse_ktta_bracket.jsが最終FB(#268)。起動時にpython3+openpyxl可用性をプローブし無い環境はJS主系統へ無停止FB(KTTA_DISABLE_PYTHON_PARSER=1で強制無効)。subprocessで疎結合
 gas/     Google Apps Script (Jimdo/フォーム連携で entrants を POST)
 standalone/  オフライン単機運用ラッパ (start.command/.bat)
 ```

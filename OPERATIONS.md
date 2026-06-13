@@ -159,6 +159,12 @@ sudo ln -s /etc/nginx/sites-available/ktta /etc/nginx/sites-enabled/
 sudo certbot --nginx -d kttatakkyu.example.com
 ```
 
+> **組合せ表パーサーの依存 (推奨)**: 組合せ表 Excel 取込の主系統は Python `bracket_parser`(openpyxl で罫線を読む)。
+> 本番へ導入するには `sudo apt install -y python3 python3-pip` 後に
+> `pip3 install -r /opt/ktta/tools/bracket_parser/requirements.txt`(または `/opt/ktta/.python-packages` へ)。
+> **未導入でも JS パーサー(`parse_bracket_seedlist.js`)へ自動フォールバックして無停止**だが、罫線精度を活かすには導入推奨。
+> 検証: `cd /opt/ktta && PYTHONPATH=tools python3 -m bracket_parser.selftest --real`。強制的に JS 主系統へ落とすには env `KTTA_DISABLE_PYTHON_PARSER=1`。
+
 ### ステップ3: 管理画面 初期設定 (10分)
 
 1. `https://yourdomain/admin/` を開く

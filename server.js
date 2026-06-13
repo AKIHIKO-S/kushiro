@@ -1983,12 +1983,66 @@ app.post("/api/tournaments/:id/kumiawase/upload",
     }
   }
 
-  // Excel 経由 (Node 製パーサー)
-  if (!kttaParser || !kttaParser.parseWorkbook) {
+  // Excel 経由: 主系統=Python 罫線パーサー(openpyxl) / 副系統=JS seed-list / 最終=旧 parse_ktta_bracket。
+  // python3+openpyxl が無い環境では Python を飛ばし JS 主系統で無停止運用する(#268 昇格)。
+  const pyOk = await pythonParserAvailable();
+  if (!pyOk && !(seedListParser && seedListParser.parseSeedList) && !(kttaParser && kttaParser.parseWorkbook)) {
     try { fs.unlinkSync(filePath); } catch {}
     return res.status(500).json({ error: "Excel パーサーが利用できません" });
   }
-  // ── 主系統: 実データ駆動の seed-list パーサー (#268・実測100%) ──
+
+  // ── 主系統: Python 罫線パーサー (tools/bracket_parser, openpyxl・実測100%) ──
+  // openpyxl はセル罫線を読めるため組合せ表(両山トーナメント)の構造復元に最も強い。
+  // 本体にロジックは置かず subprocess の JSON のみ取込む(疎結合・将来改修容易)。
+  if (pyOk) {
+    try {
+      const pyEnv = pythonParserEnv();
+      // 登録団体(正規化済み)を env(JSON)で Python パーサへ。長さは防御的に制限。
+      try { const j = JSON.stringify(regTeams); if (j.length < 60000) pyEnv.KTTA_REGISTERED_TEAMS = j; } catch (e) {}
+      const pyArgs = ["-m", "bracket_parser", filePath];
+      if (sheet) {
+        pyArgs.push("--sheet", sheet);
+        if (event) pyArgs.push("--event", event);
+        if (["singles", "doubles", "team"].includes(format)) pyArgs.push("--format", format);
+      }
+      const pyRes = await runChild("python3", pyArgs, { env: pyEnv });   // #20: タイムアウト/出力上限つき
+      let parsed = null;
+      if (pyRes.code === 0 && pyRes.out) {
+        try { parsed = JSON.parse(pyRes.out); } catch { parsed = null; }
+      }
+      const pyEvents = (parsed && !parsed.error ? (parsed.events || []) : [])
+        .filter((ev) => (ev.players || []).length >= 2);
+      if (pyEvents.length) {
+        if (dryRun) {
+          try { fs.unlinkSync(filePath); } catch {}
+          return res.json({
+            preview: { events: pyEvents.map((e) => ({ event: e.event, format: e.format, count: e.players.length, players: e.players })) },
+            message: `解析プレビュー: ${pyEvents.length}種目 / 計${pyEvents.reduce((s, e) => s + e.players.length, 0)}人 (まだ取込されていません)`,
+            used_parser: "bracket_parser (python)",
+          });
+        }
+        const imported = [];
+        for (const ev of pyEvents) {
+          const r = db.importBracket(req.params.id, {
+            format: "tabletennis-seed-list-v1",
+            event: ev.event,
+            players: ev.players,
+            regenerate: true,
+            auto_link_to_players: true,
+            auto_create_players: true,
+            placement: "as_drawn",   // 紙の並びそのまま配置(再シードしない)=他経路と統一
+          });
+          imported.push({ event: ev.event, format: ev.format, count: ev.players.length, result: r });
+        }
+        try { fs.unlinkSync(filePath); } catch {}
+        return res.json({ ok: true, source: "kumiawase_seedlist", used_parser: "bracket_parser (python)", imported });
+      }
+    } catch (e) {
+      console.warn("[kumiawase] python bracket_parser failed, JS へフォールバック:", e.message);
+    }
+  }
+
+  // ── 副系統: JS seed-list パーサー (python不在/空振り時・実測100%) ──
   // 組合せExcelからシード順の選手リストを抽出し、種目ごとに取込む(複数シート=複数種目を一括)。
   if (seedListParser && seedListParser.parseSeedList) {
     try {
@@ -2024,59 +2078,10 @@ app.post("/api/tournaments/:id/kumiawase/upload",
         try { fs.unlinkSync(filePath); } catch {}
         return res.json({ ok: true, source: "kumiawase_seedlist", used_parser: "parse_bracket_seedlist.js", imported });
       }
-      // 何も取れなければ Python 罫線パーサー → 旧パーサーへフォールバック
+      // 何も取れなければ 旧パーサーへフォールバック
     } catch (e) {
       console.warn("[kumiawase] seed-list parse failed, fallback:", e.message);
     }
-  }
-  // ── 副系統: Python 罫線パーサー (tools/bracket_parser, 実測100%) ──
-  // 本体にロジックは置かず subprocess の JSON のみ取込む(疎結合・将来改修容易)。
-  // JS seed-list が空振りした表でも openpyxl で罫線/番号を読み直す second opinion。
-  try {
-    const pyEnv = Object.assign({}, process.env);
-    const pyPaths = [path.join(__dirname, "tools"), path.join(__dirname, ".python-packages")];
-    pyEnv.PYTHONPATH = pyPaths.join(path.delimiter) + (pyEnv.PYTHONPATH ? path.delimiter + pyEnv.PYTHONPATH : "");
-    // 登録団体(正規化済み)を env(JSON)で Python パーサへ。長さは防御的に制限。
-    try { const j = JSON.stringify(regTeams); if (j.length < 60000) pyEnv.KTTA_REGISTERED_TEAMS = j; } catch (e) {}
-    const pyArgs = ["-m", "bracket_parser", filePath];
-    if (sheet) {
-      pyArgs.push("--sheet", sheet);
-      if (event) pyArgs.push("--event", event);
-      if (["singles", "doubles", "team"].includes(format)) pyArgs.push("--format", format);
-    }
-    const pyRes = await runChild("python3", pyArgs, { env: pyEnv });   // #20: タイムアウト/出力上限つき
-    let parsed = null;
-    if (pyRes.code === 0 && pyRes.out) {
-      try { parsed = JSON.parse(pyRes.out); } catch { parsed = null; }
-    }
-    const pyEvents = (parsed && !parsed.error ? (parsed.events || []) : [])
-      .filter((ev) => (ev.players || []).length >= 2);
-    if (pyEvents.length) {
-      if (dryRun) {
-        try { fs.unlinkSync(filePath); } catch {}
-        return res.json({
-          preview: { events: pyEvents.map((e) => ({ event: e.event, format: e.format, count: e.players.length, players: e.players })) },
-          message: `解析プレビュー: ${pyEvents.length}種目 / 計${pyEvents.reduce((s, e) => s + e.players.length, 0)}人 (まだ取込されていません)`,
-          used_parser: "bracket_parser (python)",
-        });
-      }
-      const imported = [];
-      for (const ev of pyEvents) {
-        const r = db.importBracket(req.params.id, {
-          format: "tabletennis-seed-list-v1",
-          event: ev.event,
-          players: ev.players,
-          regenerate: true,
-          auto_link_to_players: true,
-          auto_create_players: true,
-        });
-        imported.push({ event: ev.event, format: ev.format, count: ev.players.length, result: r });
-      }
-      try { fs.unlinkSync(filePath); } catch {}
-      return res.json({ ok: true, source: "kumiawase_seedlist", used_parser: "bracket_parser (python)", imported });
-    }
-  } catch (e) {
-    console.warn("[kumiawase] python bracket_parser fallback failed:", e.message);
   }
   // ── フォールバック: 旧 parse_ktta_bracket (テンプレ/特殊形式向け) ──
   try {
@@ -2129,6 +2134,28 @@ try {
   templateBuilder = require("./tools/build_bracket_template.js");
 } catch (e) {
   console.warn("[startup] テンプレ パーサーのロード失敗:", e.message);
+}
+
+// ── Python 罫線パーサー(tools/bracket_parser, openpyxl) の可用性プローブ ──
+// 組合せ表取込の主系統(#268 昇格)。本番に python3/openpyxl が無くても JS 主系統で
+// 無停止運用するため、プロセス内で一度だけ可用性を検査して結果をキャッシュする。
+// テスト/運用で強制 off にしたいときは KTTA_DISABLE_PYTHON_PARSER=1。
+let _pyParserAvail = null; // null=未検査 / true|false=検査済み
+function pythonParserEnv() {
+  const env = Object.assign({}, process.env);
+  const paths = [path.join(__dirname, "tools"), path.join(__dirname, ".python-packages")];
+  env.PYTHONPATH = paths.join(path.delimiter) + (env.PYTHONPATH ? path.delimiter + env.PYTHONPATH : "");
+  return env;
+}
+async function pythonParserAvailable() {
+  if (process.env.KTTA_DISABLE_PYTHON_PARSER === "1") return false;
+  if (_pyParserAvail !== null) return _pyParserAvail;
+  try {
+    const r = await runChild("python3", ["-c", "import openpyxl, bracket_parser"], { env: pythonParserEnv(), timeoutMs: 8000 });
+    _pyParserAvail = r.code === 0;
+  } catch { _pyParserAvail = false; }
+  console.log(`[startup] Python 罫線パーサー(bracket_parser): ${_pyParserAvail ? "利用可能 → 組合せ表取込の主系統" : "利用不可 → JS 主系統にフォールバック"}`);
+  return _pyParserAvail;
 }
 
 // テンプレ Excel ダウンロード

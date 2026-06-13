@@ -50,11 +50,13 @@ python3 -m bracket_parser FILE.xlsx --sheets        # シート名一覧のみ
                    "partner_name": "...", "partner_team": "...", "is_doubles": true } ] } ] }
 ```
 
-## server.js への接続(任意・疎結合)
+## server.js への接続(主系統・疎結合)
 
-`/kumiawase/upload` の JS パーサー(`parse_bracket_seedlist.js`)の後段フォールバックとして、
-`spawn("python3", ["-m","bracket_parser", xlsxPath])` の stdout(JSON)を
-既存の `events[]` 取込ループにそのまま渡せる。本体にロジックは増えない。
+`/kumiawase/upload` の Excel 取込は **本パーサーが主系統**(#268 昇格)。起動時に
+`python3 -c "import openpyxl, bracket_parser"` で可用性を一度プローブし、利用可なら
+`spawn("python3", ["-m","bracket_parser", xlsxPath])` の stdout(JSON)を既存の `events[]`
+取込ループに渡す。python3/openpyxl が無い環境では JS `parse_bracket_seedlist.js` 主系統へ
+無停止フォールバック(`KTTA_DISABLE_PYTHON_PARSER=1` で強制無効化も可)。本体にロジックは増えない。
 
 ## 解析の要点(罫線の読み方)
 
