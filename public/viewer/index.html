@@ -1028,6 +1028,13 @@ const V = {
  const [type, id] = h.split("/");
  if (type === "tournament" && id) V.openTournament(id, false);
  else if (type === "player" && id) V.openPlayer(id, false);
+ else if (type === "search" && id) {
+   // #search/<検索語> で「検索済みの画面」を開く（協会サイト等からの直リンク用）。
+   // 検索語を入力欄へセットしてから検索タブを表示すると showTab("search") が doSearch() を実行する。
+   const si = document.getElementById("searchInput");
+   if (si) { try { si.value = decodeURIComponent(id); } catch (e) { si.value = id; } }
+   V.showTab("search", true);
+ }
  else V.showTab(type || "live", true);
  },
 
