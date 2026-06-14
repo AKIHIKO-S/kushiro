@@ -1004,6 +1004,17 @@ const V = {
 
  // URLハッシュ処理（#tournament/abc, #player/xyz）
  V.handleHash();
+ // 協会サイト等からの ?q= / ?search= 直リンク対応：検索語をURLクエリで受け取っても「検索済み」で開く
+ // （#search/<語> ルートに加えた保険。古い連携実装が ?q=… で送っていても拾えるようにする）
+ try {
+   const _sp = new URLSearchParams(location.search);
+   const _q = (_sp.get("q") || _sp.get("search") || _sp.get("s") || "").trim();
+   if (_q) {
+     const _si = document.getElementById("searchInput");
+     if (_si) _si.value = _q;
+     V.showTab("search", true);
+   }
+ } catch (e) {}
  window.addEventListener("hashchange", () => V.handleHash());
 
  // 自動更新ポーラー
