@@ -851,6 +851,39 @@
  button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
  }
+/* ═══════════ viewer 選手カード刷新「モダン・ミニマル」(2026-06) ═══════════
+   白基調・余白・タイポ主役。バッジ群/性別グラデ丸アバター/支部色の左罫線/赤線を廃止。
+   差し色は控えめなスレートブルー(勝率バー・勝率%・フォーカスのみ)。動きはCSSのみ。
+   新クラス vp-* で旧 .pdb-card 系(共有common.css)と非干渉。スコープは #tab-search 内。 */
+#tab-search .pdb-acc.open .pdb-acc-body { grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 12px; background: transparent; padding: 8px 2px; }
+#tab-search .pdb-acc.open .vp-card { animation: pdbCardIn .34s cubic-bezier(.2,.7,.3,1) both; }
+#tab-search .vp-card { --vp-accent:#3b5a7a; display:block; background:#fff; border:1px solid var(--tc-line); border-radius:14px;
+  padding:17px 18px 15px; cursor:pointer; transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
+#tab-search .vp-card:hover { border-color:#d7d7db; transform:translateY(-2px); box-shadow:0 10px 26px -14px rgba(24,24,34,.16); }
+#tab-search .vp-card:focus-visible { outline:2px solid var(--vp-accent); outline-offset:2px; }
+#tab-search .vp-head { display:flex; align-items:flex-start; gap:12px; }
+#tab-search .vp-mono { flex:none; width:38px; height:38px; border-radius:10px; background:var(--tc-line2); color:var(--tc-ink2);
+  display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:600; letter-spacing:.02em; }
+#tab-search .vp-id { min-width:0; flex:1; }
+#tab-search .vp-name { font-size:18px; font-weight:650; color:var(--tc-ink); letter-spacing:.01em; line-height:1.25;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#tab-search .vp-furi { margin-top:2px; font-size:11px; color:var(--tc-ink3); letter-spacing:.08em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#tab-search .vp-team { margin-top:3px; font-size:12px; color:var(--tc-ink2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#tab-search .vp-tag { flex:none; font-size:11px; color:var(--tc-ink3); letter-spacing:.04em; padding-top:3px; white-space:nowrap; }
+#tab-search .vp-rule { border-top:1px solid var(--tc-line2); margin:14px 0 0; }
+#tab-search .vp-stats { display:flex; align-items:flex-end; justify-content:space-between; margin-top:13px; gap:8px; }
+#tab-search .vp-stat { display:flex; flex-direction:column; gap:2px; }
+#tab-search .vp-stat .v { font-family:var(--font-mono, 'SF Mono', Menlo, Consolas, monospace); font-size:20px; font-weight:600; line-height:1;
+  color:var(--tc-ink); font-variant-numeric:tabular-nums; }
+#tab-search .vp-stat.loss .v { color:var(--tc-ink3); }
+#tab-search .vp-stat .k { font-size:10px; color:var(--tc-ink3); letter-spacing:.1em; }
+#tab-search .vp-stat.rate { align-items:flex-end; }
+#tab-search .vp-stat.rate .v { color:var(--vp-accent); font-weight:700; }
+#tab-search .vp-stat.rate .v.none { font-size:11px; font-weight:600; color:var(--tc-ink3); }
+#tab-search .vp-stat.rate .pct-sign { font-size:11px; font-weight:600; }
+#tab-search .vp-bar { height:4px; border-radius:2px; margin-top:11px; background:var(--tc-line2); overflow:hidden; }
+#tab-search .vp-bar > i { display:block; height:100%; border-radius:2px; background:var(--vp-accent); }
+#tab-search .vp-bar-empty { height:4px; margin-top:11px; }
 </style>
 </head>
 <body>
@@ -1565,37 +1598,34 @@ const V = {
  list.appendChild(seg);
 
  const renderCard = (p, i) => {
- const gClass = p.gender === "female" ? "female" : "male";
+ // モダン・ミニマル(白基調・余白・タイポ主役)。バッジ/アバターグラデ/支部色左罫線は廃止。
  const wins = p.match_wins || 0, losses = p.match_losses || 0, total = wins + losses;
  const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
  const app = p.appearances || 0;
- const stats = [];
- if (app > 0) stats.push(h("span", { className: "pdb-stat app" },
- h("span", { className: "pdb-stat-lbl" }, "出場"), String(app) + "回"));
- if (total > 0) {
- stats.push(h("span", { className: "pdb-stat win" }, h("span", { className: "pdb-stat-lbl" }, "勝"), String(wins)));
- stats.push(h("span", { className: "pdb-stat loss" }, h("span", { className: "pdb-stat-lbl" }, "敗"), String(losses)));
- }
- const golds = p.wins_ach || 0, medalCount = p.total_achievements || 0;
- if (golds > 0) stats.push(h("span", { className: "pdb-stat medal" }, "優勝" + golds));
- else if (medalCount > 0) stats.push(h("span", { className: "pdb-stat medal" }, "入賞" + medalCount));
- const _bAccent = TT.branchColor(p.branch || p.team);   // 支部色を左罫線に
- return h("div", { className: "pdb-card " + gClass,
- style: { animationDelay: (Math.min(i, 14) * 0.028) + "s", borderLeft: "5px solid " + _bAccent.fg },
+ const gl = p.gender === "female" ? "女" : (p.gender === "male" ? "男" : "");
+ const tag = TT.catLabel(p.category) + (gl ? " ・ " + gl : "");
+ const rateEl = total > 0
+ ? h("span", { className: "v" }, String(winRate), h("span", { className: "pct-sign" }, "%"))
+ : h("span", { className: "v none" }, "記録なし");
+ const bar = total > 0
+ ? h("div", { className: "vp-bar", title: "勝率 " + winRate + "%" }, h("i", { style: { width: winRate + "%" } }))
+ : h("div", { className: "vp-bar-empty" });
+ return h("div", { className: "vp-card",
  "aria-label": (p.name || "選手") + " の詳細", ...V._kbtn(() => V.openPlayer(p.id)) },
- h("div", { className: "pdb-avatar" }, V._initials(p.name)),
- h("div", { className: "pdb-info" },
- h("div", { className: "pdb-name" }, p.name || "(無名)"),
- p.furigana ? h("div", { className: "pdb-furi" }, p.furigana) : null,
- h("div", { className: "pdb-meta" },
- h("span", { className: "pdb-cat" }, TT.catLabel(p.category)),
- p.branch ? (function(){ const _bc = TT.branchColor(p.branch);
-   return h("span", { className: "pdb-branch", style: { background: _bc.bg, color: _bc.fg } }, TT.normalizeBranch(p.branch)); })() : null,
- p.team || "—"),
- stats.length ? h("div", { className: "pdb-stats" }, ...stats) : null,
- total > 0 ? h("div", { className: "pdb-winrate-bar", title: "勝率 " + winRate + "%" },
- h("span", { style: { width: winRate + "%" } })) : null,
- ),
+ h("div", { className: "vp-head" },
+ h("div", { className: "vp-mono" }, V._initials(p.name)),
+ h("div", { className: "vp-id" },
+ h("div", { className: "vp-name" }, p.name || "(無名)"),
+ p.furigana ? h("div", { className: "vp-furi" }, p.furigana) : null,
+ h("div", { className: "vp-team" }, p.team || "—")),
+ h("div", { className: "vp-tag" }, tag)),
+ h("div", { className: "vp-rule" }),
+ h("div", { className: "vp-stats" },
+ h("div", { className: "vp-stat" }, h("span", { className: "v" }, String(app)), h("span", { className: "k" }, "出場")),
+ h("div", { className: "vp-stat" }, h("span", { className: "v" }, String(wins)), h("span", { className: "k" }, "勝")),
+ h("div", { className: "vp-stat loss" }, h("span", { className: "v" }, String(losses)), h("span", { className: "k" }, "敗")),
+ h("div", { className: "vp-stat rate" }, rateEl, h("span", { className: "k" }, "勝率"))),
+ bar,
  );
  };
 
