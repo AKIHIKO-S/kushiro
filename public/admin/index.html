@@ -264,75 +264,6 @@
    display: block; height: 100%;
    background: linear-gradient(90deg, #22c55e, #15803d);
  }
-
- /* ═══════════ 選手DBカード刷新「緋スコア・卓上ボード」(後勝ちオーバーライド) ═══════════
-    旧 .pdb-card 系(アバター/丸ピル/左色帯/影)は描画されなくなるため、ここで上書きする。
-    丸ピル・支部色帯・ソフト影・性別グラデ丸アバターを廃し、ヘアライン+等幅数字の編集的盤面へ。 */
- #playerList { position: relative; }
- /* 和紙背景(共有1枚・スクロール追従): 視界分だけ描く=軽量。カード間の余白から覗く */
- #pdbWashi { position: sticky; top: 0; left: 0; width: 100%; height: 100vh; margin-bottom: -100vh;
-   z-index: 0; pointer-events: none; display: block; }
- /* ホバー紅スキャンライン(全画面1枚・最大1コンテキスト・ワンショット) */
- #pdbScan { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; display: block; }
- /* アコーディオン背景を透過し、和紙を覗かせる(カード#fffは不透明のまま) */
- .pdb-acc { background: transparent; }
- .pdb-acc.open .pdb-acc-body { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; background: transparent; position: relative; z-index: 1; }
-
- .pdb-card {
-   position: relative; aspect-ratio: 1 / 1; display: flex; flex-direction: column; align-items: stretch;
-   background: var(--ink-0); border: 1px solid var(--ink-200); border-radius: 4px; padding: 13px 13px 11px;
-   gap: 0; overflow: hidden; cursor: pointer; transition: border-color .16s ease, background .16s ease;
- }
- .pdb-card:hover, .pdb-card:focus-within { border-color: var(--ink-400); transform: none; box-shadow: none; }
- .pdb-card:focus-visible { outline: 2px solid var(--kt-accent-d); outline-offset: 1px; }
- /* 頭文字の落款(透かし)= 箱型ゼッケンを廃しカード地に沈める */
- .pdb-card .pdb-stamp { position: absolute; top: 12px; right: -5px; z-index: 0; font-family: var(--font-display);
-   font-size: 92px; line-height: .8; font-weight: 700; color: var(--ink-100); pointer-events: none; user-select: none; transition: color .18s ease; }
- .pdb-card:hover .pdb-stamp { color: var(--ink-150, #ececee); }
- .pdb-card .pdb-head, .pdb-card .pdb-meta-line, .pdb-card .pdb-score, .pdb-card .pdb-foot, .pdb-card .pdb-rule { position: relative; z-index: 1; }
- .pdb-card .pdb-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin: 0; }
- .pdb-card .pdb-id-name { min-width: 0; flex: 1; }
- .pdb-card .pdb-name { display: flex; align-items: center; gap: 7px; font-size: 16px; font-weight: 700; color: var(--ink-900);
-   line-height: 1.22; letter-spacing: .01em; white-space: normal; overflow: visible; }
- .pdb-card .pdb-name .dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--kt-accent); transition: transform .16s ease, box-shadow .16s ease; }
- .pdb-card:hover .pdb-name .dot { transform: scale(1.35); box-shadow: 0 0 0 3px rgba(220,38,38,.14); }
- .pdb-card .pdb-name .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
- .pdb-card .pdb-furi { font-size: 10px; color: var(--ink-500); letter-spacing: .09em; margin: 3px 0 0 12px;
-   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-display); }
- .pdb-card .pdb-rule { height: 0; border-top: 1px solid var(--ink-200); margin: 10px -1px 0; }
- .pdb-card .pdb-meta-line { font-size: 11px; color: var(--ink-500); letter-spacing: .02em; margin-top: 8px;
-   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
- .pdb-card .pdb-meta-line b { color: var(--ink-700); font-weight: 600; }
- .pdb-card .pdb-score { flex: 1; display: flex; align-items: flex-end; margin-top: 10px; }
- .pdb-card .pdb-score-grid { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); }
- .pdb-card .pdb-col { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
- .pdb-card .pdb-col .v { font-family: var(--font-mono); font-size: 25px; font-weight: 700; line-height: 1;
-   font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; color: var(--ink-900); }
- .pdb-card .pdb-col.loss .v { color: var(--ink-400); }
- .pdb-card .pdb-col .k { font-size: 9px; font-weight: 700; letter-spacing: .14em; color: var(--ink-500); }
- .pdb-card .pdb-medal { align-self: flex-end; font-size: 10px; font-weight: 700; color: var(--kt-accent-d);
-   border: 1px solid var(--ink-200); border-radius: 3px; padding: 1px 6px; font-family: var(--font-mono);
-   font-variant-numeric: tabular-nums; letter-spacing: .02em; white-space: nowrap; }
- .pdb-card .pdb-foot { margin-top: 11px; }
- .pdb-card .pdb-foot-row { display: flex; align-items: baseline; justify-content: space-between; }
- .pdb-card .pdb-foot-row .lbl { font-size: 9px; font-weight: 700; letter-spacing: .14em; color: var(--ink-500); }
- .pdb-card .pdb-foot-row .pct { font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--ink-900); font-variant-numeric: tabular-nums; }
- .pdb-card .pdb-foot-row .pct.none { font-size: 10px; color: var(--ink-400); font-weight: 600; letter-spacing: .06em; }
- .pdb-card .pdb-wr { height: 2px; margin-top: 5px; background: var(--ink-150, #ececee); overflow: hidden; }
- .pdb-card .pdb-wr > i { display: block; height: 100%; background: var(--kt-accent); }
- .pdb-card .pdb-foot-id { margin-top: 6px; text-align: right; font-family: var(--font-mono); font-size: 9px; color: var(--ink-300); letter-spacing: .06em; font-variant-numeric: tabular-nums; }
- .pdb-card .pdb-foot-id .push { float: left; color: var(--kt-accent-d); }
- .pdb-card .pdb-foot-id .push::before { content: ""; display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: var(--kt-accent); margin-right: 4px; transform: translateY(-1px); }
- .pdb-card .pdb-actions { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: row; gap: 0;
-   opacity: 0; transform: translateY(100%); transition: opacity .14s ease, transform .14s ease; z-index: 2; }
- .pdb-card:hover .pdb-actions, .pdb-card:focus-within .pdb-actions { opacity: 1; transform: translateY(0); }
- .pdb-card .pdb-actions button { flex: 1; border: none; border-top: 1px solid var(--ink-200); background: rgba(255,255,255,.92);
-   font-family: var(--font-body); font-size: 11px; font-weight: 600; color: var(--ink-600); padding: 7px 0; cursor: pointer; }
- .pdb-card .pdb-actions button + button { border-left: 1px solid var(--ink-200); }
- .pdb-card .pdb-actions button:hover { color: var(--kt-accent); background: #fff; }
- @media (hover: none) { .pdb-card .pdb-actions { opacity: 1; transform: none; position: static; margin-top: 8px; } }
- @media (prefers-reduced-motion: reduce) { .pdb-card .pdb-name .dot, .pdb-card .pdb-stamp { transition: none; } }
-
  /* 入賞歴 (編集モーダル) */
  .ach-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
  .ach-item {
@@ -6411,55 +6342,50 @@ const A = {
    requestAnimationFrame(step); })();
 
  const renderPlayerCard = (p) => {
+ const gClass = p.gender === "female" ? "female" : "male";
  const wins = p.match_wins || 0;
  const losses = p.match_losses || 0;
  const total = wins + losses;
  const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
  const app = p.appearances || 0;
+ // 戦績バッジ群
+ const stats = [];
+ if (app > 0) stats.push(h("span", { className: "pdb-stat app" },
+   h("span", { className: "pdb-stat-lbl" }, "出場"), String(app) + "回"));
+ if (total > 0) {
+   stats.push(h("span", { className: "pdb-stat win" },
+     h("span", { className: "pdb-stat-lbl" }, "勝"), String(wins)));
+   stats.push(h("span", { className: "pdb-stat loss" },
+     h("span", { className: "pdb-stat-lbl" }, "敗"), String(losses)));
+ }
  const golds = p.wins_ach || 0;
  const medalCount = p.total_achievements || (p.achievements ? p.achievements.length : 0) || 0;
- // メタ行: カテゴリ・性別・支部 を中黒区切りの素テキストに(丸ピル廃止)、所属は太字
- const metaParts = [TT.catLabel(p.category)];
- if (p.gender === "female" || p.gender === "male") metaParts.push(p.gender === "female" ? "女" : "男");
- if (p.branch) metaParts.push(TT.normalizeBranch(p.branch));
- const metaText = metaParts.join(" ・ ");
- const teamText = p.team || "—";
- const medal = golds > 0 ? h("span", { className: "pdb-medal" }, "優 " + golds)
-   : medalCount > 0 ? h("span", { className: "pdb-medal" }, "入賞 " + medalCount) : null;
- const pct = total > 0
-   ? h("span", { className: "pct" }, String(winRate), h("span", { style: { fontSize: "10px" } }, "%"))
-   : h("span", { className: "pct none" }, "記録なし");
- const bar = total > 0
-   ? h("div", { className: "pdb-wr", title: "勝率 " + winRate + "%" }, h("i", { style: { width: winRate + "%" } }))
-   : h("div", { style: { height: "2px", marginTop: "5px" } });
- const pushOn = !!(A.state.pushPlayers && A.state.pushPlayers.has(p.id));
- return h("div", { className: "pdb-card", tabIndex: 0, onClick: () => A.editPlayer(p) },
- h("div", { className: "pdb-stamp", "aria-hidden": "true" }, A._initials(p.name)),
- h("div", { className: "pdb-head" },
- h("div", { className: "pdb-id-name" },
- h("div", { className: "pdb-name" }, h("span", { className: "dot" }), h("span", { className: "nm" }, p.name || "(無名)")),
+ if (golds > 0) stats.push(h("span", { className: "pdb-stat medal" }, "優勝" + golds));
+ else if (medalCount > 0) stats.push(h("span", { className: "pdb-stat medal" }, "入賞" + medalCount));
+ const _bAccent = TT.branchColor(p.branch || p.team);   // 支部色を左罫線に (#支部色分け)
+ return h("div", { className: "pdb-card " + gClass,
+ style: { borderLeft: "5px solid " + _bAccent.fg },
+ onClick: () => A.editPlayer(p) },
+ h("div", { className: "pdb-avatar" }, A._initials(p.name)),
+ h("div", { className: "pdb-info" },
+ h("div", { className: "pdb-name" }, p.name || "(無名)"),
  p.furigana ? h("div", { className: "pdb-furi" }, p.furigana) : null,
+ h("div", { className: "pdb-meta" },
+ h("span", { className: "pdb-cat" }, TT.catLabel(p.category)),
+ (p.gender === "female" || p.gender === "male")
+   ? h("span", { className: "pdb-sex" }, p.gender === "female" ? "女" : "男") : null,
+ p.branch ? (function(){ const _bc = TT.branchColor(p.branch);
+   return h("span", { className: "pdb-branch", style: { background: _bc.bg, color: _bc.fg } }, TT.normalizeBranch(p.branch)); })() : null,
+ p.team || "—",
+ (A.state.pushPlayers && A.state.pushPlayers.has(p.id)) ? h("span", { className: "pdb-push",
+   title: "この選手はマイ番号(プッシュ通知)を登録済み。呼出時に通知が届きます。" }, "通知ON") : null,
  ),
+ stats.length ? h("div", { className: "pdb-stats" }, ...stats) : null,
+ total > 0 ? h("div", { className: "pdb-winrate-bar", title: "勝率 " + winRate + "%" },
+   h("span", { style: { width: winRate + "%" } })) : null,
  ),
- h("div", { className: "pdb-rule" }),
- h("div", { className: "pdb-meta-line", title: metaText + " ・ " + teamText }, metaText + " ・ ", h("b", {}, teamText)),
- h("div", { className: "pdb-rule" }),
- h("div", { className: "pdb-score" },
- h("div", { className: "pdb-score-grid" },
- h("div", { className: "pdb-col" }, h("span", { className: "v" }, String(app)), h("span", { className: "k" }, "出場")),
- h("div", { className: "pdb-col" }, h("span", { className: "v" }, String(wins)), h("span", { className: "k" }, "勝")),
- h("div", { className: "pdb-col loss" }, h("span", { className: "v" }, String(losses)), h("span", { className: "k" }, "敗")),
- ),
- medal,
- ),
- h("div", { className: "pdb-foot" },
- h("div", { className: "pdb-foot-row" }, h("span", { className: "lbl" }, "勝率"), pct),
- bar,
- h("div", { className: "pdb-foot-id" },
- pushOn ? h("span", { className: "push", title: "この選手はマイ番号(プッシュ通知)を登録済み。呼出時に通知が届きます。" }, "通知ON") : null,
- "#" + p.id),
- ),
- h("div", { className: "pdb-actions", onClick: (e) => e.stopPropagation() },
+ h("div", { className: "pdb-actions",
+ onClick: (e) => e.stopPropagation() },
  h("button", { onClick: () => A.editPlayer(p), title: "編集" }, "編集"),
  h("button", { onClick: () => A.deletePlayer(p.id), title: "削除" }, "削除"),
  ),
@@ -6479,10 +6405,10 @@ const A = {
 
  if (view === "flat") {
    // フラット一覧
-   const grid = h("div", { className: "pdb-flat-grid", style: {
+   const grid = h("div", { style: {
      display: "grid",
-     gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
-     gap: "10px" } });
+     gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+     gap: "8px" } });
    list.forEach(p => grid.appendChild(renderPlayerCard(p)));
    el.appendChild(grid);
    return;
@@ -12583,141 +12509,5 @@ const TMgmt = {
 })();
 </script>
 
-<script>
-/* ═══ 選手DBカード WebGL演出: ①常時うっすら和紙背景(共有1枚) ②ホバー紅スキャンライン(1枚) ═══
-   依存ゼロ・生WebGL・CSP(script-src 'self' 'unsafe-inline')適合・per-card禁止(同時最大2コンテキスト)。
-   WebGL不可/コンテキストロスト/prefers-reduced-motion 時はCSS表示にフォールバック(機能は不変)。 */
-(function () {
-  "use strict";
-  var list = document.getElementById("playerList");
-  if (!list || !window.WebGLRenderingContext) return;
-  var DPR = Math.min(window.devicePixelRatio || 1, 1.5);
-  function rm() { return window.matchMedia && window.matchMedia("(prefers-reduced-motion:reduce)").matches; }
-  function mkGL(c) { try { return c.getContext("webgl", { alpha: true, antialias: false, premultipliedAlpha: false, powerPreference: "low-power" }) || c.getContext("experimental-webgl") || null; } catch (e) { return null; } }
-  function compile(gl, vs, fs) {
-    function sh(t, s) { var o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return gl.getShaderParameter(o, gl.COMPILE_STATUS) ? o : null; }
-    var v = sh(gl.VERTEX_SHADER, vs), f = sh(gl.FRAGMENT_SHADER, fs); if (!v || !f) return null;
-    var p = gl.createProgram(); gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p);
-    return gl.getProgramParameter(p, gl.LINK_STATUS) ? p : null;
-  }
-  var VS = "attribute vec2 a;void main(){gl_Position=vec4(a,0.0,1.0);}";
-
-  /* ── ① 和紙背景(常時・~13fps・視界分のみ・共有1枚) ── */
-  var WASHI_FS = [
-    "precision mediump float;uniform vec2 u_res;uniform float u_time;",
-    "float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}",
-    "float vn(vec2 p){vec2 i=floor(p),f=fract(p);vec2 u=f*f*(3.0-2.0*f);",
-    " return mix(mix(hash(i),hash(i+vec2(1.,0.)),u.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),u.x),u.y);}",
-    "float fbm(vec2 p){float v=0.0,a=0.5;for(int i=0;i<3;i++){v+=a*vn(p);p*=2.0;a*=0.5;}return v;}",
-    "void main(){vec2 uv=gl_FragCoord.xy/u_res.xy;vec2 p=uv*vec2(u_res.x/u_res.y,1.0)*3.0;float t=u_time*0.03;",
-    " float n=fbm(p+vec2(fbm(p+t),fbm(p-t)));float tone=fbm(p*0.4-t*0.5);",
-    " float fiber=(vn(vec2(uv.x*240.0,uv.y*7.0))-0.5)*0.018;",
-    " float v=0.967+(n-0.5)*0.045+(tone-0.5)*0.026+fiber;",
-    " float vig=smoothstep(1.35,0.10,length(uv-0.5));v-=(1.0-vig)*0.018;",
-    " gl_FragColor=vec4(vec3(v),1.0);}"
-  ].join("\n");
-
-  var washi = (function () {
-    var cv = document.createElement("canvas"); cv.id = "pdbWashi"; cv.setAttribute("aria-hidden", "true");
-    var gl = mkGL(cv); if (!gl) return null;
-    var prog = compile(gl, VS, WASHI_FS); if (!prog) return null;
-    var buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    var aLoc = gl.getAttribLocation(prog, "a"), uRes = gl.getUniformLocation(prog, "u_res"), uTime = gl.getUniformLocation(prog, "u_time");
-    var raf = null, last = 0, t0 = performance.now(), lost = false;
-    cv.addEventListener("webglcontextlost", function (e) { e.preventDefault(); lost = true; stop(); }, false);
-    function visible() { return list.offsetParent !== null && !document.hidden; }
-    function size() {
-      var w = cv.clientWidth || list.clientWidth || 1, hh = cv.clientHeight || window.innerHeight || 1;
-      var bw = Math.max(1, Math.floor(w * DPR)), bh = Math.max(1, Math.floor(hh * DPR));
-      if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
-      gl.viewport(0, 0, cv.width, cv.height);
-    }
-    function draw(now) {
-      gl.useProgram(prog); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.enableVertexAttribArray(aLoc);
-      gl.vertexAttribPointer(aLoc, 2, gl.FLOAT, false, 0, 0);
-      gl.uniform2f(uRes, cv.width, cv.height); gl.uniform1f(uTime, (now - t0) / 1000); gl.drawArrays(gl.TRIANGLES, 0, 3);
-    }
-    function loop(now) {
-      if (lost) return;
-      if (!visible()) { raf = null; return; }
-      raf = requestAnimationFrame(loop);
-      if (now - last < 72) return;
-      last = now; size(); draw(now);
-    }
-    function start() { if (lost || !visible()) return; size(); if (rm()) { draw(performance.now()); return; } if (!raf) raf = requestAnimationFrame(loop); }
-    function stop() { if (raf) { cancelAnimationFrame(raf); raf = null; } }
-    function attach() { if (lost) return; if (document.getElementById("pdbWashi") !== cv) { list.insertBefore(cv, list.firstChild); } start(); }
-    return { el: cv, attach: attach, start: start, stop: stop, size: size };
-  })();
-
-  if (washi) {
-    washi.attach();
-    new MutationObserver(function () { washi.attach(); }).observe(list, { childList: true });
-    window.addEventListener("resize", function () { washi.size(); washi.start(); });
-    document.addEventListener("visibilitychange", function () { if (document.hidden) washi.stop(); else washi.start(); });
-  }
-
-  /* ── ② ホバー紅スキャンライン(全画面1枚・ワンショット・ホバー時のみ稼働) ── */
-  var SCAN_FS = [
-    "precision mediump float;uniform vec2 u_res;uniform vec4 u_rect;uniform float u_prog;uniform float u_time;",
-    "void main(){vec2 fc=gl_FragCoord.xy;vec2 local=(fc-u_rect.xy)/u_rect.zw;",
-    " if(local.x<0.0||local.x>1.0||local.y<0.0||local.y>1.0){discard;}",
-    " float head=u_prog;float d=local.x-head;",
-    " float core=smoothstep(0.08,0.0,abs(d));",
-    " float trail=smoothstep(0.44,0.0,head-local.x)*step(local.x,head);",
-    " float ripple=0.5+0.5*sin(local.y*38.0-u_time*7.0);",
-    " float inten=core*1.0+trail*(0.34+0.20*ripple);",
-    " inten*=1.0-smoothstep(0.90,1.15,u_prog);",
-    " vec3 red=mix(vec3(0.60,0.106,0.106),vec3(0.863,0.149,0.149),local.y);",
-    " vec3 col=mix(red,vec3(1.0),core*0.92);",
-    " gl_FragColor=vec4(col,clamp(inten,0.0,1.0));}"
-  ].join("\n");
-
-  var scan = (function () {
-    if (rm()) return null;
-    var cv = document.createElement("canvas"); cv.id = "pdbScan"; cv.setAttribute("aria-hidden", "true");
-    var gl = mkGL(cv); if (!gl) return null;
-    var prog = compile(gl, VS, SCAN_FS); if (!prog) return null;
-    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    var buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    var aLoc = gl.getAttribLocation(prog, "a"), uRes = gl.getUniformLocation(prog, "u_res"),
-      uRect = gl.getUniformLocation(prog, "u_rect"), uProg = gl.getUniformLocation(prog, "u_prog"), uTime = gl.getUniformLocation(prog, "u_time");
-    var raf = null, active = null, lost = false;
-    cv.addEventListener("webglcontextlost", function (e) { e.preventDefault(); lost = true; if (raf) { cancelAnimationFrame(raf); raf = null; } }, false);
-    document.body.appendChild(cv);
-    function size() { cv.width = Math.floor(window.innerWidth * DPR); cv.height = Math.floor(window.innerHeight * DPR); gl.viewport(0, 0, cv.width, cv.height); }
-    size(); window.addEventListener("resize", size);
-    function clear() { gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
-    function rectOf(el) { var r = el.getBoundingClientRect(); var x = r.left * DPR, w = r.width * DPR, hh = r.height * DPR, y = cv.height - (r.top * DPR + hh); return [x, y, w, hh]; }
-    function loop(now) {
-      if (lost) return;
-      raf = requestAnimationFrame(loop); clear();
-      if (!active) { cancelAnimationFrame(raf); raf = null; return; }
-      var pr = (now - active.t0) / 500;
-      if (pr > 1.15) { active = null; cancelAnimationFrame(raf); raf = null; clear(); return; }
-      var rc = rectOf(active.el);
-      gl.useProgram(prog); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.enableVertexAttribArray(aLoc); gl.vertexAttribPointer(aLoc, 2, gl.FLOAT, false, 0, 0);
-      gl.uniform2f(uRes, cv.width, cv.height); gl.uniform4f(uRect, rc[0], rc[1], rc[2], rc[3]); gl.uniform1f(uProg, pr); gl.uniform1f(uTime, (now - active.t0) / 1000);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-    }
-    function fire(el) { if (lost || rm()) return; active = { el: el, t0: performance.now() }; if (!raf) raf = requestAnimationFrame(loop); }
-    return { fire: fire };
-  })();
-
-  if (scan) {
-    var hoverTimer = null;
-    list.addEventListener("mouseover", function (e) {
-      var card = e.target.closest && e.target.closest(".pdb-card"); if (!card) return;
-      if (e.relatedTarget && card.contains(e.relatedTarget)) return;
-      clearTimeout(hoverTimer); hoverTimer = setTimeout(function () { scan.fire(card); }, 80);
-    });
-    list.addEventListener("focusin", function (e) {
-      var card = e.target.closest && e.target.closest(".pdb-card"); if (card) scan.fire(card);
-    });
-  }
-})();
-</script>
 </body>
 </html>
