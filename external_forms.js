@@ -44,42 +44,56 @@ const LARGEBALL_DOUBLES_CATS = [
 // ── CSS ──────────────────────────────────────────────────────────
 const _CSS = `
 :root{
-  --paper:#f1e9d9;--card:#fffdf8;--card2:#fbf6ec;
-  --ink:#211b15;--ink2:#6c6153;--line:#e4d8c2;--line2:#efe6d4;
-  --red:#c01526;--red2:#9c0f1c;
-  --amber:#9a6a10;--ambg:#f6ebcd;
+  --paper:#f4efe4;--card:#fffdf8;--card2:#fbf7ef;
+  --ink:#171717;--ink2:#635b51;--muted:#8a8174;--line:#e1d7c6;--line2:#eee4d4;
+  --red:#c01526;--red2:#9c0f1c;--code:#202124;--code2:#313236;
+  --amber:#8b6112;--ambg:#f7eed5;
   --green:#1a7a45;--gnbg:#e9f7ee;
-  --g:'Hiragino Sans','BIZ UDPGothic','Yu Gothic UI',system-ui,sans-serif;
+  --g:'BIZ UDPGothic','Hiragino Sans','Yu Gothic UI',system-ui,sans-serif;
+  --mono:'SF Mono','Menlo','Consolas','Roboto Mono',monospace;
   --m:'Hiragino Mincho ProN','Yu Mincho','YuMincho',serif;
-  --sh:0 18px 44px -22px rgba(48,32,16,.45);
-  --r:14px;
+  --sh:0 24px 70px -44px rgba(20,16,12,.72);
+  --r:12px;
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 html{-webkit-text-size-adjust:100%;}
 body{font-family:var(--g);color:var(--ink);line-height:1.78;font-size:16px;
-  padding:24px 14px 56px;max-width:900px;margin:0 auto;
-  background:var(--paper) radial-gradient(1100px 520px at 108% -8%,rgba(192,21,38,.07),transparent 58%),
-    radial-gradient(900px 520px at -12% 112%,rgba(154,106,16,.08),transparent 58%);
+  padding:24px 14px 56px;max-width:920px;margin:0 auto;
+  background:
+    linear-gradient(90deg,rgba(23,23,23,.035) 1px,transparent 1px),
+    linear-gradient(180deg,rgba(23,23,23,.028) 1px,transparent 1px),
+    radial-gradient(1100px 520px at 108% -8%,rgba(192,21,38,.08),transparent 58%),
+    radial-gradient(900px 520px at -12% 112%,rgba(32,33,36,.09),transparent 58%),
+    var(--paper);
+  background-size:28px 28px,28px 28px,auto,auto,auto;
   -webkit-font-smoothing:antialiased;}
 @keyframes ttR{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-.fhd{background:linear-gradient(155deg,#241d16,#36281c 60%,#2c2118);
-  color:#f6efe2;padding:28px 28px 24px;
-  border-radius:var(--r) var(--r) 0 0;border-top:5px solid var(--red);
+.fhd{background:linear-gradient(145deg,var(--code),#171717 64%,#2a1d1e);
+  color:#f6efe2;padding:30px 30px 24px;
+  border-radius:var(--r) var(--r) 0 0;border-top:4px solid var(--red);
+  border-left:1px solid rgba(255,255,255,.12);border-right:1px solid rgba(255,255,255,.08);
   animation:ttR .5s ease both;position:relative;overflow:hidden;}
+.fhd::before{content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px),
+    linear-gradient(180deg,rgba(255,255,255,.035) 1px,transparent 1px);
+  background-size:22px 22px;mask-image:linear-gradient(90deg,rgba(0,0,0,.8),transparent 78%);
+  pointer-events:none;}
 .fhd::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;
   background:linear-gradient(90deg,var(--red),#d4a017 70%,transparent);opacity:.85;}
 .fhd h1{font-family:var(--m);font-size:clamp(18px,4vw,26px);font-weight:700;
   line-height:1.35;letter-spacing:.02em;position:relative;z-index:1;}
-.seal{display:inline-block;vertical-align:middle;background:var(--red);color:#fff;
-  font-size:11px;font-weight:800;padding:3px 9px;border-radius:4px;
-  margin-right:8px;letter-spacing:.15em;box-shadow:0 2px 0 rgba(0,0,0,.25);}
+.seal{display:inline-block;vertical-align:middle;background:#101010;color:#fff;
+  border:1px solid rgba(255,255,255,.2);border-left:3px solid var(--red);
+  font-family:var(--mono);font-size:10px;font-weight:800;padding:3px 9px;border-radius:5px;
+  margin-right:8px;letter-spacing:.12em;box-shadow:0 2px 0 rgba(0,0,0,.35);}
 .fhd .meta{font-size:13px;color:#d8cdba;margin-top:8px;position:relative;z-index:1;}
-.fsec{background:var(--card);padding:22px 24px;
+.fsec{background:rgba(255,253,248,.96);padding:22px 24px;
   border-left:1px solid var(--line);border-right:1px solid var(--line);
+  backdrop-filter:blur(7px);
   animation:ttR .5s ease both;}
 .fsec:last-of-type{border-radius:0 0 var(--r) var(--r);
   border-bottom:1px solid var(--line);padding-bottom:26px;box-shadow:var(--sh);}
-.fsec h2{font-family:var(--m);font-size:18px;font-weight:700;margin-bottom:14px;
+.fsec h2{font-family:var(--g);font-size:17px;font-weight:800;margin-bottom:14px;
   color:var(--ink);display:flex;align-items:center;gap:9px;}
 .fsec h2::before{content:"";width:5px;height:19px;border-radius:2px;
   background:linear-gradient(var(--red),var(--red2));
@@ -89,32 +103,32 @@ body{font-family:var(--g);color:var(--ink);line-height:1.78;font-size:16px;
   border-radius:999px;font-size:11px;font-weight:800;margin-left:auto;}
 .frow{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-bottom:13px;}
 .frow.two{grid-template-columns:1fr 1fr;}
-.frow label{display:block;font-size:12px;font-weight:800;color:var(--ink2);
-  margin-bottom:5px;letter-spacing:.07em;}
-.frow .req{background:var(--red);color:#fff;font-size:9px;
+.frow label{display:block;font-family:var(--mono);font-size:11px;font-weight:800;color:var(--ink2);
+  margin-bottom:5px;letter-spacing:.04em;}
+.frow .req{background:var(--red);color:#fff;font-size:10.5px;
   padding:1px 5px;border-radius:3px;margin-left:5px;}
 .frow input,.frow select,.frow textarea{width:100%;padding:10px 12px;
-  border:1.5px solid var(--line);border-radius:8px;
+  border:1.5px solid var(--line);border-radius:9px;
   font-family:inherit;font-size:15px;background:var(--card2);color:var(--ink);
-  transition:border-color .15s,box-shadow .15s;}
+  transition:border-color .15s,box-shadow .15s,background .15s;}
 .frow input:focus,.frow select:focus,.frow textarea:focus{
   outline:none;border-color:var(--red);box-shadow:0 0 0 3px rgba(192,21,38,.12);background:#fff;}
-.frow input::placeholder,.frow textarea::placeholder{color:#b3a892;}
+.frow input::placeholder,.frow textarea::placeholder{color:#8a7a64;}
 .fnote{background:var(--ambg);color:var(--amber);border:1px solid #e7d3a4;
   border-radius:999px;font-size:11.5px;font-weight:800;
   display:inline-flex;align-items:center;padding:4px 12px;margin:0 0 12px;}
-.notice{background:var(--card2);border-left:4px solid var(--amber);
+.notice{background:#fffaf0;border-left:4px solid var(--amber);
   padding:10px 14px;font-size:13px;margin:10px 0;
   border-radius:0 6px 6px 0;color:var(--ink2);line-height:1.7;}
-.entry-row{background:var(--card2);border:1.5px solid var(--line2);
-  border-left:4px solid #d6c8ab;border-radius:9px;
+.entry-row{background:linear-gradient(180deg,#fffdf9,#fbf7ef);border:1.5px solid var(--line2);
+  border-left:4px solid #252525;border-radius:10px;
   padding:11px 13px;margin-bottom:9px;
   transition:border-color .15s,box-shadow .15s;
   animation:ttR .2s ease both;}
-.entry-row:hover{border-left-color:var(--red);box-shadow:0 3px 12px -8px rgba(192,21,38,.3);}
+.entry-row:hover{border-left-color:var(--red);box-shadow:0 10px 24px -22px rgba(32,33,36,.7);}
 .row-head{display:flex;align-items:center;gap:8px;margin-bottom:9px;}
-.row-num{font-weight:800;font-size:12px;color:#fff;
-  background:linear-gradient(var(--red),var(--red2));
+.row-num{font-family:var(--mono);font-weight:800;font-size:12px;color:#fff;
+  background:linear-gradient(var(--code2),#141414);
   width:21px;height:21px;border-radius:50%;
   display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}
 .btn-del{background:transparent;color:var(--red);border:1px solid #ecc6c6;
@@ -122,16 +136,20 @@ body{font-family:var(--g);color:var(--ink);line-height:1.78;font-size:16px;
   font-weight:700;font-family:inherit;transition:all .15s;}
 .btn-del:hover{background:#fbe9e9;border-color:var(--red);}
 .eg{display:grid;gap:8px;margin-bottom:6px;}
-.eg label{font-size:11px;font-weight:800;color:var(--ink2);letter-spacing:.05em;
+.eg label{font-family:var(--mono);font-size:10.5px;font-weight:800;color:var(--ink2);letter-spacing:.04em;
   margin-bottom:3px;display:block;}
-.eg .req{background:var(--red);color:#fff;font-size:9px;
+.eg .req{background:var(--red);color:#fff;font-size:10.5px;
   padding:1px 4px;border-radius:3px;margin-left:3px;}
 .eg input,.eg select{width:100%;padding:8px 10px;border:1.5px solid var(--line);
-  border-radius:7px;font-size:14px;background:#fff;color:var(--ink);
+  border-radius:8px;font-size:14px;background:#fff;color:var(--ink);
   font-family:inherit;transition:border-color .15s,box-shadow .15s;}
 .eg input:focus,.eg select:focus{outline:none;border-color:var(--red);
   box-shadow:0 0 0 3px rgba(192,21,38,.13);}
-.eg input::placeholder{color:#b3a892;}
+.eg input.is-invalid,.eg select.is-invalid,.frow input.is-invalid,.frow select.is-invalid,.frow textarea.is-invalid{
+  border-color:var(--red)!important;background:#fff7f7!important;
+  box-shadow:0 0 0 3px rgba(192,21,38,.14)!important;}
+.eg input::placeholder{color:#8a7a64;}
+input:user-invalid{border-color:var(--red);background:#fff7f7;}
 .pair-sep{display:flex;align-items:center;gap:8px;margin:7px 0;
   font-size:11.5px;font-weight:800;color:var(--ink2);letter-spacing:.1em;}
 .pair-sep::before,.pair-sep::after{content:"";flex:1;height:1px;background:var(--line);}
@@ -140,11 +158,13 @@ body{font-family:var(--g);color:var(--ink);line-height:1.78;font-size:16px;
 .cav{font-weight:800;font-size:14px;color:var(--red);
   background:#fef2f2;border:1px solid #fcc;
   padding:2px 9px;border-radius:5px;min-width:44px;text-align:center;}
-.btn-add{background:#fff;color:var(--amber);border:1.5px dashed #d9c8a8;
+.btn-add{background:#fff;color:var(--code);border:1.5px dashed #b8ad9f;
   padding:9px 16px;border-radius:8px;cursor:pointer;
   font-size:13px;font-weight:800;font-family:inherit;
   transition:all .15s;margin-right:8px;margin-top:8px;}
-.btn-add:hover{background:var(--ambg);border-color:var(--amber);transform:translateY(-1px);}
+.btn-add:hover{background:#f8f3e9;border-color:var(--code);transform:translateY(-1px);}
+.btn-add.bulk{border-style:solid;border-color:var(--code2);background:#f1ece3;}
+.btn-add.bulk:hover{background:#e9e1d2;border-color:var(--code);}
 .total-box{background:linear-gradient(150deg,#fffdf8,#faf2e3);
   border:2px solid var(--amber);border-radius:11px;padding:16px 20px;margin:16px 0;
   display:flex;justify-content:space-between;align-items:center;
@@ -159,11 +179,11 @@ body{font-family:var(--g);color:var(--ink);line-height:1.78;font-size:16px;
   accent-color:var(--red);flex-shrink:0;cursor:pointer;}
 .check-row label{cursor:pointer;}
 .submit-btn{width:100%;padding:16px;font-size:16px;font-weight:800;
-  font-family:var(--g);background:linear-gradient(var(--red),var(--red2));
+  font-family:var(--g);background:linear-gradient(180deg,#242528,#111);
   color:#fff;border:none;border-radius:10px;cursor:pointer;margin-top:16px;
   letter-spacing:.15em;transition:transform .12s,box-shadow .15s;
-  box-shadow:0 8px 20px -8px rgba(192,21,38,.55);}
-.submit-btn:hover{transform:translateY(-2px);box-shadow:0 12px 26px -8px rgba(192,21,38,.7);}
+  box-shadow:0 10px 26px -12px rgba(17,17,17,.75),inset 0 1px 0 rgba(255,255,255,.12);}
+.submit-btn:hover{transform:translateY(-2px);box-shadow:0 16px 32px -15px rgba(17,17,17,.85),inset 0 1px 0 rgba(255,255,255,.16);}
 .submit-btn:disabled{background:#b9ad9c;cursor:not-allowed;transform:none;box-shadow:none;}
 @keyframes ttSpin{to{transform:rotate(360deg)}}
 .btn-spinner{display:inline-block;width:1.1em;height:1.1em;vertical-align:-.1em;
@@ -193,7 +213,7 @@ body{font-family:var(--g);color:var(--ink);line-height:1.78;font-size:16px;
   body{padding:12px 8px 40px;}
   .fhd{padding:20px 14px 18px;}
   .fsec{padding:16px 12px;}
-  .frow{grid-template-columns:1fr;}
+  .frow,.frow.two{grid-template-columns:1fr;}
   .eg{grid-template-columns:1fr !important;}
   .total-box .ta{font-size:26px;}
 }`;
@@ -206,7 +226,7 @@ function _tx(s){ return document.createTextNode(s); }
 function _lbl(t){ var e=document.createElement('label'); e.textContent=t; return e; }
 function _lblR(t){
   var e=document.createElement('label'); e.textContent=t;
-  var s=_el('span','req'); s.textContent='必'; e.appendChild(s); return e;
+  var s=_el('span','req'); s.textContent='必須'; e.appendChild(s); return e;
 }
 function _cell(lt,el){ var d=_el('div'); d.appendChild(_lbl(lt)); d.appendChild(el); return d; }
 function _cellR(lt,el){ var d=_el('div'); d.appendChild(_lblR(lt)); d.appendChild(el); return d; }
@@ -238,6 +258,36 @@ function _rowHead(num,row){
   var btn=_el('button','btn-del'); btn.type='button'; btn.textContent='削除';
   btn.addEventListener('click',function(){ row.remove(); recalcTotal(); });
   h.appendChild(sp); h.appendChild(btn); return h;
+}
+function _field(row,name){ return row.querySelector('[data-field="'+name+'"]'); }
+function _value(row,name){ var el=_field(row,name); return el ? String(el.value||'').trim() : ''; }
+function _age(row,name){ var v=parseInt(_value(row,name),10); return isNaN(v) ? 0 : v; }
+function _hasAny(row,names){
+  return names.some(function(name){ return _value(row,name); });
+}
+function _clearInvalid(){
+  document.querySelectorAll('.is-invalid').forEach(function(el){ el.classList.remove('is-invalid'); });
+}
+function _fail(text,el){
+  showMsg(text,'err');
+  if(el){
+    el.classList.add('is-invalid');
+    try{ el.focus({preventScroll:true}); }catch(_){ el.focus(); }
+    el.scrollIntoView({behavior:'smooth',block:'center'});
+  }
+  return false;
+}
+function _optLabel(sel){ return sel.options[sel.selectedIndex].dataset.label || sel.value; }
+function _mastersSingleMin(cat){
+  return {fifty:50,low60:60,hi60:65,low70:70,hi70:75,low80:80,hi80:85,ninety:90}[cat] || 50;
+}
+function _largeballSingleMin(cat){
+  if(cat==='一般') return 0;
+  return parseInt(cat,10) || 0;
+}
+function _largeballDoublesMin(cat){
+  if(cat==='一般') return 0;
+  return parseInt(cat,10) || 0;
 }
 function recalcTotal(){
   var tot=0,sc=0,dc=0;
@@ -375,7 +425,7 @@ function buildMasters2026FormHTML(opts) {
   </div>
   <div id="singlesContainer"></div>
   <button type="button" class="btn-add" id="btnAddS">＋ 選手を1名追加</button>
-  <button type="button" class="btn-add" id="btnAddS5" style="border-style:solid;border-color:#e0b75a;background:var(--ambg);">＋ 5名を一括追加</button>
+  <button type="button" class="btn-add bulk" id="btnAddS5">＋ 5名を一括追加</button>
 </div>
 
 <div class="fsec">
@@ -486,46 +536,71 @@ function addDoubles(){
 }
 
 function gatherData(){
+  _clearInvalid();
   var cname=(document.getElementById('contact_name').value||'').trim();
   var ctel=(document.getElementById('contact_tel').value||'').trim();
-  if(!cname||!ctel){ showMsg('責任者氏名・電話番号は必須です。','err'); return null; }
-  var singles=[],doubles=[];
+  if(!cname) return _fail('責任者氏名は必須です。',document.getElementById('contact_name')) && null;
+  if(!ctel) return _fail('電話番号は必須です。',document.getElementById('contact_tel')) && null;
+  var singles=[],doubles=[], ok=true;
   document.querySelectorAll('.singles-row').forEach(function(row){
-    var name=(row.querySelector('[data-field="name"]').value||'').trim(); if(!name) return;
-    var gSel=row.querySelector('[data-field="gender"]');
-    var cSel=row.querySelector('[data-field="category"]');
+    if(!ok) return;
+    if(!_hasAny(row,['name','furigana','age','team'])) return;
+    var name=_value(row,'name');
+    if(!name){ ok=_fail('シングルスの氏名を入力してください。',_field(row,'name')); return; }
+    var age=_age(row,'age');
+    var gSel=_field(row,'gender');
+    var cSel=_field(row,'category');
+    var min=_mastersSingleMin(cSel.value);
+    if(!age){ ok=_fail('シングルスの年齢を入力してください。',_field(row,'age')); return; }
+    if(age<min){ ok=_fail('選択した種目は'+min+'歳以上が対象です。',_field(row,'age')); return; }
     singles.push({
       gender:gSel.value, gender_label:gSel.options[gSel.selectedIndex].text,
-      category:cSel.value, category_label:(cSel.options[cSel.selectedIndex].dataset.label||cSel.value),
-      furigana:(row.querySelector('[data-field="furigana"]').value||'').trim(),
-      name:name, age:parseInt(row.querySelector('[data-field="age"]').value)||'',
-      birthdate:row.querySelector('[data-field="birthdate"]').value||'',
-      team:(row.querySelector('[data-field="team"]').value||'').trim(), fee:SINGLES_FEE,
+      category:cSel.value, category_label:_optLabel(cSel),
+      furigana:_value(row,'furigana'),
+      name:name, age:age,
+      birthdate:_value(row,'birthdate'),
+      team:_value(row,'team'), fee:SINGLES_FEE,
     });
   });
+  if(!ok) return null;
   document.querySelectorAll('.doubles-row').forEach(function(row){
-    var n1=(row.querySelector('[data-field="name1"]').value||'').trim();
-    var n2=(row.querySelector('[data-field="name2"]').value||'').trim();
-    if(!n1&&!n2) return;
-    var pg=row.querySelector('[data-field="pair_gender"]');
-    var cs=row.querySelector('[data-field="category"]');
-    var a1=parseInt(row.querySelector('[data-field="age1"]').value)||0;
-    var a2=parseInt(row.querySelector('[data-field="age2"]').value)||0;
+    if(!ok) return;
+    if(!_hasAny(row,['name1','name2','age1','age2','team1','team2','furigana1','furigana2'])) return;
+    var n1=_value(row,'name1');
+    var n2=_value(row,'name2');
+    var pg=_field(row,'pair_gender');
+    var cs=_field(row,'category');
+    var a1=_age(row,'age1');
+    var a2=_age(row,'age2');
+    if(!n1){ ok=_fail('ダブルスの選手A氏名を入力してください。',_field(row,'name1')); return; }
+    if(!n2){ ok=_fail('ダブルスの選手B氏名を入力してください。',_field(row,'name2')); return; }
+    if(!a1){ ok=_fail('ダブルスの選手A年齢を入力してください。',_field(row,'age1')); return; }
+    if(!a2){ ok=_fail('ダブルスの選手B年齢を入力してください。',_field(row,'age2')); return; }
+    if(a1<50 || a2<50){ ok=_fail('マスターズダブルスは50歳以上が対象です。',a1<50?_field(row,'age1'):_field(row,'age2')); return; }
+    var combined=a1+a2;
+    if(cs.value==='under_129' && combined>129){ ok=_fail('129歳以下カテゴリは合計年齢129歳以下で入力してください。',cs); return; }
+    if(cs.value==='over_130' && combined<130){ ok=_fail('130歳以上カテゴリは合計年齢130歳以上で入力してください。',cs); return; }
     doubles.push({
       pair_gender:pg.value, pair_gender_label:pg.options[pg.selectedIndex].text,
-      category:cs.value, category_label:(cs.options[cs.selectedIndex].dataset.label||cs.value),
-      furigana1:(row.querySelector('[data-field="furigana1"]').value||'').trim(),
-      name1:n1, age1:a1||'', birthdate1:row.querySelector('[data-field="birthdate1"]').value||'',
-      team1:(row.querySelector('[data-field="team1"]').value||'').trim(),
-      furigana2:(row.querySelector('[data-field="furigana2"]').value||'').trim(),
-      name2:n2, age2:a2||'', birthdate2:row.querySelector('[data-field="birthdate2"]').value||'',
-      team2:(row.querySelector('[data-field="team2"]').value||'').trim(),
-      combined_age:a1+a2||'', fee:DOUBLES_FEE,
+      category:cs.value, category_label:_optLabel(cs),
+      furigana1:_value(row,'furigana1'),
+      name1:n1, age1:a1, birthdate1:_value(row,'birthdate1'),
+      team1:_value(row,'team1'),
+      furigana2:_value(row,'furigana2'),
+      name2:n2, age2:a2, birthdate2:_value(row,'birthdate2'),
+      team2:_value(row,'team2'),
+      combined_age:combined, fee:DOUBLES_FEE,
     });
   });
+  if(!ok) return null;
   if(!singles.length&&!doubles.length){
     showMsg('少なくとも1名（シングルス）または1組（ダブルス）を入力してください。','err');
     return null;
+  }
+  var needsConsent=singles.some(function(s){ return s.category==='ninety' || s.age>=90; }) ||
+    doubles.some(function(d){ return d.age1>=90 || d.age2>=90; });
+  if(needsConsent && !document.getElementById('has_over90').checked){
+    return _fail('90歳以上の選手がいる場合は、同意書提出の確認にチェックしてください。',document.getElementById('has_over90')) && null;
   }
   return{form_type:FORM_TYPE,form_name:FORM_NAME,
     contact_name:cname,contact_tel:ctel,
@@ -617,7 +692,7 @@ function _buildLargeballFormHTML(cfg, gasUrl) {
   </div>
   <div id="singlesContainer"></div>
   <button type="button" class="btn-add" id="btnAddS">＋ 選手を1名追加</button>
-  <button type="button" class="btn-add" id="btnAddS5" style="border-style:solid;border-color:#e0b75a;background:var(--ambg);">＋ 5名を一括追加</button>
+  <button type="button" class="btn-add bulk" id="btnAddS5">＋ 5名を一括追加</button>
 </div>
 
 <div class="fsec">
@@ -705,37 +780,56 @@ function addDoubles(){
 }
 
 function gatherData(){
+  _clearInvalid();
   var cname=(document.getElementById('contact_name').value||'').trim();
   var ctel=(document.getElementById('contact_tel').value||'').trim();
-  if(!cname||!ctel){ showMsg('責任者氏名・電話番号は必須です。','err'); return null; }
-  var singles=[],doubles=[];
+  if(!cname) return _fail('責任者氏名は必須です。',document.getElementById('contact_name')) && null;
+  if(!ctel) return _fail('電話番号は必須です。',document.getElementById('contact_tel')) && null;
+  var singles=[],doubles=[], ok=true;
   document.querySelectorAll('.singles-row').forEach(function(row){
-    var name=(row.querySelector('[data-field="name"]').value||'').trim(); if(!name) return;
-    var gSel=row.querySelector('[data-field="gender"]');
-    var cSel=row.querySelector('[data-field="category"]');
+    if(!ok) return;
+    if(!_hasAny(row,['name','age','team'])) return;
+    var name=_value(row,'name');
+    if(!name){ ok=_fail('シングルスの氏名を入力してください。',_field(row,'name')); return; }
+    var gSel=_field(row,'gender');
+    var cSel=_field(row,'category');
+    var age=_age(row,'age');
+    var min=_largeballSingleMin(cSel.value);
+    if(!age){ ok=_fail('シングルスの年齢を入力してください。',_field(row,'age')); return; }
+    if(min && age<min){ ok=_fail('選択した種目は'+min+'歳以上が対象です。',_field(row,'age')); return; }
     singles.push({
       gender:gSel.value, gender_label:gSel.options[gSel.selectedIndex].text,
-      category:cSel.value, category_label:(cSel.options[cSel.selectedIndex].dataset.label||cSel.value),
-      name:name, age:parseInt(row.querySelector('[data-field="age"]').value)||'',
-      team:(row.querySelector('[data-field="team"]').value||'').trim(), fee:SINGLES_FEE,
+      category:cSel.value, category_label:_optLabel(cSel),
+      name:name, age:age,
+      team:_value(row,'team'), fee:SINGLES_FEE,
     });
   });
+  if(!ok) return null;
   document.querySelectorAll('.doubles-row').forEach(function(row){
-    var n1=(row.querySelector('[data-field="name1"]').value||'').trim();
-    var n2=(row.querySelector('[data-field="name2"]').value||'').trim();
-    if(!n1&&!n2) return;
-    var cs=row.querySelector('[data-field="category"]');
-    var a1=parseInt(row.querySelector('[data-field="age1"]').value)||0;
-    var a2=parseInt(row.querySelector('[data-field="age2"]').value)||0;
+    if(!ok) return;
+    if(!_hasAny(row,['name1','name2','age1','age2','team1','team2'])) return;
+    var n1=_value(row,'name1');
+    var n2=_value(row,'name2');
+    var cs=_field(row,'category');
+    var a1=_age(row,'age1');
+    var a2=_age(row,'age2');
+    if(!n1){ ok=_fail('混合ダブルスの男子選手氏名を入力してください。',_field(row,'name1')); return; }
+    if(!n2){ ok=_fail('混合ダブルスの女子選手氏名を入力してください。',_field(row,'name2')); return; }
+    if(!a1){ ok=_fail('混合ダブルスの男子選手年齢を入力してください。',_field(row,'age1')); return; }
+    if(!a2){ ok=_fail('混合ダブルスの女子選手年齢を入力してください。',_field(row,'age2')); return; }
+    var combined=a1+a2;
+    var min=_largeballDoublesMin(cs.value);
+    if(min && combined<min){ ok=_fail('選択した混合ダブルス種目は合計'+min+'歳以上が対象です。',cs); return; }
     doubles.push({
-      category:cs.value, category_label:(cs.options[cs.selectedIndex].dataset.label||cs.value),
-      name1:n1, age1:a1||'',
-      team1:(row.querySelector('[data-field="team1"]').value||'').trim(),
-      name2:n2, age2:a2||'',
-      team2:(row.querySelector('[data-field="team2"]').value||'').trim(),
-      combined_age:a1+a2||'', fee:DOUBLES_FEE,
+      category:cs.value, category_label:_optLabel(cs),
+      name1:n1, age1:a1,
+      team1:_value(row,'team1'),
+      name2:n2, age2:a2,
+      team2:_value(row,'team2'),
+      combined_age:combined, fee:DOUBLES_FEE,
     });
   });
+  if(!ok) return null;
   if(!singles.length&&!doubles.length){
     showMsg('少なくとも1名または1組を入力してください。','err'); return null;
   }
