@@ -4133,38 +4133,62 @@ const _gasExtUrl = () => process.env.GAS_EXTERNAL_URL || "";
 
 // フォーム送信プロキシ: フロント→ /api/forms/submit → GAS
 // GAS URL をブラウザ側 HTML に埋め込まない。env 未設定時は 503 を返す。
+// GAS Web App は処理完了後に必ず 302 (Location: script.googleusercontent.com) を返す仕様のため、
+// redirect:"follow" で追従する(relayEntryToGas / GET /api/tournaments/:id/gas-stats と同じパターン)。
+// ここは DB 保存を持たず GAS が唯一の記録先のため、relayEntryToGas のように ok/status へ要約せず、
+// GAS の実応答ボディ({ok:true,row:N} / {ok:false,error:"..."})をそのままブラウザへ返す。
+// タイムアウトは既定22秒(env GAS_FORMS_TIMEOUT_MS で上書き可)。
+//   他箇所(relayEntryToGas/gas-stats)の8秒は「失敗しても付随情報に過ぎない」経路向けの値で、
+//   この経路はGAS側がLockService待機(最大15秒)+スプレッドシート書込+4件メール送信を伴うため
+//   短すぎると誤検知するリスクがある。フロント(external_forms.js)側の中断が25秒のため、
+//   それより短い22秒のままにして「サーバー側で先に綺麗な504 JSONを返す」関係を維持する。
+const FORMS_SUBMIT_TIMEOUT_MS = parseInt(process.env.GAS_FORMS_TIMEOUT_MS, 10) || 22000;
 app.post("/api/forms/submit", async (req, res) => {
   const gasUrl = _gasExtUrl();
   if (!gasUrl) return res.status(503).json({ ok: false, error: "GAS URL が設定されていません(GAS_EXTERNAL_URL)" });
-  const body = JSON.stringify(req.body);
-  const https = require("https");
-  const url = new URL(gasUrl);
-  const opt = {
-    hostname: url.hostname,
-    path: url.pathname + url.search,
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8", "Content-Length": Buffer.byteLength(body) },
-  };
-  let responded = false;
-  const proxyReq = https.request(opt, (proxyRes) => {
-    let raw = "";
-    proxyRes.on("data", (c) => (raw += c));
-    proxyRes.on("end", () => {
-      if (responded) return;
-      responded = true;
-      try { res.status(proxyRes.statusCode).json(JSON.parse(raw)); }
-      catch (_) { res.status(proxyRes.statusCode).json({ ok: proxyRes.statusCode < 400 }); }
+  if (typeof fetch !== "function") {
+    return res.status(500).json({ ok: false, error: "サーバー内部エラー(fetch 利用不可)" });
+  }
+
+  let gasRes;
+  try {
+    gasRes = await fetch(gasUrl, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(req.body || {}),
+      redirect: "follow",                                  // GAS は googleusercontent へ 302 する仕様(必須)
+      signal: AbortSignal.timeout(FORMS_SUBMIT_TIMEOUT_MS),
     });
-  });
-  proxyReq.setTimeout(22000, () => {
-    if (!responded) { responded = true; res.status(504).json({ ok: false, error: "GAS通信タイムアウト" }); }
-    proxyReq.destroy();
-  });
-  proxyReq.on("error", (err) => {
-    if (!responded) { responded = true; res.status(502).json({ ok: false, error: "GAS通信エラー: " + err.message }); }
-  });
-  proxyReq.write(body);
-  proxyReq.end();
+  } catch (err) {
+    const isTimeout = err && (err.name === "TimeoutError" || err.name === "AbortError");
+    if (isTimeout) return res.status(504).json({ ok: false, error: "GAS通信タイムアウト" });
+    console.warn("[forms/submit] GAS通信エラー:", err && err.message);
+    return res.status(502).json({
+      ok: false,
+      error: IS_PROD ? "GAS通信エラー" : ("GAS通信エラー: " + (err && err.message || String(err))),
+    });
+  }
+
+  let raw;
+  try { raw = await gasRes.text(); }
+  catch (err) {
+    console.warn("[forms/submit] GAS応答の読み取りに失敗:", err && err.message);
+    return res.status(502).json({ ok: false, error: "GAS応答の読み取りに失敗しました" });
+  }
+
+  let data;
+  try { data = JSON.parse(raw); }
+  catch (_) {
+    console.warn("[forms/submit] GAS応答がJSONではありません:", gasRes.status, raw.slice(0, 200));
+    return res.status(502).json({
+      ok: false,
+      error: "GAS応答がJSONではありません",
+      ...(IS_PROD ? {} : { raw: raw.slice(0, 200) }),
+    });
+  }
+
+  // GAS の実ボディ({ok:true,row:N} / {ok:false,error:"..."})とステータス(通常200)をそのまま転送
+  res.status(gasRes.status).json(data);
 });
 app.get("/forms/masters2026", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
