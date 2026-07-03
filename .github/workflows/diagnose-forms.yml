@@ -38,7 +38,7 @@ jobs:
             echo "=== nginx アクセスログの場所(全ログファイル) ==="
             sudo ls -la /var/log/nginx/ 2>&1
 
-            for LOG in /var/log/nginx/access.log /var/log/nginx/ktta.access.log; do
+            for LOG in /var/log/nginx/access.log /var/log/nginx/ktta.access.log /var/log/nginx/access.log.1 /var/log/nginx/ktta.access.log.1; do
               echo ""
               echo "=== [$LOG] /api/forms/submit へのアクセス件数 ==="
               sudo grep -c "forms/submit" "$LOG" 2>/dev/null || echo "0件 または $LOG が読めず"
@@ -48,11 +48,25 @@ jobs:
 
               echo "=== [$LOG] /forms/largeball-* ページ自体へのGETアクセス件数 ==="
               sudo grep -cE "GET /forms/largeball-(national|alljapan)2026" "$LOG" 2>/dev/null || echo "0件"
+
+              echo "=== [$LOG] /forms/largeball-* 直近ヒット(最大30件) ==="
+              sudo grep -E "GET /forms/largeball-(national|alljapan)2026" "$LOG" 2>/dev/null | tail -30
             done
 
             echo ""
-            echo "=== ローテート済みログ内の forms/submit 件数(全種) ==="
-            sudo bash -c 'for f in /var/log/nginx/*.log.*.gz; do [ -e "$f" ] && echo "$f: $(zgrep -c forms/submit "$f" 2>/dev/null)"; done' 2>/dev/null || echo "ローテートログなし"
+            echo "=== ローテート済み(.gz)ログ内の forms/submit・largeball 実ヒット行(全部) ==="
+            sudo bash -c 'for f in /var/log/nginx/*.log.*.gz; do
+              n=$(zgrep -c forms/submit "$f" 2>/dev/null)
+              if [ "$n" != "0" ] && [ -n "$n" ]; then
+                echo "--- $f (forms/submit: $n件) ---"
+                zgrep "forms/submit" "$f" 2>/dev/null
+              fi
+              m=$(zgrep -cE "GET /forms/largeball-(national|alljapan)2026" "$f" 2>/dev/null)
+              if [ "$m" != "0" ] && [ -n "$m" ]; then
+                echo "--- $f (largeball GET: $m件) ---"
+                zgrep -E "GET /forms/largeball-(national|alljapan)2026" "$f" 2>/dev/null
+              fi
+            done' 2>/dev/null || echo "ローテートログなし"
 
             echo ""
             echo "=== ktta.error.log 内容(全文, 192バイトのみなので全出力) ==="
