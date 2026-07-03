@@ -77,4 +77,20 @@ jobs:
             sudo journalctl -u ktta --since "90 days ago" 2>/dev/null | grep -iE "forms/submit|GAS通信|largeball" | tail -30 || echo "該当なし"
 
             echo ""
+            echo "=== nginx設定ファイル一覧 ==="
+            sudo ls -la /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>&1
+
+            echo ""
+            echo "=== nginx設定(sites-enabled配下 全文, リダイレクト/rewrite関連を特に確認) ==="
+            for f in /etc/nginx/sites-enabled/*; do
+              [ -e "$f" ] || continue
+              echo "--- $f ---"
+              sudo cat "$f"
+            done
+
+            echo ""
+            echo "=== server.js内のリダイレクト/rewrite関連ミドルウェア(参考・読み取りのみ) ==="
+            grep -nE "redirect|301|302|trust proxy|www\.|https?://" /opt/ktta/server.js 2>/dev/null | grep -iE "redirect|301|302" | head -20
+
+            echo ""
             echo "=== 診断完了 ==="
