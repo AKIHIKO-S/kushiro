@@ -35,6 +35,15 @@ jobs:
             fi
 
             echo ""
+            echo "=== 特定デプロイIDとの一致確認(値は非公開・一致有無のみ) ==="
+            DEPLOY_FRAGMENT="AKfycbx-HO47EXTo1ymuC9YrUZ5MGHivuKsyfeGl"
+            if echo "$VAL" | grep -q "$DEPLOY_FRAGMENT"; then
+              echo "一致: この特定デプロイIDが本番のGAS_EXTERNAL_URLに含まれています"
+            else
+              echo "不一致: この特定デプロイIDは本番のGAS_EXTERNAL_URLに含まれていません(別のデプロイ/別プロジェクトの可能性)"
+            fi
+
+            echo ""
             echo "=== nginx アクセスログの場所(全ログファイル) ==="
             sudo ls -la /var/log/nginx/ 2>&1
 
