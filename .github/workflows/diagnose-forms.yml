@@ -77,6 +77,14 @@ jobs:
             sudo journalctl -u ktta --since "90 days ago" 2>/dev/null | grep -iE "forms/submit|GAS通信|largeball" | tail -30 || echo "該当なし"
 
             echo ""
+            echo "=== systemctl status ktta (現在の稼働状態) ==="
+            sudo systemctl status ktta --no-pager -l 2>&1 | head -30
+
+            echo ""
+            echo "=== ktta.service 直近30分の起動・エラーログ全文 ==="
+            sudo journalctl -u ktta --since "30 minutes ago" --no-pager 2>&1 | tail -100
+
+            echo ""
             echo "=== nginx設定ファイル一覧 ==="
             sudo ls -la /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>&1
 
