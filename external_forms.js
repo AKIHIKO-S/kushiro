@@ -722,7 +722,7 @@ function _buildLargeballFormHTML(cfg, gasUrl) {
 
 <script>
 var SINGLES_FEE=2000, DOUBLES_FEE=2400;
-var FORM_TYPE='${ftJs}', FORM_NAME='${fnJs}';
+var FORM_TYPE=${ftJs}, FORM_NAME=${fnJs};
 var LARGEBALL_SINGLES_CATS=${sCatsJs};
 var LARGEBALL_DOUBLES_CATS=${dCatsJs};
 
