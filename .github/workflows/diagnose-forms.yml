@@ -35,28 +35,32 @@ jobs:
             fi
 
             echo ""
-            echo "=== nginx アクセスログの場所 ==="
-            sudo ls -la /var/log/nginx/*.log 2>&1 | head -10
+            echo "=== nginx アクセスログの場所(全ログファイル) ==="
+            sudo ls -la /var/log/nginx/ 2>&1
+
+            for LOG in /var/log/nginx/access.log /var/log/nginx/ktta.access.log; do
+              echo ""
+              echo "=== [$LOG] /api/forms/submit へのアクセス件数 ==="
+              sudo grep -c "forms/submit" "$LOG" 2>/dev/null || echo "0件 または $LOG が読めず"
+
+              echo "=== [$LOG] /api/forms/submit 直近ヒット(最大30件) ==="
+              sudo grep "forms/submit" "$LOG" 2>/dev/null | tail -30
+
+              echo "=== [$LOG] /forms/largeball-* ページ自体へのGETアクセス件数 ==="
+              sudo grep -cE "GET /forms/largeball-(national|alljapan)2026" "$LOG" 2>/dev/null || echo "0件"
+            done
 
             echo ""
-            echo "=== /api/forms/submit へのアクセス件数(現行ログ) ==="
-            sudo grep -c "forms/submit" /var/log/nginx/access.log 2>/dev/null || echo "0件 または access.log が読めず"
+            echo "=== ローテート済みログ内の forms/submit 件数(全種) ==="
+            sudo bash -c 'for f in /var/log/nginx/*.log.*.gz; do [ -e "$f" ] && echo "$f: $(zgrep -c forms/submit "$f" 2>/dev/null)"; done' 2>/dev/null || echo "ローテートログなし"
 
             echo ""
-            echo "=== /api/forms/submit 直近ヒット(最大30件, timestamp+method+path+status+size) ==="
-            sudo grep "forms/submit" /var/log/nginx/access.log 2>/dev/null | tail -30
-
-            echo ""
-            echo "=== ローテート済みログ内の件数 ==="
-            sudo bash -c 'for f in /var/log/nginx/access.log.*.gz; do [ -e "$f" ] && echo "$f: $(zgrep -c forms/submit "$f" 2>/dev/null)"; done' 2>/dev/null || echo "ローテートログなし"
+            echo "=== ktta.error.log 内容(全文, 192バイトのみなので全出力) ==="
+            sudo cat /var/log/nginx/ktta.error.log 2>/dev/null || echo "読めず/存在せず"
 
             echo ""
             echo "=== journalctl(ktta.service) 側の forms/submit・GAS関連・largeball 言及 ==="
             sudo journalctl -u ktta --since "90 days ago" 2>/dev/null | grep -iE "forms/submit|GAS通信|largeball" | tail -30 || echo "該当なし"
-
-            echo ""
-            echo "=== /forms/largeball-* ページ自体へのGETアクセス件数(参考) ==="
-            sudo grep -cE "GET /forms/largeball-(national|alljapan)2026" /var/log/nginx/access.log 2>/dev/null || echo "0件"
 
             echo ""
             echo "=== 診断完了 ==="
