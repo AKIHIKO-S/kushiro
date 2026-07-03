@@ -1,0 +1,62 @@
+# 診断専用ワークフロー: 外部申込フォーム(/api/forms/submit)の中継状況を読み取り専用で確認する。
+# 手動実行(workflow_dispatch)のみ。デプロイ・再起動・書き込みは一切行わない。
+# github.event.* 由来のユーザー入力は一切使用しない(secrets のみ参照)。
+# 調査後は削除して構わない(使い捨ての診断ツール)。
+
+name: Diagnose External Forms Relay
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: SSH and inspect (read-only)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER || 'ubuntu' }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          port: 22
+          script_stop: false
+          script: |
+            echo "=== GAS_EXTERNAL_URL 設定有無(値は非表示) ==="
+            if sudo grep -q "^GAS_EXTERNAL_URL=" /etc/ktta.env 2>/dev/null; then
+              VAL=$(sudo grep "^GAS_EXTERNAL_URL=" /etc/ktta.env | cut -d= -f2-)
+              if [ -n "$VAL" ]; then
+                echo "設定あり(空でない) / ホスト: $(echo "$VAL" | sed -E 's#(https://[^/]+)/.*#\1#')"
+              else
+                echo "キーはあるが値が空"
+              fi
+            else
+              echo "未設定(キー自体が無い)"
+            fi
+
+            echo ""
+            echo "=== nginx アクセスログの場所 ==="
+            sudo ls -la /var/log/nginx/*.log 2>&1 | head -10
+
+            echo ""
+            echo "=== /api/forms/submit へのアクセス件数(現行ログ) ==="
+            sudo grep -c "forms/submit" /var/log/nginx/access.log 2>/dev/null || echo "0件 または access.log が読めず"
+
+            echo ""
+            echo "=== /api/forms/submit 直近ヒット(最大30件, timestamp+method+path+status+size) ==="
+            sudo grep "forms/submit" /var/log/nginx/access.log 2>/dev/null | tail -30
+
+            echo ""
+            echo "=== ローテート済みログ内の件数 ==="
+            sudo bash -c 'for f in /var/log/nginx/access.log.*.gz; do [ -e "$f" ] && echo "$f: $(zgrep -c forms/submit "$f" 2>/dev/null)"; done' 2>/dev/null || echo "ローテートログなし"
+
+            echo ""
+            echo "=== journalctl(ktta.service) 側の forms/submit・GAS関連・largeball 言及 ==="
+            sudo journalctl -u ktta --since "90 days ago" 2>/dev/null | grep -iE "forms/submit|GAS通信|largeball" | tail -30 || echo "該当なし"
+
+            echo ""
+            echo "=== /forms/largeball-* ページ自体へのGETアクセス件数(参考) ==="
+            sudo grep -cE "GET /forms/largeball-(national|alljapan)2026" /var/log/nginx/access.log 2>/dev/null || echo "0件"
+
+            echo ""
+            echo "=== 診断完了 ==="
