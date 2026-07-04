@@ -3842,66 +3842,97 @@ const A = {
      h("div", { className: "text-xs text-sub mt-1" },
        "下の内容で取り込みます（表の並び順そのまま=as_drawn）。読み取り違いがあれば取込後にトーナメント管理で修正できます。"));
 
-   const evCards = events.map(ev => {
+   // 編集セル(氏名/所属/相方/相方所属)。値は players 配列を直接書き換える(確定時にそのまま送信)。
+   const cellInput = (obj, key, ph) => h("input", {
+     className: "input", value: obj[key] || "", placeholder: ph || "",
+     style: { fontSize: "12px", padding: "3px 6px", width: "100%", minWidth: "80px" },
+     onInput: (e) => { obj[key] = e.target.value; },
+   });
+
+   // 1種目カードを描画。編集(削除/欠落選手の追加)後は renderPreview() で再描画する。
+   const buildCard = (ev) => {
      const isD = ev.format === "doubles" || (ev.players || []).some(p => p.is_doubles || p.partner_name);
      const card = h("div", { className: "card", style: { padding: "10px 14px", marginBottom: "10px" } });
      card.appendChild(h("div", { className: "font-bold mb-1", style: { fontSize: "14px",
        borderBottom: "2px solid #1e2a4a", paddingBottom: "4px", display: "inline-block" } },
        `${ev.event}（${isD ? "ダブルス" : "シングルス"} ・ ${(ev.players || []).length}${isD ? "組" : "名"}）`));
-     // 品質警告バナー
+     // 品質警告バナー(roster_missing は欠落選手を1名ずつ追加できるボタン付き)
      (ev.notices || []).forEach(n => {
        const st = noticeStyle(n.type);
-       card.appendChild(h("div", { style: { margin: "6px 0", padding: "8px 12px", background: st.bg,
+       const banner = h("div", { style: { margin: "6px 0", padding: "8px 12px", background: st.bg,
          border: "1px solid " + st.border, borderRadius: "6px", fontSize: "12px", color: st.color, fontWeight: 600 } },
-         `${st.icon} ${n.detail || n.type}`));
+         `${st.icon} ${n.detail || n.type}`);
+       if (n.type === "roster_missing") {
+         banner.appendChild(h("button", { className: "btn btn-sm", style: { marginLeft: "8px" },
+           onClick: () => {
+             // 末尾に空の1名を追加(as_drawn では末尾配置=位置調整はトーナメント管理で)。
+             ev.players.push({ name: "", team: "", seed: (ev.players.length + 1) });
+             renderPreview();
+           } }, "この種目に選手を1名追加"));
+       }
+       card.appendChild(banner);
      });
      if (!(ev.notices || []).length) {
        card.appendChild(h("div", { style: { margin: "6px 0", padding: "6px 12px", background: "#d1fae5",
          border: "1px solid #10b981", borderRadius: "6px", fontSize: "12px", color: "#065f46", fontWeight: 600 } },
          "✓ 警告なし"));
      }
-     // 出場者テーブル
-     const tblWrap = h("div", { style: { overflow: "auto", maxHeight: "260px", marginTop: "6px" } });
+     // 読み取り違いはこの場で直せる(氏名/所属/相方をその場編集・行削除)。位置調整のみトーナメント管理へ。
+     card.appendChild(h("div", { className: "text-xs text-sub", style: { margin: "4px 0" } },
+       "読み取り違いはこの表で直接修正できます(氏名・所属・相方)。誤読の行は「削除」、欠落は上のボタンで追加。"));
+     const tblWrap = h("div", { style: { overflow: "auto", maxHeight: "300px", marginTop: "6px" } });
      const tbl = h("table", { className: "tbl", style: { fontSize: "12px" } });
      tbl.appendChild(h("thead", {}, h("tr", {},
-       h("th", { style: { width: "36px" } }, "#"),
-       h("th", {}, "氏名"), h("th", { style: { width: "26%" } }, "所属"),
+       h("th", { style: { width: "32px" } }, "#"),
+       h("th", {}, "氏名"), h("th", { style: { width: "24%" } }, "所属"),
        isD ? h("th", {}, "パートナー") : null,
-       isD ? h("th", { style: { width: "26%" } }, "パートナー所属") : null)));
+       isD ? h("th", { style: { width: "24%" } }, "パートナー所属") : null,
+       h("th", { style: { width: "44px" } }, ""))));
      const tb = h("tbody", {});
      (ev.players || []).forEach((p, i) => {
        const noPartner = isD && !(p.partner_name || "").trim();
        tb.appendChild(h("tr", { style: noPartner ? { background: "#fef2f2" } : {} },
          h("td", { style: { textAlign: "center", color: "#64748b" } }, String(i + 1)),
-         h("td", { style: { fontWeight: 700 } }, p.name || h("span", { className: "text-sub" }, "(空)")),
-         h("td", { style: { color: "#475569" } }, p.team || ""),
-         isD ? h("td", {}, p.partner_name || h("span", { style: { color: "#dc2626" } }, "(相方なし)")) : null,
-         isD ? h("td", { style: { color: "#475569" } }, p.partner_team || "") : null));
+         h("td", {}, cellInput(p, "name", "氏名")),
+         h("td", {}, cellInput(p, "team", "所属")),
+         isD ? h("td", {}, cellInput(p, "partner_name", "相方")) : null,
+         isD ? h("td", {}, cellInput(p, "partner_team", "相方所属")) : null,
+         h("td", { style: { textAlign: "center" } },
+           h("button", { className: "btn btn-sm btn-ghost", title: "この行を削除",
+             style: { color: "#dc2626", padding: "2px 6px" },
+             onClick: () => { ev.players.splice(i, 1); renderPreview(); } }, "×"))));
      });
      tbl.appendChild(tb); tblWrap.appendChild(tbl); card.appendChild(tblWrap);
      return card;
-   });
+   };
 
-   const body = h("div", { style: { maxHeight: "70vh", overflow: "auto", padding: "0 4px" } }, head, ...evCards);
-   const foot = h("div", { className: "flex gap-2" },
-     h("button", { className: "btn", onClick: async () => {
-       if (!confirm(`${events.length}種目を取り込みますか？\n(既存の同種目の試合は削除されます)`)) return;
-       const fails = [];
-       for (const ev of events) {
-         const r = await api.post(`/api/tournaments/${tournamentId}/bracket/import`, {
-           format: "tabletennis-seed-list-v1", event: ev.event, players: ev.players,
-           regenerate: true, auto_link_to_players: true, auto_create_players: true, placement: "as_drawn",
-         });
-         if (r && r.error) fails.push(`${ev.event}: ${r.error}`);
-       }
-       document.querySelector(".modal-bg")?.remove();
-       if (fails.length) toast("一部失敗: " + fails.join(" / "), "err");
-       else toast(`${events.length}種目を取込 - 出場選手DBに自動連携しました`, "ok");
-       await A.openTournament(tournamentId);
-     } }, "この内容で取込"),
-     h("button", { className: "btn btn-ghost",
-       onClick: () => document.querySelector(".modal-bg")?.remove() }, "キャンセル"));
-   openModal("組合せ表 取込プレビュー（ファクトチェック）", body, foot);
+   const renderPreview = () => {
+     document.querySelector(".modal-bg")?.remove();
+     const body = h("div", { style: { maxHeight: "70vh", overflow: "auto", padding: "0 4px" } },
+       head, ...events.map(buildCard));
+     const foot = h("div", { className: "flex gap-2" },
+       h("button", { className: "btn", onClick: async () => {
+         if (!confirm(`${events.length}種目を取り込みますか？\n(既存の同種目の試合は削除されます)`)) return;
+         const fails = [];
+         for (const ev of events) {
+           // 空氏名の行(未入力の追加枠)は送らない
+           const players = (ev.players || []).filter(p => (p.name || "").trim());
+           const r = await api.post(`/api/tournaments/${tournamentId}/bracket/import`, {
+             format: "tabletennis-seed-list-v1", event: ev.event, players,
+             regenerate: true, auto_link_to_players: true, auto_create_players: true, placement: "as_drawn",
+           });
+           if (r && r.error) fails.push(`${ev.event}: ${r.error}`);
+         }
+         document.querySelector(".modal-bg")?.remove();
+         if (fails.length) toast("一部失敗: " + fails.join(" / "), "err");
+         else toast(`${events.length}種目を取込 - 出場選手DBに自動連携しました`, "ok");
+         await A.openTournament(tournamentId);
+       } }, "この内容で取込"),
+       h("button", { className: "btn btn-ghost",
+         onClick: () => document.querySelector(".modal-bg")?.remove() }, "キャンセル"));
+     openModal("組合せ表 取込プレビュー（ファクトチェック）", body, foot);
+   };
+   renderPreview();
  },
 
  // ── 取込後の品質警告提示(直接取込でプレビューを省いた場合の安全網) ──
