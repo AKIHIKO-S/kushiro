@@ -3826,9 +3826,11 @@ const A = {
  // 組番号欠番などを目立つバナーで提示する。読み取り違いに operator が気づける状態で取り込む。
  showSeedListPreview(preview, tournamentId) {
    const events = Array.isArray(preview.events) ? preview.events : [];
-   const noticeStyle = (type) => type === "seed_gap"
-     ? { bg: "#fffbeb", border: "#f59e0b", color: "#92400e", icon: "ℹ" }   // 欠番は良性のことが多い
-     : { bg: "#fef2f2", border: "#dc2626", color: "#991b1b", icon: "⚠" };  // 相方欠落/重複は要確認
+   // 良性寄り(黄・ℹ): 欠番/名簿の過大・表記揺れ・同名。要確認(赤・⚠): 相方欠落/氏名重複/名簿取りこぼし。
+   const yellow = new Set(["seed_gap", "roster_extra", "roster_variant", "roster_dup"]);
+   const noticeStyle = (type) => yellow.has(type)
+     ? { bg: "#fffbeb", border: "#f59e0b", color: "#92400e", icon: "ℹ" }
+     : { bg: "#fef2f2", border: "#dc2626", color: "#991b1b", icon: "⚠" };
    const totalCount = events.reduce((s, e) => s + (e.count || (e.players || []).length), 0);
    const totalNotices = events.reduce((s, e) => s + (e.notices || []).length, 0);
 
@@ -3904,7 +3906,8 @@ const A = {
 
  // ── 取込後の品質警告提示(直接取込でプレビューを省いた場合の安全網) ──
  showImportQualityNotices(noticeList, total) {
-   const st = (type) => type === "seed_gap"
+   const yellow = new Set(["seed_gap", "roster_extra", "roster_variant", "roster_dup"]);
+   const st = (type) => yellow.has(type)
      ? { bg: "#fffbeb", border: "#f59e0b", color: "#92400e", icon: "ℹ" }
      : { bg: "#fef2f2", border: "#dc2626", color: "#991b1b", icon: "⚠" };
    const body = h("div", { style: { maxHeight: "60vh", overflow: "auto", padding: "0 4px" } },

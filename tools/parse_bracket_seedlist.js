@@ -460,6 +460,8 @@ function parseSeedList(filePath, opts = {}) {
 module.exports = {
   parseSeedList, extractSheet, extractDoubles, looksLikeName, looksLikeTeamName,
   isRegionToken, sheetSections, stripAnnot, isNoiseSheet, guessFormat,
+  // 名簿クロスチェック(roster_reader)で再利用する低レベルヘルパ(一元管理のためエクスポート)。
+  safeRange, cellStr, baseSheetName, cleanTeam, isParenTeam, stripParen,
 };
 
 if (require.main === module) {

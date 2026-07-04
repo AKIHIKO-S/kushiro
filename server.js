@@ -41,6 +41,7 @@ const QRCode = require("qrcode");     // ローカルQR生成(会場オフライ
 const db = require("./db");
 const reports = require("./reports");
 const importQuality = require("./tools/import_quality");   // 取込プレビューの品質警告(notices)を全経路へ後付け
+const rosterReader = require("./tools/roster_reader");       // ブック内の名簿と突合し取りこぼし/過大/表記揺れを検出
 const entryForm = require("./entry_form");
 const externalForms = require("./external_forms");
 const mailer = require("./mailer");
@@ -2014,6 +2015,7 @@ app.post("/api/tournaments/:id/kumiawase/upload",
   // チェーンは parseExcelChain に集約(申込Excel取込 upload-excel と共用)。source は組合せ表取込の識別用。
   try {
     const chain = await parseExcelChain(filePath, { sheet, event, format, regTeams });
+    applyRosterCrossCheck(filePath, chain);   // 名簿突合(取りこぼし/過大/表記揺れ)を警告に追加
     const source = chain.kind === "data" ? "kumiawase_chart" : "kumiawase_seedlist";
     return sendChainResult(res, req.params.id, filePath, chain, {
       dryRun,
@@ -2147,6 +2149,21 @@ async function parseExcelChain(filePath, { sheet, event, format, regTeams } = {}
   }
 
   return { kind: "none" };
+}
+
+// chain(events 形状)に対し、同じブック内の名簿と突合した警告を後付けする。
+// 名簿読取・突合の失敗は握りつぶす(取込・プレビューは絶対に止めない)。events 以外は素通し。
+function applyRosterCrossCheck(filePath, chain) {
+  if (!chain || chain.kind !== "events") return chain;
+  try {
+    const roster = rosterReader.extractRoster(filePath, {});
+    if (roster && !roster.error && roster.entries && roster.entries.length) {
+      importQuality.crossCheck(chain.events, roster.entries);
+    }
+  } catch (e) {
+    console.warn("[roster] 名簿突合に失敗(取込は継続):", e.message);
+  }
+  return chain;
 }
 
 // parseExcelChain の結果を HTTP 応答へ変換する共通処理(組合せ表取込/申込Excel取込で共用)。
@@ -2293,6 +2310,7 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
   // 以前はこの経路だけ 旧ktta→旧jtta.py で、同じファイルでも入口により読取精度が変わっていた(#268 後始末)。
   try {
     const chain = await parseExcelChain(xlsxPath, { sheet: null, event: eventHint, format, regTeams });
+    applyRosterCrossCheck(xlsxPath, chain);   // 名簿突合(取りこぼし/過大/表記揺れ)を警告に追加
     return sendChainResult(res, req.params.id, xlsxPath, chain, {
       dryRun,
       // 直接取込(非dryRun)時は申込フォーム側のチェックボックス(置換/自動連携)を尊重しつつ、
