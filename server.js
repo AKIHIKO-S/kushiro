@@ -2011,128 +2011,15 @@ app.post("/api/tournaments/:id/kumiawase/upload",
   }
 
   // Excel 経由: 主系統=Python 罫線パーサー(openpyxl) / 副系統=JS seed-list / 最終=旧 parse_ktta_bracket。
-  // python3+openpyxl が無い環境では Python を飛ばし JS 主系統で無停止運用する(#268 昇格)。
-  const pyOk = await pythonParserAvailable();
-  if (!pyOk && !(seedListParser && seedListParser.parseSeedList) && !(kttaParser && kttaParser.parseWorkbook)) {
-    try { fs.unlinkSync(filePath); } catch {}
-    return res.status(500).json({ error: "Excel パーサーが利用できません" });
-  }
-
-  // ── 主系統: Python 罫線パーサー (tools/bracket_parser, openpyxl・実測100%) ──
-  // openpyxl はセル罫線を読めるため組合せ表(両山トーナメント)の構造復元に最も強い。
-  // 本体にロジックは置かず subprocess の JSON のみ取込む(疎結合・将来改修容易)。
-  if (pyOk) {
-    try {
-      const pyEnv = pythonParserEnv();
-      // 登録団体(正規化済み)を env(JSON)で Python パーサへ。長さは防御的に制限。
-      try { const j = JSON.stringify(regTeams); if (j.length < 60000) pyEnv.KTTA_REGISTERED_TEAMS = j; } catch (e) {}
-      const pyArgs = ["-m", "bracket_parser", filePath];
-      if (sheet) {
-        pyArgs.push("--sheet", sheet);
-        if (event) pyArgs.push("--event", event);
-        if (["singles", "doubles", "team"].includes(format)) pyArgs.push("--format", format);
-      }
-      const pyRes = await runChild("python3", pyArgs, { env: pyEnv });   // #20: タイムアウト/出力上限つき
-      let parsed = null;
-      if (pyRes.code === 0 && pyRes.out) {
-        try { parsed = JSON.parse(pyRes.out); } catch { parsed = null; }
-      }
-      const pyEvents = (parsed && !parsed.error ? (parsed.events || []) : [])
-        .filter((ev) => (ev.players || []).length >= 2);
-      if (pyEvents.length) {
-        // 主系統(Python)にも品質警告を後付け。従来この経路は notices が無く、
-        // 副系統(JS)より品質可視化が弱いという逆転があった(#268 の後始末)。
-        importQuality.annotateEvents(pyEvents);
-        if (dryRun) {
-          try { fs.unlinkSync(filePath); } catch {}
-          return res.json({
-            preview: { events: pyEvents.map((e) => ({ event: e.event, format: e.format, count: e.players.length, players: e.players, notices: e.notices || [] })) },
-            message: `解析プレビュー: ${pyEvents.length}種目 / 計${pyEvents.reduce((s, e) => s + e.players.length, 0)}人 (まだ取込されていません)`,
-            used_parser: "bracket_parser (python)",
-          });
-        }
-        const imported = [];
-        for (const ev of pyEvents) {
-          const r = db.importBracket(req.params.id, {
-            format: "tabletennis-seed-list-v1",
-            event: ev.event,
-            players: ev.players,
-            regenerate: true,
-            auto_link_to_players: true,
-            auto_create_players: true,
-            placement: "as_drawn",   // 紙の並びそのまま配置(再シードしない)=他経路と統一
-          });
-          imported.push({ event: ev.event, format: ev.format, count: ev.players.length, notices: ev.notices || [], result: r });
-        }
-        try { fs.unlinkSync(filePath); } catch {}
-        return res.json({ ok: true, source: "kumiawase_seedlist", used_parser: "bracket_parser (python)", imported });
-      }
-    } catch (e) {
-      console.warn("[kumiawase] python bracket_parser failed, JS へフォールバック:", e.message);
-    }
-  }
-
-  // ── 副系統: JS seed-list パーサー (python不在/空振り時・実測100%) ──
-  // 組合せExcelからシード順の選手リストを抽出し、種目ごとに取込む(複数シート=複数種目を一括)。
-  if (seedListParser && seedListParser.parseSeedList) {
-    try {
-      const parsed = seedListParser.parseSeedList(filePath, {
-        sheet: sheet || null,
-        eventHint: (sheet && event) ? event : null,
-        formatHint: (sheet && ["singles", "doubles", "team"].includes(format)) ? format : null,
-        registeredTeams: regTeams,
-      });
-      const events = (parsed.events || []).filter(ev => (ev.players || []).length >= 2);
-      if (events.length) {
-        if (dryRun) {
-          try { fs.unlinkSync(filePath); } catch {}
-          return res.json({
-            preview: { events: events.map(e => ({ event: e.event, format: e.format, count: e.players.length, players: e.players, notices: e.notices || [] })) },
-            message: `解析プレビュー: ${events.length}種目 / 計${events.reduce((s, e) => s + e.players.length, 0)}人 (まだ取込されていません)`,
-            used_parser: "parse_bracket_seedlist.js",
-          });
-        }
-        const imported = [];
-        for (const ev of events) {
-          const r = db.importBracket(req.params.id, {
-            format: "tabletennis-seed-list-v1",
-            event: ev.event,
-            players: ev.players,
-            regenerate: true,
-            auto_link_to_players: true,
-            auto_create_players: true,
-            placement: "as_drawn",   // 紙の並びそのまま(上から順)に配置。標準シード再配置で飛ばさない。
-          });
-          imported.push({ event: ev.event, format: ev.format, count: ev.players.length, notices: ev.notices || [], result: r });
-        }
-        try { fs.unlinkSync(filePath); } catch {}
-        return res.json({ ok: true, source: "kumiawase_seedlist", used_parser: "parse_bracket_seedlist.js", imported });
-      }
-      // 何も取れなければ 旧パーサーへフォールバック
-    } catch (e) {
-      console.warn("[kumiawase] seed-list parse failed, fallback:", e.message);
-    }
-  }
-  // ── フォールバック: 旧 parse_ktta_bracket (テンプレ/特殊形式向け) ──
-  // 注: このパーサは events[] ではなく単一ブラケット {players, type} / {brackets:[...]} 形状を返し、
-  // admin では旧 showImportPreview(notices 非対応の legacy 描画)で表示されるため、notices は付けない
-  // (付けても表示されない)。品質警告が効くのは events[] 形状を返す Python/JS 主系統。
+  // チェーンは parseExcelChain に集約(申込Excel取込 upload-excel と共用)。source は組合せ表取込の識別用。
   try {
-    const data = kttaParser.parseWorkbook(filePath, {
-      formatHint: format && ["singles", "doubles", "team"].includes(format) ? format : null,
-      eventHint: event || null,
-      sheet: sheet || null,
-      allSheets: !sheet,
-      verbose: false,
+    const chain = await parseExcelChain(filePath, { sheet, event, format, regTeams });
+    const source = chain.kind === "data" ? "kumiawase_chart" : "kumiawase_seedlist";
+    return sendChainResult(res, req.params.id, filePath, chain, {
+      dryRun,
+      importOpts: { regenerate: true, auto_link_to_players: true, auto_create_players: true, placement: "as_drawn" },
+      source,
     });
-    try { fs.unlinkSync(filePath); } catch {}
-    if (data.error) return res.status(400).json(data);
-    if (dryRun) return res.json({ preview: data, message: "解析プレビュー (まだ取込されていません)" });
-    data.regenerate = true;
-    data.auto_link_to_players = true;
-    data.placement = "as_drawn"; // 取り込んだ表通りに対戦を固定配置 (再シードしない)
-    const r = db.importBracket(req.params.id, data);
-    return res.json({ ...r, source: "kumiawase_chart", used_parser: "parse_ktta_bracket.js" });
   } catch (e) {
     try { fs.unlinkSync(filePath); } catch {}
     return res.status(500).json({ error: "Excel 解析失敗: " + e.message });
@@ -2191,6 +2078,122 @@ async function pythonParserAvailable() {
   return _pyParserAvail;
 }
 
+// Excel を主系統(Python 罫線)→副系統(JS seed-list)→最終FB(旧 parse_ktta_bracket)の順で解析し、
+// 正規化した結果を返す共通チェーン。res/DB/unlink は一切触らない(組合せ表取込と申込Excel取込で共用)。
+// 返り値 kind:
+//   'events' : { events:[{event,format,players,notices}], used_parser }  — Python/JS 主系統(events[] 形状)
+//   'data'   : { data, used_parser }                                     — 旧ktta(単一/{brackets:[]} 形状・legacy描画)
+//   'none'   : どのパーサも種目を取れなかった(呼び元でエラー応答)
+async function parseExcelChain(filePath, { sheet, event, format, regTeams } = {}) {
+  const fmtHint = ["singles", "doubles", "team"].includes(format) ? format : null;
+  const rt = regTeams || [];
+
+  // ── 主系統: Python 罫線パーサー ──
+  // openpyxl はセル罫線を読めるため組合せ表(両山トーナメント)の構造復元に最も強い。
+  if (await pythonParserAvailable()) {
+    try {
+      const pyEnv = pythonParserEnv();
+      try { const j = JSON.stringify(rt); if (j.length < 60000) pyEnv.KTTA_REGISTERED_TEAMS = j; } catch (e) {}
+      const pyArgs = ["-m", "bracket_parser", filePath];
+      if (sheet) {
+        pyArgs.push("--sheet", sheet);
+        if (event) pyArgs.push("--event", event);
+        if (fmtHint) pyArgs.push("--format", fmtHint);
+      }
+      const pyRes = await runChild("python3", pyArgs, { env: pyEnv });   // #20: タイムアウト/出力上限つき
+      let parsed = null;
+      if (pyRes.code === 0 && pyRes.out) { try { parsed = JSON.parse(pyRes.out); } catch { parsed = null; } }
+      const pyEvents = (parsed && !parsed.error ? (parsed.events || []) : [])
+        .filter((ev) => (ev.players || []).length >= 2);
+      if (pyEvents.length) {
+        importQuality.annotateEvents(pyEvents);   // 主系統にも品質警告を後付け(#268 逆転解消)
+        return { kind: "events", events: pyEvents, used_parser: "bracket_parser (python)" };
+      }
+    } catch (e) {
+      console.warn("[parseExcelChain] python bracket_parser failed, JS へフォールバック:", e.message);
+    }
+  }
+
+  // ── 副系統: JS seed-list パーサー ──
+  if (seedListParser && seedListParser.parseSeedList) {
+    try {
+      const parsed = seedListParser.parseSeedList(filePath, {
+        sheet: sheet || null,
+        eventHint: (sheet && event) ? event : null,
+        formatHint: (sheet && fmtHint) ? fmtHint : null,
+        registeredTeams: rt,
+      });
+      const events = (parsed.events || []).filter((ev) => (ev.players || []).length >= 2);
+      if (events.length) {
+        importQuality.annotateEvents(events);   // seed-list 側は buildEvent で既に付与済み(type単位で重複回避)
+        return { kind: "events", events, used_parser: "parse_bracket_seedlist.js" };
+      }
+    } catch (e) {
+      console.warn("[parseExcelChain] seed-list parse failed, fallback:", e.message);
+    }
+  }
+
+  // ── 最終FB: 旧 parse_ktta_bracket (テンプレ/特殊形式向け) ──
+  // events[] ではなく単一ブラケット {players,type}/{brackets:[]} 形状。admin では legacy 描画(notices非対応)。
+  if (kttaParser && kttaParser.parseWorkbook) {
+    const data = kttaParser.parseWorkbook(filePath, {
+      formatHint: fmtHint,
+      eventHint: event || null,
+      sheet: sheet || null,
+      allSheets: !sheet,
+      verbose: false,
+    });
+    return { kind: "data", data, used_parser: "parse_ktta_bracket.js" };
+  }
+
+  return { kind: "none" };
+}
+
+// parseExcelChain の結果を HTTP 応答へ変換する共通処理(組合せ表取込/申込Excel取込で共用)。
+// dryRun 時はプレビューを返し(取込まない)、そうでなければ取込む。filePath の unlink はここで行う。
+//   opts.dryRun     : プレビューのみ
+//   opts.importOpts : db.importBracket へ渡す取込オプション(regenerate/auto_link 等)
+//   opts.source     : 応答の source ラベル(任意)
+function sendChainResult(res, tid, filePath, chain, { dryRun, importOpts, source } = {}) {
+  const done = () => { try { fs.unlinkSync(filePath); } catch {} };
+  if (chain.kind === "events") {
+    const events = chain.events;
+    if (dryRun) {
+      done();
+      return res.json({
+        preview: { events: events.map((e) => ({ event: e.event, format: e.format, count: e.players.length, players: e.players, notices: e.notices || [] })) },
+        message: `解析プレビュー: ${events.length}種目 / 計${events.reduce((s, e) => s + e.players.length, 0)}人 (まだ取込されていません)`,
+        used_parser: chain.used_parser,
+      });
+    }
+    const imported = [];
+    for (const ev of events) {
+      const r = db.importBracket(tid, Object.assign({
+        format: "tabletennis-seed-list-v1", event: ev.event, players: ev.players,
+      }, importOpts));
+      imported.push({ event: ev.event, format: ev.format, count: ev.players.length, notices: ev.notices || [], result: r });
+    }
+    done();
+    const out = { ok: true, used_parser: chain.used_parser, imported };
+    if (source) out.source = source;
+    return res.json(out);
+  }
+  if (chain.kind === "data") {
+    const data = chain.data;
+    done();
+    if (data.error) return res.status(400).json({ ...data, used_parser: chain.used_parser });
+    if (dryRun) return res.json({ preview: data, message: "解析プレビュー (まだ取込されていません)", used_parser: chain.used_parser });
+    Object.assign(data, importOpts);
+    const r = db.importBracket(tid, data);
+    const out = { ...r, used_parser: chain.used_parser };
+    if (source) out.source = source;
+    return res.json(out);
+  }
+  // どのパーサも利用できなかった
+  done();
+  return res.status(500).json({ error: "Excel パーサーが利用できません" });
+}
+
 // テンプレ Excel ダウンロード
 app.get("/api/templates/bracket-import.xlsx", (req, res) => {
   if (!templateBuilder || !templateBuilder.buildTemplateBuffer) {
@@ -2219,10 +2222,14 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
   const xlsxPath = req.file.path;
   const regenerate = req.body.regenerate === "1" || req.body.regenerate === "true";
   const autoLink = req.body.auto_link !== "0" && req.body.auto_link !== "false";
+  const dryRun = req.body.dry_run === "1" || req.body.dry_run === "true";
   const format = req.body.format;
   const eventHint = req.body.event || "";
   const originalName = (req.file.originalname || "").toLowerCase();
   const isPdf = originalName.endsWith(".pdf") || req.file.mimetype === "application/pdf";
+  // 登録団体マスタ(正規化済み)を各パーサへ渡し、団体名を氏名に誤判定しない(組合せ表取込と同じ扱い)。
+  let regTeams = [];
+  try { regTeams = db.registeredTeamNormalizedList() || []; } catch (e) { regTeams = []; }
 
   // ── 1a. PDF パーサー (テキストPDFのみ) ──
   if (isPdf) {
@@ -2234,11 +2241,14 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
       const data = await pdfParser.parseWorkbook(xlsxPath, {
         formatHint: format && ["singles", "doubles", "team"].includes(format) ? format : null,
         eventHint: eventHint || null,
+        registeredTeams: regTeams,
       });
       try { fs.unlinkSync(xlsxPath); } catch {}
       if (data.error) {
         return res.status(400).json({ ...data, used_parser: "parse_pdf_bracket.js" });
       }
+      // PDF は {brackets,type} 形状で legacy 描画のため notices 非対象(#268 と同判断)。
+      if (dryRun) return res.json({ preview: data, message: "解析プレビュー (まだ取込されていません)", used_parser: "parse_pdf_bracket.js" });
       data.regenerate = regenerate;
       data.auto_link_to_players = autoLink;
       const r = db.importBracket(req.params.id, data);
@@ -2267,6 +2277,8 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
         if (data.error) {
           return res.status(400).json({ ...data, used_parser: "parse_template_bracket.js" });
         }
+        // テンプレは位置情報を正確に持つため最優先。legacy 描画のため notices 非対象。
+        if (dryRun) return res.json({ preview: data, message: "解析プレビュー (まだ取込されていません)", used_parser: "parse_template_bracket.js" });
         data.regenerate = regenerate;
         data.auto_link_to_players = autoLink;
         const r = db.importBracket(req.params.id, data);
@@ -2277,69 +2289,19 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
     }
   }
 
-  // ── 1b. Node.js 汎用 Excel パーサー (シード抽出) ──
-  if (kttaParser && kttaParser.parseWorkbook) {
-    try {
-      const data = kttaParser.parseWorkbook(xlsxPath, {
-        formatHint: format && ["singles", "doubles", "team"].includes(format) ? format : null,
-        eventHint: eventHint || null,
-        allSheets: true,
-        verbose: false,
-      });
-      try { fs.unlinkSync(xlsxPath); } catch {}
-      if (data.error) {
-        return res.status(400).json({ ...data, used_parser: "parse_ktta_bracket.js" });
-      }
-      data.regenerate = regenerate;
-      data.auto_link_to_players = autoLink;
-      const r = db.importBracket(req.params.id, data);
-      return res.json({ ...r, used_parser: "parse_ktta_bracket.js" });
-    } catch (e) {
-      console.error("[parser] Node parser failed:", e);
-      try { fs.unlinkSync(xlsxPath); } catch {}
-      return res.status(500).json({
-        error: "Excel パーサー失敗: " + e.message,
-        used_parser: "parse_ktta_bracket.js",
-      });
-    }
-  }
-
-  // ── 2. fallback: Python parse_jtta_excel.py (旧版) ──
-  const script = path.join(__dirname, "tools", "parse_jtta_excel.py");
-  if (!fs.existsSync(script)) {
-    try { fs.unlinkSync(xlsxPath); } catch {}
-    return res.status(500).json({ error: "Node パーサーも Python パーサーも利用できません" });
-  }
-  const pyEnv = Object.assign({}, process.env);
-  if (!pyEnv.PYTHONPATH) pyEnv.PYTHONPATH = path.join(__dirname, ".python-packages");
-  // #20: タイムアウト/出力上限つきで実行 (不正xlsxでのハング/暴走を遮断)。
-  const r0 = await runChild("python3", [script, xlsxPath, "--all-sheets"], { env: pyEnv });
-  try { fs.unlinkSync(xlsxPath); } catch {}
-  if (r0.code !== 0) {
-    const timedOut = r0.err === "timeout" || r0.err === "output too large";
-    return res.status(timedOut ? 504 : 500).json({
-      error: timedOut ? "パーサーが時間/サイズ上限を超過しました" : "パーサー失敗 (exit code " + r0.code + ")",
-      stderr: (r0.err || "").slice(0, 500),
-      used_parser: "parse_jtta_excel.py (fallback)",
-    });
-  }
-  let data;
-  try { data = JSON.parse(r0.out); }
-  catch (e) {
-    return res.status(500).json({ error: "JSON 解析失敗: " + e.message,
-      used_parser: "parse_jtta_excel.py (fallback)" });
-  }
-  if (data.error) {
-    return res.status(400).json({ ...data, used_parser: "parse_jtta_excel.py (fallback)" });
-  }
-  data.regenerate = regenerate;
-  data.auto_link_to_players = autoLink;
+  // ── 汎用 Excel: 組合せ表取込と同一チェーン(Python 主系統 → JS seed-list → 旧ktta)に統一。──
+  // 以前はこの経路だけ 旧ktta→旧jtta.py で、同じファイルでも入口により読取精度が変わっていた(#268 後始末)。
   try {
-    const r = db.importBracket(req.params.id, data);
-    return res.json({ ...r, used_parser: "parse_jtta_excel.py (fallback)" });
+    const chain = await parseExcelChain(xlsxPath, { sheet: null, event: eventHint, format, regTeams });
+    return sendChainResult(res, req.params.id, xlsxPath, chain, {
+      dryRun,
+      // 直接取込(非dryRun)時は申込フォーム側のチェックボックス(置換/自動連携)を尊重しつつ、
+      // 紙の並び固定・未登録選手の自動作成は組合せ表取込と揃える。
+      importOpts: { regenerate, auto_link_to_players: autoLink, auto_create_players: true, placement: "as_drawn" },
+    });
   } catch (e) {
-    return res.status(500).json({ error: "取込に失敗しました: " + e.message,
-      used_parser: "parse_jtta_excel.py (fallback)" });
+    try { fs.unlinkSync(xlsxPath); } catch {}
+    return res.status(500).json({ error: "Excel 解析失敗: " + e.message });
   }
 });
 

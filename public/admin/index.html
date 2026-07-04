@@ -4555,7 +4555,7 @@ const A = {
  h("span", {}, "氏名+所属の一致でマスタDB と自動連携 (推奨)"),
  )),
  h("div", { className: "text-xs text-sub mt-2" },
- "アップロード後、Excelの読み取りが自動で行われます。"),
+ "アップロードすると、まず読み取り結果のプレビュー(ファクトチェック)が出ます。内容を確認してから取込みます。"),
  );
  const foot = h("button", { className: "btn", onClick: async () => {
  const file = document.getElementById("xlsxFile").files[0];
@@ -4569,6 +4569,8 @@ const A = {
  fd.append("file", file);
  fd.append("regenerate", replace ? "1" : "0");
  fd.append("auto_link", autoLink ? "1" : "0");
+ // 常にプレビュー(dry_run)で受け、内容確認 → 確定は各プレビューの取込ボタン(/bracket/import)で行う。
+ fd.append("dry_run", "1");
  if (format && format !== "auto") fd.append("format", format);
  if (eventHint) fd.append("event", eventHint);
  try {
@@ -4599,17 +4601,16 @@ const A = {
    openModal("Excel取込失敗", eb, ef);
    return;
  }
- const summary = r.imported
- ? r.imported.map(x => `${x.event}: ${x.entrants_created || 0}名`).join(", ")
- : `${r.entrants_created || 0}名取込`;
- toast("Excel取込成功: " + summary, "ok");
+ // 取込前プレビューへ振分け(組合せ表取込と同一の規則)。
+ // seed-list パーサ(events[])は showSeedListPreview(品質警告つき)、legacy 形状は showImportPreview。
  document.querySelector(".modal-bg")?.remove();
- // 大会詳細画面をリロード
- await A.openTournament(tournamentId);
+ if (r.preview && Array.isArray(r.preview.events)) A.showSeedListPreview(r.preview, tournamentId);
+ else if (r.preview) A.showImportPreview(r.preview, tournamentId);
+ else toast("プレビューを取得できませんでした", "err");
  } catch (e) {
  toast("アップロード失敗: " + e.message, "err");
  }
- } }, "アップロード&取込");
+ } }, "アップロードして確認");
  openModal("Excel ファイル直接取込", body, foot);
  },
 
