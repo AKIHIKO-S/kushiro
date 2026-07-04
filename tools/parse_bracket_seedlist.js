@@ -40,11 +40,8 @@ function safeRange(ws) {
 }
 
 // 北海道の地区(支部)トークン。組合せ表で氏名脇に出る「地区」列の判定に使う。
-const REGION_TOKENS = [
-  '釧路', '十勝', '札幌', '北見', '根室', '名寄', '斜里', '千歳', '苫小牧', '帯広',
-  '旭川', '函館', '室蘭', '小樽', '岩見沢', '網走', '稚内', '留萌', '空知', '日高',
-  '後志', '檜山', '宗谷', '上川', '十勝支部', '釧路支部', '帯広卓球協会',
-];
+// PDFパーサ(parse_pdf_bracket.js)と共通の辞書 region_tokens.json を参照(一元管理)。
+const REGION_TOKENS = require('./region_tokens.json');
 // ブロック見出し・構造語(氏名と誤認しないよう除外)
 // 注意: 年/月/日 のような単漢字は氏名(朝日・美月 等)に頻出するため入れない。
 //       日付は looksLikeName 内で「数字+年月日」のパターンとして別途除外する。
@@ -182,6 +179,22 @@ function extractSheet(ws, band, nameTest) {
   const picked = [];
   dense.forEach(c => picked.push(...byCol[c]));
 
+  // dense列3件未満の救済: 端の小さなリーフ列(2件)が落ちる取りこぼしを救う。
+  // 誤混入(スコア由来の孤立整数)を避けるため、採用済み seed 範囲の欠番を埋める連番であり、
+  // かつ氏名が採用済みと重複しない列に限る(保守的条件)。孤立整数は連番条件で排除される。
+  const denseSeeds = new Set(picked.map(p => p.seed).filter(s => s != null));
+  if (denseSeeds.size) {
+    const mn = Math.min(...denseSeeds), mx = Math.max(...denseSeeds);
+    const pickedNames = new Set(picked.map(p => String(p.name || '').replace(/[\s　]/g, '')));
+    Object.keys(byCol).map(Number).forEach(c => {
+      const col = byCol[c];
+      if (col.length !== 2 || dense.includes(c)) return;
+      const fillsGap = col.every(p => p.seed != null && p.seed >= mn && p.seed <= mx && !denseSeeds.has(p.seed));
+      const newNames = col.every(p => !pickedNames.has(String(p.name || '').replace(/[\s　]/g, '')));
+      if (fillsGap && newNames) { picked.push(...col); col.forEach(p => denseSeeds.add(p.seed)); }
+    });
+  }
+
   // --- 氏名(正規化)で distinct 統合(過大カウント=二重計上の撲滅) ---
   // 同一シートに同居する「検算名簿/クラブ別ロスター」(全選手を別順で再掲する第2系統)や、
   // 罫線都合で同名が2行に出る複製行、左右ブロックの再掲を、氏名の同一性で畳む。
@@ -189,6 +202,9 @@ function extractSheet(ws, band, nameTest) {
   //   ブロックを丸ごと落とすため不可。氏名同一性が唯一頑健な信号。
   // ※所属(team)はロスターとブラケットで表記が揺れる(「（ドングリ）」vs「釧友会」, 略称差)ため
   //   キーに含めない。氏名のみを「空白/全角空白を除去」して比較する。
+  // ※副作用として「同姓同名の別人」は1名に畳まれうるが、所属を含めるとロスター表記揺れで
+  //   逆に過大カウントが復活するため、氏名キーのまま据え置く。同名2名の取りこぼしは名簿
+  //   クロスチェック(import_quality.crossCheck の roster_missing)で可視化し、運営が復元する。
   // 残す代表は「最も左の seed列」のもの: ロスターは常にブラケットの右側に付帯するため、
   // 最左列=ブラケット本体側の組番号(ドロー位置)・所属を保持できる。
   const nkey = (x) => String(x || '').replace(/[\s　・,，.．]/g, '');
@@ -333,10 +349,20 @@ function guessFormat(sheetName, players, fmtHint) {
   const sn = stripAnnot(sheetName || '');
   if (/団体|チーム.?カップ|団体戦/.test(sn)) return 'team';
   if (/ダブルス|ペア|ミックス|混合/.test(sn)) return 'doubles';
-  // 氏名に "/" "・" が多ければダブルス
-  const pair = players.filter(p => /[\/・]/.test(p.name)).length;
-  if (players.length && pair / players.length > 0.5) return 'doubles';
+  // シート名に種目語が無い場合は singles と仮置き。抽出後の氏名から buildEvent が
+  // ダブルス(結合ペア氏名が過半)を再判定する(旧「players の / ・ 比率」判定は players が
+  // 常に空で死にコードだったため撤去し、buildEvent 側の二段判定に一本化)。
   return 'singles';
+}
+// 抽出済み players が「結合ペア氏名(A/B・A・B)」を過半に含むなら doubles と判断する。
+// シート名に種目語が無い組合せ表(会長杯「一般男子」等)が singles 固定になる誤判定を救う。
+function looksLikeDoublesPlayers(players) {
+  if (!players || players.length < 2) return false;
+  const pairLike = players.filter(p => {
+    const parts = String(p.name || '').split(/[\/・]/).map(s => s.trim()).filter(Boolean);
+    return parts.length === 2 && parts.every(t => t.replace(/\s/g, '').length >= 2);
+  }).length;
+  return pairLike / players.length > 0.5;
 }
 function guessGender(sheetName) {
   const sn = sheetName || '';
@@ -412,9 +438,15 @@ function parseSeedList(filePath, opts = {}) {
   const skipDupSheet = (n) => /重複管理|検算|確認用|チェック/.test(n) && cleanBases.has(baseSheetName(n));
   // 1イベント分の seed-list を組み立てる(行帯 band 指定可)。失敗時は null。
   function buildEvent(ws, eventName, fmt, band) {
-    const players = (fmt === 'doubles') ? extractDoubles(ws, band)
+    let players = (fmt === 'doubles') ? extractDoubles(ws, band)
       : (fmt === 'team') ? extractSheet(ws, band, looksLikeTeamName)
         : extractSheet(ws, band);
+    // 二段判定: singles と仮置きしたが結合ペア氏名が過半なら doubles で再抽出し、
+    // 2組以上取れたら doubles として採用(シート名に種目語が無い組合せ表の救済)。
+    if (fmt === 'singles' && looksLikeDoublesPlayers(players)) {
+      const asDoubles = extractDoubles(ws, band);
+      if (asDoubles.length >= 2) { players = asDoubles; fmt = 'doubles'; }
+    }
     if (players.length < 2) return null; // ブラケットでない
     const withSeed = players.filter(p => p.seed != null).sort((x, y) => x.seed - y.seed);
     const noSeed = players.filter(p => p.seed == null).sort((x, y) => (x._r - y._r) || (x._c - y._c));
@@ -459,7 +491,7 @@ function parseSeedList(filePath, opts = {}) {
 
 module.exports = {
   parseSeedList, extractSheet, extractDoubles, looksLikeName, looksLikeTeamName,
-  isRegionToken, sheetSections, stripAnnot, isNoiseSheet, guessFormat,
+  isRegionToken, sheetSections, stripAnnot, isNoiseSheet, guessFormat, looksLikeDoublesPlayers,
   // 名簿クロスチェック(roster_reader)で再利用する低レベルヘルパ(一元管理のためエクスポート)。
   safeRange, cellStr, baseSheetName, cleanTeam, isParenTeam, stripParen,
 };

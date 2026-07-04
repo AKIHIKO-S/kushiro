@@ -39,10 +39,8 @@ const LABELS = new Set([
   '相互審判', 'BYE', 'bye', '不戦勝', '棄権',
 ]);
 const PARENS_RE = /^[(（]\s*(.*?)\s*[)）]$/;
-const KNOWN_REGIONS = new Set([
-  '釧路', '十勝', '北見', '札幌', '千歳', '苫小牧', '根室', '斜里',
-  '名寄', '旭川', '函館', '帯広', '石狩', '美幌', '中標津',
-]);
+// 地区(支部)辞書は seed-list パーサと共通の region_tokens.json を参照(一元管理)。
+const KNOWN_REGIONS = new Set(require('./region_tokens.json'));
 const TEAM_SUFFIX_RE = /(中学校?|高校|高等学校|小学校?|大学|TTC|TTスタジオ|スポーツ|クラブ|協会|市役所|アスティーダ|JFY|個人)$/;
 
 function detectFormat(eventName, hint) {
@@ -333,20 +331,25 @@ function extractDoublesPlayers(items, classification, eventName) {
     const names = near.filter(it => looksLikeName(it.str));
     const teams = near.filter(it => looksLikeTeam(it.str));
     names.sort((a, b) => Math.abs(a.y - posItem.y) - Math.abs(b.y - posItem.y));
+    // 所属も y 近接順にソートし、選手1(n1)/選手2(n2)へ対応付ける。
+    teams.sort((a, b) => Math.abs(a.y - posItem.y) - Math.abs(b.y - posItem.y));
     const n1 = names[0] ? normalizeName(names[0].str) : '';
     const n2 = names[1] ? normalizeName(names[1].str) : '';
-    const team = teams[0] ? stripParens(teams[0].str) : '';
+    const t1 = teams[0] ? stripParens(teams[0].str) : '';
+    const t2 = teams[1] ? stripParens(teams[1].str) : '';
     // ペアは name(選手1)/partner_name(選手2) に分離 → 2名とも個別DB連携可能に。
     // importer は data.partner_name を参照する。name:"A/B" 結合だと1名扱いになり
     // パートナー分離・DB連携が壊れるため、parse_ktta_bracket.js と同じ形に揃える。
     const member1 = n1 || n2;
     const member2 = (n1 && n2 && n1 !== n2) ? n2 : '';
     if (!member1) return null;
+    // 所属が2つ見つかれば別チームペアとして分離。1つなら partner_team は空
+    // (importer 側で team を継承。Python emit.py と同じ「単一所属は空」契約に統一)。
     return {
       name: member1,
       partner_name: member2,
-      team,
-      partner_team: team, // 同チーム既定 (別チームは取込後に編集可)
+      team: t1,
+      partner_team: teams.length >= 2 ? t2 : '',
       is_doubles: true,
       seed: posItem.value,
     };
@@ -602,4 +605,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseWorkbook, parsePdfBuffer };
+// テスト用に内部関数を露出(合成 items でダブルスの別所属分離を検証するため)。
+module.exports = { parseWorkbook, parsePdfBuffer, _internal: { extractDoublesPlayers } };
