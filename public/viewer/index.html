@@ -884,6 +884,19 @@
 #tab-search .vp-bar { height:4px; border-radius:2px; margin-top:11px; background:var(--tc-line2); overflow:hidden; }
 #tab-search .vp-bar > i { display:block; height:100%; border-radius:2px; background:var(--vp-accent); }
 #tab-search .vp-bar-empty { height:4px; margin-top:11px; }
+/* 接続状態バッジ: 大会進行の更新経路(SSE即時 / ポーリング / 断)を控えめに可視化 (#264) */
+.conn-badge {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:3px 9px; border-radius:999px;
+  font-size:11px; font-weight:600; white-space:nowrap;
+  color:var(--sub); background:var(--bg); border:1px solid var(--border);
+}
+.conn-badge::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--sub-l); flex:none; }
+.conn-badge.is-live { color:var(--ok); border-color:var(--ok-bg); background:var(--ok-bg); }
+.conn-badge.is-live::before { background:var(--ok); }
+.conn-badge.is-poll { color:var(--warn); }
+.conn-badge.is-poll::before { background:var(--warn); }
+.conn-badge.is-down::before { background:var(--sub-l); }
 </style>
 </head>
 <body>
@@ -961,6 +974,7 @@
  <div class="card">
  <div class="card-head">
  <div class="card-title">大会進行</div>
+ <span id="lConnBadge" class="conn-badge" hidden></span>
  <select class="input input-sm" id="liveTournamentSel" style="width:240px"></select>
  </div>
  <div id="liveMain"></div>
@@ -2557,6 +2571,7 @@ const L = {
  poller: null,
  _es: null,            // SSE (EventSource) 接続 (#264 を観戦ビューへ移植)
  _sseLastMsg: 0,       // 直近にSSEメッセージを受けた時刻 (ポーリング省略判定用)
+ _tickFails: 0,        // ops-version ポーリングの連続失敗回数 (接続バッジの「再接続中」判定)
 
  async init() {
  const sel = document.getElementById("liveTournamentSel");
@@ -2574,7 +2589,7 @@ const L = {
  if (def) { sel.value = def.id; L.select(def.id); return; }
  } else {
  // 再開: データ再取得 + SSE が閉じていれば再接続
- if (L.tournamentId) { L.fetch(); if (!L._es) L._initOpsStream(); }
+ if (L.tournamentId) { L.fetch(); if (!L._es) L._initOpsStream(); L._updateConnBadge(); }
  }
  if (!sel.value) {
  document.getElementById("liveMain").innerHTML = '<div class="empty-state">'
@@ -2586,23 +2601,27 @@ const L = {
  select(id) {
  L.tournamentId = id;
  L._ver = null;
+ L._tickFails = 0;
  if (L.poller) clearInterval(L.poller);
  L._closeOpsStream();
- if (!id) { document.getElementById("liveMain").innerHTML = ""; return; }
+ if (!id) { document.getElementById("liveMain").textContent = ""; L._updateConnBadge(); return; }
  L.fetch();
  // 変化検知: SSE で即時 push (#264)。SSE 不可/断の環境では下の ops-version ポーリングが代替。
  L._initOpsStream();
  L.poller = setInterval(() => L.tick(), 4000);
+ L._updateConnBadge();
  },
 
  async tick() {
  if (!L.tournamentId) return;
  // SSE が生きている間 (直近メッセージ < 7秒) はポーリングを省略 (SSE が変化を即push)。
- if (L._sseLastMsg && (Date.now() - L._sseLastMsg) < 7000) return;
+ if (L._sseLastMsg && (Date.now() - L._sseLastMsg) < 7000) { L._updateConnBadge(); return; }
  try {
  const r = await api.get("/api/public/tournaments/" + L.tournamentId + "/ops-version");
  if (r && r.v !== undefined && r.v !== L._ver) { L._ver = r.v; L.fetch(); }
- } catch (e) {}
+ L._tickFails = 0;
+ } catch (e) { L._tickFails++; }
+ L._updateConnBadge();
  },
 
  async fetch() {
@@ -2627,17 +2646,34 @@ const L = {
  L._es = es;
  es.onmessage = (e) => {
  L._sseLastMsg = Date.now();   // hello/ping/ops いずれでも健全性を更新
+ L._tickFails = 0;
  let d = null; try { d = JSON.parse(e.data || "{}"); } catch (_) {}
  // 変化 → 即時 /live 取得。観戦タブを離れている間は隠れた再描画を避け、
  // 復帰時に init() が再取得する (接続は維持し変化検知だけ継続)。
  if (d && d.type === "ops" && V.activeTab === "live") L.fetch();
+ L._updateConnBadge();
  };
- es.onerror = () => { /* 自動再接続。復帰までは tick(ポーリング)が代替 */ };
+ es.onerror = () => { L._updateConnBadge(); /* 自動再接続。復帰までは tick(ポーリング)が代替 */ };
  } catch (e) { /* SSE 不可環境 → tick が代替 */ }
  },
  _closeOpsStream() {
  if (L._es) { try { L._es.close(); } catch (e) {} L._es = null; }
  L._sseLastMsg = 0;
+ },
+
+ // 更新経路の可視化: SSE即時 / ポーリング / 断 の3状態を控えめに表示。
+ _updateConnBadge() {
+ const el = document.getElementById("lConnBadge");
+ if (!el) return;
+ if (!L.tournamentId) { el.hidden = true; return; }
+ el.hidden = false;
+ const sseAlive = L._sseLastMsg && (Date.now() - L._sseLastMsg) < 7000;
+ let cls, label;
+ if (sseAlive) { cls = "is-live"; label = "ライブ更新中"; }
+ else if (L._tickFails >= 2) { cls = "is-down"; label = "再接続中…"; }
+ else { cls = "is-poll"; label = "自動更新中"; }
+ el.className = "conn-badge " + cls;
+ el.textContent = label;
  },
 
  render() {

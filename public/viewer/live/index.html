@@ -123,6 +123,22 @@
   }
   .lv-btn:hover { background: rgba(255,255,255,.2); border-color: rgba(255,255,255,.5); }
   .lv-btn.active { background: #fff; color: var(--lv-header); border-color: #fff; }
+  /* 接続状態バッジ: 更新経路(SSE即時 / ポーリング / 断)を控えめに可視化 (#264) */
+  .lv-conn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 9px; border-radius: 999px;
+    font-family: var(--font-body); font-size: 11px; font-weight: 500;
+    color: rgba(255,255,255,.85); background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.18);
+    white-space: nowrap;
+  }
+  .lv-conn::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--lv-disabled); flex: none;
+  }
+  .lv-conn.is-live::before { background: var(--lv-ok-2); animation: lvPulse 1.4s infinite; }
+  .lv-conn.is-poll::before { background: var(--lv-warn); }
+  .lv-conn.is-down::before { background: var(--lv-disabled); }
   /* 閲覧モードへ戻るリンク (#259) */
   a.lv-btn { text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
   .lv-btn-back {
@@ -638,6 +654,15 @@
   }
   .lv-next-content .vs-sep { color: var(--lv-sub); margin: 0 7px; font-size: 11px; }
   .lv-next-reason { font-size: 12px; color: var(--lv-warn); margin-top: 4px; line-height: 1.4; font-weight: 700; }
+  .lv-next-head {
+    padding: 9px 16px; font-size: 12px; font-weight: 700;
+    color: var(--lv-sub); background: var(--lv-surface-2);
+    border-bottom: 1px solid var(--lv-line);
+  }
+  .lv-next-more {
+    padding: 10px 16px; font-size: 12px; text-align: center;
+    color: var(--lv-sub); background: var(--lv-surface);
+  }
 
   /* ─── 検索 (コンパクト) ─── */
   .lv-search {
@@ -970,6 +995,7 @@
     </div>
     <div class="lv-controls">
       <a class="lv-btn lv-btn-back" href="/viewer/" title="閲覧モード（通常表示）に戻る">← 閲覧モード</a>
+      <span id="lvConnBadge" class="lv-conn" hidden></span>
       <select id="tournSel" class="lv-select" onchange="LV.selectTournament(this.value)"></select>
       <button class="lv-btn" id="bsBtn" onclick="LV.toggleBigscreen()">大画面</button>
       <button class="lv-btn" onclick="LV.toggleFullscreen()">全画面</button>
@@ -1000,10 +1026,17 @@
 <script>
 const { h, api, clear, fmtDate } = TT;
 
+// 残試合タブの一括描画で DOM が過大にならないための保護上限。
+// 大会依存の意味を持つ値ではなく、あくまで描画負荷の安全弁 (超過分は「他N件」に集約)。
+const LV_NEXT_RENDER_CAP = 200;
+
 const LV = {
   tournamentId: null,
   state: null,
   poller: null,
+  _es: null,            // SSE (EventSource) 接続 — 呼出を即検知 (#264 パターンを観戦大画面へ移植)
+  _sseLastMsg: 0,       // 直近にSSEメッセージを受けた時刻 (ポーリング省略・接続バッジ判定用)
+  _tickFails: 0,        // ops-version ポーリングの連続失敗回数 (接続バッジで「再接続中」判定に使用)
   searchQuery: "",
   activeTab: "live", // "live" | "next" | "done"
   tournaments: [],
@@ -1038,6 +1071,8 @@ const LV = {
         if (ov && ov.childElementCount) ov.replaceChildren();
       }
     });
+    // 離脱時に SSE 接続を明示クローズ (接続数上限 SSE_MAX を無駄に消費しない)。
+    window.addEventListener("pagehide", () => LV._closeOpsStream());
   },
 
   async loadTournaments() {
@@ -1086,25 +1121,75 @@ const LV = {
   selectTournament(id) {
     LV.tournamentId = id;
     LV._ver = null;
+    LV._tickFails = 0;
     document.getElementById("tournSel").value = id || "";
     if (LV.poller) clearInterval(LV.poller);
     if (!id) {
+      LV._closeOpsStream();
+      LV._updateConnBadge();
       LV.renderEmptyState();
       history.replaceState({}, "", location.pathname);
       return;
     }
     history.replaceState({}, "", location.pathname + "?t=" + encodeURIComponent(id));
     LV.fetch();
-    // 変化検知: 軽量 ops-version を見て、変化時だけ重い /live を取得
+    // 変化検知: SSE で即時 push (#264)。SSE 不可/断の環境では下の ops-version ポーリングが代替。
+    LV._initOpsStream();
     LV.poller = setInterval(() => LV.tick(), 4000);
+    LV._updateConnBadge();
   },
 
   async tick() {
     if (!LV.tournamentId) return;
+    // SSE が生きている間 (直近メッセージ < 7秒) はポーリングを省略 (SSE が変化を即push)。
+    if (LV._sseLastMsg && (Date.now() - LV._sseLastMsg) < 7000) { LV._updateConnBadge(); return; }
     try {
       const r = await api.get("/api/public/tournaments/" + LV.tournamentId + "/ops-version");
       if (r && r.v !== undefined && r.v !== LV._ver) { LV._ver = r.v; LV.fetch(); }
-    } catch (e) {}
+      LV._tickFails = 0;
+    } catch (e) { LV._tickFails++; }
+    LV._updateConnBadge();
+  },
+
+  // ── SSE リアルタイム push (#264 パターンを観戦大画面へ移植) ──
+  // サーバが進行変化を即push。EventSource は自動再接続。SSE 不可/断の環境 (旧端末・
+  // 会場NATで上限超過の 429/503 等) では tick(ポーリング)が代替するため安全に縮退する。
+  // 送られるのは reload 合図のみ (PII無し)。実データは従来どおり /live で取得。
+  _initOpsStream() {
+    LV._closeOpsStream();
+    if (typeof EventSource === "undefined" || !LV.tournamentId) return;
+    try {
+      const es = new EventSource("/api/public/tournaments/" + encodeURIComponent(LV.tournamentId) + "/ops-stream");
+      LV._es = es;
+      es.onmessage = (e) => {
+        LV._sseLastMsg = Date.now();   // hello/ping/ops いずれでも健全性を更新
+        LV._tickFails = 0;
+        let d = null; try { d = JSON.parse(e.data || "{}"); } catch (_) {}
+        // 大画面は常に前面表示なので、変化 → 即時 /live 取得 (メインviewerのタブ表示条件は不要)。
+        if (d && d.type === "ops") LV.fetch();
+        LV._updateConnBadge();
+      };
+      es.onerror = () => { LV._updateConnBadge(); /* 自動再接続。復帰までは tick(ポーリング)が代替 */ };
+    } catch (e) { /* SSE 不可環境 → tick が代替 */ }
+  },
+  _closeOpsStream() {
+    if (LV._es) { try { LV._es.close(); } catch (e) {} LV._es = null; }
+    LV._sseLastMsg = 0;
+  },
+
+  // 更新経路の可視化: SSE即時 / ポーリング / 断 の3状態を控えめに表示。
+  _updateConnBadge() {
+    const el = document.getElementById("lvConnBadge");
+    if (!el) return;
+    if (!LV.tournamentId) { el.hidden = true; return; }
+    el.hidden = false;
+    const sseAlive = LV._sseLastMsg && (Date.now() - LV._sseLastMsg) < 7000;
+    let cls, label;
+    if (sseAlive) { cls = "is-live"; label = "ライブ更新中"; }
+    else if (LV._tickFails >= 2) { cls = "is-down"; label = "再接続中…"; }
+    else { cls = "is-poll"; label = "自動更新中"; }
+    el.className = "lv-conn " + cls;
+    el.textContent = label;
   },
 
   async fetch() {
@@ -1364,10 +1449,15 @@ const LV = {
           style: { padding: "30px 16px", fontSize: "13px" } },
           "残試合はありません。"));
       } else {
-        s.callable.slice(0, 20).forEach(m => {
+        // 見出しに残試合の総数を明示 (以前は先頭20件しか描画しておらず残りが見えなかった)。
+        content.appendChild(h("div", { className: "lv-next-head" }, "残試合 " + s.callable.length + "件"));
+        // 全件を DocumentFragment にまとめて一括append (ポーリング毎の全再描画コストを抑える)。
+        const frag = document.createDocumentFragment();
+        const shown = s.callable.slice(0, LV_NEXT_RENDER_CAP);
+        shown.forEach(m => {
           const p1Num = m.player1_bracket_number;
           const p2Num = m.player2_bracket_number;
-          content.appendChild(h("div", { className: "lv-next" },
+          frag.appendChild(h("div", { className: "lv-next" },
             h("div", { className: "lv-next-tag" },
               `${(m.event || "").slice(0, 10)}`, h("br", {}),
               `${(m.round || "").slice(0, 10)}`),
@@ -1386,6 +1476,11 @@ const LV = {
               })()),
           ));
         });
+        content.appendChild(frag);
+        if (s.callable.length > LV_NEXT_RENDER_CAP) {
+          content.appendChild(h("div", { className: "lv-next-more" },
+            "他 " + (s.callable.length - LV_NEXT_RENDER_CAP) + "件"));
+        }
       }
     } else if (LV.activeTab === "done") {
       if (!s.recent_finished.length) {
