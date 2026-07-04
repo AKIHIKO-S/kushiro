@@ -36,6 +36,16 @@ function buildJsFixture(p) {
   XLSX.utils.book_append_sheet(wb, singles, "一般男子シングルス");
   XLSX.writeFile(wb, p);
 }
+// 組番号 4 を欠番にした合成ブック(seed_gap 警告の全経路化を検証するため)。
+function buildJsFixtureGapped(p) {
+  const wb = XLSX.utils.book_new();
+  const singles = XLSX.utils.aoa_to_sheet([
+    [1, "甲山 一郎", "A会"], [2, "乙川 二郎", "B会"], [3, "丙田 三郎", "C会"],
+    [5, "戊野 五郎", "E会"], [6, "己島 六郎", "F会"], [7, "庚村 七郎", "G会"],
+  ]);
+  XLSX.utils.book_append_sheet(wb, singles, "一般男子シングルス");
+  XLSX.writeFile(wb, p);
+}
 // Python(openpyxl)で読める罫線ありブックをパーサ自身の selftest ビルダで生成(PIIなし合成)。
 function buildPyFixture(p) {
   const code = "from openpyxl import Workbook\n" +
@@ -105,6 +115,21 @@ describe("kumiawase 振り分け: JS フォールバック (KTTA_DISABLE_PYTHON_
     assert.ok(j.preview && Array.isArray(j.preview.events) && j.preview.events.length >= 1, "種目が解析される: " + JSON.stringify(j));
     assert.strictEqual(j.preview.events[0].count, 6, "6名: " + JSON.stringify(j.preview.events[0]));
   });
+
+  it("組番号に欠番があると preview に seed_gap 警告が付く", async () => {
+    const gapFx = path.join(os.tmpdir(), `ktta_disp_js_gap_${process.pid}.xlsx`);
+    buildJsFixtureGapped(gapFx);
+    try {
+      const tid = await createTournament(BASE, KEY);
+      const j = await uploadDryRun(BASE, KEY, tid, gapFx);
+      const ev = j.preview && j.preview.events && j.preview.events[0];
+      assert.ok(ev && Array.isArray(ev.notices), "notices フィールドが存在する: " + JSON.stringify(j));
+      const gap = ev.notices.find(n => n.type === "seed_gap");
+      assert.ok(gap && gap.count === 1, "組番号4の欠番が seed_gap として検出される: " + JSON.stringify(ev.notices));
+    } finally {
+      try { fs.rmSync(gapFx, { force: true }); } catch (e) {}
+    }
+  });
 });
 
 describe("kumiawase 振り分け: Python 主系統 (python+openpyxl 利用可時)", { skip: PY ? false : "python3+openpyxl が無いためスキップ" }, () => {
@@ -127,5 +152,7 @@ describe("kumiawase 振り分け: Python 主系統 (python+openpyxl 利用可時
     const j = await uploadDryRun(BASE, KEY, tid, FX);
     assert.strictEqual(j.used_parser, "bracket_parser (python)", "used_parser=python: " + JSON.stringify(j));
     assert.ok(j.preview && Array.isArray(j.preview.events) && j.preview.events.length >= 1, "種目が解析される: " + JSON.stringify(j));
+    // 主系統(Python)経路でも品質警告が後付けされ、notices フィールドが存在する(#268 の逆転解消)。
+    assert.ok(Array.isArray(j.preview.events[0].notices), "python preview に notices フィールドが存在: " + JSON.stringify(j.preview.events[0]));
   });
 });

@@ -40,6 +40,7 @@ const multer = require("multer");
 const QRCode = require("qrcode");     // ローカルQR生成(会場オフラインで外部QRサービスに依存しないLAN接続案内用)
 const db = require("./db");
 const reports = require("./reports");
+const importQuality = require("./tools/import_quality");   // 取込プレビューの品質警告(notices)を全経路へ後付け
 const entryForm = require("./entry_form");
 const externalForms = require("./external_forms");
 const mailer = require("./mailer");
@@ -1993,6 +1994,7 @@ app.post("/api/tournaments/:id/kumiawase/upload",
       });
       try { fs.unlinkSync(filePath); } catch {}
       if (data.error) return res.status(400).json(data);
+      // PDF も単一ブラケット/{brackets:[...]} 形状を返し legacy 描画になるため notices は付けない(#268 と同じ判断)。
       if (dryRun) return res.json({ preview: data, message: "解析プレビュー (まだ取込されていません)" });
       data.regenerate = true;
       data.auto_link_to_players = true;
@@ -2038,10 +2040,13 @@ app.post("/api/tournaments/:id/kumiawase/upload",
       const pyEvents = (parsed && !parsed.error ? (parsed.events || []) : [])
         .filter((ev) => (ev.players || []).length >= 2);
       if (pyEvents.length) {
+        // 主系統(Python)にも品質警告を後付け。従来この経路は notices が無く、
+        // 副系統(JS)より品質可視化が弱いという逆転があった(#268 の後始末)。
+        importQuality.annotateEvents(pyEvents);
         if (dryRun) {
           try { fs.unlinkSync(filePath); } catch {}
           return res.json({
-            preview: { events: pyEvents.map((e) => ({ event: e.event, format: e.format, count: e.players.length, players: e.players })) },
+            preview: { events: pyEvents.map((e) => ({ event: e.event, format: e.format, count: e.players.length, players: e.players, notices: e.notices || [] })) },
             message: `解析プレビュー: ${pyEvents.length}種目 / 計${pyEvents.reduce((s, e) => s + e.players.length, 0)}人 (まだ取込されていません)`,
             used_parser: "bracket_parser (python)",
           });
@@ -2057,7 +2062,7 @@ app.post("/api/tournaments/:id/kumiawase/upload",
             auto_create_players: true,
             placement: "as_drawn",   // 紙の並びそのまま配置(再シードしない)=他経路と統一
           });
-          imported.push({ event: ev.event, format: ev.format, count: ev.players.length, result: r });
+          imported.push({ event: ev.event, format: ev.format, count: ev.players.length, notices: ev.notices || [], result: r });
         }
         try { fs.unlinkSync(filePath); } catch {}
         return res.json({ ok: true, source: "kumiawase_seedlist", used_parser: "bracket_parser (python)", imported });
@@ -2109,6 +2114,9 @@ app.post("/api/tournaments/:id/kumiawase/upload",
     }
   }
   // ── フォールバック: 旧 parse_ktta_bracket (テンプレ/特殊形式向け) ──
+  // 注: このパーサは events[] ではなく単一ブラケット {players, type} / {brackets:[...]} 形状を返し、
+  // admin では旧 showImportPreview(notices 非対応の legacy 描画)で表示されるため、notices は付けない
+  // (付けても表示されない)。品質警告が効くのは events[] 形状を返す Python/JS 主系統。
   try {
     const data = kttaParser.parseWorkbook(filePath, {
       formatHint: format && ["singles", "doubles", "team"].includes(format) ? format : null,

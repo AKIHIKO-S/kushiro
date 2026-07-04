@@ -16,6 +16,7 @@
 'use strict';
 const XLSX = require('xlsx');
 const fs = require('fs');
+const { computeNotices } = require('./import_quality');
 
 // 宣言上の !ref はアップロード側が巨大値(A1:XFD1048576 等)を仕込め、そのまま二重ループすると
 // 数百億セルの空走査でイベントループが固まる (#8 DoS)。実際に値を持つセルの範囲にクランプする。
@@ -428,23 +429,10 @@ function parseSeedList(filePath, opts = {}) {
       return rec;
     });
     // 品質ゲート: 取込前に人が確認すべき点を notices として可視化(自動補正はしない)。
-    const notices = [];
+    // 計算は共通モジュール(import_quality)に集約し、他の取込経路(Python/PDF)からも同じ警告を出せるようにする。
+    // seed_gap は「振り直し前の生の組番号」で見るため withSeed の seed を rawSeeds として渡す。
     const srcSeeds = withSeed.map(p => p.seed).filter(s => s >= 1);
-    if (srcSeeds.length) {
-      const mn = Math.min(...srcSeeds), mx = Math.max(...srcSeeds), present = new Set(srcSeeds);
-      const gaps = []; for (let s = mn; s <= mx; s++) if (!present.has(s)) gaps.push(s);
-      if (gaps.length) notices.push({ type: 'seed_gap', count: gaps.length,
-        detail: `組番号の欠番 ${gaps.length}件 (取りこぼし/欠場の可能性): ${gaps.slice(0, 20).join(',')}${gaps.length > 20 ? '…' : ''}` });
-    }
-    const nameCount = {};
-    playersOut.forEach(p => { const k = String(p.name || '').replace(/[\s　]/g, ''); if (k) nameCount[k] = (nameCount[k] || 0) + 1; });
-    const dups = Object.entries(nameCount).filter(([, c]) => c > 1);
-    if (dups.length) notices.push({ type: 'dup_name', count: dups.length,
-      detail: `氏名重複 ${dups.length}種 (同一人物の二重 or 同姓同名): ${dups.slice(0, 10).map(([k, c]) => k + '×' + c).join(', ')}` });
-    if (fmt === 'doubles') {
-      const missing = playersOut.filter(p => !p.partner_name).length;
-      if (missing) notices.push({ type: 'pair_missing', count: missing, detail: `相方欠落の可能性 ${missing}組` });
-    }
+    const notices = computeNotices(playersOut, { format: fmt, rawSeeds: srcSeeds });
     const ev = { event: eventName, format: fmt, regenerate: true, players: playersOut, _rawSeedCount: withSeed.length };
     if (notices.length) ev.notices = notices;
     return ev;
