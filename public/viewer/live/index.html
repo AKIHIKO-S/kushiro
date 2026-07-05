@@ -21,7 +21,7 @@
     --lv-warn: #9a6a10;       /* アンバー (呼出可能) */
     --lv-ok: #1a7a45;         /* 緑 (使用可能・終了) */
     --lv-blue: #2563eb;       /* 青 (待機) */
-    --lv-purple: #7c3aed;     /* 紫 (団体追加コート) */
+    --lv-purple: #6b5a2a;     /* 団体追加コート識別色(旧・紫#7c3aedを墨がかった琥珀に変更しAI-tell排除) */
     --lv-header: #191917;     /* ヘッダー墨(ink) */
     /* 仕上げ: 部分ハードコードのトークン化(見た目は実質同等・トンマナ統一) */
     --lv-ok-2: #22c55e;       /* 緑(明) 進捗バーのグラデ上端 */
@@ -377,10 +377,10 @@
     box-shadow: 0 2px 8px rgba(220,38,38,.3);
   }
 
-  /* 団体追加コート: 紫背景 */
+  /* 団体追加コート: 紫グラデを撤去し、落ち着いた墨地の無地で区別(AI-tell排除) */
   .lv-court.extra {
-    background: linear-gradient(180deg, #a78bfa 0%, #7c3aed 100%);
-    border-color: #5b21b6;
+    background: #2a2722;
+    border-color: var(--lv-warn);
     color: #fff;
   }
 
@@ -1018,7 +1018,7 @@
 
 <!-- 全画面/大画面モードの終了ボタン (#185) -->
 <button class="lv-exit-big" id="lvExitBig" onclick="LV.exitBigscreen()"
-  title="大画面/全画面を終了">✕ 表示を戻す</button>
+  title="大画面/全画面を終了">表示を戻す
 
 <!-- 動的オーバーレイ (コート詳細・QR) -->
 <div id="lvOverlay"></div>
@@ -1246,7 +1246,7 @@ const LV = {
           lvPct >= 12 ? h("span", { className: "lv-progress-pct" }, lvPct + "%") : null)),
       // 全試合終了は明示。それ以外は終了時刻の目安のみ表示 (平均/残試合は出さない) #282
       (totalMatches > 0 && lvPct >= 100)
-        ? h("div", { className: "lv-progress-eta", style: { color: "var(--lv-ok)" } }, "🏁 全試合終了")
+        ? h("div", { className: "lv-progress-eta", style: { color: "var(--lv-ok)" } }, "全試合終了")
         : (s.progress && s.progress.eta_text)
           ? h("div", { className: "lv-progress-eta" }, "終了予定 " + s.progress.eta_text + " ごろ（目安）")
           : null,
@@ -1475,7 +1475,7 @@ const LV = {
               // 待機理由(呼べない理由)を簡潔に。種目＋理由のラベル(選手名は出さない=メインviewerと同方針・PII最小)。
               (() => {
                 const labels = [...new Set((m.blocks || []).map(b => b && b.label).filter(Boolean))];
-                return labels.length ? h("div", { className: "lv-next-reason" }, "⏳ 待機: " + labels.join(" / ")) : null;
+                return labels.length ? h("div", { className: "lv-next-reason" }, "待機: " + labels.join(" / ")) : null;
               })()),
           ));
         });
