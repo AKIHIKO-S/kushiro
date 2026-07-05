@@ -4,7 +4,7 @@
 // 実行: node --test test/import-quality.test.js
 const { describe, it } = require("node:test");
 const assert = require("node:assert");
-const { computeNotices, annotateEvents, nameKey } = require("../tools/import_quality");
+const { computeNotices, annotateEvents, nameKey, isMergedEventName } = require("../tools/import_quality");
 
 describe("computeNotices: seed_gap", () => {
   it("rawSeeds の欠番を列挙する", () => {
@@ -98,5 +98,22 @@ describe("nameKey", () => {
   it("半角/全角スペースを除去する", () => {
     assert.strictEqual(nameKey("田中 太郎"), "田中太郎");
     assert.strictEqual(nameKey("田中　太郎"), "田中太郎");
+  });
+});
+
+describe("isMergedEventName (複数種目シート名の検出)", () => {
+  it("2種目を結合したシート名は true", () => {
+    assert.ok(isMergedEventName("混合ダブルス・男子ダブルス"));
+    assert.ok(isMergedEventName("一般女子シングルス・女子ダブルス"));
+    assert.ok(isMergedEventName("男子シングルス／女子シングルス"));
+  });
+  it("単一種目・区切りなしは false", () => {
+    assert.ok(!isMergedEventName("混合ダブルス"));
+    assert.ok(!isMergedEventName("一般男子シングルス"));
+    assert.ok(!isMergedEventName("男子団体"));
+    assert.ok(!isMergedEventName(""));
+  });
+  it("区切りがあっても種目語が片側だけなら false", () => {
+    assert.ok(!isMergedEventName("一般・男子シングルス")); // 種目語は1つ(シングルス)のみ
   });
 });

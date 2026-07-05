@@ -185,4 +185,14 @@ function crossCheck(events, roster) {
   return events;
 }
 
-module.exports = { computeNotices, annotateEvents, nameKey, strictKey, looseKey, crossCheck };
+// 種目名が「2種目を結合したシート名」か判定する(例「混合ダブルス・男子ダブルス」)。
+// Python 主系統は 1シート=1種目で扱い複数種目シートを分割できないため、この形を検出したら
+// sheetSections で分割できる JS パーサへ切り替える(server.js の取込チェーンで使用)。
+function isMergedEventName(name) {
+  const parts = String(name || '').split(/[・／/･]/);
+  if (parts.length < 2) return false;
+  const kw = /(シングルス|ダブルス|団体|チーム)/;
+  return parts.filter((p) => kw.test(p)).length >= 2;
+}
+
+module.exports = { computeNotices, annotateEvents, nameKey, strictKey, looseKey, crossCheck, isMergedEventName };

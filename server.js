@@ -2090,6 +2090,23 @@ async function parseExcelChain(filePath, { sheet, event, format, regTeams } = {}
   const fmtHint = ["singles", "doubles", "team"].includes(format) ? format : null;
   const rt = regTeams || [];
 
+  // JS seed-list パーサーで解析(複数種目シートを sheetSections で分割)。events[] を返す。
+  const jsParse = () => {
+    if (!(seedListParser && seedListParser.parseSeedList)) return [];
+    try {
+      const parsed = seedListParser.parseSeedList(filePath, {
+        sheet: sheet || null,
+        eventHint: (sheet && event) ? event : null,
+        formatHint: (sheet && fmtHint) ? fmtHint : null,
+        registeredTeams: rt,
+      });
+      return (parsed.events || []).filter((ev) => (ev.players || []).length >= 2);
+    } catch (e) {
+      console.warn("[parseExcelChain] seed-list parse failed:", e.message);
+      return [];
+    }
+  };
+
   // ── 主系統: Python 罫線パーサー ──
   // openpyxl はセル罫線を読めるため組合せ表(両山トーナメント)の構造復元に最も強い。
   if (await pythonParserAvailable()) {
@@ -2108,6 +2125,15 @@ async function parseExcelChain(filePath, { sheet, event, format, regTeams } = {}
       const pyEvents = (parsed && !parsed.error ? (parsed.events || []) : [])
         .filter((ev) => (ev.players || []).length >= 2);
       if (pyEvents.length) {
+        // Python が複数種目シートを1種目に潰していないか検査。潰していて(種目名が2種目を結合)、
+        // かつ JS がそのシートを複数種目に分割できるなら JS を採用(ペア/所属/件数の崩れを回避)。
+        if (pyEvents.some((e) => importQuality.isMergedEventName(e.event))) {
+          const jsEvents = jsParse();
+          if (jsEvents.length > pyEvents.length) {
+            importQuality.annotateEvents(jsEvents);
+            return { kind: "events", events: jsEvents, used_parser: "parse_bracket_seedlist.js (複数種目シート分割)" };
+          }
+        }
         importQuality.annotateEvents(pyEvents);   // 主系統にも品質警告を後付け(#268 逆転解消)
         return { kind: "events", events: pyEvents, used_parser: "bracket_parser (python)" };
       }
@@ -2117,21 +2143,11 @@ async function parseExcelChain(filePath, { sheet, event, format, regTeams } = {}
   }
 
   // ── 副系統: JS seed-list パーサー ──
-  if (seedListParser && seedListParser.parseSeedList) {
-    try {
-      const parsed = seedListParser.parseSeedList(filePath, {
-        sheet: sheet || null,
-        eventHint: (sheet && event) ? event : null,
-        formatHint: (sheet && fmtHint) ? fmtHint : null,
-        registeredTeams: rt,
-      });
-      const events = (parsed.events || []).filter((ev) => (ev.players || []).length >= 2);
-      if (events.length) {
-        importQuality.annotateEvents(events);   // seed-list 側は buildEvent で既に付与済み(type単位で重複回避)
-        return { kind: "events", events, used_parser: "parse_bracket_seedlist.js" };
-      }
-    } catch (e) {
-      console.warn("[parseExcelChain] seed-list parse failed, fallback:", e.message);
+  {
+    const events = jsParse();
+    if (events.length) {
+      importQuality.annotateEvents(events);   // seed-list 側は buildEvent で既に付与済み(type単位で重複回避)
+      return { kind: "events", events, used_parser: "parse_bracket_seedlist.js" };
     }
   }
 
