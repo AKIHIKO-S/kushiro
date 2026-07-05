@@ -4307,7 +4307,7 @@ function lanIPv4s() {
   return out;
 }
 const server = app.listen(PORT, () => {   // host未指定=0.0.0.0(全インターフェース)=LAN内の他端末から到達可能
-  console.log(`\n🏓 卓球大会運営アプリ 起動中`);
+  console.log(`\n卓球大会運営アプリ 起動中`);
   console.log(`   閲覧画面:  http://localhost:${PORT}/viewer`);
   console.log(`   管理画面:  http://localhost:${PORT}/admin`);
   console.log(`   API:       http://localhost:${PORT}/api/health`);

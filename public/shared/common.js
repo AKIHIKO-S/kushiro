@@ -56,9 +56,9 @@
     "6回戦","5回戦","4回戦","3回戦","2回戦","1回戦","予選リーグ"
   ];
   const PLACES = [
-    {v:1,l:"優勝",e:"🥇",c:"#ca8a04"},
-    {v:2,l:"準優勝",e:"🥈",c:"#6b7280"},
-    {v:3,l:"3位",e:"🥉",c:"#b45309"}
+    {v:1,l:"優勝",c:"#ca8a04"},
+    {v:2,l:"準優勝",c:"#6b7280"},
+    {v:3,l:"3位",c:"#b45309"}
   ];
 
   // ── DOMユーティリティ ──
@@ -519,8 +519,8 @@
     // ── ② 主要指標 (厳選タイル) ──
     const keyTiles = [
       tile(st.setRate + "%", "セット取得率", st.setsWon + "-" + st.setsLost, cmpPct(st.setRate, 50, true)),
-      tile(st.total ? Math.round(st.fullSet.total / st.total * 100) + "%" : "—", "接戦率", "フルセット " + st.fullSet.total + " 試合"),
-      tile(st.wins ? st.shutout.winRate + "%" : "—", "ストレート勝率", st.shutout.w + " / " + st.wins + " 勝"),
+      tile(st.total ? Math.round(st.fullSet.total / st.total * 100) + "%" : "集計中", "接戦率", "フルセット " + st.fullSet.total + " 試合"),
+      tile(st.wins ? st.shutout.winRate + "%" : "記録なし", "ストレート勝率", st.shutout.w + " / " + st.wins + " 勝"),
     ];
     if (st.recent10 && st.recent10.n > 0)
       keyTiles.push(tile(st.recent10.rate + "%", "直近" + st.recent10.n + "戦勝率", st.recent10.w + "勝 " + (st.recent10.n - st.recent10.w) + "敗"));
@@ -541,11 +541,11 @@
     const moreTiles = [
       tile(st.avgWon, "平均取得セット", "1試合あたり"),
       tile(st.avgLost, "平均失セット", "1試合あたり"),
-      tile(st.losses ? st.shutout.loseRate + "%" : "—", "被ストレート率", st.shutout.l + " / " + st.losses + " 敗"),
+      tile(st.losses ? st.shutout.loseRate + "%" : "記録なし", "被ストレート率", st.shutout.l + " / " + st.losses + " 敗"),
       tile(String(st.streakLongest), "最多連勝", "現在 " + st.streakCurrent + " 連勝中"),
-      tile(st.avgDur ? fmtDuration(st.avgDur) : "—", "平均対戦時間", st.durCount ? (st.durCount + " 試合") : "記録なし", (avg && st.avgDur) ? cmpDur(st.avgDur, avg.avgDurationSec) : null),
-      tile(st.maxDur ? fmtDuration(st.maxDur) : "—", "最長の対戦", "呼出→結果入力"),
-      tile(st.totalDur ? fmtDuration(st.totalDur) : "—", "総試合時間", st.durCount + " 試合の合計"),
+      tile(st.avgDur ? fmtDuration(st.avgDur) : "集計中", "平均対戦時間", st.durCount ? (st.durCount + " 試合") : "記録なし", (avg && st.avgDur) ? cmpDur(st.avgDur, avg.avgDurationSec) : null),
+      tile(st.maxDur ? fmtDuration(st.maxDur) : "集計中", "最長の対戦", "呼出→結果入力"),
+      tile(st.totalDur ? fmtDuration(st.totalDur) : "集計中", "総試合時間", st.durCount + " 試合の合計"),
     ];
     if (st.points && st.points.games > 0)
       moreTiles.push(tile((st.pointDiff > 0 ? "+" : "") + st.pointDiff, "得点デフ", "総得点−総失点"));
@@ -567,7 +567,7 @@
         h("span", { className: "pdist-label " + cls }, label),
         h("span", { className: "pdist-chips" },
           arr.length ? arr.map(d => h("span", { className: "pdist-chip " + cls }, d.k + " ×" + d.n))
-                     : h("span", { className: "pdist-none" }, "—")));
+                     : h("span", { className: "pdist-none" }, "記録なし")));
       addSub("ゲームカウント分布", h("div", { className: "pdist" },
         distRow("勝ち", st.scoreDist.win, "w"), distRow("負け", st.scoreDist.lose, "l")));
     }
@@ -1043,8 +1043,8 @@
       const won = mm.winner === (rowIsP1 ? "p1" : "p2");
       return { txt: (won ? "○" : "●") + rw + "-" + cw, cls: won ? "lg-win" : "lg-lose" };
     };
-    // 率の表示は生カウントから出し分け: 失0かつ取得>0=∞、0-0(データ無し/未消化)=—、それ以外=比。
-    const fmtRate = (won, lost) => lost === 0 ? (won === 0 ? "—" : "∞") : (Math.round((won / lost) * 100) / 100).toFixed(2);
+    // 率の表示は生カウントから出し分け: 失0かつ取得>0=∞、0-0(データ無し/未消化)=-、それ以外=比。
+    const fmtRate = (won, lost) => lost === 0 ? (won === 0 ? "-" : "∞") : (Math.round((won / lost) * 100) / 100).toFixed(2);
     const wrap = h("div", { className: "lg-block" });
     if (blockLabel) wrap.appendChild(h("div", { className: "lg-block-title" }, (opts.titlePrefix || "予選リーグ ") + blockLabel + "ブロック"));
     const tbl = h("table", { className: "lg-table" });
@@ -1058,7 +1058,7 @@
         h("td", { className: "lg-rank" }, String(t.rank) + (t.tiebreak ? "*" : "")),
         h("td", { className: "lg-team", title: t.team_name }, (ri + 1) + ". " + t.team_name));
       teams.forEach((c, ci) => {
-        if (ci === ri) { tr.appendChild(h("td", { className: "lg-self" }, "—")); return; }
+        if (ci === ri) { tr.appendChild(h("td", { className: "lg-self" }, "")); return; }
         const cell = cellFor(t.entrant_id, c.entrant_id);
         tr.appendChild(h("td", { className: "lg-cell " + cell.cls }, cell.txt));
       });

@@ -287,7 +287,7 @@ function ageCatLabel(v){return AGE_CATS.find(c=>c.v===v)?.l||v||"";}
 function renderSetup(){
   const saved=getGasUrl();
   const card=h("div",{className:"card fi",style:{maxWidth:"480px",margin:"60px auto",textAlign:"center",padding:"32px"}},
-    h("div",{style:{fontSize:"40px",marginBottom:"8px"}},"🏓"),
+    h("div",{className:"font-bold",style:{fontSize:"18px",marginBottom:"8px"}},"KTTA"),
     h("div",{style:{fontSize:"20px",fontWeight:"900",marginBottom:"4px"}},"卓球大会 申込管理"),
     h("div",{style:{fontSize:"12px",color:"var(--sub)",marginBottom:"24px"}},"Google スプレッドシート連携")
   );
@@ -303,7 +303,7 @@ function renderSetup(){
   card.appendChild(h("div",{style:{marginTop:"20px",padding:"12px",background:"#f1f5f9",borderRadius:"var(--radius)",textAlign:"left",fontSize:"11px",lineHeight:"1.8",color:"var(--sub)"}},
     h("div",{style:{fontWeight:"700",color:"var(--txt)",marginBottom:"4px"}},"セットアップ手順:"),
     ...["Google スプレッドシートを新規作成","拡張機能 → Apps Script を開く","Code.gs にGASコードを貼り付けて保存",
-    "onOpen を実行（初回権限承認）","スプレッドシートの 🏓大会管理 → 初期設定 を実行",
+    "onOpen を実行（初回権限承認）","スプレッドシートの 大会管理 → 初期設定 を実行",
     "デプロイ → 新しいデプロイ → ウェブアプリ","「全員」がアクセスできるように設定","表示されたURLを上の欄に貼り付け"
     ].map((t,i)=>h("div",null,(i+1)+". "+t))
   ));
@@ -320,7 +320,6 @@ function renderHeader(){
   return h("header",{className:"no-print",style:{background:"var(--pri)",position:"sticky",top:"0",zIndex:"100",boxShadow:"0 1px 8px rgba(0,0,0,.1)"}},
     h("div",{style:{maxWidth:"1000px",margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 16px"}},
       h("div",{style:{display:"flex",alignItems:"center",gap:"8px"}},
-        h("span",{style:{fontSize:"18px"}},"🏓"),
         h("span",{style:{fontSize:"13px",fontWeight:"700",color:"#fff"}},S.config?.name||"卓球大会管理")),
       h("div",{style:{display:"flex",gap:"6px",alignItems:"center"}},
         h("span",{style:{width:"6px",height:"6px",borderRadius:"50%",background:"#4ade80",display:"inline-block"}}),
@@ -411,7 +410,7 @@ function renderEmbedModal(){
   const box=h("div",{className:"modal-box fi",style:{maxWidth:"600px"},onClick:e=>e.stopPropagation()});bg.appendChild(box);
   const formUrl=location.origin+location.pathname+'?mode=form';
   const iframeCode=`<iframe src="${formUrl}" width="100%" height="800" frameborder="0" style="max-width:750px;margin:0 auto;display:block;border-radius:12px;border:1px solid #e2e8f0;"></iframe>`;
-  const linkHtml=`<a href="${formUrl}" target="_blank" style="display:inline-block;padding:12px 24px;background:#1a56db;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;font-family:sans-serif;">🏓 ${S.config?.name||'大会'} 参加申込</a>`;
+  const linkHtml=`<a href="${formUrl}" target="_blank" style="display:inline-block;padding:12px 24px;background:#1a56db;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;font-family:sans-serif;">${S.config?.name||'大会'} 参加申込</a>`;
   const header=h("div",{style:{padding:"16px 20px",borderBottom:"1px solid var(--border)"}},
     h("div",{style:{fontSize:"16px",fontWeight:"900"}},"WEBサイト埋込コード"));
   const body=h("div",{style:{padding:"16px 20px"}});
@@ -482,7 +481,7 @@ function renderEventForm(){
     nameI.addEventListener("input",e=>{d.event_name=e.target.value;nameI.dataset.manual="1";});
     function autoN(){if(nameI.dataset.manual==="1"&&nameI.value)return;
       nameI.value=[GENDER_OPTIONS.find(g=>g.v===d.gender)?.l||"",AGE_CATS.find(a=>a.v===d.age_category)?.l||"",EV_TYPES.find(t=>t.v===d.event_type)?.l||""].join(" ");d.event_name=nameI.value;}
-    const delBtn=h("button",{className:"btn btn-sm btn-err",onClick:()=>{const idx=formEvents.indexOf(d);if(idx>=0)formEvents.splice(idx,1);row.remove();}},"✕");
+    const delBtn=h("button",{className:"btn btn-sm btn-err",onClick:()=>{const idx=formEvents.indexOf(d);if(idx>=0)formEvents.splice(idx,1);row.remove();}},"×");
     const r1=h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:"6px",alignItems:"end"}});
     r1.append(fld("種別",typeSel),fld("種目名",nameI),delBtn);
     const gSel=makeSelect(GENDER_OPTIONS,d.gender,v=>{d.gender=v;autoN();});gSel.style.width="100%";
@@ -572,10 +571,10 @@ function renderRegistrationsTab(){
             :h("button",{className:"btn btn-sm",style:{background:"var(--warn-bg)",color:"var(--warn)",border:"none",fontSize:"10px",padding:"3px 5px"},
               onClick:e=>{e.stopPropagation();setState({showReceipt:r,receiptDesc:S.config?.receipt_template||"参加費として"});}},"発行")),
         h("div",{style:{display:"flex",gap:"2px"},onClick:e=>e.stopPropagation()},
-          h("button",{className:"btn btn-sm",style:{background:"var(--pri-bg)",color:"var(--pri)",border:"none",padding:"3px 5px"},
-            onClick:()=>setState({editReg:r,showRegForm:true})},"✏"),
-          h("button",{className:"btn btn-sm",style:{background:"var(--err-bg)",color:"var(--err)",border:"none",padding:"3px 5px"},
-            onClick:()=>deleteRegistration(r.id)},"✕"))
+          h("button",{className:"btn btn-sm",style:{background:"var(--pri-bg)",color:"var(--pri)",border:"none",padding:"3px 8px"},
+            onClick:()=>setState({editReg:r,showRegForm:true})},"編集"),
+          h("button",{className:"btn btn-sm",style:{background:"var(--err-bg)",color:"var(--err)",border:"none",padding:"3px 8px"},
+            onClick:()=>deleteRegistration(r.id)},"削除"))
       );
       card.appendChild(row);
     });
@@ -728,7 +727,6 @@ function renderPublicForm(){
   const t=S.publicData;
   if(S.loading)return h("div",{className:"loading",style:{marginTop:"80px"}},"読み込み中...");
   if(!t||t.error)return h("div",{style:{maxWidth:"500px",margin:"60px auto",textAlign:"center",padding:"32px"}},
-    h("div",{style:{fontSize:"40px",marginBottom:"12px"}},"🏓"),
     h("div",{style:{fontSize:"18px",fontWeight:"900",marginBottom:"6px"}},"申込フォーム"),
     h("div",{style:{fontSize:"13px",color:"var(--sub)"}},"この大会は受付終了しているか、見つかりません。"));
 
@@ -736,7 +734,6 @@ function renderPublicForm(){
 
   // Header
   wrap.appendChild(h("div",{style:{background:"linear-gradient(135deg,#1e3a5f,var(--pri))",color:"#fff",borderRadius:"12px",padding:"28px 20px",textAlign:"center",marginBottom:"16px"}},
-    h("div",{style:{fontSize:"36px",marginBottom:"6px"}},"🏓"),
     h("div",{style:{fontSize:"20px",fontWeight:"900"}},t.name),
     h("div",{style:{fontSize:"12px",opacity:".7",marginTop:"6px"}},[t.date,t.venue].filter(Boolean).join(" · ")),
     t.organizer?h("div",{style:{fontSize:"11px",opacity:".5",marginTop:"3px"}},"主催: "+t.organizer):null,

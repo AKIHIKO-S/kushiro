@@ -1167,7 +1167,7 @@ async function submitForm(e) {
       document.getElementById("ttCopyBtn").onclick = async function() {
         try {
           await navigator.clipboard.writeText(summary);
-          this.textContent = "コピーしました ✓";
+          this.textContent = "コピーしました";
           this.classList.add("copied");
           setTimeout(() => {
             this.textContent = "クリップボードにコピー (LINE等で共有可)";
@@ -1178,7 +1178,7 @@ async function submitForm(e) {
           const ta = document.createElement("textarea");
           ta.value = summary; document.body.appendChild(ta);
           ta.select(); document.execCommand("copy"); ta.remove();
-          this.textContent = "コピーしました ✓";
+          this.textContent = "コピーしました";
         }
       };
       // 新規申込ボタン
@@ -1396,7 +1396,7 @@ function buildApplicantStatusHTML() {
   function divLabel(e){
     if(e.division&&DIV[e.division])return DIV[e.division];
     if(e.category&&CAT[e.category])return CAT[e.category];
-    return "—";
+    return "";
   }
   function show(id,on){document.getElementById(id).classList[on?"remove":"add"]("hidden");}
   function setMsg(html){document.getElementById("msg").innerHTML=html?('<div class="card"><div class="msg err">'+html+'</div></div>'):"";}
@@ -1405,9 +1405,9 @@ function buildApplicantStatusHTML() {
     setMsg("");
     document.getElementById("rToken").textContent=document.getElementById("tokenInput").value.trim().toUpperCase();
     document.getElementById("rTournament").textContent=(d.tournament&&d.tournament.name||"")+(d.tournament&&d.tournament.date?(" ("+d.tournament.date+")"):"");
-    document.getElementById("rTeam").textContent=d.team_name||"—";
-    document.getElementById("rContact").textContent=d.contact_name||"—";
-    document.getElementById("rDate").textContent=d.created_at||"—";
+    document.getElementById("rTeam").textContent=d.team_name||"未登録";
+    document.getElementById("rContact").textContent=d.contact_name||"未登録";
+    document.getElementById("rDate").textContent=d.created_at||"";
     var rows=(d.entries||[]).map(function(e){
       var who=esc(e.name||"");
       if(e.is_doubles&&e.partner_name)who+=" / "+esc(e.partner_name);

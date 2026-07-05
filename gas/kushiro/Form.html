@@ -268,9 +268,9 @@ const BOOT = <?!= JSON.stringify(bootstrap) ?>;
   const cfg = BOOT.config || {};
   if (cfg['大会名']) titleEl.textContent = cfg['大会名'];
   const metas = [];
-  if (cfg['開催日']) metas.push('📅 ' + cfg['開催日']);
-  if (cfg['会場']) metas.push('🏟 ' + cfg['会場']);
-  if (cfg['申込締切']) metas.push('⏰ 締切：' + cfg['申込締切']);
+  if (cfg['開催日']) metas.push(cfg['開催日']);
+  if (cfg['会場']) metas.push(cfg['会場']);
+  if (cfg['申込締切']) metas.push('締切：' + cfg['申込締切']);
   if (cfg['主催']) metas.push('主催：' + cfg['主催']);
   metaEl.innerHTML = metas.join('　');
 

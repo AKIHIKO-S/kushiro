@@ -333,7 +333,7 @@ function showSuccess(summary){
     var self=this;
     if(navigator.clipboard){
       navigator.clipboard.writeText(summary).then(function(){
-        self.textContent='コピーしました ✓';
+        self.textContent='コピーしました';
         setTimeout(function(){ self.textContent='クリップボードにコピー'; },2500);
       }).catch(function(){ _lcopy(summary,self); });
     }else{ _lcopy(summary,self); }
@@ -345,7 +345,7 @@ function _lcopy(text,btn){
   var ta=document.createElement('textarea'); ta.value=text;
   document.body.appendChild(ta); ta.select();
   try{ document.execCommand('copy'); }catch(e){}
-  ta.remove(); btn.textContent='コピーしました ✓';
+  ta.remove(); btn.textContent='コピーしました';
   setTimeout(function(){ btn.textContent='クリップボードにコピー'; },2500);
 }
 function submitForm(e){

@@ -14,7 +14,7 @@
  *   2) 拡張機能 > Apps Script を開く
  *   3) Code.gs にこのファイル全文を貼り付け
  *   4) Form.html を新規作成（HTML）して Form.html の中身を貼り付け
- *   5) スプレッドシートに戻り、メニュー「🏓大会管理 > 初期セットアップ」を実行
+ *   5) スプレッドシートに戻り、メニュー「大会管理 > 初期セットアップ」を実行
  *   6) 「種目マスター」「大会設定」を必要に応じて編集
  *   7) デプロイ > 新しいデプロイ > ウェブアプリ
  *       - 実行ユーザー：自分
@@ -40,7 +40,7 @@ const EVENT_SHEET_PREFIX = '種目別名簿_';
 
 // ── メニュー ──────────────────────────────────────────────────
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu('🏓 大会管理')
+  SpreadsheetApp.getUi().createMenu('大会管理')
     .addItem('初期セットアップ', 'setupAll')
     .addSeparator()
     .addItem('集計を更新（手動）', 'rebuildAllAggregations')

@@ -86,7 +86,6 @@
   .b-ok:disabled { background:#a8a29e; }
   .b-cancel { background:#f5f5f4; color:#57534e; border:1px solid #d6d3d1; }
   .empty { text-align:center; color:#78716c; padding: 48px 16px; font-size: 14px; line-height:1.8; }
-  .empty .big { font-size: 40px; margin-bottom: 8px; }
   .mcard.pending { border-color: #f59e0b; background: #fffbeb; }
   .pending-banner { font-size: 15px; font-weight: 800; color: #b45309; margin: 4px 0 8px; }
   .pending-win { font-size: 16px; margin-bottom: 12px; }
@@ -98,7 +97,6 @@
   .err-screen p { color:#57534e; font-size: 14px; line-height:1.8; }
   /* 会場パスコード入力ゲート (#261) */
   .pass-gate { text-align:center; padding: 40px 20px 24px; max-width: 360px; margin: 0 auto; }
-  .pass-gate .pass-lock { font-size: 44px; line-height:1; margin-bottom: 10px; }
   .pass-gate h2 { font-size: 20px; font-weight: 800; margin: 0 0 8px; }
   .pass-gate p { color:#57534e; font-size: 13.5px; line-height: 1.8; margin: 0 0 18px; }
   .pass-input {
@@ -241,7 +239,6 @@
     var nameEl = document.getElementById("tname");
     if (nameEl) nameEl.textContent = (t.name || "大会") + (PERCOURT ? "　【コート" + COURT + " 専用】" : "");
     root.innerHTML = '<div class="pass-gate">'
-      + '<div class="pass-lock">🔒</div>'
       + '<h2>会場パスコードを入力</h2>'
       + '<p>本部から会場で伝えられた数字を入力してください。<br>'
       + '同じ端末では、次回から自動で省略されます。</p>'
@@ -301,7 +298,7 @@
       root.innerHTML = '<div class="ref-note">担当の試合がコートに入ると、ここに表示されます。'
         + '結果が出たら<b>勝った選手を選んで報告</b>してください（セット数の入力は任意です）。</div>'
         + '<div class="reload-bar"><button id="rl">↻ 最新に更新</button></div>'
-        + '<div class="empty"><div class="big">🏓</div>いまコートに入っている試合はありません。<br>試合が始まったら自動で表示されます。</div>';
+        + '<div class="empty">いまコートに入っている試合はありません。<br>試合が始まったら自動で表示されます。</div>';
       bindReload();
       return;
     }
@@ -348,7 +345,7 @@
     if (m.awaiting_approval && !redo[m.id]) {
       var rw = (m.reported && m.reported.winner_name) || "";
       return '<div class="mcard pending" id="card-' + esc(m.id) + '">' + head
-        + '<div class="pending-banner">⏳ 報告済み・本部の承認待ち</div>'
+        + '<div class="pending-banner">報告済み・本部の承認待ち</div>'
         + '<div class="pending-win"><b>' + esc(rw) + '</b> の勝ちで報告しました</div>'
         + '<button class="b b-cancel" data-redo="' + esc(m.id) + '">報告をやり直す</button>'
         + '</div>';
@@ -369,7 +366,7 @@
     return '<div class="pbtn" data-mid="' + esc(m.id) + '" data-slot="' + slot + '">'
       + '<div class="pn">' + (bn ? '<span class="pbn">#' + esc(bn) + '</span>' : '') + esc(nm || "（未定）") + '</div>'
       + (tm ? '<div class="pt">' + esc(tm) + '</div>' : '')
-      + '<div class="pwin">✓ 勝ち</div>'
+      + '<div class="pwin">勝ち</div>'
       + '</div>';
   }
 
@@ -612,7 +609,7 @@
       if (!root.innerHTML || root.querySelector(".empty") == null && !root.querySelector(".mcard")) {
         // 初回失敗のみエラー表示。既に描画済みなら据え置き。
         if (!lastMatches.length && !root.querySelector(".mcard")) {
-          root.innerHTML = '<div class="empty"><div class="big">⚠️</div>読み込みに失敗しました。<br>'
+          root.innerHTML = '<div class="empty">読み込みに失敗しました。<br>'
             + '<button class="b b-cancel" style="margin-top:12px;max-width:200px" onclick="location.reload()">再読み込み</button></div>';
         }
       }

@@ -199,7 +199,7 @@ function _buildEmailBody(cfg, data, singles, doubles, rowNum) {
 
   if (data.has_over90) {
     lines.push("");
-    lines.push("⚠️ 90歳以上の選手が含まれます。同意書の提出を確認してください。");
+    lines.push("[要確認] 90歳以上の選手が含まれます。同意書の提出を確認してください。");
   }
 
   // シングルス

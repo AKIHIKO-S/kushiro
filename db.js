@@ -1864,7 +1864,7 @@ function getCoachDashboard(coachId, tournamentId) {
         opponent: won ? (m.loser_name || "") : (m.winner_name || ""),
         score: (m.winner_sets != null ? (won ? m.winner_sets + "-" + m.loser_sets : m.loser_sets + "-" + m.winner_sets) : ""), event: m.event || "" };
     }
-    return { ...slim(p), status: "none", label: "—" };
+    return { ...slim(p), status: "none", label: "対戦前" };
   });
   // 状況の重み付け順 (試合中→呼出→待機→結果→なし)
   const order = { playing: 0, callable: 1, waiting: 2, won: 3, lost: 3, none: 4 };

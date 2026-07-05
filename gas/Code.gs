@@ -7,7 +7,7 @@
 // 2. 拡張機能 > Apps Script を開く
 // 3. このコード全体をコピーして Code.gs に貼り付け
 // 4. 保存（Ctrl+S）後、関数選択で「onOpen」を選んで ▶実行
-// 5. スプレッドシートに戻り 🏓大会管理 > 初期設定 を実行
+// 5. スプレッドシートに戻り 大会管理 > 初期設定 を実行
 // 6. デプロイ > 新しいデプロイ > ウェブアプリ
 //    - 説明: 卓球大会申込API
 //    - 実行するユーザー: 自分
@@ -28,7 +28,7 @@ const SN = {
 
 // ── メニュー ──────────────────────────────────────────
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu('🏓 大会管理')
+  SpreadsheetApp.getUi().createMenu('大会管理')
     .addItem('初期設定（シート作成）', 'setupSheets')
     .addItem('種目別シート再生成', 'syncAllEventSheets')
     .addSeparator()

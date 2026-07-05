@@ -722,7 +722,7 @@ function buildMatchCardsXlsx(tournament, matches, entrants, opts) {
     list.forEach((m, idx) => {
       const p1Num = numByEntrant.get(m.player1_entrant_id) || "";
       const p2Num = numByEntrant.get(m.player2_entrant_id) || "";
-      const tableNo = m.table_no || "—";
+      const tableNo = m.table_no || "未定";
       const refName = m.referee_name || "";
 
       // 試合カード (横長 8列)

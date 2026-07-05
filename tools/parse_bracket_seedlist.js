@@ -502,7 +502,7 @@ if (require.main === module) {
   if (!out.events.length) console.log('(イベントなし: ブラケットを検出できませんでした)');
   out.events.forEach(e => {
     console.log(`[${e.event}] fmt=${e.format} players=${e.players.length} (seeded=${e._rawSeedCount})`);
-    (e.notices || []).forEach(n => console.log(`   ⚠ ${n.detail}`));
+    (e.notices || []).forEach(n => console.log(`   [注意] ${n.detail}`));
   });
   if (process.argv[4] === '--dump' && out.events[0]) console.log(JSON.stringify(out.events[0].players.slice(0, 10), null, 1));
 }
