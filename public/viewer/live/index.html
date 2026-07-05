@@ -1729,7 +1729,7 @@ const LV = {
       if (match(m.player1_name) || match(m.player2_name)
           || match(m.player1_team) || match(m.player2_team)) {
         hits.push({
-          where: "残試合数",
+          where: "コート待ち",
           summary: `${m.event || ""} ${m.round || ""} ${m.player1_name} vs ${m.player2_name}`,
         });
       }
