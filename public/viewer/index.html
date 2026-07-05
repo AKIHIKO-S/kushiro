@@ -897,6 +897,52 @@
 .conn-badge.is-poll { color:var(--warn); }
 .conn-badge.is-poll::before { background:var(--warn); }
 .conn-badge.is-down::before { background:var(--sub-l); }
+/* ランキング / 統計タブ(丹頂トーン・レート非表示・勝利数ベース) */
+.rk-title-bar{display:flex;align-items:center;gap:10px;margin:6px 2px 14px}
+.rk-title-bar::before{content:"";width:4px;height:22px;background:var(--accent);border-radius:2px;flex:none}
+.rk-title-bar h2{font-size:19px;font-weight:700;letter-spacing:.01em}
+.rk-basis{font-size:11px;font-weight:700;color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:2px 10px;margin-left:auto}
+.rk-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+.rk-filters .input{width:auto;min-width:120px}
+.rk-toggle{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--sub);margin-left:auto}
+.rk-table{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
+.rk-head,.rk-row{display:grid;grid-template-columns:44px 1fr 96px 58px 66px;gap:10px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--border)}
+.rk-head{background:var(--bg);font-size:11px;color:var(--sub);font-weight:700;letter-spacing:.04em}
+.rk-head .num,.rk-row .rk-wins,.rk-row .rk-rate,.rk-row .rk-champ{text-align:right;font-variant-numeric:tabular-nums}
+.rk-row{cursor:pointer}
+.rk-row:last-child{border-bottom:none}
+.rk-row:hover,.rk-row:focus-visible{background:var(--bg);outline:none}
+.rk-rank{font-weight:800;font-size:16px;text-align:center;font-variant-numeric:tabular-nums;color:var(--sub)}
+.rk-row.top .rk-rank{color:var(--accent)}
+.rk-name{font-weight:700;font-size:15px}
+.rk-team{font-size:12px;color:var(--sub)}
+.rk-wins{font-weight:800;font-size:16px}
+.rk-wins small{font-size:11px;color:var(--sub);font-weight:600}
+.rk-rate{font-size:13px;color:var(--sub)}
+.rk-champ b{color:#9a6a10;font-weight:800}
+.rk-champ .none{color:var(--sub-l)}
+.rk-foot{font-size:12px;color:var(--sub);text-align:center;padding:12px 4px 0}
+.st-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px}
+.st-tile{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
+.st-tile .v{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1}
+.st-tile .k{font-size:12px;color:var(--sub);margin-top:4px}
+.st-tile.accent .v{color:var(--accent)}
+.st-duo{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.st-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+.st-card .big{font-size:24px;font-weight:800;color:var(--accent);font-variant-numeric:tabular-nums}
+.st-card .lbl{font-size:12px;color:var(--ink);font-weight:600;margin-top:2px}
+.st-card .sub{font-size:11px;color:var(--sub);margin-top:2px}
+.st-sub-h{display:flex;align-items:baseline;gap:10px;margin:16px 2px 10px}
+.st-sub-h span{font-size:14px;font-weight:700}
+.st-more{font-size:12px;color:var(--accent);margin-left:auto;text-decoration:none}
+@media(max-width:560px){
+ .st-tiles{grid-template-columns:1fr 1fr}
+ .st-duo{grid-template-columns:1fr}
+ .rk-head{display:none}
+ .rk-row{grid-template-columns:34px 1fr auto;gap:8px;padding:10px 11px}
+ .rk-row .rk-rate,.rk-row .rk-champ{display:none}
+ .rk-filters .rk-toggle{margin-left:0;width:100%}
+}
 </style>
 </head>
 <body>
@@ -924,6 +970,8 @@
  <button class="tab active" data-tab="live">大会進行</button>
  <button class="tab" data-tab="myportal">マイ番号</button>
  <button class="tab" data-tab="search">選手データベース</button>
+ <button class="tab" data-tab="ranking">ランキング</button>
+ <button class="tab" data-tab="stats">統計</button>
  <button class="tab" data-tab="tournaments">大会一覧</button>
  <button class="tab" data-tab="coach">監督・顧問</button>
  <a class="tab" href="/viewer/live/" style="text-decoration:none;color:inherit;border-left:1px solid var(--border);margin-left:8px;padding-left:14px">観戦ビュー (大画面)</a>
@@ -956,6 +1004,16 @@
  <!-- 大会一覧 -->
  <div class="tab-panel hidden" id="tab-tournaments">
  <div id="tournamentList"></div>
+ </div>
+
+ <!-- ランキング -->
+ <div class="tab-panel hidden" id="tab-ranking">
+ <div id="rankingMain"></div>
+ </div>
+
+ <!-- 統計 -->
+ <div class="tab-panel hidden" id="tab-stats">
+ <div id="statsMain"></div>
  </div>
 
  <!-- 選手データベース (検索のみ) -->
@@ -1118,6 +1176,8 @@ const V = {
  if (name !== "myportal" && typeof MP !== "undefined") MP._closeOpsStream();
  if (name === "tournaments") V.renderTournaments();
  else if (name === "search") V.doSearch();
+ else if (name === "ranking") V.renderRanking();
+ else if (name === "stats") V.renderStats();
  else if (name === "live") L.init();
  else if (name === "myportal") MP.init();
  else if (name === "coach") CO.render();
@@ -1936,8 +1996,142 @@ const V = {
  },
 
  // ─── ランキング ────────────────────────────────
+ // 勝利数ベースのランキング(Eloレートは公開しない)。勝敗・勝率・優勝回数(place=1)を併記。
+ _rankFilter: { gender: "all", category: "all", onlyPlayed: true },
+ async renderRanking() {
+ const main = document.getElementById("rankingMain");
+ if (!main) return;
+ if (!V._rankPlayers) {
+   main.innerHTML = '<div class="empty-state">読み込み中…</div>';
+   try { V._rankPlayers = await api.get("/api/public/players?sort=wins") || []; }
+   catch (e) { main.innerHTML = '<div class="empty-state">ランキングを取得できませんでした。時間をおいて再度お試しください。</div>'; return; }
+ }
+ clear(main);
+ const f = V._rankFilter;
+
+ // 見出し
+ main.appendChild(h("div", { className: "rk-title-bar" },
+   h("h2", {}, "ランキング"),
+   h("span", { className: "rk-basis" }, "勝利数順")));
+
+ // フィルタ(選手DBと同じ選択肢)
+ const genSel = h("select", { className: "input", value: f.gender,
+   onChange: (e) => { f.gender = e.target.value; V.renderRanking(); } },
+   h("option", { value: "all" }, "男女すべて"),
+   h("option", { value: "male" }, "男子"),
+   h("option", { value: "female" }, "女子"));
+ const catSel = h("select", { className: "input", value: f.category,
+   onChange: (e) => { f.category = e.target.value; V.renderRanking(); } },
+   h("option", { value: "all" }, "カテゴリすべて"),
+   h("option", { value: "general" }, "一般"),
+   h("option", { value: "high" }, "高校"),
+   h("option", { value: "middle" }, "中学"),
+   h("option", { value: "elementary" }, "小学"),
+   h("option", { value: "senior" }, "シニア"));
+ const playedTgl = h("label", { className: "rk-toggle" },
+   h("input", { type: "checkbox", checked: f.onlyPlayed ? "" : null,
+     onChange: (e) => { f.onlyPlayed = e.target.checked; V.renderRanking(); } }),
+   h("span", {}, "対戦実績のある選手のみ"));
+ main.appendChild(h("div", { className: "rk-filters" }, genSel, catSel, playedTgl));
+
+ // 絞り込み + 勝利数降順(同数は勝率→出場数)
+ let rows = V._rankPlayers.slice();
+ if (f.gender !== "all") rows = rows.filter(p => p.gender === f.gender);
+ if (f.category !== "all") rows = rows.filter(p => p.category === f.category);
+ const played = (p) => (p.match_wins || 0) + (p.match_losses || 0) > 0;
+ if (f.onlyPlayed) rows = rows.filter(played);
+ rows.sort((a, b) => {
+   const wd = (b.match_wins || 0) - (a.match_wins || 0);
+   if (wd) return wd;
+   const ra = (a.match_wins + a.match_losses) ? a.match_wins / (a.match_wins + a.match_losses) : 0;
+   const rb = (b.match_wins + b.match_losses) ? b.match_wins / (b.match_wins + b.match_losses) : 0;
+   if (rb - ra) return rb - ra;
+   return (b.appearances || 0) - (a.appearances || 0);
+ });
+
+ if (!rows.length) { main.appendChild(h("div", { className: "empty-state" }, "該当する選手がいません。")); return; }
+
+ const table = h("div", { className: "rk-table" });
+ table.appendChild(h("div", { className: "rk-head" },
+   h("div", {}, "順位"), h("div", {}, "選手"),
+   h("div", { className: "num" }, "勝敗"), h("div", { className: "num" }, "勝率"), h("div", { className: "num" }, "優勝")));
+ rows.forEach((p, i) => {
+   const w = p.match_wins || 0, l = p.match_losses || 0, tot = w + l;
+   const rate = tot ? Math.round((w / tot) * 100) : 0;
+   const champs = p.wins_ach || 0;
+   const rank = i + 1;
+   table.appendChild(h("div", { className: "rk-row" + (rank <= 3 ? " top" : ""), ...V._kbtn(() => V.openPlayer(p.id)) },
+     h("div", { className: "rk-rank" }, String(rank)),
+     h("div", {}, h("div", { className: "rk-name" }, p.name || "(無名)"), h("div", { className: "rk-team" }, p.team || "—")),
+     h("div", { className: "rk-wins" }, String(w), h("small", {}, "勝" + l + "敗")),
+     h("div", { className: "rk-rate" }, tot ? rate + "%" : "—"),
+     h("div", { className: "rk-champ" }, champs ? h("b", {}, String(champs) + "回") : h("span", { className: "none" }, "—"))));
+ });
+ main.appendChild(table);
+ main.appendChild(h("div", { className: "rk-foot" }, rows.length + "名 ・ 勝利数の多い順（同数は勝率→出場数）"));
+ },
 
  // ─── 統計 ────────────────────────────────
+ async renderStats() {
+ const main = document.getElementById("statsMain");
+ if (!main) return;
+ main.innerHTML = '<div class="empty-state">読み込み中…</div>';
+ let stats, avg;
+ try {
+   [stats, avg] = await Promise.all([
+     api.get("/api/public/stats"),
+     api.get("/api/public/stats/match-averages"),
+   ]);
+   // 勝利数 上位は選手データ(勝利数順)から取る(stats.topPlayers は大会成績ベースで match_wins を持たないため)。
+   if (!V._rankPlayers) { try { V._rankPlayers = await api.get("/api/public/players?sort=wins") || []; } catch (e) {} }
+ } catch (e) { main.innerHTML = '<div class="empty-state">統計を取得できませんでした。時間をおいて再度お試しください。</div>'; return; }
+ stats = stats || {}; avg = avg || {};
+ clear(main);
+
+ main.appendChild(h("div", { className: "rk-title-bar" }, h("h2", {}, "統計")));
+
+ const fmt = (n) => (n == null ? "—" : Number(n).toLocaleString("ja-JP"));
+ const tiles = h("div", { className: "st-tiles" },
+   h("div", { className: "st-tile accent" }, h("div", { className: "v" }, fmt(stats.playerCount)), h("div", { className: "k" }, "登録選手数")),
+   h("div", { className: "st-tile" }, h("div", { className: "v" }, fmt(stats.teamCount)), h("div", { className: "k" }, "所属団体数")),
+   h("div", { className: "st-tile" }, h("div", { className: "v" }, fmt(stats.matchCount)), h("div", { className: "k" }, "累計試合数")),
+   h("div", { className: "st-tile" }, h("div", { className: "v" }, fmt(stats.tournamentCount)), h("div", { className: "k" }, "大会数")));
+ main.appendChild(tiles);
+
+ // フルセット率・平均試合時間(用語に平易な補足)
+ const durSec = avg.avgDurationSec || 0;
+ const durTxt = durSec ? (Math.floor(durSec / 60) + "分" + String(durSec % 60).padStart(2, "0") + "秒") : "—";
+ const duo = h("div", { className: "st-duo" },
+   h("div", { className: "st-card" },
+     h("div", { className: "big" }, (avg.fullSetFreqPct != null ? avg.fullSetFreqPct + "%" : "—")),
+     h("div", { className: "lbl" }, "フルセット率"),
+     h("div", { className: "sub" }, "最終ゲームまでもつれた試合の割合（接戦の多さの目安）")),
+   h("div", { className: "st-card" },
+     h("div", { className: "big" }, durTxt),
+     h("div", { className: "lbl" }, "平均試合時間"),
+     h("div", { className: "sub" }, "1試合あたりの平均所要時間")));
+ main.appendChild(duo);
+
+ // 勝利数 上位(ランキングへの導線)。対戦実績のある選手を勝利数順で上位5名。
+ const top = (V._rankPlayers || [])
+   .filter(p => (p.match_wins || 0) + (p.match_losses || 0) > 0)
+   .sort((a, b) => (b.match_wins || 0) - (a.match_wins || 0))
+   .slice(0, 5);
+ if (top.length) {
+   main.appendChild(h("div", { className: "st-sub-h" },
+     h("span", {}, "勝利数 上位"),
+     h("a", { href: "#ranking", className: "st-more",
+       onClick: (e) => { e.preventDefault(); V.showTab("ranking"); } }, "ランキングを見る →")));
+   const list = h("div", { className: "rk-table" });
+   top.forEach((p, i) => {
+     list.appendChild(h("div", { className: "rk-row top", ...V._kbtn(() => V.openPlayer(p.id)) },
+       h("div", { className: "rk-rank" }, String(i + 1)),
+       h("div", {}, h("div", { className: "rk-name" }, p.name || "(無名)"), h("div", { className: "rk-team" }, p.team || "—")),
+       h("div", { className: "rk-wins", style: { gridColumn: "span 3" } }, String(p.match_wins || 0), h("small", {}, "勝"))));
+   });
+   main.appendChild(list);
+ }
+ },
 };
 
 V.init();
