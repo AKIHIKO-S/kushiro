@@ -917,7 +917,7 @@
  }
  .score-side.is-winner .score-name { color: #15803d; }
  .score-side.is-winner .score-name::after {
-   content: " 🏆"; font-size: 13px;
+   content: " 勝ち"; font-size: 13px;
  }
  .score-vs {
    font-size: 22px; font-weight: 800; color: var(--sub);
@@ -1032,7 +1032,7 @@
    border-color: var(--ink-900);
  }
  .es-chip.on::before {
-   content: "✓ "; font-weight: 700;
+   content: ""; font-weight: 700;
  }
 
  /* 集計バー */
@@ -1357,7 +1357,7 @@
  <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border)">
  <label class="field-label">全データ書き出し・バックアップ・全削除（上級）</label>
  <p class="text-xs text-sub" style="margin:2px 0 8px">DB全体の保存・全選手削除など取り返しのつかない操作は、オーナー権限の「システム管理」に隔離しています。</p>
- <button class="btn btn-sm" style="background:#fef2f2;color:#7f1d1d;border-color:#fca5a5" onclick="A.openOwnerPanel()">🔒 システム管理（オーナー）を開く</button>
+ <button class="btn btn-sm" style="background:#fef2f2;color:#7f1d1d;border-color:#fca5a5" onclick="A.openOwnerPanel()">システム管理（オーナー）を開く</button>
  </div>
  </div>
  </div>
@@ -1382,17 +1382,14 @@
  <div style="display:flex;flex-direction:column;gap:12px;max-width:480px;">
    <a href="/forms/masters2026" target="_blank" rel="noopener"
       style="display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;text-decoration:none;color:inherit;font-weight:700;">
-     <span style="font-size:20px;">🏓</span>
      <span>2026北海道卓球選手権大会（マスターズの部）</span>
    </a>
    <a href="/forms/largeball-national2026" target="_blank" rel="noopener"
       style="display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;text-decoration:none;color:inherit;font-weight:700;">
-     <span style="font-size:20px;">🏓</span>
      <span>第39回全国ラージボール卓球大会 北海道予選</span>
    </a>
    <a href="/forms/largeball-alljapan2026" target="_blank" rel="noopener"
       style="display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;text-decoration:none;color:inherit;font-weight:700;">
-     <span style="font-size:20px;">🏓</span>
      <span>第9回全日本ラージボール卓球選手権大会 北海道予選</span>
    </a>
  </div>
@@ -1688,7 +1685,7 @@ const A = {
      bcTitle, h("div", { style: { height: "6px" } }), bcBody, h("div", { style: { height: "6px" } }), bcBtn),
    h("div", { className: "font-bold", style: { marginBottom: "6px" } }, "登録者一覧（個別に通知・解除）"),
    listWrap);
- openModal("📲 プッシュ通知 / マイ選手 管理", body, null);
+ openModal("プッシュ通知 / マイ選手 管理", body, null);
  load();
  },
  _pushSendOne(p) {
@@ -1718,9 +1715,9 @@ const A = {
  border: "1px solid " + (checks.allOk ? "#15803d" : "#d97706") } });
  checkSection.appendChild(h("div", { className: "card-title",
  style: { color: checks.allOk ? "#14532d" : "#78350f", marginBottom: "10px" } },
- checks.allOk ? "✓ 本番運用 準備完了" : "本番運用 セットアップ チェック"));
+ checks.allOk ? "本番運用 準備完了" : "本番運用 セットアップ チェック"));
  checks.items.forEach(c => {
- const icon = c.ok ? "✓" : "△";
+ const icon = c.ok ? "OK" : "△";
  checkSection.appendChild(h("div", {
  style: { display: "flex", alignItems: "flex-start", gap: "10px",
  padding: "6px 0", borderBottom: "1px dashed #e7e5e4" } },
@@ -1877,15 +1874,15 @@ const A = {
  h("button", { className: "btn btn-sm",
  style: { background: "#fef2f2", color: "#7f1d1d", borderColor: "#fca5a5" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
-   A.openOwnerPanel(); } }, "🔒 システム管理（オーナー）"),
+   A.openOwnerPanel(); } }, "システム管理（オーナー）"),
  h("button", { className: "btn btn-sm",
  style: { background: "#eff6ff", color: "#1e40af", borderColor: "#93c5fd" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
-   A.openLanConnect(); } }, "📱 会場の他の端末をつなぐ"),
+   A.openLanConnect(); } }, "会場の他の端末をつなぐ"),
  h("button", { className: "btn btn-sm",
  style: { background: "#f0fdf4", color: "#15803d", borderColor: "#86efac" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
-   A.openPushManager(); } }, "📲 プッシュ通知 / マイ選手"),
+   A.openPushManager(); } }, "プッシュ通知 / マイ選手"),
  h("a", { className: "btn btn-sm btn-ghost",
  href: "/OPERATIONS.md", target: "_blank" }, "運用マニュアル"),
  h("a", { className: "btn btn-sm btn-ghost",
@@ -1946,12 +1943,12 @@ const A = {
  let sync = null;
  try { sync = await api.get("/api/sync/status"); } catch (e) {}
  const syncBox = h("div", { className: "card", style: { padding: "12px", marginTop: "6px", background: "#f8fafc" } });
- syncBox.appendChild(h("div", { style: { fontWeight: 700, marginBottom: "4px" } }, "☁ クラウド公開ビューへの同期"));
+ syncBox.appendChild(h("div", { style: { fontWeight: 700, marginBottom: "4px" } }, "クラウド公開ビューへの同期"));
  if (sync && sync.push_enabled) {
    syncBox.appendChild(h("div", { className: "text-xs" },
-     "送信先: " + (sync.cloud_host || "—") + " ・ " +
+     "送信先: " + (sync.cloud_host || "未設定") + " ・ " +
      (sync.last_ok_at ? "最終同期: " + new Date(sync.last_ok_at).toLocaleString("ja-JP") : "未同期") +
-     (sync.last_error ? " ・ ⚠" + sync.last_error : "")));
+     (sync.last_error ? " ・ " + sync.last_error : "")));
    syncBox.appendChild(h("div", { className: "text-xs text-sub", style: { margin: "2px 0 6px" } },
      "ネットが生きた間欠で進行中大会を自動同期します(観客は数分遅れで閲覧)。"));
    syncBox.appendChild(h("button", { className: "btn btn-sm", onClick: async () => {
@@ -1965,7 +1962,7 @@ const A = {
      "自動で送れます（設定は担当者にお問い合わせください）。"));
  }
  body.appendChild(syncBox);
- openModal("📱 会場の他の端末をつなぐ / クラウド同期", body, null);
+ openModal("会場の他の端末をつなぐ / クラウド同期", body, null);
  },
 
  // ── データ保護: DBスナップショット (バックアップ/復元) #201 ── ※オーナー権限へ隔離
@@ -2009,8 +2006,8 @@ const A = {
    const snaps = (data && data.snapshots) || [];
    listWrap.appendChild(h("div", { className: "text-xs", style: { marginBottom: "8px",
      color: (data && data.ongoing) ? "#15803d" : "var(--sub)" } },
-     (data && data.ongoing) ? "● 進行中の大会あり — 自動バックアップ作動中（約7分ごと）"
-       : "○ 進行中の大会なし — 自動バックアップは待機中"));
+     (data && data.ongoing) ? "● 進行中の大会あり。自動バックアップ作動中（約7分ごと）"
+       : "○ 進行中の大会なし。自動バックアップは待機中"));
    if (!snaps.length) {
      listWrap.appendChild(h("div", { className: "empty-state", style: { padding: "16px" } },
        "まだバックアップがありません。「今すぐ保存」で作成できます。"));
@@ -2123,7 +2120,7 @@ const A = {
      background: r.server.env === "production" ? "#f0fdf4" : "#fffbeb",
      border: "1.5px solid " + (r.server.env === "production" ? "#15803d" : "#d97706") } },
    h("div", { className: "card-title", style: { marginBottom: "8px" } },
-     "サーバー状態 — " + (r.server.env === "production" ? "本番" : "開発")),
+     "サーバー状態：" + (r.server.env === "production" ? "本番" : "開発")),
    h("div", { style: { fontFamily: "monospace", fontSize: "12px", lineHeight: "1.7" } },
      "稼働時間: " + fmtMin(r.server.uptime_sec) +
        " (起動: " + new Date(r.server.started_at).toLocaleString("ja-JP") + ")", h("br", {}),
@@ -2246,7 +2243,7 @@ const A = {
  wrap.appendChild(h("div", {
    style: { textAlign: "center", padding: "10px",
      fontSize: "11px", color: "#71717a" } },
-   "10秒ごと自動更新 — 最終: " + new Date().toLocaleTimeString("ja-JP")));
+   "10秒ごと自動更新・最終: " + new Date().toLocaleTimeString("ja-JP")));
  },
 
  // 本番運用準備チェック (settings ダイアログ上部に表示)
@@ -2330,15 +2327,11 @@ const A = {
  if (lv) meta.push(h("span", { className: "t-chip",
    style: { background: lv.bg, color: lv.color, borderColor: lv.border, fontWeight: "700" } }, lv.label));
  meta.push(
-   h("span", { className: "t-chip" },
-     h("span", { className: "t-chip-ic" }, "📅"), fmtDate(t.date) || "日程未定"),
-   h("span", { className: "t-chip" },
-     h("span", { className: "t-chip-ic" }, "📍"), t.venue || "会場未定"),
+   h("span", { className: "t-chip" }, fmtDate(t.date) || "日程未定"),
+   h("span", { className: "t-chip" }, t.venue || "会場未定"),
  );
- if (pc > 0) meta.push(h("span", { className: "t-chip" },
-   h("span", { className: "t-chip-ic" }, "👤"), pc + "名"));
- if (mc > 0) meta.push(h("span", { className: "t-chip" },
-   h("span", { className: "t-chip-ic" }, "🏓"), mc + "試合"));
+ if (pc > 0) meta.push(h("span", { className: "t-chip" }, pc + "名"));
+ if (mc > 0) meta.push(h("span", { className: "t-chip" }, mc + "試合"));
  if (t.entries_open) meta.push(h("span", { className: "t-chip hot" }, "申込受付中"));
 
  el.appendChild(h("div", { className: "t-card st-" + st,
@@ -2727,7 +2720,7 @@ const A = {
  listCard.appendChild(h("summary", {
    style: { padding: "10px 14px", cursor: "pointer", fontWeight: 700,
      fontSize: "13px", listStyle: "none" } },
-   "試合一覧 (" + t.matches.length + " 試合) — クリックで開閉"));
+   "試合一覧 (" + t.matches.length + " 試合)・クリックで開閉"));
  const matchList = h("div", { style: { padding: "0 14px 10px" } });
  listCard.appendChild(matchList);
  // 遅延描画: 既定で折りたたみ。初めて開かれた時だけ全試合行を構築する
@@ -3181,7 +3174,7 @@ const A = {
  value: ev.tie_format || "", placeholder: "例 S,S,D,S,S",
  title: "団体戦の対戦形式。S=シングルス D=ダブルス をカンマ区切り(例 S,S,D,S,S=5試合)。数字だけなら試合数。空欄なら結果はチームスコア直接入力。",
  onInput: (e) => { ev.tie_format = e.target.value; refreshCode(); } }))
- : h("span", { className: "text-sub" }, "—")),
+ : h("span", { className: "text-sub" }, "")),
  h("td", {}, h("button", { className: "btn btn-sm btn-danger",
  onClick: () => { events.splice(idx, 1); renderEventsTable(); refreshCode(); } },
  "削除")),
@@ -3295,7 +3288,7 @@ const A = {
    }
    if (!errors.length && !warnings.length) {
      html = "<div style='padding:8px 10px;background:#f0fdf4;border:1px solid #15803d;border-radius:5px;color:#14532d'>" +
-       "<strong>[OK]</strong> エラーチェック合格 — このまま貼付可能です。</div>";
+       "<strong>[OK]</strong> エラーチェック合格。このまま貼付可能です。</div>";
    }
    wn.innerHTML = html;
  }
@@ -3468,8 +3461,8 @@ const A = {
          if (!u || u === "#") return toast("URL未生成", "err");
          try {
            const r = await fetch(u, { method: "HEAD" });
-           if (r.ok) toast("✓ URL接続 OK (HTTP " + r.status + ")", "ok");
-           else toast("✗ HTTP " + r.status + " — 設定を見直してください", "err");
+           if (r.ok) toast("URL接続 OK (HTTP " + r.status + ")", "ok");
+           else toast("HTTP " + r.status + "。設定を見直してください", "err");
          } catch (e) {
            toast("通信エラー: " + e.message + " (Renderスリープ中？数秒待って再試行)", "err");
          }
@@ -3830,7 +3823,7 @@ const A = {
    const yellow = new Set(["seed_gap", "roster_extra", "roster_variant", "roster_dup"]);
    const noticeStyle = (type) => yellow.has(type)
      ? { bg: "#fffbeb", border: "#f59e0b", color: "#92400e", icon: "ℹ" }
-     : { bg: "#fef2f2", border: "#dc2626", color: "#991b1b", icon: "⚠" };
+     : { bg: "#fef2f2", border: "#dc2626", color: "#991b1b", icon: "" };
    const totalCount = events.reduce((s, e) => s + (e.count || (e.players || []).length), 0);
    const totalNotices = events.reduce((s, e) => s + (e.notices || []).length, 0);
 
@@ -3838,7 +3831,7 @@ const A = {
      borderLeft: "4px solid #3b82f6", borderRadius: "0 4px 4px 0", marginBottom: "12px" } },
      h("div", { className: "font-bold", style: { fontSize: "16px" } }, "組合せ表 取込プレビュー（ファクトチェック）"),
      h("div", { className: "text-sm text-sub mt-1" },
-       `${events.length}種目 ・ 計${totalCount}名/組` + (totalNotices ? ` ・ ⚠ 要確認 ${totalNotices}件` : " ・ 警告なし")),
+       `${events.length}種目 ・ 計${totalCount}名/組` + (totalNotices ? ` ・ 要確認 ${totalNotices}件` : " ・ 警告なし")),
      h("div", { className: "text-xs text-sub mt-1" },
        "下の内容で取り込みます（表の並び順そのまま=as_drawn）。読み取り違いがあれば取込後にトーナメント管理で修正できます。"));
 
@@ -3875,7 +3868,7 @@ const A = {
      if (!(ev.notices || []).length) {
        card.appendChild(h("div", { style: { margin: "6px 0", padding: "6px 12px", background: "#d1fae5",
          border: "1px solid #10b981", borderRadius: "6px", fontSize: "12px", color: "#065f46", fontWeight: 600 } },
-         "✓ 警告なし"));
+         "警告なし"));
      }
      // 読み取り違いはこの場で直せる(氏名/所属/相方をその場編集・行削除)。位置調整のみトーナメント管理へ。
      card.appendChild(h("div", { className: "text-xs text-sub", style: { margin: "4px 0" } },
@@ -3950,11 +3943,11 @@ const A = {
    const yellow = new Set(["seed_gap", "roster_extra", "roster_variant", "roster_dup"]);
    const st = (type) => yellow.has(type)
      ? { bg: "#fffbeb", border: "#f59e0b", color: "#92400e", icon: "ℹ" }
-     : { bg: "#fef2f2", border: "#dc2626", color: "#991b1b", icon: "⚠" };
+     : { bg: "#fef2f2", border: "#dc2626", color: "#991b1b", icon: "" };
    const body = h("div", { style: { maxHeight: "60vh", overflow: "auto", padding: "0 4px" } },
      h("div", { style: { padding: "10px 14px", background: "#eff6ff", borderLeft: "4px solid #3b82f6",
        borderRadius: "0 4px 4px 0", marginBottom: "12px" } },
-       h("div", { className: "font-bold", style: { fontSize: "15px" } }, `取込完了（${total}試合生成）— 確認推奨`),
+       h("div", { className: "font-bold", style: { fontSize: "15px" } }, `取込完了（${total}試合生成）・確認推奨`),
        h("div", { className: "text-xs text-sub mt-1" },
          "取り込みは完了しています。下記は読み取り精度の確認ポイントです。必要ならトーナメント管理で修正してください。")),
      ...noticeList.map(n => {
@@ -4178,12 +4171,12 @@ const A = {
  const renderPatternBox = () => {
    clear(patternBox);
    patternBox.appendChild(h("div", { style: { fontWeight: 700, fontSize: "13px", marginBottom: "6px", color: "#1e3a8a" } },
-     "🔍 氏名／所属チームの振り分けを確認してください"));
+     "氏名／所属チームの振り分けを確認してください"));
    if (meta.is_doubles) patternBox.appendChild(h("div", { className: "text-xs", style: { color: "#1e3a8a", marginBottom: "6px", lineHeight: "1.6" } },
      "ダブルスは「選手2名を上下に並べ、右に所属（2人同じなら所属1つ／別チームなら各自の所属）」として読み取ります。ペアの相手や所属が違う場合は、下の表の『パートナー氏名／パートナー所属』で修正してください。"));
    const samples = editablePlayers.slice(0, 3).filter(p => p && (p.name || p.team));
    if (samples.length) {
-     patternBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "3px" } }, "例（先頭の選手）— この振り分けで正しいですか？"));
+     patternBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "3px" } }, "例（先頭の選手）：この振り分けで正しいですか？"));
      const tb = h("table", { style: { fontSize: "12px", marginBottom: "6px" } });
      tb.appendChild(h("thead", {}, h("tr", {},
        h("th", { style: { textAlign: "left", padding: "2px 16px 2px 0", color: "#1d4ed8" } }, "氏名"),
@@ -4462,7 +4455,7 @@ const A = {
  h("div", { className: "field" },
    h("label", { className: "field-label" }, "並び順"),
    h("select", { className: "input", id: "dnMode" },
-     h("option", { value: "shuffle" }, "シャッフル (ランダム) — 推奨"),
+     h("option", { value: "shuffle" }, "シャッフル (ランダム)・推奨"),
      h("option", { value: "surname" }, "苗字50音順"),
      h("option", { value: "submitted" }, "申込順 (受付日時)"),
    ),
@@ -4512,7 +4505,7 @@ const A = {
  h("button", { className: "btn btn-ghost",
  onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"),
  );
- openModal("抽選番号 自動付与 — " + t.name, body, foot);
+ openModal("抽選番号 自動付与：" + t.name, body, foot);
  },
 
  // ── Excel/PDF 直接アップロード ──
@@ -4974,7 +4967,7 @@ const A = {
    qualityBar.appendChild(h("div", {
      style: { display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap",
        padding: "10px 14px", borderRadius: "8px", background: "#fef3c7", border: "1px solid #fbbf24" } },
-     h("span", { style: { fontWeight: 700, color: "#78350f" } }, `⚠ データ不整合 ${issueTotal} 件`),
+     h("span", { style: { fontWeight: 700, color: "#78350f" } }, `データ不整合 ${issueTotal} 件`),
      h("span", { className: "text-xs", style: { color: "#92400e" } }, parts.join(" ・ ")),
      h("button", { className: "btn btn-sm", style: { marginLeft: "auto", background: "#d97706", color: "#fff", borderColor: "#b45309" },
        onClick: bulkFix }, "推定値で一括修正")));
@@ -5002,14 +4995,14 @@ const A = {
          e.furigana ? h("span", { className: "text-xs text-sub", style: { fontWeight: 400, marginLeft: "4px" } }, `(${e.furigana})`) : null,
          e.is_doubles && e.partner_name ? h("span", { className: "text-xs text-sub", style: { display: "block", fontWeight: 400 } }, `/ ${e.partner_name}`) : null,
          members),
-       h("td", {}, e.team || "—"),
+       h("td", {}, e.team || "未登録"),
        h("td", { className: "text-xs text-sub", title: [e.contact_email, e.contact_tel].filter(Boolean).join(" / ") },
-         e.contact_name || "—"),
+         e.contact_name || "未登録"),
        h("td", {}, h("span", { className: "badge badge-ghost" }, divLabel(e)),
          item ? h("button", { className: "badge badge-warn", style: { marginLeft: "5px", cursor: "pointer", border: "none" },
            title: (item.issues || []).map(is => is.label).join(" / ") + "  (クリックで推定値修正)",
-           onClick: () => fixOne(item) }, "⚠") : null),
-       h("td", {}, e.entry_event || "—"),
+           onClick: () => fixOne(item) }, "要確認") : null),
+       h("td", {}, e.entry_event || "未定"),
        h("td", {}, h("input", { type: "number", className: "input-sm", style: { width: "62px" },
          value: e.seed || 0,
          onChange: async (ev) => { try {
@@ -5024,7 +5017,7 @@ const A = {
          ...[1, 2, 3, 4, 5, 6].map(r => h("option",
            { value: String(r), selected: (parseInt(e.entry_round) || 1) === r ? "" : null },
            r === 1 ? "1回戦から(通常)" : r + "回戦から" + (r >= 3 ? "（SS）" : ""))))),
-       h("td", { className: "text-xs text-sub" }, e.applied_at ? String(e.applied_at).split(" ")[0] : "—"),
+       h("td", { className: "text-xs text-sub" }, e.applied_at ? String(e.applied_at).split(" ")[0] : "未登録"),
        h("td", { className: "flex gap-1" },
          h("button", { className: "btn btn-sm btn-ghost", title: "氏名・所属・ダブルスのペア(相方)などを編集",
            onClick: async () => {
@@ -5078,8 +5071,8 @@ const A = {
  };
  const previewBtn = h("button", { className: "btn btn-sm btn-ghost",
    onClick: () => { previewOpen = !previewOpen; previewBox.style.display = previewOpen ? "block" : "none";
-     previewBtn.textContent = previewOpen ? "▲ 配置プレビューを閉じる" : "🔍 登場回戦の配置をプレビュー"; updatePreview(); } },
-   "🔍 登場回戦の配置をプレビュー");
+     previewBtn.textContent = previewOpen ? "▲ 配置プレビューを閉じる" : "登場回戦の配置をプレビュー"; updatePreview(); } },
+   "登場回戦の配置をプレビュー");
  // ① 取込後にシードを直してから、この種目でトーナメント表を生成/再生成
  const genBtn = h("button", { className: "btn btn-sm",
    onClick: async () => {
@@ -5089,7 +5082,7 @@ const A = {
      if (!confirm(`「${activeTab}」(${evEnts.length}名) でトーナメント表を生成/再生成します。\n既存の対戦は削除されます。よろしいですか？`)) return;
      const base = { event: activeTab, entrant_ids: evEnts.map(e => e.id), regenerate: true, base_rev: O._bracketRev && O._bracketRev[activeTab] };
      let r = await api.post(`/api/tournaments/${t.id}/bracket`, base);
-     if (r && r.needs_force) { if (!confirm("⚠ " + r.error + "\n\n結果入力済みも消して作り直しますか？")) return; r = await api.post(`/api/tournaments/${t.id}/bracket`, { ...base, force: true }); }
+     if (r && r.needs_force) { if (!confirm(r.error + "\n\n結果入力済みも消して作り直しますか？")) return; r = await api.post(`/api/tournaments/${t.id}/bracket`, { ...base, force: true }); }
      if (r && r.error) return toast(r.error, "err");
      if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[activeTab] = r.bracket_rev; }
      toast(`生成しました: ${r.total_matches || 0}試合 / ${r.total_rounds || 0}ラウンド`, "ok");
@@ -5104,16 +5097,16 @@ const A = {
      if (!confirm(`${label} の出場者(名簿)とトーナメント表を削除します。\n取込のやり直し用です。削除前に自動バックアップを取りますが、元の名簿は消えます。\nよろしいですか？`)) return;
      let r = await api.del(`/api/tournaments/${t.id}/entrants${qs}`);
      if (r && r.needs_force) {
-       if (!confirm(`⚠ ${r.error}\n\nそれでも削除しますか？`)) return;
+       if (!confirm(`${r.error}\n\nそれでも削除しますか？`)) return;
        r = await api.del(`/api/tournaments/${t.id}/entrants${qs}${ev ? "&" : "?"}force=1`);
      }
      if (r && r.error) return toast(r.error, "err");
      toast(`削除しました: 出場者${r.entrants || 0}名 / 試合${r.matches || 0}件`, "ok");
      await load();
-   } }, "🗑 出場者を一括削除");
+   } }, "出場者を一括削除");
  const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", marginTop: "10px" } }, genBtn, previewBtn, bulkDelBtn);
  const body = h("div", {}, summary, qualityBar, tabStrip, ssNote, tableWrap, btnBar, previewBox);
- const modalBg = openModal(`申込一覧 — ${t.name}`, body,
+ const modalBg = openModal(`申込一覧：${t.name}`, body,
    h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
  const box = modalBg && modalBg.querySelector ? modalBg.querySelector(".modal-box") : null;
  if (box) { box.style.width = "94vw"; box.style.maxWidth = "1120px"; box.style.height = "86vh"; }
@@ -5414,7 +5407,7 @@ const A = {
  },
  h("div", { className: "autoc-item-name" }, p.name),
  h("div", { className: "autoc-item-team" },
- `${p.team || "—"}　${p.gender === "female" ? "女子" : "男子"}`)
+ `${p.team || "未登録"}　${p.gender === "female" ? "女子" : "男子"}`)
  ));
  });
  // 新規追加オプション
@@ -5555,7 +5548,7 @@ const A = {
  }
  },
  h("div", { className: "autoc-item-name" }, p.name),
- h("div", { className: "autoc-item-team" }, p.team || "—")));
+ h("div", { className: "autoc-item-team" }, p.team || "未登録")));
  });
  // 「BYE」を選択肢に
  list.appendChild(h("div", { className: "autoc-item",
@@ -6253,7 +6246,7 @@ const A = {
   sec("氏名の表記ゆれ (同一人物の可能性)", ex.nameVariants.map(n => `「${n.name}」: 表記[${n.raws.join(" / ")}]` + (n.teams.length > 1 ? ` 所属[${n.teams.join(" / ")}]` : "") + (n.furis.length > 1 ? ` ふりがな[${n.furis.join(" / ")}]` : "")), "#7c3aed");
   sec("性別と種目の不一致", ex.genderConflicts.map(g => `${g.name}${g.team ? `(${g.team})` : ""}: 選手は${g.pg === "female" ? "女子" : "男子"}だが種目「${g.event}」は${g.eg === "female" ? "女子" : "男子"}`), "#be185d");
   sec("男女種目の掛け持ち (要確認)", ex.crossList.map(c => `${c.name}${c.team ? `(${c.team})` : ""}: ${c.evs.join(" / ")}`), "#be185d");
-  if (!cnt) body.appendChild(h("div", { className: "card", style: { padding: "14px", textAlign: "center", color: "#15803d", fontWeight: "700" } }, "問題なし — 申込データは良好です"));
+  if (!cnt) body.appendChild(h("div", { className: "card", style: { padding: "14px", textAlign: "center", color: "#15803d", fontWeight: "700" } }, "問題なし。申込データは良好です"));
   openModal("申込品質チェック", body, h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
  },
  _renderMergeGroup(g, gi) {
@@ -6421,7 +6414,7 @@ const A = {
    ? h("span", { className: "pdb-sex" }, p.gender === "female" ? "女" : "男") : null,
  p.branch ? (function(){ const _bc = TT.branchColor(p.branch);
    return h("span", { className: "pdb-branch", style: { background: _bc.bg, color: _bc.fg } }, TT.normalizeBranch(p.branch)); })() : null,
- p.team || "—",
+ p.team || "未登録",
  (A.state.pushPlayers && A.state.pushPlayers.has(p.id)) ? h("span", { className: "pdb-push",
    title: "この選手はマイ番号(プッシュ通知)を登録済み。呼出時に通知が届きます。" }, "通知ON") : null,
  ),
@@ -6472,7 +6465,7 @@ const A = {
      // チーム内は出場回数の多い選手を上に (#194)
      const players = byTeam[tn].sort((a, b) => (b.appearances || 0) - (a.appearances || 0)
        || (a.furigana || "").localeCompare(b.furigana || "", "ja"));
-     pdbAcc(idx === 0 ? " open" : "", h("div", { className: "pdb-row-num", style: { fontSize: "16px" } }, "🏓"), tn, players);
+     pdbAcc(idx === 0 ? " open" : "", h("div", { className: "pdb-row-num", style: { fontSize: "16px" } }, "団"), tn, players);
    });
    return;
  }
@@ -6518,7 +6511,7 @@ const A = {
      players.sort((a, b) => (b.appearances || 0) - (a.appearances || 0)
        || (a.furigana || "").localeCompare(b.furigana || "", "ja"));
      pdbAcc(idx === 0 ? " open" : "", h("div", { className: "pdb-row-num", style: { fontSize: "15px",
-       background: k === "female" ? "#fce7f3" : "#dbeafe", color: k === "female" ? "#db2777" : "#2563eb" } }, k === "female" ? "♀" : "♂"), label, players);
+       background: k === "female" ? "#fce7f3" : "#dbeafe", color: k === "female" ? "#db2777" : "#2563eb" } }, k === "female" ? "女" : "男"), label, players);
    });
    return;
  }
@@ -6724,7 +6717,7 @@ const A = {
 
  // ─── 個別戦績 (試合) の手動入力・削除 ───
  !isNew ? h("div", { className: "field" },
- h("label", { className: "field-label" }, "個別戦績 (試合の勝敗) — 手動入力・削除"),
+ h("label", { className: "field-label" }, "個別戦績 (試合の勝敗)・手動入力・削除"),
  h("div", { className: "ach-list", id: "matchRecList" },
    h("div", { style: { fontSize: "12px", color: "#a8a29e", padding: "6px" } }, "読込中...")),
  // 追加フォーム
@@ -7168,7 +7161,7 @@ const A = {
      const foot = h("div", { className: "flex gap-2", style: { justifyContent: "flex-end" } },
        h("button", { className: "btn btn-ghost", onClick: () => { bg.remove(); resolve(false); } }, "キャンセル"),
        h("button", { className: "btn btn-ok", onClick: submit }, "ロック解除"));
-     const bg = openModal("🔒 オーナー権限の確認", body, foot);
+     const bg = openModal("オーナー権限の確認", body, foot);
    });
  },
  // 上級管理者ホーム(普段は隠す)。危険操作の集約先。
@@ -7180,7 +7173,7 @@ const A = {
      h("div", { className: "flex gap-2 flex-wrap" }, ...btns));
    const body = h("div", {},
      h("div", { className: "text-xs", style: { background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: "8px", padding: "8px 10px", color: "#7f1d1d", lineHeight: 1.6, marginBottom: "12px" } },
-       "⚠ 上級管理者専用。全データのPIIを動かす/取り返しのつかない操作を含みます。操作は監査ログに記録されます。"),
+       "上級管理者専用。全データのPIIを動かす/取り返しのつかない操作を含みます。操作は監査ログに記録されます。"),
      card("バックアップ / 復元", "今のデータをまるごと控え(バックアップ)として保存・PCへ保存・元に戻す。", [
        h("button", { className: "btn btn-sm", onClick: () => { document.querySelector(".modal-bg")?.remove(); A.openBackups(); } }, "開く")]),
      card("データをまるごとPCに保存（バックアップ用）", "今のデータをまるごと1つのファイルにしてPCに保存します（連絡先などの個人情報も含む手元の控えです）。", [
@@ -7199,7 +7192,7 @@ const A = {
        "実施者: ", h("b", {}, A.ownerOperator() || "(未設定)"),
        h("button", { className: "btn btn-sm btn-ghost", style: { marginLeft: "auto" },
          onClick: () => { try { sessionStorage.removeItem("ktta_owner_key"); } catch (e) {} document.querySelector(".modal-bg")?.remove(); toast("オーナー権限をロックしました", "ok"); } }, "ロックする")));
-   openModal("🔒 システム管理（オーナー）", body, null);
+   openModal("システム管理（オーナー）", body, null);
  },
  // DB全体を .db でダウンロード(=全PII)。サーバ側で一貫スナップショットを生成して返す。
  async ownerDownloadDB() {
@@ -7510,7 +7503,7 @@ const O = {
    clear(bar);
    bar.style.background = down ? "#b91c1c" : "#0ea5e9";
    const msg = down
-     ? "⚠ 通信が切れています — 操作はこの端末に一時保存中。通信が戻ると自動で送信します" + (pend > 0 ? "（送信待ち " + pend + "件）" : "")
+     ? "通信が切れています。操作はこの端末に一時保存中。通信が戻ると自動で送信します" + (pend > 0 ? "（送信待ち " + pend + "件）" : "")
      : "↑ 送信待ち " + pend + "件 を送信中…";
    bar.appendChild(h("span", {}, msg));
    const miniBtn = (label, onClick) => h("button", {
@@ -7750,7 +7743,7 @@ const O = {
  className: "btn btn-sm btn-ghost" }, "公開ページ"),
  // 散在していた端末接続/同期への導線を進行管理にも集約(#12)。A.openLanConnect を再利用。
  h("div", { className: "op-tools-adv" }, "接続・同期"),
- h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openLanConnect() }, "📱 会場の他の端末をつなぐ / データ共有"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openLanConnect() }, "会場の他の端末をつなぐ / データ共有"),
  // 高度な操作: JSON入出力は目立たないように最下部へ #279
  h("div", { className: "op-tools-adv" }, "高度な操作"),
  h("button", { className: "btn btn-sm btn-ghost", style: { opacity: ".7", fontSize: "12px" },
@@ -7980,7 +7973,7 @@ const O = {
    return h("span", { style: { ...base, color: "#64748b", background: "#f1f5f9" } }, "不戦");
  const map = { on_table: ["進行中", "#dc2626", "#fef2f2"], pending: ["呼出可", "#b45309", "#fffbeb"],
    waiting: ["待機", "#1d4ed8", "#eff6ff"], completed: ["終了", "#15803d", "#f0fdf4"] };
- const c = map[m.status] || ["—", "#64748b", "#f1f5f9"];
+ const c = map[m.status] || ["未定", "#64748b", "#f1f5f9"];
  return h("span", { style: { ...base, color: c[1], background: c[2] } }, c[0]);
  },
 
@@ -8125,10 +8118,10 @@ const O = {
      onClick: () => O.openAddSeed(sel) }, "＋ シードを追加"),
    h("button", { className: "btn btn-sm", style: { background: "#a16207", color: "#fff" },
      title: "シードを選手DB(Elo+過去成績)から客観スコア順に提案。根拠を見て人手で採否・順位を決めて一括設定。抽選の前に。",
-     onClick: () => O.openSeedSuggest(sel) }, "🏅 シード提案"),
+     onClick: () => O.openSeedSuggest(sel) }, "シード提案"),
    h("button", { className: "btn btn-sm", style: { background: "#1a7a45", color: "#fff" },
      title: "個人戦をシード固定＋ランダム抽選でトーナメント表を作成。1回戦は配置するだけで自動進行しません(編集後に『進行開始』で進める)。",
-     onClick: () => O.openDrawBracket(sel) }, "🎲 抽選ドロー"),
+     onClick: () => O.openDrawBracket(sel) }, "抽選ドロー"),
    h("button", { className: "btn btn-sm", style: { background: "#b45309", color: "#fff" },
      title: "抽選で配置・編集した1回戦を確定し、不戦勝(vs BYE)を繰り上げて進行を開始します。抽選直後は自動進行しないので、編集が済んだらこれを押してください。",
      onClick: () => O.advanceByes(sel) }, "▶ 進行開始(不戦勝確定)"),
@@ -8150,12 +8143,12 @@ const O = {
      onClick: () => O.openVisualBracket() }, "全画面・印刷"),
    h("button", { className: "btn btn-sm", style: { background: "#1f6f3f", color: "#fff" },
      title: "両山トーナメント表(左右対向・中央決勝)をExcelで出力。手修正・印刷用。",
-     onClick: () => A.downloadAuthedFile(`/api/tournaments/${O.tournamentId}/bracket/export.xlsx?event=${encodeURIComponent(sel)}`, `トーナメント表_${sel}.xlsx`) }, "📋 表をExcel出力"),
+     onClick: () => A.downloadAuthedFile(`/api/tournaments/${O.tournamentId}/bracket/export.xlsx?event=${encodeURIComponent(sel)}`, `トーナメント表_${sel}.xlsx`) }, "表をExcel出力"),
    h("button", { className: "btn btn-sm", style: { background: "#0f766e", color: "#fff" },
      title: "出力したExcelを直して取り込み、その並びを正しい組み合わせとして反映します(選手や結果はそのまま、位置だけ更新)。",
-     onClick: () => O.importBracketXlsx(sel) }, "📥 Excel取込で反映"),
+     onClick: () => O.importBracketXlsx(sel) }, "Excel取込で反映"),
    h("span", { className: "text-xs text-sub" },
-     "1回戦: ドラッグで入替 / クリックで編集 ・ 各対戦の ✕ で削除"),
+     "1回戦: ドラッグで入替 / クリックで編集 ・ 各対戦の × で削除"),
  );
 
  const inner = h("div", {});
@@ -8185,7 +8178,7 @@ const O = {
  _decorateBracketCard(card, m) {
  if (!O._bracketEditMode || !m || !m.id) return;
  const del = h("button", { className: "vb-del", title: "この対戦を削除",
-   onClick: (e) => { e.stopPropagation(); O._deleteMatchFromBracket(m); } }, "✕");
+   onClick: (e) => { e.stopPropagation(); O._deleteMatchFromBracket(m); } }, "×");
  card.appendChild(del);
  },
 
@@ -8233,14 +8226,14 @@ const O = {
      const payload = { event: ev, name, team: teamI.value.trim(), side, entry_round: parseInt(roundSel.value) || 1,
        base_rev: O._bracketRev && O._bracketRev[ev] };
      let r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/add-seed`, payload);
-     if (r && r.needs_force) { if (!confirm("⚠ " + r.error + "\n\n結果入力済みも消して作り直しますか？")) return; r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/add-seed`, { ...payload, force: true }); }
+     if (r && r.needs_force) { if (!confirm(r.error + "\n\n結果入力済みも消して作り直しますか？")) return; r = await api.post(`/api/tournaments/${O.tournamentId}/bracket/add-seed`, { ...payload, force: true }); }
      if (r && r.error) return toast(r.error, "err");
      if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[ev] = r.bracket_rev; }
      toast(`「${name}」をシードとして追加しました（枠${r.bracket_size || ""}）`, "ok");
      document.querySelector(".modal-bg")?.remove();
      if (O._vbReload) O._vbReload();
    } }, "追加");
-   openModal(`シード選手を追加 — ${ev}`, body, foot);
+   openModal(`シード選手を追加：${ev}`, body, foot);
  },
 
  async openAddMatch(presetEvent) {
@@ -8431,7 +8424,7 @@ const O = {
        toast("結果を修正しました", "ok");
        document.querySelector(".modal-bg")?.remove();
        O.reload();
-     } }, "✓ 修正を保存"),
+     } }, "修正を保存"),
    h("button", { className: "btn btn-ghost",
      onClick: () => document.querySelector(".modal-bg")?.remove() }, "キャンセル"),
  );
@@ -8460,7 +8453,7 @@ const O = {
  else O.openCallFlow({ table: t.table_no });
  },
  title: awaiting
-   ? "審判が結果を報告しました — クリックで内容を確認して承認"
+   ? "審判が結果を報告しました。クリックで内容を確認して承認"
    : (m
    ? (t.is_extra ? "団体戦追加コート - クリックで結果入力"
                  : "クリックで結果入力" + (cc >= 2 ? " (呼出" + cc + "回・未着の可能性)" : ""))
@@ -8492,7 +8485,7 @@ const O = {
  if (awaiting) {
    const conflict = !!(m.pending && m.pending.conflict);
    cell.appendChild(h("div", { className: "cc-await" + (conflict ? " conflict" : "") },
-     (conflict ? "⚠ 報告不一致 " : "● 承認待ち") +
+     (conflict ? "報告不一致 " : "● 承認待ち") +
      (m.pending && m.pending.winner_name ? "（" + shortName(m.pending.winner_name) + "）" : "")));
  }
  // 経過時間: 氏名・所属から離して見やすく (区切り線つき) #222
@@ -8544,7 +8537,7 @@ const O = {
  const since = m.called_at || m.started_at || "";
  // 色は呼出からの経過(サーバ値)で判定、表示テキストはクライアントで1分ごと更新
  return h("span", { className: "elapsed-badge " + cls, title: "呼出からの経過時間",
-   "data-elapsed-since": since, "data-elapsed-prefix": "⏱ " }, "⏱ " + e + "分");
+   "data-elapsed-since": since, "data-elapsed-prefix": "経過 " }, "経過 " + e + "分");
  },
 
  // ── 進行中の試合行 ──
@@ -8708,12 +8701,12 @@ const O = {
  ).slice(0, 10).forEach(p => {
  list.appendChild(h("div", { className: "autoc-item",
  onClick: () => {
- input.value = `${p.name} (${p.team || "—"})`;
+ input.value = `${p.name} (${p.team || "未登録"})`;
  selectedId = p.id;
  list.classList.add("hidden");
  }},
  h("div", { className: "autoc-item-name" }, p.name + (p.furigana ? "  " + p.furigana : "")),
- h("div", { className: "autoc-item-team" }, p.team || "—")));
+ h("div", { className: "autoc-item-team" }, p.team || "未登録")));
  });
  list.classList.remove("hidden");
  });
@@ -8826,7 +8819,7 @@ const O = {
  // どの試合(コート)の審判を外すかを明示し、進行中(コートに入っている)試合の審判を盲目的に外さないよう警告する。
  async releaseReferee(matchId, playerName, lockLabel) {
  const onCourt = lockLabel && /コート/.test(lockLabel);
- const warn = onCourt ? ("\n⚠ この審判は今" + lockLabel.replace(/\s*\(審判担当中\)\s*/, "") + " を担当中です。外すとその試合は審判未指定に戻ります。") : "";
+ const warn = onCourt ? ("\nこの審判は今" + lockLabel.replace(/\s*\(審判担当中\)\s*/, "") + " を担当中です。外すとその試合は審判未指定に戻ります。") : "";
  if (!confirm((playerName || "この選手") + " の審判担当を解任します。" + warn + "\n（この選手は別の試合に呼べるようになります）\nよろしいですか？")) return;
  let r;
  try { r = await api.post(`/api/matches/${matchId}/referee`, { referee_id: null }); }
@@ -8856,7 +8849,7 @@ const O = {
  style: blocked ? { borderLeftColor: "var(--accent)", background: "#fef2f2" } : {} },
  // 順番番号 + コール済みチェック
  h("div", { className: "call-order-wrap" },
-   h("div", { className: "call-order" }, idx != null ? String(idx + 1) : "—"),
+   h("div", { className: "call-order" }, idx != null ? String(idx + 1) : "未定"),
    h("label", { className: "call-chk", title: "場内アナウンス(コール)済みにする" },
      h("input", { type: "checkbox", checked: announced ? "" : null,
        onChange: (e) => { O._setAnnounced(m.id, e.target.checked);
@@ -9033,9 +9026,9 @@ const O = {
    allPlayers.filter(p => p.name.toLowerCase().includes(q) || (p.furigana || "").includes(q) ||
      (p.team || "").toLowerCase().includes(q)).slice(0, 8).forEach(p => {
      refAnyList.appendChild(h("div", { className: "autoc-item",
-       onClick: () => { refAny.value = `${p.name} (${p.team || "—"})`; selectedRefereeId = p.id; refAnyList.classList.add("hidden"); } },
+       onClick: () => { refAny.value = `${p.name} (${p.team || "未登録"})`; selectedRefereeId = p.id; refAnyList.classList.add("hidden"); } },
        h("div", { className: "autoc-item-name" }, p.name),
-       h("div", { className: "autoc-item-team" }, p.team || "—")));
+       h("div", { className: "autoc-item-team" }, p.team || "未登録")));
    });
    refAnyList.classList.remove("hidden");
  });
@@ -9169,7 +9162,7 @@ const O = {
  if (!confirm("リーグを生成します。既存のこの種目のリーグ対戦は作り直されます。よろしいですか？")) return;
  let r = await api.post(`/api/tournaments/${O.tournamentId}/league/generate`, { event, num_blocks, regenerate: true });
  if (r && r.needs_force) {
-   if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
+   if (!confirm(r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
    r = await api.post(`/api/tournaments/${O.tournamentId}/league/generate`, { event, num_blocks, regenerate: true, force: true });
  }
  if (r.error) return toast(r.error, "err");
@@ -9205,22 +9198,22 @@ const O = {
    issuesBox.appendChild(h("div", {
      style: { fontSize: "12px", fontWeight: 600, marginBottom: "4px", color: diff.intact ? "#1a7a45" : "#b45309" } },
      diff.intact
-       ? `✓ 抽選済み(記録ID ${diff.draw_seed}・実施 ${diff.drawn_by || "—"})。原配置のまま。`
-       : `⚠ 抽選済み(記録ID ${diff.draw_seed})。原配置から ${diff.modified}件 手修正されています(${(diff.changes || []).slice(0, 3).map(c => c.original_name + "→" + c.current_name).join("、")}${diff.modified > 3 ? " ほか" : ""})。`));
+       ? `抽選済み(記録ID ${diff.draw_seed}・実施 ${diff.drawn_by || "未登録"})。原配置のまま。`
+       : `抽選済み(記録ID ${diff.draw_seed})。原配置から ${diff.modified}件 手修正されています(${(diff.changes || []).slice(0, 3).map(c => c.original_name + "→" + c.current_name).join("、")}${diff.modified > 3 ? " ほか" : ""})。`));
  }
  if (rdy) {
    (rdy.issues || []).forEach(i => issuesBox.appendChild(h("div", {
      style: { color: i.level === "block" ? "#c01526" : "#b45309", fontSize: "12px", fontWeight: i.level === "block" ? 700 : 500 } },
-     (i.level === "block" ? "⛔ " : "⚠ ") + i.msg)));
+     (i.level === "block" ? "" : "") + i.msg)));
    if (!(rdy.issues || []).length) issuesBox.appendChild(h("div", { style: { color: "#1a7a45", fontSize: "12px" } },
-     `✓ 抽選OK: 承認${rdy.confirmed}名 / 枠${rdy.bracket_size} / BYE${rdy.bye_count} / シード${rdy.seeded}`));
+     `抽選OK: 承認${rdy.confirmed}名 / 枠${rdy.bracket_size} / BYE${rdy.bye_count} / シード${rdy.seeded}`));
  }
 
  const renderPreview = (r) => {
    clear(previewBox);
    previewBox.appendChild(h("div", { style: { fontWeight: 700, marginBottom: "4px" } },
-     `プレビュー: ${r.bracket_size}枠 / シード${r.seeded_count} / BYE${r.bye_count}` + (r.r1_same_club ? ` / ⚠1回戦同所属${r.r1_same_club}` : "")));
-   (r.warnings || []).forEach(w => previewBox.appendChild(h("div", { style: { color: "#c01526", fontSize: "12px" } }, "⚠ " + w)));
+     `プレビュー: ${r.bracket_size}枠 / シード${r.seeded_count} / BYE${r.bye_count}` + (r.r1_same_club ? ` / 1回戦同所属${r.r1_same_club}` : "")));
+   (r.warnings || []).forEach(w => previewBox.appendChild(h("div", { style: { color: "#c01526", fontSize: "12px" } }, "" + w)));
    const nm = (c) => c.bye ? "（BYE）" : (c.name + (c.seed ? ` [${c.seed}]` : "") + (c.team ? ` ・${c.team}` : ""));
    const tb = h("tbody", {});
    r.pairs.forEach(p => tb.appendChild(h("tr", {},
@@ -9248,7 +9241,7 @@ const O = {
    const body = { event, separate_by: sep, draw_seed: lastSeed, drawn_by: by, base_rev: rdy && rdy.bracket_rev };
    let r = await api.post(`/api/tournaments/${tid}/bracket/draw`, body);
    if (r && r.needs_force) {
-     if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して確定しますか？")) return;
+     if (!confirm(r.error + "\n\n結果入力済みの試合も消して確定しますか？")) return;
      body.force = true; r = await api.post(`/api/tournaments/${tid}/bracket/draw`, body);
    }
    if (!r || r.error) return toast((r && r.error) || "確定に失敗", "err");
@@ -9280,7 +9273,7 @@ const O = {
      h("span", { className: "text-xs", style: { fontWeight: 700 } }, "③ 実施者名:"), drawnBy));
  const foot = h("div", { className: "flex gap-2", style: { flexWrap: "wrap" } },
    h("button", { className: "btn btn-ok", onClick: doConfirm }, "④ この並びで確定"),
-   h("button", { className: "btn btn-ghost", title: "両山トーナメント表をExcelで出力", onClick: () => A.downloadAuthedFile(`/api/tournaments/${tid}/bracket/export.xlsx?event=${encodeURIComponent(event)}`, `トーナメント表_${event}.xlsx`) }, "📋 Excel出力"),
+   h("button", { className: "btn btn-ghost", title: "両山トーナメント表をExcelで出力", onClick: () => A.downloadAuthedFile(`/api/tournaments/${tid}/bracket/export.xlsx?event=${encodeURIComponent(event)}`, `トーナメント表_${event}.xlsx`) }, "Excel出力"),
    h("button", { className: "btn", style: { background: "#b45309", color: "#fff" }, onClick: doUndo }, "直前の抽選を取消"));
  openModal("抽選ドロー（" + event + "）", body, foot);
  },
@@ -9310,7 +9303,7 @@ const O = {
      const resp = await fetch(`/api/tournaments/${tid}/bracket/import-xlsx${qs || ""}`, { method: "POST", headers: { "X-Admin-Key": api.adminKey }, body: fd });
      return resp.json().catch(() => ({ error: "サーバーからの返事を読み取れませんでした" }));
    };
-   const summOf = (r) => (r.results || []).map(x => x.error ? `${x.event}: ✕ ${x.error}` : `${x.event}: ${x.placed}名配置 / BYE${x.byes}`).join("\n");
+   const summOf = (r) => (r.results || []).map(x => x.error ? `${x.event}: ${x.error}` : `${x.event}: ${x.placed}名配置 / BYE${x.byes}`).join("\n");
    const pv = await post("?dry_run=1");
    if (pv.error) return toast(pv.error, "err");
    if (!pv.ok) return alert("取込できません:\n\n" + summOf(pv));
@@ -9319,7 +9312,7 @@ const O = {
    const baseRev = (O._bracketRev && O._bracketRev[event]) || "";
    let r = await post("", { ev: event, base_rev: baseRev });
    if (r.results && r.results.some(x => x.needs_force)) {
-     if (!confirm("⚠ 結果入力済みの試合があります。消して上書きしますか？")) return;
+     if (!confirm("結果入力済みの試合があります。消して上書きしますか？")) return;
      r = await post("", { force: "1", ev: event, base_rev: baseRev });
    }
    if (r.error || (r.results || []).some(x => x.error)) return toast("取込失敗: " + (r.error || ((r.results || []).find(x => x.error) || {}).error || ""), "err");
@@ -9353,13 +9346,13 @@ const O = {
    tbl.appendChild(h("thead", {}, h("tr", {}, h("th", {}, "提案"), h("th", {}, "シード"), h("th", {}, "氏名"), h("th", {}, "所属"), h("th", {}, "R"), h("th", {}, "成績"), h("th", {}, "根拠"))));
    const tb = h("tbody", {});
    (data.suggestions || []).forEach((s, i) => tb.appendChild(h("tr", {},
-     h("td", { style: { color: "#94a3b8" } }, s.score != null ? (i + 1) : "—"),
+     h("td", { style: { color: "#94a3b8" } }, s.score != null ? (i + 1) : "未集計"),
      h("td", {}, h("input", { type: "number", className: "input-sm", style: { width: "54px" }, value: String(state[s.entrant_id] || 0), min: 0, max: 64,
        onChange: (e) => { state[s.entrant_id] = Math.max(0, parseInt(e.target.value) || 0); } })),
      h("td", { className: "font-bold" }, s.name),
      h("td", {}, s.team || ""),
-     h("td", {}, s.rating != null ? String(s.rating) : "—"),
-     h("td", {}, s.ach_score > 0 ? (s.ach_score + "pt") : "—"),
+     h("td", {}, s.rating != null ? String(s.rating) : "未集計"),
+     h("td", {}, s.ach_score > 0 ? (s.ach_score + "pt") : "0"),
      h("td", { className: "text-sub" }, s.basis))));
    tbl.appendChild(tb); tableWrap.appendChild(tbl);
  };
@@ -9391,7 +9384,7 @@ const O = {
    tableWrap,
    h("div", { className: "flex gap-2", style: { alignItems: "center", marginTop: "8px" } },
      h("span", { className: "text-xs", style: { fontWeight: 700 } }, "実施者名:"), setBy));
- openModal("🏅 シード自動提案（" + event + "）", body, h("button", { className: "btn btn-ok", onClick: apply }, "この内容でシードを設定"));
+ openModal("シード自動提案（" + event + "）", body, h("button", { className: "btn btn-ok", onClick: apply }, "この内容でシードを設定"));
  load();
  },
 
@@ -9418,7 +9411,7 @@ const O = {
    tableWrap.appendChild(h("div", { className: "text-xs", style: { margin: "4px 0 8px", fontWeight: 700 } },
      "部ごとのチーム数(基本5・たまに6): " +
      (Object.keys(counts).length ? Object.keys(counts).sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99))
-       .map(d => `${d}部:${counts[d]}` + (counts[d] < 2 || counts[d] > 6 ? "⚠" : "")).join(" / ") : "(未設定)")));
+       .map(d => `${d}部:${counts[d]}` + (counts[d] < 2 || counts[d] > 6 ? "※" : "")).join(" / ") : "(未設定)")));
    const rows = suggestion.suggestions.slice().sort((a, b) =>
      ((parseInt(state[a.entrant_id]) || 99) - (parseInt(state[b.entrant_id]) || 99)) ||
      String(a.team_name).localeCompare(b.team_name, "ja"));
@@ -9430,8 +9423,8 @@ const O = {
      const moveColor = s.status === "new" ? "#6b7280" : ({ promote: "#1a7a45", relegate: "#c01526", stay: "#334155" }[s.move] || "#334155");
      tb.appendChild(h("tr", {},
        h("td", { className: "font-bold" }, s.team_name),
-       h("td", {}, s.prev_division ? s.prev_division + "部" : "—"),
-       h("td", {}, s.prev_rank ? s.prev_rank + "位" : "—"),
+       h("td", {}, s.prev_division ? s.prev_division + "部" : "未定"),
+       h("td", {}, s.prev_rank ? s.prev_rank + "位" : "未定"),
        h("td", { style: { color: moveColor, fontWeight: 700 } }, moveLabel),
        h("td", {}, h("input", {
          type: "number", className: "input-sm", style: { width: "66px" }, min: 1, max: 99,
@@ -9462,7 +9455,7 @@ const O = {
    if (!confirm("この割当で釧路リーグ(各部 総当たり)を生成します。既存のこの種目のリーグ対戦は作り直されます。よろしいですか？")) return;
    let r = await api.post(`/api/tournaments/${O.tournamentId}/league/generate`, { event, assignments, regenerate: true });
    if (r && r.needs_force) {
-     if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
+     if (!confirm(r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
      r = await api.post(`/api/tournaments/${O.tournamentId}/league/generate`, { event, assignments, regenerate: true, force: true });
    }
    if (r.error) return toast(r.error, "err");
@@ -9544,17 +9537,17 @@ const O = {
  container.appendChild(h("div", { style: { textAlign: "center", margin: "2px 0 10px" } },
  h("span", { style: { fontSize: "26px", fontWeight: 800 } }, `${sc.home} - ${sc.away}`),
  h("span", { className: "text-xs text-sub", style: { marginLeft: "8px" } },
- `${fmt.threshold}勝で確定` + (decided ? " ✓" : ""))));
+ `${fmt.threshold}勝で確定` + (decided ? "" : ""))));
  // オーダー(出場選手)の記録 — 任意。コートで決まったオーダーを入力する(事前確定・公開はしない)。
  const orderViolations = showOrder ? TTTieOrder.validateTieOrder(ev && ev.tie_format, orderEntries()) : [];
  container.appendChild(h("div", { style: { margin: "0 0 8px" } },
  h("button", { className: "btn btn-sm" + (showOrder ? "" : " btn-ghost"),
  onClick: () => { showOrder = !showOrder; render(); } },
- (showOrder ? "▾" : "▸") + " オーダー(出場選手)を記録 — 任意"),
+ (showOrder ? "▾" : "▸") + " オーダー(出場選手)を記録（任意）"),
  showOrder && orderViolations.length
  ? h("div", { style: { marginTop: "6px", padding: "6px 8px", borderRadius: "6px",
    background: "#fef2f2", color: "#b91c1c", fontSize: "12px", fontWeight: 700 } },
-   ...orderViolations.map(v => h("div", {}, "⚠ " + TTTieOrder.describeViolation(v))))
+   ...orderViolations.map(v => h("div", {}, "" + TTTieOrder.describeViolation(v))))
  : null));
  if (showOrder) {
  container.appendChild(h("datalist", { id: "tieRosterHome" }, ...homeRoster.map(n => h("option", { value: n }))));
@@ -9575,7 +9568,7 @@ const O = {
  onClick: () => toggleWin("away") }, away),
  h("button", { className: "btn btn-sm" + (st.wo ? " btn-warn" : " btn-ghost"), style: { minWidth: "78px" },
  title: "この個別試合を不戦勝(3-0)にする。先に勝つ側を選んでから押してください。",
- onClick: () => { st.wo = !st.wo; if (st.wo) { st.gamesStr = ""; if (!st.winner) toast("先に勝つチームを選んでください", "warn"); } render(); } }, st.wo ? "不戦勝 ✓" : "不戦勝3-0")),
+ onClick: () => { st.wo = !st.wo; if (st.wo) { st.gamesStr = ""; if (!st.winner) toast("先に勝つチームを選んでください", "warn"); } render(); } }, st.wo ? "不戦勝" : "不戦勝3-0")),
  st.wo
  ? h("div", { className: "text-xs", style: { marginTop: "4px", fontWeight: 700, color: "#92400e" } },
    "不戦勝 3-0" + (st.winner ? "（" + (st.winner === "home" ? home : away) + " の勝ち）" : "（勝つチーム未選択）"))
@@ -9625,7 +9618,7 @@ const O = {
  document.getElementById("tside2")?.classList.toggle("is-winner", w === 2);
  } }));
  container.appendChild(h("div", { className: "score-entry" },
- sideEl("Home", home, hScore, 1), h("div", { className: "score-vs" }, "—"), sideEl("Away", away, aScore, 2)));
+ sideEl("Home", home, hScore, 1), h("div", { className: "score-vs" }, "vs"), sideEl("Away", away, aScore, 2)));
  container.appendChild(h("div", { className: "score-hint" }, "各チームの勝った試合数を直接入力してください。多い方が勝ちチームです。"));
  }
  };
@@ -9734,7 +9727,7 @@ const O = {
    } },
    h("div", { className: "wo-name" }, name || ("選手" + slot)),
    team ? h("div", { className: "wo-team" }, team) : null,
-   h("div", { className: "wo-mark" }, "✓ 勝ち"));
+   h("div", { className: "wo-mark" }, "勝ち"));
  inputs = h("div", {},
    h("div", { className: "wo-pick" },
      mkWO(1, m.player1_name, m.player1_team),
@@ -9759,7 +9752,7 @@ const O = {
    document.getElementById("side2")?.classList.toggle("is-winner", w === 2);
  } }),
  ),
- h("div", { className: "score-vs" }, "—"),
+ h("div", { className: "score-vs" }, "vs"),
  h("div", { className: "score-side" + (winnerSlot === 2 ? " is-winner" : ""), id: "side2" },
  h("div", { className: "score-name" }, m.player2_name),
  h("input", { type: "number", className: "score-num", id: "p2Num",
@@ -9894,7 +9887,7 @@ const O = {
    ...members.map(x => h("button", { className: "btn btn-sm btn-ghost",
      onClick: () => A.editPlayer({ id: x.id }) },
      (x.name || "選手") + " ▸",
-     hasPush(x.id) ? h("span", { title: "マイ番号(プッシュ通知)登録済み — 呼出が届きます",
+     hasPush(x.id) ? h("span", { title: "マイ番号(プッシュ通知)登録済み。呼出が届きます",
        style: { marginLeft: "4px", fontSize: "11px", fontWeight: 800, color: "#166534", background: "#dcfce7", borderRadius: "6px", padding: "1px 5px" } }, "通知ON") : null)));
  },
 
@@ -10039,7 +10032,7 @@ const O = {
      // マスタトークンから各コートのキーをHMAC導出。審判は担当コートのQRをスキャンするだけで
      // 入力画面へ(長いURL手入力=伝達難易度 を回避)。会場オフラインでも生成可(外部QR非依存)。
      const cdet = h("details", { style: { marginTop: "12px", borderTop: "1px dashed var(--border)", paddingTop: "10px" } },
-       h("summary", { style: { cursor: "pointer", fontWeight: 700, fontSize: "13px", color: "#0369a1" } }, "📷 コート別 審判QR（台ごとに配布・おすすめ）"),
+       h("summary", { style: { cursor: "pointer", fontWeight: 700, fontSize: "13px", color: "#0369a1" } }, "コート別 審判QR（台ごとに配布・おすすめ）"),
        h("div", { className: "text-xs text-sub", style: { lineHeight: 1.7, margin: "6px 0" } },
          "審判は担当コートのQRをスキャンするだけで入力画面に入れます（長いURLの手入力は不要）。", h("br"),
          "各コートからは", h("b", {}, "自分のコートの試合だけ"), "報告でき、他コートは見えません。", h("br"),
@@ -10048,7 +10041,7 @@ const O = {
          h("label", { className: "text-xs", style: { fontWeight: 700 } }, "コート数"),
          h("input", { id: "refQrCourts", type: "number", min: "1", max: "40", placeholder: "自動", className: "input", style: { width: "76px" } }),
          h("button", { className: "btn btn-sm btn-ok", id: "loadCourtQR" }, "QRを表示"),
-         h("button", { className: "btn btn-sm btn-ghost", id: "printCourtQR" }, "🖨 まとめて印刷")),
+         h("button", { className: "btn btn-sm btn-ghost", id: "printCourtQR" }, "まとめて印刷")),
        h("div", { id: "courtQrInfo", className: "text-xs text-sub", style: { margin: "4px 0", lineHeight: 1.6 } }),
        h("div", { id: "courtQrBox", style: { marginTop: "8px", display: "flex", flexWrap: "wrap", gap: "10px", maxHeight: "440px", overflowY: "auto" } }));
      body.appendChild(cdet);
@@ -10069,7 +10062,7 @@ const O = {
        info.appendChild(h("div", {}, "接続先: ", h("b", { style: { fontFamily: "monospace" } }, data.base)));
        if (/localhost|127\.0\.0\.1/.test(data.base))
          info.appendChild(h("div", { style: { color: "#b91c1c", fontWeight: 700 } },
-           "⚠ この端末からしか開けません。本部PCを会場LANのIPで開き直すか、「📱端末接続」でLAN URLをご確認ください。"));
+           "この端末からしか開けません。本部PCを会場LANのIPで開き直すか、「端末接続」でLAN URLをご確認ください。"));
        if (data.passcode_required)
          info.appendChild(h("div", { style: { color: "#0369a1" } },
            "※会場パスコード要求中。審判には会場で口頭/掲示でパスコードも伝えてください。"));
@@ -10116,7 +10109,7 @@ const O = {
    h("div", { className: "text-sm text-sub mb-2" }, `${m.event || ""} ${m.round || ""}　コート${m.table_no || "?"}`),
    p.conflict ? h("div", { style: { background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: "8px",
        padding: "10px 12px", marginBottom: "10px", color: "#b91c1c", fontWeight: 700, fontSize: "13px", lineHeight: 1.6 } },
-     "⚠ 二重報告の可能性：複数の審判から異なる勝者の報告がありました。" +
+     "二重報告の可能性：複数の審判から異なる勝者の報告がありました。" +
      (p.prev && p.prev.winner_name ? "（前の報告: " + p.prev.winner_name + " の勝ち）" : "") +
      " 必ず現地で確認してから承認してください。") : null,
    h("div", { style: { background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "10px", padding: "16px", textAlign: "center" } },
@@ -10141,7 +10134,7 @@ const O = {
        catch (e) { return toast("通信できません（オフライン）", "err"); }
        if (r && r.error) return toast(r.error, "err");
        toast(`承認しました: ${r.winner_name || ""} の勝ち`, "ok"); bg.remove(); O.reload();
-     } }, "✓ 承認して確定"));
+     } }, "承認して確定"));
  const bg = openModal("結果の承認（審判報告）", body, foot);
  },
  async _showRefQR(url) {
@@ -10190,7 +10183,7 @@ const O = {
    "<h1>" + e(data.tournament_name || "大会") + "　審判 結果入力（コート別QR）</h1>" +
    '<div class="sub">各コートに掲示してください。審判はQRを読み取り、担当コートの試合結果だけを報告できます。' +
    (pass ? "　※報告には会場パスコードが必要です（会場で口頭/掲示でお伝えください）。" : "") + "</div>" +
-   '<button class="noprint" onclick="window.print()" style="margin-bottom:6mm;padding:6px 16px;font-size:13px;cursor:pointer">🖨 印刷する</button>' +
+   '<button class="noprint" onclick="window.print()" style="margin-bottom:6mm;padding:6px 16px;font-size:13px;cursor:pointer">印刷する</button>' +
    '<div class="grid">' + cards + "</div></body></html>";
  const w = window.open("", "_blank");
  if (!w) { toast("別ウィンドウが開けませんでした。画面の表示から『許可』してください。", "err"); return; }
@@ -10491,7 +10484,7 @@ const O = {
      (!editOnly && m.status === "on_table") ? h("span", {
        style: { marginLeft: "6px", color: "#dc2626", fontWeight: 800 } }, "● LIVE") : null,
      (!editOnly && m.status === "completed") ? h("span", {
-       style: { marginLeft: "6px", color: "#16a34a", fontWeight: 800 } }, "✓") : null,
+       style: { marginLeft: "6px", color: "#16a34a", fontWeight: 800 } }, "済") : null,
      callable ? h("span", { className: "vb-call-chip" }, "▶ クリックで呼出") : null,
      // 試合まるごと入替(編集可・1回戦・未確定のみ)。2試合の⇄を順に押すと両選手を一括入替。
      (canEdit && m.bracket_round === 1 && m.status !== "completed" && m.status !== "on_table")
@@ -10517,12 +10510,12 @@ const O = {
          borderRadius: "4px" } },
        slotNo ? h("span", { className: "vb-slotno" }, String(slotNo)) : null,
        // BYE は表示しない(シード/抽選トーナメント): 相手欄を薄いダッシュにし、シードは繰上で進出に見せる(#8)
-       (name === "BYE" ? h("span", { style: { color: "#cbd5e1", fontStyle: "italic" } }, "ー") : (name || "—")),
+       (name === "BYE" ? h("span", { style: { color: "#cbd5e1", fontStyle: "italic" } }, "ー") : (name || "未登録")),
        (team && name !== "BYE") ? h("span", { className: "text-xs text-sub", style: { marginLeft: "4px" } }, "(" + team + ")") : null,
        // ★ シードにする(編集ビュー・1回戦・実選手のみ)。クリックで登場回戦を指定→紙どおり配置。
        (editOnly && canEdit && m.bracket_round === 1 && name && name !== "BYE")
          ? h("button", { className: "vb-seedbtn", title: "この枠をシードにする(登場回戦を指定)",
-             onClick: (e) => { e.stopPropagation(); O._seedMenu(ctx, (slot === 1 ? m.player1_entrant_id : m.player2_entrant_id), name); } }, "★")
+             onClick: (e) => { e.stopPropagation(); O._seedMenu(ctx, (slot === 1 ? m.player1_entrant_id : m.player2_entrant_id), name); } }, "SS")
          : null);
      if (dndOn) {
        if (name && name !== "BYE") {
@@ -10626,7 +10619,7 @@ const O = {
    h("span", { style: { color: "#dc2626" } }, "● 進行中 " + stats.on_table),
    h("span", { style: { color: "#b45309", fontWeight: 800 } }, "▶ 呼出可 " + stats.pending),
    h("span", { style: { color: "#9ca3af" } }, "● 待機 " + stats.waiting),
-   h("span", { style: { color: "#16a34a" } }, "✓ 終了 " + stats.completed),
+   h("span", { style: { color: "#16a34a" } }, "終了 " + stats.completed),
    h("span", { className: "text-sub" }, "/ 計 " + stats.total),
  );
 
@@ -10655,7 +10648,7 @@ const O = {
    try {
      let r = await post(false);
      if (r && r.needs_force) {
-       if (!confirm("⚠ " + (r.error || "結果に影響する可能性があります") + "\n\n強制的に再構築しますか？")) return;
+       if (!confirm((r.error || "結果に影響する可能性があります") + "\n\n強制的に再構築しますか？")) return;
        r = await post(true);
      }
      if (r && r.conflict) { toast(r.error || "組合せが他端末で変更されています", "err"); ctx.reload(); return; }
@@ -10836,7 +10829,7 @@ const O = {
            if (!confirm(`「${currentName}」を ${seedRoundSel.value}回戦からのシードに繰り上げます。よろしいですか？`)) return;
            const payload = { event, pos, slot, entry_round: parseInt(seedRoundSel.value) || 2, side: seedSideSel.value, base_rev: ctx.getRev() };
            let r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/promote-seed`, payload);
-           if (r && r.needs_force) { if (!confirm("⚠ " + r.error + "\n\n結果入力済みも消して作り直しますか？")) return; r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/promote-seed`, { ...payload, force: true }); }
+           if (r && r.needs_force) { if (!confirm(r.error + "\n\n結果入力済みも消して作り直しますか？")) return; r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/promote-seed`, { ...payload, force: true }); }
            if (r && r.error) return toast(r.error, "err");
            if (r.bracket_rev) ctx.setRev(r.bracket_rev);
            toast(`「${currentName}」をシードに繰り上げました`, "ok");
@@ -10942,7 +10935,7 @@ const O = {
  const _gbRev = O._bracketRev && O._bracketRev[event];   // 同時作業ガード: 見ていた組合せの版
  let r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event, player_ids: ids, regenerate: regen, base_rev: _gbRev });
  if (r && r.needs_force) {
- if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
+ if (!confirm(r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
  r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event, player_ids: ids, regenerate: regen, force: true, base_rev: _gbRev });
  }
  if (r.error) return toast(r.error, "err");
@@ -11354,7 +11347,7 @@ const EnT = {
    const card = h("div", { style: { background: "#fffbeb", border: "1px solid #fde68a",
      borderRadius: "8px", padding: "10px 12px", margin: "6px 0" } },
      h("div", { className: "text-sm", style: { fontWeight: 700, color: "#92400e", marginBottom: "6px" } },
-       "⚠ 所属が変わった可能性 (進学・転職など)"),
+       "所属が変わった可能性 (進学・転職など)"),
      h("div", { className: "text-sm", style: { marginBottom: "8px" } }, w.message),
      h("div", { className: "flex gap-2", style: { flexWrap: "wrap" } },
        h("button", { className: "btn btn-sm btn-ok",
@@ -11429,7 +11422,7 @@ const EnT = {
 
  renderRow(e) {
  const tr = h("tr", {});
- tr.appendChild(h("td", { className: "mono" }, e.seed ? "#" + e.seed : "—"));
+ tr.appendChild(h("td", { className: "mono" }, e.seed ? "#" + e.seed : "未定"));
  // 選手番号 (大会固有: 左右別) - インライン編集可能
  const bnSide = h("select", {
    className: "input", style: { width: "44px", padding: "2px", fontSize: "11px" },
@@ -11454,13 +11447,13 @@ const EnT = {
  tr.appendChild(nameCell);
 
  const teamCell = h("td", {},
- e.team || "—",
+ e.team || "未登録",
  e.is_doubles && e.partner_team
  ? h("div", { className: "text-xs text-sub" }, "P2: " + e.partner_team)
  : null,
  );
  tr.appendChild(teamCell);
- tr.appendChild(h("td", {}, e.block || h("span", { className: "text-sub" }, "—")));
+ tr.appendChild(h("td", {}, e.block || h("span", { className: "text-sub" }, "未定")));
  const linkCell = h("td", {});
  if (e.player_id) {
  linkCell.appendChild(h("span", { className: "badge badge-ok" }, "連携済"));
@@ -11629,9 +11622,9 @@ const EnT = {
      allPlayers.filter(p => p.name.toLowerCase().includes(q) || (p.furigana || "").includes(q))
        .slice(0, 10).forEach(p => {
        resultList.appendChild(h("div", { className: "autoc-item",
-         onClick: () => { searchInput.value = `${p.name} (${p.team || "—"})`; selectedId = p.id; resultList.classList.add("hidden"); } },
+         onClick: () => { searchInput.value = `${p.name} (${p.team || "未登録"})`; selectedId = p.id; resultList.classList.add("hidden"); } },
          h("div", { className: "autoc-item-name" }, p.name),
-         h("div", { className: "autoc-item-team" }, p.team || "—")));
+         h("div", { className: "autoc-item-team" }, p.team || "未登録")));
      });
      resultList.classList.remove("hidden");
    });
@@ -11648,7 +11641,7 @@ const EnT = {
      sug.suggested ? h("div", { style: { background: "#ecfdf5", border: "1px solid #a7f3d0",
        borderRadius: "6px", padding: "8px", margin: "6px 0" } },
        h("div", { className: "text-xs", style: { color: "#065f46", fontWeight: 700 } },
-         "DBに同名候補: " + sug.suggested.name + " (" + (sug.suggested.team || "—") + ")"),
+         "DBに同名候補: " + sug.suggested.name + " (" + (sug.suggested.team || "未登録") + ")"),
        h("button", { className: "btn btn-sm", style: { marginTop: "5px" },
          onClick: () => doLink(sug.suggested.id) }, "この選手と連携")) : null,
      h("div", { style: { position: "relative", marginTop: "6px" } }, searchInput, resultList),
@@ -11760,7 +11753,7 @@ const EnT = {
    base_rev: O._bracketRev && O._bracketRev[EnT.filterEvent] };   // 同時作業ガード
  let r = await api.post(`/api/tournaments/${EnT.tournamentId}/bracket`, body);
  if (r && r.needs_force) {
- if (!confirm("⚠ " + r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
+ if (!confirm(r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
  r = await api.post(`/api/tournaments/${EnT.tournamentId}/bracket`, { ...body, force: true });
  }
  if (r.error) return toast(r.error, "err");
@@ -11899,16 +11892,16 @@ const TMgmt = {
       const editOn = !!TMgmt._treeEdit;
       // 編集専用ビューであることの明示(呼出・結果入力は進行管理で)。
       main.appendChild(h("div", { className: "tm-editnote" },
-        "🛠 ここは組み合わせ（配置）の編集専用です。試合の呼出・結果入力・進行は「進行管理(LIVE)」で行います。"));
+        "ここは組み合わせ（配置）の編集専用です。試合の呼出・結果入力・進行は「進行管理(LIVE)」で行います。"));
       // 進行開始後(実戦の結果あり=不戦勝/BYE除く)の編集は確定試合に影響しうる旨を警告。
       const hasResults = (b.matches || []).some(m => (m.status === "completed" || m.status === "on_table")
         && m.player1_name && m.player2_name && m.player1_name !== "BYE" && m.player2_name !== "BYE");
       if (hasResults) main.appendChild(h("div", { className: "tm-editwarn" },
-        "⚠ この種目はすでに試合結果があります。配置の変更は確定済みの試合に影響することがあります（確定/試合中の枠は編集できません）。"));
+        "この種目はすでに試合結果があります。配置の変更は確定済みの試合に影響することがあります（確定/試合中の枠は編集できません）。"));
       main.appendChild(h("div", { style: { marginBottom: "8px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" } },
         h("button", { className: "btn btn-sm" + (editOn ? "" : " btn-ghost"),
           onClick: () => { TMgmt._treeEdit = !TMgmt._treeEdit; TMgmt.render(); } },
-          editOn ? "✏ 編集モード: ON" : "✏ 編集モード: OFF"),
+          editOn ? "編集モード: ON" : "編集モード: OFF"),
         // ミス編集対策: 直前の編集をその場で取り消す(進行管理の Undo と同じ op_log を使用)。
         h("button", { className: "btn btn-sm", style: { background: "#fffbeb", color: "#b45309", borderColor: "#fcd34d" },
           title: "直前の編集（枠の設定・選手入替・試合入替など）を1つ取り消します",
@@ -11958,7 +11951,7 @@ const TMgmt = {
     // 番号は実枠だけの連番(slotNo)。BYEは欠番(null)=「—」表示で番号を振らない。
     if (row.is_bye) {
       tbody.appendChild(h("tr", { className: "tm-row-bye" },
-        h("td", { className: "tm-pos tm-pos-empty" }, "—"),
+        h("td", { className: "tm-pos tm-pos-empty" }, ""),
         h("td", { colSpan: 6, style: { color: "#94a3b8", fontStyle: "italic" } }, "BYE（欠番・シード不戦勝）"),
         TMgmt._menuBtn(row, 1)));
       return;
@@ -11975,8 +11968,8 @@ const TMgmt = {
     const erTd = h("td", { className: "tm-cell-edit", rowSpan: row.is_doubles ? 2 : 1, style: { textAlign: "center", color: ((row.entry_round || 1) > 1) ? "#b45309" : "#64748b", fontWeight: ((row.entry_round || 1) > 1) ? 700 : 400 },
       title: "クリックでシード(登場回戦)を指定/解除",
       onClick: () => O._seedMenu(TMgmt._treeCtx(), row.entrant_id, row.display_name || row.surname || row.name || "") },
-      ((row.entry_round || 1) > 1) ? ("★" + row.entry_round) : "1");
-    const oppTd = h("td", { rowSpan: row.is_doubles ? 2 : 1, style: { color: "#64748b", fontSize: "12px" } }, row.opponent || "—");
+      ((row.entry_round || 1) > 1) ? ("SS" + row.entry_round) : "1");
+    const oppTd = h("td", { rowSpan: row.is_doubles ? 2 : 1, style: { color: "#64748b", fontSize: "12px" } }, row.opponent || "未定");
     // 直前に編集した選手(メンバー)の行を黄色で表示。
     const le = TMgmt._lastEdited;
     const editedCls = (p) => (le && le.entrant_id === row.entrant_id && le.isPartner === p) ? "tm-edited" : "";
@@ -12085,7 +12078,7 @@ const TMgmt = {
     const field = isPartner ? "partner_team" : "team";
     const cur = isPartner ? (row.partner_team || "") : (row.team || "");
     const td = h("td", { className: "tm-cell-edit" });
-    const showDisp = () => { td.replaceChildren(h("span", {}, cur || "—")); };
+    const showDisp = () => { td.replaceChildren(h("span", {}, cur || "未登録")); };
     showDisp();
     td.onclick = async () => {
       if (td.querySelector("input")) return;
@@ -12127,7 +12120,7 @@ const TMgmt = {
   // 編集可能セル: クリックで input 化、Enter/Tab/blurで確定、Escで取消
   _cell(value, commit, opts) {
     opts = opts || {};
-    const disp = (v) => (v === "" || v == null) ? "—" : String(v);
+    const disp = (v) => (v === "" || v == null) ? "" : String(v);
     const td = h("td", { className: "tm-cell-edit" });
     if (opts.rowSpan && opts.rowSpan > 1) td.rowSpan = opts.rowSpan;
     td.appendChild(h("span", {}, disp(value)));
@@ -12237,7 +12230,7 @@ const TMgmt = {
     try {
       let r = await api.post(`/api/tournaments/${tid}${path}`, { ...body, base_rev: TMgmt._gridRev });
       if (r && r.needs_force) {
-        if (!confirm("⚠ " + (r.error || "結果に影響する可能性があります") + "\n\n強制的に実行しますか？")) return;
+        if (!confirm((r.error || "結果に影響する可能性があります") + "\n\n強制的に実行しますか？")) return;
         r = await api.post(`/api/tournaments/${tid}${path}`, { ...body, force: true, base_rev: TMgmt._gridRev });
       }
       if (!r || r.error || r.conflict) {
@@ -12427,7 +12420,7 @@ const TMgmt = {
     const head = h("div", { className: "tm-integrity-head",
       onClick: () => { TMgmt._integrityOpen = !TMgmt._integrityOpen; body.style.display = TMgmt._integrityOpen ? "block" : "none"; caret.textContent = TMgmt._integrityOpen ? "▼" : "▶"; } },
       caret, h("span", { style: { fontWeight: 700 } }, "整合性チェック"),
-      total ? h("span", { className: "tm-badge-warn" }, "⚠ " + total + " 件") : h("span", { className: "tm-badge-ok" }, "✓ 問題なし"));
+      total ? h("span", { className: "tm-badge-warn" }, total + " 件") : h("span", { className: "tm-badge-ok" }, "問題なし"));
     panel.appendChild(head);
 
     // 1. 推定不一致(性別/カテゴリ/ふりがな)
