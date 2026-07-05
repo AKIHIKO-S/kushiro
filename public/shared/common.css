@@ -284,7 +284,11 @@ input:focus, select:focus, textarea:focus {
   background: var(--ink-800); border-color: var(--ink-800);
   transform: translateY(-1px);
 }
-.btn:active { transform: translateY(0); }
+.btn:active { transform: translateY(0) scale(.98); filter: brightness(.94); }
+/* キーボード/タッチ操作のフォーカスを可視化(アクセシビリティ・押した実感)。 */
+.btn:focus-visible, .tab:focus-visible, .pdb-seg-btn:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
 .btn-ghost {
   background: transparent; color: var(--txt);
   border: 1px solid var(--border-strong);

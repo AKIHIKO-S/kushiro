@@ -920,6 +920,21 @@ body{ background:#fbfaf7; }
 .pm-row.loss{ box-shadow:inset 3px 0 0 var(--accent); }
 /* 大会カード: 左バー型をやめ、上端に細い赤帯+白カード(新聞のセクション見出し風) */
 .tcard{ border-radius:0; border-left:1px solid var(--border); }
+/* 選手名鑑のグループ切替(セグメント制御): CSS未定義で375pxで見切れていた。横スクロール可能に。 */
+.pdb-seg{ display:flex; gap:2px; overflow-x:auto; -webkit-overflow-scrolling:touch;
+  border:1px solid var(--border); border-radius:0; background:#fff; padding:3px; margin:14px 0;
+  scrollbar-width:thin; }
+.pdb-seg-btn{ flex:none; white-space:nowrap; padding:8px 16px; font-size:13px; font-weight:700;
+  color:var(--sub); background:transparent; border:none; border-radius:0; cursor:pointer; }
+.pdb-seg-btn.active{ color:#fff; background:var(--accent); }
+/* 検索バーの固定幅 select を可変に(375pxで見切れ解消) */
+#searchGender,#searchCat{ width:auto !important; min-width:96px; flex:1 1 auto; }
+.search-bar-in{ flex-wrap:wrap; }
+@media(max-width:560px){
+  .search-bar-in{ gap:8px; }
+  #searchInput{ flex:1 1 100%; }
+  #searchGender,#searchCat{ flex:1 1 40%; }
+}
 /* 接続状態バッジ: 大会進行の更新経路(SSE即時 / ポーリング / 断)を控えめに可視化 (#264) */
 .conn-badge {
   display:inline-flex; align-items:center; gap:5px;
@@ -1143,6 +1158,9 @@ const V = {
  // 初回ロード
  await V.reload();
 
+ // ランキング/統計タブは成績データがある時だけ表示(協会初回・大会序盤の空タブを常設しない)。
+ await V._updateStatTabs();
+
  // URLハッシュ処理（#tournament/abc, #player/xyz）
  V.handleHash();
  // 協会サイト等からの ?q= / ?search= 直リンク対応：検索語をURLクエリで受け取っても「検索済み」で開く
@@ -1242,6 +1260,19 @@ const V = {
  } catch (e) {
  console.error(e);
  }
+ },
+
+ // 成績(試合)データがある時だけ ランキング/統計 タブを表示する。
+ // 協会初回・大会序盤は常に空なので、空タブを常設せず畳む(破壊者指摘)。
+ async _updateStatTabs() {
+ let hasData = false;
+ try { const st = await api.get("/api/public/stats"); hasData = !!(st && (st.matchCount || 0) > 0); } catch (e) {}
+ ["ranking", "stats"].forEach(name => {
+ const btn = document.querySelector('.tab[data-tab="' + name + '"]');
+ if (btn) btn.style.display = hasData ? "" : "none";
+ });
+ // 非表示タブが今アクティブなら大会一覧へ退避
+ if (!hasData && (V.activeTab === "ranking" || V.activeTab === "stats")) V.showTab("tournaments");
  },
 
  // 進行中の大会が1件も無ければ LIVE 表記を隠す
