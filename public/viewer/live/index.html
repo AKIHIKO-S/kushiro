@@ -185,6 +185,7 @@
   .lv-progress-title { font-size: 14px; font-weight: 700; }
   .lv-progress-figure { font-size: 13px; color: var(--lv-sub); }
   .lv-progress-figure strong { color: var(--lv-ok); font-size: 17px; }
+  .lv-progress-remain { color: var(--lv-accent); font-weight: 700; }
   .lv-progress-bar {
     height: 24px; border-radius: 12px; background: var(--lv-line);
     overflow: hidden;
@@ -1231,12 +1232,14 @@ const LV = {
     const totalMatches = (s.total_matches != null) ? s.total_matches
       : Object.values(s.event_stats || {}).reduce((a, e) => a + (e.total || 0), 0);
     const lvPct = totalMatches > 0 ? Math.round((totalCompleted / totalMatches) * 100) : 0;
+    const remaining = Math.max(0, totalMatches - totalCompleted);   // 真の残り試合数(呼出可能だけでない全未消化)
     main.appendChild(h("div", { className: "lv-progress" },
       h("div", { className: "lv-progress-head" },
         h("span", { className: "lv-progress-title" }, "大会の進捗"),
         h("span", { className: "lv-progress-figure" },
-          totalCompleted + " / " + totalMatches + " 試合　",
-          h("strong", {}, lvPct + "%"))),
+          totalCompleted + " / " + totalMatches + " 試合",
+          totalMatches > 0 ? h("span", { className: "lv-progress-remain" }, "（残り" + remaining + "）") : null,
+          "　", h("strong", {}, lvPct + "%"))),
       h("div", { className: "lv-progress-bar" },
         h("div", { className: "lv-progress-fill" + (lvPct >= 100 ? " done" : ""),
           style: { width: lvPct + "%" } },
@@ -1254,7 +1257,7 @@ const LV = {
         h("div", { className: "lv-stat-label" }, "進行中の試合")),
       h("div", { className: "lv-stat highlight-yellow" },
         h("div", { className: "lv-stat-num yellow" }, String(s.callable.length)),
-        h("div", { className: "lv-stat-label" }, "残試合数")),
+        h("div", { className: "lv-stat-label" }, "コート待ち")),
       h("div", { className: "lv-stat highlight-blue" },
         h("div", { className: "lv-stat-num blue" }, String(s.waiting || 0)),
         h("div", { className: "lv-stat-label" }, "待機中")),
@@ -1425,7 +1428,7 @@ const LV = {
         h("span", { className: "lv-tab-count" }, String(s.on_table.length))),
       h("button", { className: "lv-tab" + (LV.activeTab === "next" ? " active" : ""),
         onClick: () => { LV.activeTab = "next"; LV.render(); } },
-        "残試合数",
+        "コート待ち",
         h("span", { className: "lv-tab-count" }, String(s.callable.length))),
       h("button", { className: "lv-tab" + (LV.activeTab === "done" ? " active" : ""),
         onClick: () => { LV.activeTab = "done"; LV.render(); } },
@@ -1447,10 +1450,10 @@ const LV = {
       if (!s.callable.length) {
         content.appendChild(h("div", { className: "lv-empty",
           style: { padding: "30px 16px", fontSize: "13px" } },
-          "残試合はありません。"));
+          "コート待ちの試合はありません。"));
       } else {
-        // 見出しに残試合の総数を明示 (以前は先頭20件しか描画しておらず残りが見えなかった)。
-        content.appendChild(h("div", { className: "lv-next-head" }, "残試合 " + s.callable.length + "件"));
+        // 見出しに件数を明示 (以前は先頭20件しか描画しておらず残りが見えなかった)。
+        content.appendChild(h("div", { className: "lv-next-head" }, "コート待ち " + s.callable.length + "件"));
         // 全件を DocumentFragment にまとめて一括append (ポーリング毎の全再描画コストを抑える)。
         const frag = document.createDocumentFragment();
         const shown = s.callable.slice(0, LV_NEXT_RENDER_CAP);
