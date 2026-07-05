@@ -884,6 +884,7 @@
 #tab-search .vp-bar { height:4px; border-radius:2px; margin-top:11px; background:var(--tc-line2); overflow:hidden; }
 #tab-search .vp-bar > i { display:block; height:100%; border-radius:2px; background:var(--vp-accent); }
 #tab-search .vp-bar-empty { height:4px; margin-top:11px; }
+#tab-search .vp-norec { margin-top:13px; font-size:12px; color:var(--tc-ink3); letter-spacing:.02em; }
 
 /* ═══════════ 案B 新聞エディトリアル(承認済み方向) ═══════════
    温白の紙 × 墨の太罫 × 丹頂赤1色 × タブラー数字。AI-tell(紫グラデ/左縁色線/絵文字/em-dash)を排除。
@@ -920,6 +921,18 @@ body{ background:#fbfaf7; }
 .pm-row.loss{ box-shadow:inset 3px 0 0 var(--accent); }
 /* 大会カード: 左バー型をやめ、上端に細い赤帯+白カード(新聞のセクション見出し風) */
 .tcard{ border-radius:0; border-left:1px solid var(--border); }
+/* 大会カードは新聞のセクション見出し風: 上端に細い赤帯(左バーは廃止済) */
+.tcard{ border-top:2px solid var(--accent); }
+.tcard.is-completed,.tcard.is-cancelled{ border-top-color:var(--border-strong); }
+/* 状態バッジ: 進行中=丹頂赤(LIVEと統一)、他は墨系の中立。高彩度多色をやめる */
+.st-pill.is-ongoing{ background:var(--accent-bg); color:var(--accent); }
+.st-pill.is-preparation{ background:#f4efe7; color:var(--ink-700); }
+.st-pill.is-scheduled{ background:var(--ink-100); color:var(--ink-700); }
+.st-pill.is-ongoing::before{ background:var(--accent); }
+.st-pill.is-preparation::before,.st-pill.is-scheduled::before{ background:var(--ink-500); }
+/* 進捗バー: 緑グラデ→単色(完了の意味色)、赤みトラック→中立 */
+.wr-bar{ background:var(--line2, #f0ebe1); border-radius:0; height:6px; }
+.wr-bar > span{ background:var(--lg-win, #1a7a45); }
 /* 選手名鑑のグループ切替(セグメント制御): CSS未定義で375pxで見切れていた。横スクロール可能に。 */
 .pdb-seg{ display:flex; gap:2px; overflow-x:auto; -webkit-overflow-scrolling:touch;
   border:1px solid var(--border); border-radius:0; background:#fff; padding:3px; margin:14px 0;
@@ -1745,12 +1758,22 @@ const V = {
  const app = p.appearances || 0;
  const gl = p.gender === "female" ? "女" : (p.gender === "male" ? "男" : "");
  const tag = TT.catLabel(p.category) + (gl ? " ・ " + gl : "");
+ // 未対戦(出場も対戦も0)の選手は 0/0/0/記録なし の生表示をやめ、控えめな一言に。
+ const noRecord = app === 0 && total === 0;
  const rateEl = total > 0
  ? h("span", { className: "v" }, String(winRate), h("span", { className: "pct-sign" }, "%"))
  : h("span", { className: "v none" }, "記録なし");
- const bar = total > 0
+ const statsEl = noRecord
+ ? h("div", { className: "vp-norec" }, "まだ試合記録がありません")
+ : h("div", { className: "vp-stats" },
+ h("div", { className: "vp-stat" }, h("span", { className: "v" }, String(app)), h("span", { className: "k" }, "出場")),
+ h("div", { className: "vp-stat" }, h("span", { className: "v" }, String(wins)), h("span", { className: "k" }, "勝")),
+ h("div", { className: "vp-stat loss" }, h("span", { className: "v" }, String(losses)), h("span", { className: "k" }, "敗")),
+ h("div", { className: "vp-stat rate" }, rateEl, h("span", { className: "k" }, "勝率")));
+ const bar = noRecord ? null
+ : (total > 0
  ? h("div", { className: "vp-bar", title: "勝率 " + winRate + "%" }, h("i", { style: { width: winRate + "%" } }))
- : h("div", { className: "vp-bar-empty" });
+ : h("div", { className: "vp-bar-empty" }));
  return h("div", { className: "vp-card",
  "aria-label": (p.name || "選手") + " の詳細", ...V._kbtn(() => V.openPlayer(p.id)) },
  h("div", { className: "vp-head" },
@@ -1761,11 +1784,7 @@ const V = {
  h("div", { className: "vp-team" }, p.team || "")),
  h("div", { className: "vp-tag" }, tag)),
  h("div", { className: "vp-rule" }),
- h("div", { className: "vp-stats" },
- h("div", { className: "vp-stat" }, h("span", { className: "v" }, String(app)), h("span", { className: "k" }, "出場")),
- h("div", { className: "vp-stat" }, h("span", { className: "v" }, String(wins)), h("span", { className: "k" }, "勝")),
- h("div", { className: "vp-stat loss" }, h("span", { className: "v" }, String(losses)), h("span", { className: "k" }, "敗")),
- h("div", { className: "vp-stat rate" }, rateEl, h("span", { className: "k" }, "勝率"))),
+ statsEl,
  bar,
  );
  };
