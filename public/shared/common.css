@@ -884,6 +884,7 @@ input:focus, select:focus, textarea:focus {
 /* Utility */
 .flex { display: flex; }
 .flex-1 { flex: 1; }
+.flex-wrap { flex-wrap: wrap; }
 .gap-1 { gap: 4px; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; }
 /* flex gap 非対応(Safari<14.1 / iOS<14.5)向けフォールバック。common.js が検出時のみ .no-flexgap を付与するので、
    正常ブラウザには一切影響しない。gap ユーティリティ(横並び .flex.gap-N)を margin-left で代替。 */

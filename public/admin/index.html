@@ -806,6 +806,11 @@
  padding: 6px 12px; border-radius: 6px;
  font-weight: 700; min-width: 50px; text-align: center;
  }
+ /* 狭幅では「結果入力/編集/戻す」の3ボタンが折り返さず右にはみ出していた→折り返し可能に */
+ @media (max-width: 480px) {
+ .on-table-row { grid-template-columns: auto 1fr; }
+ .on-table-row > .flex.gap-1 { grid-column: 1 / -1; flex-wrap: wrap; justify-content: flex-end; }
+ }
 
  /* ブラケット表示 */
  .bracket-rounds { display: flex; gap: 10px; overflow-x: auto; padding: 8px 0; }
