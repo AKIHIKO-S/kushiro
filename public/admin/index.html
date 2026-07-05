@@ -7392,6 +7392,7 @@ const O = {
  O._lastOpsVer = undefined;
  O.reload();
  O.initPullToRefresh();   // スワイプ更新を有効化 (#238)
+ O.initRenderGuard();     // 操作中の再描画保留(#11: 押そうとした行が動く問題への対策)
  O._initNet();            // オフライン/送信待ち監視を有効化 (#線断対策)
  O._initOpsStream();      // SSE リアルタイム push を有効化 (#264)
  // 自動更新 (1.5秒): SSE が生きている間は省略。SSE 断時のフォールバックとして ops-version をポーリング。
@@ -7494,6 +7495,27 @@ const O = {
    main.addEventListener("touchcancel", end);
  },
 
+ // 操作中の再描画保留 (#11): 他端末の操作でSSE/ポーリングが再描画を起こすたびに
+ // #opMain を丸ごと差し替えていたため、タップした瞬間に押そうとした行が動いて誤タップになる
+ // ことがあった。指(ポインタ)が触れている間は再描画をせず、離した直後にまとめて反映する。
+ // render() 自体の出力ロジックは変更しない(表示は今まで通り、タイミングだけ安全にする)。
+ initRenderGuard() {
+   const main = document.getElementById("opMain");
+   if (!main || main._rgBound) return;
+   main._rgBound = true;
+   const start = () => { O._touchBusy = true; O._touchBusySince = Date.now(); };
+   const end = () => {
+     // タップのクリック処理が確実に終わってから解除(着地直後にDOMが動くのを防ぐ)
+     setTimeout(() => {
+       O._touchBusy = false;
+       if (O._renderPending) { O._renderPending = false; O._doRender(); }
+     }, 220);
+   };
+   main.addEventListener("pointerdown", start, { passive: true });
+   main.addEventListener("pointerup", end, { passive: true });
+   main.addEventListener("pointercancel", end, { passive: true });
+ },
+
  // 通信状態バー (#線断対策): オフライン/送信待ちを画面上部に常時表示
  _updateNetBar() {
    const pend = (typeof api !== "undefined" && api.pendingCount) ? api.pendingCount() : 0;
@@ -7539,6 +7561,34 @@ const O = {
    };
  },
 
+ // render() 本体の呼び出し(スクロール位置保持+描画エラーの受け皿)。reload() と
+ // initRenderGuard() の両方から呼ばれる(操作中は保留され、指を離した直後にここへ合流する)。
+ _doRender() {
+ const main = document.getElementById("opMain");
+ try {
+   // 再描画でスクロール位置が先頭に戻らないよう保持 (4秒ポーリング/対戦操作後も維持)
+   const sc = O._opScrollEl();
+   const sy = sc ? (sc === window ? window.scrollY : sc.scrollTop) : 0;
+   O.render();
+   if (sc && sy) requestAnimationFrame(() => {
+     try { if (sc === window) window.scrollTo(0, sy); else sc.scrollTop = sy; } catch (e) {}
+   });
+ } catch (renderErr) {
+   console.error("[Operations render error]", renderErr);
+   if (main) {
+     clear(main);
+     main.appendChild(h("div", { className: "empty-state",
+       style: { color: "var(--accent)", padding: "20px" } },
+       h("div", { className: "font-bold mb-2" }, "進行管理の描画でエラーが発生しました"),
+       h("div", { className: "text-sm" }, String(renderErr.message || renderErr)),
+       h("div", { className: "text-xs text-sub mt-2" },
+         "同じエラーが続く場合は、画面の写真を撮ってシステムの管理担当にお知らせください。"),
+       h("button", { className: "btn btn-sm mt-2",
+         onClick: () => O.reload() }, "再読込")));
+   }
+ }
+ },
+
  async reload(silent) {
  if (!O.tournamentId) return;
  const main = document.getElementById("opMain");
@@ -7575,28 +7625,10 @@ const O = {
    O.teamRosterMap = map; O.teamRosterByEid = byEid;
  }
  if (needBest8 && b) { O.best8 = (b.events) || []; }
- try {
-   // 再描画でスクロール位置が先頭に戻らないよう保持 (4秒ポーリング/対戦操作後も維持)
-   const sc = O._opScrollEl();
-   const sy = sc ? (sc === window ? window.scrollY : sc.scrollTop) : 0;
-   O.render();
-   if (sc && sy) requestAnimationFrame(() => {
-     try { if (sc === window) window.scrollTo(0, sy); else sc.scrollTop = sy; } catch (e) {}
-   });
- } catch (renderErr) {
-   console.error("[Operations render error]", renderErr);
-   if (main) {
-     clear(main);
-     main.appendChild(h("div", { className: "empty-state",
-       style: { color: "var(--accent)", padding: "20px" } },
-       h("div", { className: "font-bold mb-2" }, "進行管理の描画でエラーが発生しました"),
-       h("div", { className: "text-sm" }, String(renderErr.message || renderErr)),
-       h("div", { className: "text-xs text-sub mt-2" },
-         "同じエラーが続く場合は、画面の写真を撮ってシステムの管理担当にお知らせください。"),
-       h("button", { className: "btn btn-sm mt-2",
-         onClick: () => O.reload() }, "再読込")));
-   }
- }
+ // 操作中(指/ポインタが#opMainに触れている間)は再描画を保留し、離した直後にまとめて反映する
+ // (#11: 他端末の更新のたびにDOMが差し替わり、押そうとした行が動いて誤タップになる問題への対策)。
+ const stale = O._touchBusy && (Date.now() - (O._touchBusySince || 0) > 4000);
+ if (O._touchBusy && !stale) { O._renderPending = true; } else { O._doRender(); }
  } catch (e) {
    if (!silent) console.error("[Operations fetch error]", e);
    // オフライン/回線断: すでに表示済みなら画面を消さず維持 (#線断対策で運用継続)。
