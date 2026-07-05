@@ -884,6 +884,42 @@
 #tab-search .vp-bar { height:4px; border-radius:2px; margin-top:11px; background:var(--tc-line2); overflow:hidden; }
 #tab-search .vp-bar > i { display:block; height:100%; border-radius:2px; background:var(--vp-accent); }
 #tab-search .vp-bar-empty { height:4px; margin-top:11px; }
+
+/* ═══════════ 案B 新聞エディトリアル(承認済み方向) ═══════════
+   温白の紙 × 墨の太罫 × 丹頂赤1色 × タブラー数字。AI-tell(紫グラデ/左縁色線/絵文字/em-dash)を排除。
+   スポーツ結果面の権威と信頼感。既存の丹頂scopedより後勝ちで上書きする。 */
+body{ background:#fbfaf7; }
+.container{ background:transparent; }
+/* 数字は等幅(スコア・順位・件数・統計) */
+.num,.rk-rank,.rk-wins,.rk-rate,.rk-champ,.st-tile .v,.st-card .big,.vp-stat .v,
+.lv-tab-count,.pdb-total-num,.mr-score,.ms-score{ font-variant-numeric:tabular-nums; }
+/* マストヘッド: ヘッダは白地・太い墨罫、ブランドを大きく */
+.hero{ border-bottom:none; box-shadow:none; background:#fbfaf7; }
+.ktta-logo-name{ font-weight:800; letter-spacing:.01em; }
+/* ナビ: 下端に太い墨罫(新聞の題字下罫)、アクティブは赤ブロック */
+.tabs{ border-bottom:3px solid var(--ink-900); background:#fbfaf7; }
+.tabs-in{ gap:0; }
+.tab{ border-bottom:none !important; padding:11px 15px; font-weight:700; color:var(--ink-700);
+  border-right:1px solid var(--border); }
+.tab:first-child{ border-left:none; }
+.tab.active{ background:var(--accent); color:#fff; border-bottom:none !important; }
+.tab.active:hover{ background:var(--accent-l); }
+/* 選手名鑑バナー: 紫グラデ・左縁インディゴを撤去 → 白地・墨の太上罫・大きな黒数字・赤キッカー */
+.pdb-total,.pdb-hero{ background:#fff !important; border:1px solid var(--border) !important;
+  border-top:3px solid var(--ink-900) !important; border-left:1px solid var(--border) !important;
+  border-radius:0 !important; box-shadow:none !important; padding:16px 20px; }
+.pdb-total .pdb-total-num,.pdb-hero .pdb-total-num{ color:var(--ink-900) !important; text-shadow:none !important;
+  font-variant-numeric:tabular-nums; }
+.pdb-total .pdb-total-unit,.pdb-hero .pdb-total-unit{ color:var(--ink-700) !important; }
+.pdb-hero .pdb-total-lbl{ color:var(--accent) !important; font-weight:800; letter-spacing:.08em; }
+.pdb-hero .pdb-total-sub{ color:var(--sub) !important; }
+/* カード左縁の色付きアクセント線を撤去(オーナー最頻指摘) */
+.tcard-accent{ display:none !important; }
+.pm-row.win,.pm-row.loss{ border-left:none !important; }
+.pm-row.win{ box-shadow:inset 3px 0 0 var(--lg-win); }   /* 左バーの代わりに控えめなinset */
+.pm-row.loss{ box-shadow:inset 3px 0 0 var(--accent); }
+/* 大会カード: 左バー型をやめ、上端に細い赤帯+白カード(新聞のセクション見出し風) */
+.tcard{ border-radius:0; border-left:1px solid var(--border); }
 /* 接続状態バッジ: 大会進行の更新経路(SSE即時 / ポーリング / 断)を控えめに可視化 (#264) */
 .conn-badge {
   display:inline-flex; align-items:center; gap:5px;
@@ -965,7 +1001,7 @@
 
 <!-- タブ -->
 <div class="tabs">
- <button class="v-burger" id="vBurger" aria-label="メニューを開く">☰ メニュー</button>
+ <button class="v-burger" id="vBurger" aria-label="メニューを開く">メニュー</button>
  <div class="tabs-in" id="tabsIn">
  <button class="tab active" data-tab="live">大会進行</button>
  <button class="tab" data-tab="myportal">マイ番号</button>
@@ -1235,11 +1271,11 @@ const V = {
  const done = t.completed_count != null ? t.completed_count : 0;
  const progress = mc > 0 ? Math.round((done / mc) * 100) : 0;
  const meta = [
-   h("span", { className: "meta-chip" }, h("span", { className: "ic" }, "📅"), fmtD(d)),
-   h("span", { className: "meta-chip" }, h("span", { className: "ic" }, "📍"), t.venue || "会場未定"),
+   h("span", { className: "meta-chip" }, fmtD(d)),
+   h("span", { className: "meta-chip" }, t.venue || "会場未定"),
  ];
- if (t.player_count) meta.push(h("span", { className: "meta-chip" }, h("span", { className: "ic" }, "👤"), t.player_count + "名"));
- if (mc) meta.push(h("span", { className: "meta-chip" }, h("span", { className: "ic" }, "🏓"), mc + "試合"));
+ if (t.player_count) meta.push(h("span", { className: "meta-chip" }, t.player_count + "名"));
+ if (mc) meta.push(h("span", { className: "meta-chip" }, mc + "試合"));
  return h("div", { className: "tcard is-" + st, "aria-label": (t.name || "大会") + " を開く", ...V._kbtn(() => V.openTournament(t.id)) },
  h("div", { className: "tcard-accent" }),
  h("div", { className: "tcard-body" },
@@ -1313,7 +1349,7 @@ const V = {
  h("div", { className: "flex-1" },
  h("div", { style: { fontSize: "22px", fontWeight: 700 } }, t.name),
  h("div", { className: "text-sm text-sub mt-1" },
- `📅 ${fmtDate(t.date) || "日付未定"}　📍 ${t.venue || "会場未定"}`
+ `${fmtDate(t.date) || "日付未定"}　・　${t.venue || "会場未定"}`
  ),
  t.description ? h("div", { className: "text-sm mt-2" }, t.description) : null,
  ),
@@ -1433,7 +1469,7 @@ const V = {
        h("div", { className: "mr-pname" }, nameEl(m.winner_id, m.winner_name),
          m.winner_team ? h("span", { className: "mr-pteam" }, " (" + m.winner_team + ")") : null)),
      h("div", { className: "mr-vs", style: { fontSize: "11px" }, title: "対戦相手がいないため、次の試合へ自動で進みます" }, "不戦勝"),
-     h("div", { className: "mr-lose" }, h("div", { className: "mr-pname", style: { color: "var(--sub-l)" } }, "—")));
+     h("div", { className: "mr-lose" }, h("div", { className: "mr-pname", style: { color: "var(--sub-l)" } }, "対戦相手なし")));
  }
  return h("div", { className: "mr-row", style: { cursor: "pointer" },
      title: "タップで試合詳細", onClick: () => V.showBracketMatchDetail(m) },
@@ -1471,7 +1507,7 @@ const V = {
      h("div", { className: "text-sm font-bold text-sub mb-1" }, "団体戦の内訳"),
      ...m.tie_results.map(r => {
        const winName = r.winner === "home" ? (m.player1_name || "ホーム")
-         : r.winner === "away" ? (m.player2_name || "アウェイ") : "—";
+         : r.winner === "away" ? (m.player2_name || "アウェイ") : "未確定";
        // オーダー(出場選手)が記録されていれば2行目に表示 (例: 山田・佐藤 vs 鈴木)
        const hp = Array.isArray(r.home_players) ? r.home_players.filter(Boolean) : [];
        const ap = Array.isArray(r.away_players) ? r.away_players.filter(Boolean) : [];
@@ -1481,7 +1517,7 @@ const V = {
            h("span", { className: "font-bold", style: { flex: "1" } }, winName, r.winner ? " ○" : ""),
            r.score ? h("span", { className: "text-sub", style: { fontFamily: "monospace" } }, r.score) : null),
          (hp.length || ap.length) ? h("div", { className: "text-sub", style: { fontSize: "11.5px", paddingLeft: "52px" } },
-           (hp.join("・") || "—") + " vs " + (ap.join("・") || "—")) : null);
+           (hp.join("・") || "") + " vs " + (ap.join("・") || "")) : null);
      })) : null,
    m.loser_name ? h("div", { style: { padding: "10px", marginTop: "8px", background: "#f8fafc", borderRadius: "8px" } },
      h("div", { className: "text-sub" }, "" + m.loser_name,
@@ -1691,7 +1727,7 @@ const V = {
  h("div", { className: "vp-id" },
  h("div", { className: "vp-name" }, p.name || "(無名)"),
  p.furigana ? h("div", { className: "vp-furi" }, p.furigana) : null,
- h("div", { className: "vp-team" }, p.team || "—")),
+ h("div", { className: "vp-team" }, p.team || "")),
  h("div", { className: "vp-tag" }, tag)),
  h("div", { className: "vp-rule" }),
  h("div", { className: "vp-stats" },
@@ -1864,8 +1900,8 @@ const V = {
 
  // バイオ情報 (NPBの「身長/体重/出身/投打」風)
  const bioFields = [
- ["所属", p.team || "—"],
- ["ふりがな", p.furigana || "—"],
+ ["所属", p.team || ""],
+ ["ふりがな", p.furigana || ""],
  ["性別", p.gender === "female" ? "女子" : "男子"],
  ["カテゴリ", TT.catLabel(p.category)],
  ];
@@ -1885,7 +1921,7 @@ const V = {
 
  // 種目別統計 (旧・computePlayerStatsの種目別勝率に統合済のため非表示)
  if (false && p.event_stats && p.event_stats.length) {
- body.appendChild(h("div", { className: "section-title" }, "🎯 種目別戦績"));
+ body.appendChild(h("div", { className: "section-title" }, "種目別戦績"));
  const grid = h("div", { className: "event-stats-grid", style: { marginBottom: "16px" } });
  p.event_stats.forEach(s => {
  const total = (s.wins || 0) + (s.losses || 0);
@@ -2062,10 +2098,10 @@ const V = {
    const rank = i + 1;
    table.appendChild(h("div", { className: "rk-row" + (rank <= 3 ? " top" : ""), ...V._kbtn(() => V.openPlayer(p.id)) },
      h("div", { className: "rk-rank" }, String(rank)),
-     h("div", {}, h("div", { className: "rk-name" }, p.name || "(無名)"), h("div", { className: "rk-team" }, p.team || "—")),
+     h("div", {}, h("div", { className: "rk-name" }, p.name || "(無名)"), h("div", { className: "rk-team" }, p.team || "")),
      h("div", { className: "rk-wins" }, String(w), h("small", {}, "勝" + l + "敗")),
-     h("div", { className: "rk-rate" }, tot ? rate + "%" : "—"),
-     h("div", { className: "rk-champ" }, champs ? h("b", {}, String(champs) + "回") : h("span", { className: "none" }, "—"))));
+     h("div", { className: "rk-rate" }, tot ? rate + "%" : ""),
+     h("div", { className: "rk-champ" }, champs ? h("b", {}, String(champs) + "回") : "")));
  });
  main.appendChild(table);
  main.appendChild(h("div", { className: "rk-foot" }, rows.length + "名 ・ 勝利数の多い順（同数は勝率→出場数）"));
@@ -2090,7 +2126,7 @@ const V = {
 
  main.appendChild(h("div", { className: "rk-title-bar" }, h("h2", {}, "統計")));
 
- const fmt = (n) => (n == null ? "—" : Number(n).toLocaleString("ja-JP"));
+ const fmt = (n) => (n == null ? "0" : Number(n).toLocaleString("ja-JP"));
  const tiles = h("div", { className: "st-tiles" },
    h("div", { className: "st-tile accent" }, h("div", { className: "v" }, fmt(stats.playerCount)), h("div", { className: "k" }, "登録選手数")),
    h("div", { className: "st-tile" }, h("div", { className: "v" }, fmt(stats.teamCount)), h("div", { className: "k" }, "所属団体数")),
@@ -2100,10 +2136,10 @@ const V = {
 
  // フルセット率・平均試合時間(用語に平易な補足)
  const durSec = avg.avgDurationSec || 0;
- const durTxt = durSec ? (Math.floor(durSec / 60) + "分" + String(durSec % 60).padStart(2, "0") + "秒") : "—";
+ const durTxt = durSec ? (Math.floor(durSec / 60) + "分" + String(durSec % 60).padStart(2, "0") + "秒") : "集計中";
  const duo = h("div", { className: "st-duo" },
    h("div", { className: "st-card" },
-     h("div", { className: "big" }, (avg.fullSetFreqPct != null ? avg.fullSetFreqPct + "%" : "—")),
+     h("div", { className: "big" }, (avg.fullSetFreqPct != null ? avg.fullSetFreqPct + "%" : "集計中")),
      h("div", { className: "lbl" }, "フルセット率"),
      h("div", { className: "sub" }, "最終ゲームまでもつれた試合の割合（接戦の多さの目安）")),
    h("div", { className: "st-card" },
@@ -2126,7 +2162,7 @@ const V = {
    top.forEach((p, i) => {
      list.appendChild(h("div", { className: "rk-row top", ...V._kbtn(() => V.openPlayer(p.id)) },
        h("div", { className: "rk-rank" }, String(i + 1)),
-       h("div", {}, h("div", { className: "rk-name" }, p.name || "(無名)"), h("div", { className: "rk-team" }, p.team || "—")),
+       h("div", {}, h("div", { className: "rk-name" }, p.name || "(無名)"), h("div", { className: "rk-team" }, p.team || "")),
        h("div", { className: "rk-wins", style: { gridColumn: "span 3" } }, String(p.match_wins || 0), h("small", {}, "勝"))));
    });
    main.appendChild(list);
@@ -2270,7 +2306,7 @@ const MS = {
  },
  h("td", { className: "text-sub", style: { whiteSpace: "nowrap" } },
  fmtDateShort(m.tournament_date) || ""),
- h("td", {}, m.tournament_name || "—"),
+ h("td", {}, m.tournament_name || ""),
  h("td", { className: "ms-event-cell" },
  h("div", {}, m.event),
  h("div", { style: { opacity: .7 } }, m.round)),
@@ -2361,15 +2397,15 @@ const EN = {
  h("div", {},
  h("div", { className: "font-bold", style: { fontSize: "16px" } }, t.name),
  h("div", { className: "text-sm text-sub mt-1" },
- `📅 ${fmtDate(t.date) || "—"}　📍 ${t.venue || "—"}　${t.category ? "🏷 " + t.category : ""}`,
+ `${fmtDate(t.date) || "日付未定"}　・　${t.venue || "会場未定"}${t.category ? "　・　" + t.category : ""}`,
  t.organizer ? h("span", {}, "　主催: " + t.organizer) : null,
  ),
  t.entry_deadline ? h("div", { className: "text-xs",
  style: { color: "var(--accent)", marginTop: "4px" } },
- "⏰ 申込締切: " + fmtDate(t.entry_deadline)) : null,
+ "申込締切: " + fmtDate(t.entry_deadline)) : null,
  t.description ? h("div", { className: "text-sm mt-2" }, t.description) : null,
  ),
- h("button", { className: "btn", onClick: () => EN.openForm(t) }, "📝 申込フォーム"),
+ h("button", { className: "btn", onClick: () => EN.openForm(t) }, "申込フォーム"),
  ),
  h("div", { className: "text-xs text-sub" },
  "申込可能種目: ",
@@ -2457,7 +2493,7 @@ const EN = {
  toast(`申込を送信しました（${r.events.length}種目）`, "ok");
  document.querySelector(".modal-bg")?.remove();
  } }, "申込送信");
- TT.openModal("📝 大会申込フォーム", body, foot);
+ TT.openModal("大会申込フォーム", body, foot);
  },
 };
 
@@ -3025,7 +3061,7 @@ const L = {
    return h("span", { className: "tab-chip", style: { color: "#64748b", background: "#f1f5f9" } }, "不戦");
  const map = { on_table: ["進行中", "#dc2626", "#fef2f2"], pending: ["コール可", "#d97706", "#fffbeb"],
    waiting: ["待機", "#475569", "#f1f5f9"], completed: ["終了", "#15803d", "#f0fdf4"] };
- const c = map[m.status] || ["—", "#64748b", "#f1f5f9"];
+ const c = map[m.status] || ["未定", "#64748b", "#f1f5f9"];
  return h("span", { className: "tab-chip", style: { color: c[1], background: c[2] } }, c[0]);
  },
 
@@ -3297,7 +3333,7 @@ const MP = {
  h("div", { className: "player-info" },
  h("div", { className: "player-name" }, p.name),
  h("div", { className: "player-meta" },
- p.team || "—",
+ p.team || "",
  p.furigana ? " / " + p.furigana : "")),
  ));
  });
@@ -3585,7 +3621,7 @@ const MP = {
  h("div", { className: "flex-1" },
  h("div", { className: "font-bold", style: { fontSize: "16px" } }, s.player.name),
  h("div", { className: "text-xs", style: { opacity: .85 } },
- s.player.team || "—"),
+ s.player.team || ""),
  ),
  h("button", { className: "btn btn-sm btn-ghost",
  style: { background: "rgba(255,255,255,.2)", color: "#fff", border: "none" },
