@@ -66,6 +66,10 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
 
+  /* 余白スケール(リズムを揃えAI感を減らす中央レバー)。padding/margin/gap はこれを参照する */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+  --space-4: 16px; --space-6: 24px; --space-8: 32px;
+
   /* タッチ目標 (WCAG 2.5.5/2.5.8) と文字サイズ床。11px未満の font-size を新設しないこと */
   --tap-min: 44px; --tap-sm: 36px; --fs-min: 11px;
 
