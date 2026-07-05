@@ -2552,6 +2552,10 @@ const entrantStmts = {
       updated_at = datetime('now','localtime')
     WHERE id = ?
   `),
+  // 取込時に登場回戦(シード)を保存する軽量UPDATE(ブラケット再構築は呼び元でまとめて1回)。
+  setEntryRound: sqlite.prepare(`
+    UPDATE entrants SET entry_round = ?, updated_at = datetime('now','localtime') WHERE id = ?
+  `),
   // 申込承認フロー用 (entrants を申込の唯一の正本にする / Phase1)
   setStatus: sqlite.prepare(`
     UPDATE entrants SET status = ?, updated_at = datetime('now','localtime') WHERE id = ?
@@ -7618,6 +7622,7 @@ function importFromSeedList(tournamentId, data) {
   }
 
   const entrantIds = [];
+  let anySeed = false;   // 取込プレビューで登場回戦(シード)が1件でも指定されたか
   const linkedPlayers = [];
   // 自動DB連携: デフォルト ON。「氏名+所属」の完全一致でリンク。
   // false 明示時のみ無効化。
@@ -7718,17 +7723,24 @@ function importFromSeedList(tournamentId, data) {
     if (e && (p.side === "L" || p.side === "R")) {
       entrantStmts.setBracketNumber.run(parseInt(p.seed) || 0, p.side, e.id);
     }
+    // 取込プレビューで運営が入力した登場回戦(シード)を保存(1=通常/2=シード/3以上=スーパーシード)。
+    const er = Math.max(1, Math.min(8, parseInt(p.entry_round) || 1));
+    if (e && er > 1) { entrantStmts.setEntryRound.run(er, e.id); anySeed = true; }
     entrantIds.push(e.id);
   });
 
   // matches 生成は1回だけ。regenerate 時は generateBracket が「削除+生成」を同一
   // トランザクションで行う(上の修正)。旧コードは generate→bare DELETE→再generate の
   // 二重生成で、DELETE 後に2回目が throw すると matches が消えたまま復旧不能だった。
-  const r = generateBracket(tournamentId, data.event, {
-    entrant_ids: entrantIds,
-    regenerate: data.regenerate !== false,
-    placement: data.placement,
-  });
+  // シード(登場回戦>1)が1件でもあれば、紙順を保ったまま各シードのBYE区画を展開する
+  // rebuildSeededBracket を使う(シードは1回戦なしで登場回戦から。他者への巻き込みBYEなし)。
+  const r = anySeed
+    ? rebuildSeededBracket(tournamentId, data.event, { force: true })
+    : generateBracket(tournamentId, data.event, {
+        entrant_ids: entrantIds,
+        regenerate: data.regenerate !== false,
+        placement: data.placement,
+      });
 
   return { ...r, entrants_created: entrantIds.length, linked_to_players: linkedPlayers.length };
 }
