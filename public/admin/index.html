@@ -3833,7 +3833,7 @@ const A = {
      h("div", { className: "text-sm text-sub mt-1" },
        `${events.length}種目 ・ 計${totalCount}名/組` + (totalNotices ? ` ・ 要確認 ${totalNotices}件` : " ・ 警告なし")),
      h("div", { className: "text-xs text-sub mt-1" },
-       "下の内容で取り込みます（表の並び順そのまま=as_drawn）。読み取り違いがあれば取込後にトーナメント管理で修正できます。"));
+       "下の内容で取り込みます（表の並び順そのまま）。読み取り違いがあれば取込後にトーナメント管理で修正できます。"));
 
    // 編集セル(氏名/所属/相方/相方所属)。値は players 配列を直接書き換える(確定時にそのまま送信)。
    const cellInput = (obj, key, ph) => h("input", {
@@ -7706,7 +7706,7 @@ const O = {
  h("button", {
  className: "btn btn-sm " + (O.state.tournament.enforce_referee_rule !== 0 ? "btn-ok" : "btn-ghost"),
  onClick: () => O.toggleRefereeRule(),
- title: "敗者は次の試合まで審判担当。OFFにすると拘束チェックを無効化"
+ title: "敗者は次の試合まで審判担当になります。OFFにするとこの呼出制限をなくします"
  },
  (O.state.tournament.enforce_referee_rule !== 0 ? "● " : "○ ") + "敗者審判ルール"),
  // 直前の操作を取り消す (誤操作/抗議対応 #203)
@@ -7834,7 +7834,7 @@ const O = {
  const refCard = h("div", { className: "card" },
  h("div", { className: "card-head" },
  h("div", { className: "flex gap-2", style: { alignItems: "center" } },
- h("div", { className: "card-title" }, "審判候補 (敗者プール)"),
+ h("div", { className: "card-title" }, "審判候補"),
  h("div", { className: "card-title-sub" }, `${O.state.referee_queue.length}名`),
  ),
  h("div", { className: "text-xs text-sub" }, "次の試合の審判をここから割当"),
@@ -8684,7 +8684,7 @@ const O = {
  const poolChips = h("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px" } });
  if (!ordered.length) {
    poolChips.appendChild(h("div", { className: "text-xs text-sub" },
-     "敗者プールは空です。下の検索から任意の選手を割当てられます。"));
+     "審判候補がいません。下の検索から任意の選手を割当てられます。"));
  } else {
    ordered.forEach(r => {
      poolChips.appendChild(h("button", { className: "btn btn-sm",
@@ -8730,7 +8730,7 @@ const O = {
    m.referee_name || "未指定")),
  // 敗者プール (おすすめ)
  h("div", { className: "field" },
- h("label", { className: "field-label" }, "敗者プールから選ぶ (タップで即割当・緑=同種目おすすめ)"),
+ h("label", { className: "field-label" }, "審判候補から選ぶ (タップで即割当・緑=同種目おすすめ)"),
  poolChips),
  // 任意選手検索
  h("div", { className: "field mt-3" },
@@ -8739,7 +8739,7 @@ const O = {
  ),
  h("label", { className: "flex gap-2 mt-2", style: { alignItems: "center" } },
  h("input", { type: "checkbox", id: "refForce" }),
- h("span", { className: "text-sm" }, "拘束を無視して強制割当"),
+ h("span", { className: "text-sm" }, "担当中でも構わず割当てる"),
  ),
  );
  const foot = h("div", { className: "flex gap-2" },
@@ -8750,7 +8750,7 @@ const O = {
  O.reload();
  } }, "解除"),
  h("button", { className: "btn", onClick: async () => {
- if (!selectedId) return toast("敗者プールから選ぶか、検索で選手を選んでください", "err");
+ if (!selectedId) return toast("審判候補から選ぶか、検索で選手を選んでください", "err");
  await assignNow(selectedId, document.getElementById("refForce").checked);
  } }, "検索した選手で割当"),
  );
@@ -8878,7 +8878,7 @@ const O = {
  O.renderTeamMembers(m),
  ...blocks.map(b =>
  h("div", { className: "lock-line" },
- h("span", { className: "lock-tag" }, "拘束"),
+ h("span", { className: "lock-tag" }, "呼出制限"),
  h("span", { className: "lock-text" }, `${b.player_name}: ${b.label}`),
  // 審判担当中で拘束されている場合は、その審判を解任して呼べるようにする(#1 審判解放)
  (b.type === "referee" && b.locked_by_match) ? h("button", {
@@ -8912,7 +8912,7 @@ const O = {
  async toggleRefereeRule() {
  const cur = O.state.tournament.enforce_referee_rule !== 0;
  if (!confirm(cur
- ? "敗者審判ルールをOFFにします（拘束チェックなしで自由に呼出可能）。よろしいですか？"
+ ? "敗者審判ルールをOFFにします（呼出制限なしで自由に呼出可能）。よろしいですか？"
  : "敗者審判ルールをONにします（審判担当中の選手は呼べなくなります）。よろしいですか？"))
  return;
  await api.put(`/api/tournaments/${O.tournamentId}/op-settings`, {
@@ -8978,7 +8978,7 @@ const O = {
            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
            (num1 ? "#" + num1 + " " : "") + (m.player1_name || "") +
            "  vs  " + (num2 ? "#" + num2 + " " : "") + (m.player2_name || "")),
-         blocked ? h("span", { className: "text-xs", style: { flex: "0 0 auto", color: "var(--accent)" } }, "拘束") : null));
+         blocked ? h("span", { className: "text-xs", style: { flex: "0 0 auto", color: "var(--accent)" } }, "呼出制限") : null));
      });
    });
  };
@@ -9018,7 +9018,7 @@ const O = {
 
  // ===== ③ 審判 =====
  const refPool = h("select", { className: "input" },
-   h("option", { value: "" }, "（敗者プールから選択）"));
+   h("option", { value: "" }, "（審判候補から選択）"));
  O.state.referee_queue.forEach(r => { if (r.loser_id) {
    refPool.appendChild(h("option", { value: r.loser_id },
      `${r.loser_name} ${r.loser_team ? "(" + r.loser_team + ")" : ""}`)); } });
@@ -9047,7 +9047,7 @@ const O = {
      className: "btn btn-sm" + (refSource === key ? "" : " btn-ghost"),
      onClick: () => { refSource = key; selectedRefereeId = ""; manualRefName = ""; refreshRefUI(); } }, label);
    const tabs = h("div", { className: "flex gap-1 mb-2 flex-wrap" },
-     mkTab("auto", "自動 (同コート敗者)"), mkTab("pool", "敗者プール"),
+     mkTab("auto", "自動 (同コート敗者)"), mkTab("pool", "審判候補"),
      mkTab("any", "DB から検索"), mkTab("manual", "手動入力 (DB外可)"), mkTab("none", "審判なし"));
    let nb;
    if (refSource === "pool") nb = refPool;
@@ -9056,7 +9056,7 @@ const O = {
      h("input", { className: "input", placeholder: "氏名を直接入力 (例: 山本 満 / 外部審判員)",
        value: manualRefName, onInput: (e) => { manualRefName = e.target.value; } }),
      h("div", { className: "text-xs text-sub mt-1" }, "選手名簿に登録されていない外部の審判員も指定できます。"));
-   else if (refSource === "none") nb = h("div", { className: "text-sub text-sm" }, "審判なしで呼出 (拘束チェックも軽減)");
+   else if (refSource === "none") nb = h("div", { className: "text-sub text-sm" }, "審判なしで呼出 (呼出制限も緩めます)");
    else nb = h("div", { className: "text-sub text-sm" }, "同じコートで直前に敗れた選手を自動的に審判アサインします。 (敗者審判)");
    refSection.innerHTML = "";
    refSection.append(h("label", { className: "field-label" }, "③ 審判の指定 (任意)"), tabs, nb);
@@ -9086,9 +9086,9 @@ const O = {
    warnEl.innerHTML = "";
    if (blocks.length) {
      warnEl.style.display = "block";
-     warnEl.appendChild(h("div", { className: "font-bold mb-1" }, "[警告] 選手拘束あり (敗者審判ルール)"));
+     warnEl.appendChild(h("div", { className: "font-bold mb-1" }, "[警告] 審判担当中の選手がいます (敗者審判ルール)"));
      blocks.forEach(b => warnEl.appendChild(h("div", {}, `・${b.player_name}: ${b.label}`)));
-     warnEl.appendChild(h("div", { className: "mt-2 text-xs" }, "「強制呼出」を押すと拘束を無視して呼出します。"));
+     warnEl.appendChild(h("div", { className: "mt-2 text-xs" }, "「強制呼出」を押すと担当中でも呼出します。"));
    } else { warnEl.style.display = "none"; }
    teamHint.style.display = (selMatch && /団体|チーム/.test(selMatch.event || "")) ? "block" : "none";
    updateFoot();
@@ -9125,7 +9125,7 @@ const O = {
    if (r.queued) { flowModal.remove(); return toast("オフライン: 呼出を保存しました（未送信" + api.pendingCount() + "件・接続復帰後に自動送信）", "warn"); }
    if (r.error) {
      if (r.blocked) {
-       const msg = "選手拘束で呼べません:\n" + r.blocked.map(b => `・${b.player_name}: ${b.locked_by_label}`).join("\n") + "\n\n強制呼出しますか？";
+       const msg = "審判担当中のため呼べません:\n" + r.blocked.map(b => `・${b.player_name}: ${b.locked_by_label}`).join("\n") + "\n\n強制呼出しますか？";
        if (!confirm(msg)) return;
        const r2 = await api.opSend("POST", `/api/matches/${selMatch.id}/call`, { ...buildPayload(), force: true }, { tag: selMatch.id });
        if (r2.queued) { flowModal.remove(); return toast("オフライン: 強制呼出を保存しました（接続復帰後に送信）", "warn"); }
