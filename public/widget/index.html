@@ -40,7 +40,7 @@
     margin: 10px 0 5px; }
   .kw-match { display: grid; grid-template-columns: 42px 1fr; gap: 8px;
     align-items: center; background: var(--w-card); border: 1px solid var(--w-line);
-    border-left: 3px solid var(--w-accent); border-radius: 7px;
+    border-radius: 7px;
     padding: 7px 9px; margin-bottom: 5px; }
   .kw-tno { background: var(--w-accent); color: #fff; font-weight: 800;
     font-size: 13px; text-align: center; padding: 4px 0; border-radius: 5px; }
@@ -78,13 +78,16 @@
     if (!s || s.error) { root.innerHTML = '<div class="kw-empty">大会が見つかりません</div>'; return; }
     var t = s.tournament || {};
     var onT = s.on_table || [], rec = (s.recent_finished || []).filter(function(m){return m.winner_name!=="BYE"&&m.loser_name!=="BYE";});
+    // 残り試合 = 全試合数 - 完了数(呼出可能数ではない)。呼出可能はあくまで「今すぐ呼べる分」で
+    // 後続ラウンド待ちを含まず、これを「残り」と誤表示すると実際より少なく見えてしまう(#1修正と同種)。
+    var remain = Math.max(0, (s.total_matches || 0) - (s.finished_count || 0));
     var html = '';
     html += '<div class="kw-head"><span class="kw-live"><span class="dot"></span>LIVE</span>'
       + '<span class="kw-title">' + esc(t.name || "大会") + '</span></div>';
     html += '<div class="kw-body">';
     html += '<div class="kw-stats">'
       + '<div class="kw-stat"><div class="kw-stat-n red">' + onT.length + '</div><div class="kw-stat-l">進行中</div></div>'
-      + '<div class="kw-stat"><div class="kw-stat-n amber">' + (s.callable ? s.callable.length : 0) + '</div><div class="kw-stat-l">残り試合</div></div>'
+      + '<div class="kw-stat"><div class="kw-stat-n amber">' + remain + '</div><div class="kw-stat-l">残り試合</div></div>'
       + '<div class="kw-stat"><div class="kw-stat-n">' + rec.length + '</div><div class="kw-stat-l">最近終了</div></div>'
       + '</div>';
 
