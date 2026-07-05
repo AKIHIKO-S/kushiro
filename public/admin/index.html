@@ -2534,7 +2534,7 @@ const A = {
  h("div", { className: "card-title" }, "トーナメント表 (取込)"),
  h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm",
-   onClick: () => A.openExcelUpload(t.id) }, "Excel / PDF 取込"),
+   onClick: () => A.openExcelUpload(t.id) }, "組合せ表・名簿を取込"),
  h("button", { className: "btn btn-sm btn-ghost",
    onClick: () => A.openManualMatchCreate(t) }, "試合追加"),
  ),
@@ -2666,7 +2666,7 @@ const A = {
  const s3 = chip("確認中…", "");
  mk(3, "名簿を作る（抽選番号・確認）",
    "申込Excelを取込み、抽選番号を付与。重複・所属相違をチェックして名簿確定。", s3, [
-   h("button", { className: "btn btn-sm", onClick: () => A.openExcelUpload(t.id) }, "申込Excel取込"),
+   h("button", { className: "btn btn-sm", onClick: () => A.openExcelUpload(t.id) }, "組合せ表・名簿を取込"),
    h("button", { className: "btn btn-sm",
      style: { background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" },
      onClick: () => A.openDrawNumberDialog(t) }, "抽選番号 付与"),
@@ -2676,7 +2676,7 @@ const A = {
  const s4 = matches > 0 ? chip(matches + "試合 作成済", "ok") : chip("未作成", "todo");
  mk(4, "トーナメント表を作る",
    "名簿からトーナメント表を自動作成、またはExcel/PDFの組合せ表を取込。", s4, [
-   h("button", { className: "btn btn-sm", onClick: () => A.openExcelUpload(t.id) }, "Excel/PDF 取込"),
+   h("button", { className: "btn btn-sm", onClick: () => A.openExcelUpload(t.id) }, "組合せ表・名簿を取込"),
    h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openEntrantsTab(t.id) }, "名簿から生成"),
  ]);
 
@@ -4340,7 +4340,7 @@ const A = {
  h("div", { className: "flex gap-2 flex-wrap" },
  // 運営に必須の名簿操作 (主役)
  h("button", { className: "btn btn-sm",
- onClick: () => A.openExcelUpload(t.id) }, "Excel / PDF 取込"),
+ onClick: () => A.openExcelUpload(t.id) }, "組合せ表・名簿を取込"),
  h("button", { className: "btn btn-sm",
  style: { background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" },
  onClick: () => A.openDrawNumberDialog(t) }, "抽選番号 自動付与"),
@@ -4511,6 +4511,14 @@ const A = {
  // ── Excel/PDF 直接アップロード ──
  openExcelUpload(tournamentId) {
  const body = h("div", {},
+ // ─── この取込で何ができるか(取り違え防止の明確化) ───
+ h("div", { style: { marginBottom: "12px" } },
+   h("div", { className: "font-bold", style: { fontSize: "14px", marginBottom: "3px" } },
+     "トーナメント組合せ表・申込名簿の取込"),
+   h("div", { className: "text-sm text-sub" },
+     "組合せ表(会長杯/VICTAS杯など)でも、申込名簿のExcelでも、同じ手順で取り込めます。" +
+     "アップロードすると読み取り結果のプレビューが出るので、内容を確認してから取り込みます。"),
+ ),
  // ─── テンプレダウンロード (推奨) ───
  h("div", {
    style: { padding: "12px 14px", background: "#eff6ff",
@@ -4531,7 +4539,7 @@ const A = {
  "上記テンプレ以外の組合せ表 (会長杯/VICTAS杯など) も取込めます。"),
  h("div", { className: "text-xs text-sub mb-3",
    style: { padding: "8px 10px", background: "#f0fdf4",
-            borderLeft: "3px solid #15803d", borderRadius: "0 4px 4px 0" } },
+            border: "1px solid #cde9d5", borderRadius: "4px" } },
    "対応形式: ",
    h("strong", {}, ".xlsx / .xls (Excel) "),
    "または ",
