@@ -595,47 +595,28 @@
    .ms-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
  }
 
- /* ═══ 監督・顧問ビュー: 柔らかい明るいトーン (#tab-coach にスコープ) ═══ */
+ /* ═══ 監督・顧問ビュー(白磁): ティール別世界トーンを廃し、warm-white + 丹頂赤で他タブと統一 (#tab-coach) ═══ */
  #tab-coach {
-   --card: #ffffff; --card-elev: #ffffff;
-   --border: #e0ebe7; --border-strong: #cdded8;
-   --txt: #1c2230; --txt-l: #334155; --sub: #64748b; --sub-l: #8a97a8;
-   --ink-50: #eef6f4; --ink-100: #e6f3ef; --ink-400: #94a3b8;
-   background:
-     radial-gradient(1200px 360px at 50% -8%, rgba(15,118,110,.06), transparent 60%),
-     linear-gradient(180deg, #f4fbf9 0%, #ecf6f3 100%);
-   color: var(--txt);
-   border-radius: 16px;
+   background: #fff;
+   border: 1px solid var(--border);
+   border-radius: var(--radius-lg);
    padding: 14px 12px 28px;
    margin-top: 4px;
-   box-shadow: inset 0 0 0 1px rgba(15,118,110,.08);
+   box-shadow: var(--shadow);
  }
  #tab-coach .card {
-   background: var(--card);
-   border: 1px solid #e0ebe7;
-   box-shadow: 0 2px 8px rgba(15,40,35,.06);
+   background: #fff;
+   border: 1px solid var(--border);
+   box-shadow: var(--shadow);
  }
- #tab-coach .card-title { color: #14322c; }
- #tab-coach .card-head { border-bottom-color: #e3eeea; }
- #tab-coach .input, #tab-coach select, #tab-coach textarea {
-   background: #ffffff; color: #1c2230; border-color: #cdded8;
- }
- #tab-coach .input::placeholder, #tab-coach textarea::placeholder { color: #9aa6ba; }
- #tab-coach .input:hover, #tab-coach select:hover, #tab-coach textarea:hover { border-color: #0f766e; }
+ #tab-coach .input:hover, #tab-coach select:hover, #tab-coach textarea:hover { border-color: var(--accent); }
  #tab-coach .btn { background: var(--accent); border-color: var(--accent); color: #fff; }
- #tab-coach .btn:hover { background: #b91c1c; border-color: #b91c1c; }
- #tab-coach .btn-ghost { background: #ffffff; color: #44403c; border-color: #cdded8; }
- #tab-coach .btn-ghost:hover { background: #f0faf7; border-color: #0f766e; }
- #tab-coach .empty-state { color: #64748b; }
- #tab-coach .text-sub, #tab-coach .text-xs.text-sub { color: #64748b; }
- #tab-coach .badge-sub { background: #e6f3ef; color: #14322c; }
- #tab-coach a { color: #0f766e; }
- #tab-coach code { background: #f1f5f4 !important; color: #134e4a !important; border: 1px solid #e0ebe7; }
- /* 共有の通知手順ボックス(_pushHowto)も明るいトーンに */
- #tab-coach details.card { background: #fbfdfc !important; border-color: #e3eeea !important; color: #1c2230; }
- #tab-coach details.card summary { color: #14322c; }
- #tab-coach details.card .font-bold { color: #1c2230 !important; }
- #tab-coach .pdb-push, #tab-coach .badge { color: #14322c; }
+ #tab-coach .btn:hover { background: var(--accent-l); border-color: var(--accent-l); }
+ #tab-coach .btn-ghost:hover { background: var(--accent-bg); border-color: var(--accent); }
+ #tab-coach a { color: var(--accent); }
+ #tab-coach code { background: var(--ink-100) !important; color: var(--ink-800) !important; border: 1px solid var(--border); }
+ /* 共有の通知手順ボックス(_pushHowto)も白磁トーンに */
+ #tab-coach details.card { background: #fff !important; border-color: var(--border) !important; }
 
  /* ═══════════ 丹頂エディトリアル: 選手DB(白・ゴシック / viewer scoped) ═══════════
     申込フォームと同じ世界観(白基調・丹頂レッドのアクセント・ゴシック・編集的)を
@@ -1059,6 +1040,13 @@ body{ background:#fbfaf7; }
 #tab-live .live-court-match{ color:var(--txt); }
 #tab-live .live-court-ev{ font-size:9px; color:var(--sub); font-weight:700; margin-top:1px;
   text-align:center; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; letter-spacing:.02em; }
+/* 大会進行ヘッダ: 375pxで「大会進行」がタイトル縮小により字ごとに縦折れしていた。
+   モバイルはヘッダを折り返し、タイトルは1行固定、大会選択を次行フル幅に。 */
+@media(max-width:560px){
+  #tab-live .card-head{ flex-wrap:wrap; }
+  #tab-live .card-title{ white-space:nowrap; flex:0 0 auto; }
+  #tab-live .card-head .tsel{ flex:1 1 100%; }
+}
 /* ═══════════ モバイル下部ナビ(白磁・≤640pxのみ) ═══════════ */
 .v-bnav{ display:none; }
 .v-bnav-btn{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
