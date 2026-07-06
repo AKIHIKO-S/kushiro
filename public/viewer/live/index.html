@@ -203,6 +203,28 @@
   .lv-progress-eta { margin-top: 7px; font-size: 14px; font-weight: 700; color: var(--lv-sub); text-align: right; }
   .lv-progress-pct { color: #fff; font-size: 12px; font-weight: 800; padding-right: 10px; }
 
+  /* 対昨年 進捗レース(案3ボックススコア型・会場ディスプレイ向けに差分を大きく) */
+  .lv-vsprev { background: var(--lv-surface); border: 1px solid var(--lv-line);
+    border-radius: 10px; padding: 12px 16px 14px; margin-bottom: 10px; }
+  .lv-vsprev-head { display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 9px; }
+  .lv-vsprev-kicker { font-size: 12px; font-weight: 800; letter-spacing: .1em; color: var(--lv-sub); }
+  .lv-vsprev-delta { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+  .lv-vsprev-delta.up { color: var(--lv-accent); }
+  .lv-vsprev-delta.down, .lv-vsprev-delta.even { color: var(--lv-sub); }
+  .lv-vsprev-rows { display: flex; flex-direction: column; gap: 7px; }
+  .lv-vsprev-row { display: flex; align-items: center; gap: 12px; }
+  .lv-vsprev-lbl { font-size: 13px; font-weight: 700; color: var(--lv-sub); width: 40px; flex: none; }
+  .lv-vsprev-row.now .lv-vsprev-lbl { color: var(--lv-text); }
+  .lv-vsprev-track { flex: 1; min-width: 0; height: 12px; border-radius: 999px;
+    background: var(--lv-track, #efe8dd); overflow: hidden; }
+  .lv-vsprev-track > i { display: block; height: 100%; border-radius: 999px; }
+  .lv-vsprev-row.now .lv-vsprev-track > i { background: var(--lv-accent); }
+  .lv-vsprev-row.prev .lv-vsprev-track > i { background: #cbbfae; }
+  .lv-vsprev-val { font-size: 14px; font-weight: 800; color: var(--lv-text);
+    font-variant-numeric: tabular-nums; width: 92px; text-align: right; flex: none; }
+  .lv-vsprev-row.prev .lv-vsprev-val { color: var(--lv-sub); font-weight: 700; }
+
   .lv-stats {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -1234,9 +1256,11 @@ const LV = {
         `${fmtDate(s.tournament.date) || ""} ${s.tournament.venue ? " · " + s.tournament.venue : ""}`),
     ));
 
-    // 統計
-    const totalCompleted = Object.values(s.event_stats || {})
-      .reduce((a, e) => a + (e.completed || 0), 0);
+    // 統計。完了数は実試合ベースの finished_count(BYE/不戦勝除く)を正とする。
+    // event_stats.completed は BYE を含むため過大(閲覧ヒーロー17%と観戦30%の乖離・
+    // vs昨年deltaとの不整合の原因だった)。閲覧#liveタブ・vs昨年と同一基準に統一。
+    const totalCompleted = (s.finished_count != null) ? s.finished_count
+      : Object.values(s.event_stats || {}).reduce((a, e) => a + (e.completed || 0), 0);
 
     // ── 全体進捗バー (最上部) ──
     const totalMatches = (s.total_matches != null) ? s.total_matches
@@ -1261,6 +1285,30 @@ const LV = {
           ? h("div", { className: "lv-progress-eta" }, "終了予定 " + s.progress.eta_text + " ごろ（目安）")
           : null,
     ));
+    // ── 対昨年 進捗レース(比較対象が指定されていれば同経過時点の昨年ペースと差を大きく表示) ──
+    // 比較未指定/データ無しは s.vs_prev=null で非表示(グレースフル)。会場ディスプレイ向けに差分を大きく。
+    if (s.vs_prev) {
+      const vp = s.vs_prev;
+      const vpPct = Math.round((vp.pct || 0) * 100);
+      const d = vp.delta || 0;
+      const dCls = d > 0 ? "up" : d < 0 ? "down" : "even";
+      const dTxt = d > 0 ? "昨年同時刻より " + d + "試合 先行"
+        : d < 0 ? "昨年同時刻より " + Math.abs(d) + "試合 遅れ"
+        : "昨年とほぼ同ペース";
+      main.appendChild(h("div", { className: "lv-vsprev" },
+        h("div", { className: "lv-vsprev-head" },
+          h("span", { className: "lv-vsprev-kicker" }, "対昨年　" + (vp.name || "昨年")),
+          h("span", { className: "lv-vsprev-delta " + dCls }, dTxt)),
+        h("div", { className: "lv-vsprev-rows" },
+          h("div", { className: "lv-vsprev-row now" },
+            h("span", { className: "lv-vsprev-lbl" }, "今年"),
+            h("div", { className: "lv-vsprev-track" }, h("i", { style: { width: lvPct + "%" } })),
+            h("span", { className: "lv-vsprev-val" }, lvPct + "% (" + totalCompleted + ")")),
+          h("div", { className: "lv-vsprev-row prev" },
+            h("span", { className: "lv-vsprev-lbl" }, "昨年"),
+            h("div", { className: "lv-vsprev-track" }, h("i", { style: { width: vpPct + "%" } })),
+            h("span", { className: "lv-vsprev-val" }, vpPct + "% (" + (vp.done || 0) + ")")))));
+    }
     main.appendChild(h("div", { className: "lv-stats" },
       h("div", { className: "lv-stat highlight-red" },
         h("div", { className: "lv-stat-num red" }, String(s.on_table.length)),
