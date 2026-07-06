@@ -1010,6 +1010,49 @@ body{ background:#fbfaf7; }
  .rk-row .rk-rate,.rk-row .rk-champ{display:none}
  .rk-filters .rk-toggle{margin-left:0;width:100%}
 }
+/* ═══════════ 大会進行ヒーロー: 対昨年 進捗レース(白磁+案3明快さ) ═══════════
+   白の浮遊カードに、二重リング(今年=丹頂赤弧/昨年=淡グレーのゴースト弧)と
+   今年・昨年の明快な行表示を重ね、昨年同時刻との差(先行/遅れ)を即読させる。
+   昨年データが無い大会は今年のみ表示し「今年が基準年」を静かに示す(グレースフル縮退)。 */
+.vs-hero{ background:#fff; border:1px solid var(--border); border-radius:var(--radius-lg);
+  box-shadow:var(--shadow); padding:15px 17px 16px; margin-bottom:12px; }
+.vs-hero-head{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:11px; }
+.vs-kicker{ font-size:10.5px; font-weight:800; letter-spacing:.14em; color:var(--accent); }
+.vs-eta{ font-size:11.5px; color:var(--sub); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.vs-eta b{ color:var(--txt); font-weight:700; }
+.vs-hero-main{ display:flex; align-items:center; gap:16px; }
+.vs-ring{ position:relative; width:104px; height:104px; flex:none; }
+.vs-ring svg{ display:block; transform:rotate(-90deg); }
+.vs-ring-center{ position:absolute; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; }
+.vs-ring-pct{ font-size:25px; font-weight:800; line-height:1; color:var(--txt); font-variant-numeric:tabular-nums; letter-spacing:-.01em; }
+.vs-ring-sub{ font-size:10.5px; color:var(--sub); margin-top:3px; font-variant-numeric:tabular-nums; }
+.vs-rows{ flex:1; min-width:0; display:flex; flex-direction:column; gap:8px; }
+.vs-row{ display:flex; align-items:center; gap:9px; }
+.vs-row-lbl{ font-size:11px; font-weight:700; color:var(--sub); width:30px; flex:none; }
+.vs-row.now .vs-row-lbl{ color:var(--txt); }
+.vs-track{ flex:1; min-width:0; height:8px; border-radius:999px; background:var(--line2,#f0ebe1); overflow:hidden; }
+.vs-track > i{ display:block; height:100%; border-radius:999px; }
+.vs-row.now .vs-track > i{ background:var(--accent); }
+.vs-row.prev .vs-track > i{ background:#cbbfae; }
+.vs-row-val{ font-size:12px; font-weight:700; color:var(--txt); font-variant-numeric:tabular-nums; width:58px; text-align:right; flex:none; }
+.vs-row.prev .vs-row-val{ color:var(--sub); font-weight:600; }
+.vs-delta{ margin-top:3px; font-size:11.5px; font-weight:700; }
+.vs-delta.up{ color:var(--accent); }
+.vs-delta.up b{ font-size:13px; }
+.vs-delta.even,.vs-delta.down{ color:var(--sub); }
+.vs-delta.none{ color:var(--sub-l); font-weight:600; font-size:11px; }
+@media(max-width:380px){
+  .vs-hero-main{ gap:12px; }
+  .vs-ring{ width:92px; height:92px; }
+}
+/* 大会進行KPI(白磁): 縦長2列タイル→横一列のコンパクト帯。ファーストビューに
+   ヒーロー+KPI+最初の試合を収めるための密度設計。状態フィルタのタブ機能は維持。 */
+#tab-live .live-stats.tabs{ display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin-bottom:12px; }
+#tab-live .live-stats.tabs .live-stat{ padding:9px 3px; min-height:0; border-radius:12px; }
+#tab-live .live-stats.tabs .live-stat-num{ font-size:19px; }
+#tab-live .live-stats.tabs .stat-label{ font-size:9.5px; margin-top:2px; color:var(--sub); line-height:1.2; }
+#tab-live .live-stats.tabs .live-stat.active{ box-shadow:0 0 0 2px var(--accent); background:#fffaf5; }
 </style>
 </head>
 <body>
@@ -2980,6 +3023,10 @@ const L = {
    { key: "all", label: "総試合", color: "var(--ink-900)", count: s.total_matches },
  ];
  if (!L.activeTab) { const fn = tabs.find(t => t.count > 0); L.activeTab = fn ? fn.key : "ongoing"; }
+
+ // ── 対昨年 進捗レース ヒーロー(ファーストビューの主役) ──
+ main.appendChild(L.renderVsPrevHero(s));
+
  const bar = h("div", { className: "live-stats tabs" });
  tabs.forEach(t => bar.appendChild(h("div", {
    className: "live-stat" + (L.activeTab === t.key ? " active" : ""),
@@ -2997,6 +3044,71 @@ const L = {
  const content = h("div", { id: "liveTabContent", className: "mt-3" });
  main.appendChild(content);
  L.fillTab(content, s);
+ },
+
+ // 進捗リングの弧(SVG circle)。dashoffsetで割合を描く。stroke は固定色(丹頂赤等)。
+ _ringArc(r, sw, color, pct) {
+   const NS = "http://www.w3.org/2000/svg";
+   const c = document.createElementNS(NS, "circle");
+   c.setAttribute("cx", "52"); c.setAttribute("cy", "52"); c.setAttribute("r", String(r));
+   c.setAttribute("fill", "none"); c.setAttribute("stroke", color);
+   c.setAttribute("stroke-width", String(sw));
+   if (pct < 1) c.setAttribute("stroke-linecap", "round");
+   const circ = 2 * Math.PI * r;
+   c.setAttribute("stroke-dasharray", circ.toFixed(2));
+   c.setAttribute("stroke-dashoffset", (circ * (1 - Math.max(0, Math.min(1, pct)))).toFixed(2));
+   return c;
+ },
+ // 対昨年 進捗レース ヒーロー。s.vs_prev(バックエンド供給・{name,pct,done,delta})が
+ // 有れば昨年ゴースト弧+行+差分を描き、無ければ今年のみ(グレースフル縮退)。
+ renderVsPrevHero(s) {
+   const total = s.total_matches || 0;
+   const done = (s.finished_count != null) ? s.finished_count : 0;
+   const pct = total ? done / total : 0;
+   const pctInt = Math.round(pct * 100);
+   const prev = s.vs_prev || null;
+   const NS = "http://www.w3.org/2000/svg";
+   const svg = document.createElementNS(NS, "svg");
+   svg.setAttribute("width", "104"); svg.setAttribute("height", "104"); svg.setAttribute("viewBox", "0 0 104 104");
+   svg.appendChild(L._ringArc(44, 9, "#efe8dd", 1));
+   svg.appendChild(L._ringArc(44, 9, "#c01526", pct));
+   if (prev) {
+     svg.appendChild(L._ringArc(31, 6, "#f1ece4", 1));
+     svg.appendChild(L._ringArc(31, 6, "#cbbfae", prev.pct || 0));
+   }
+   const ring = h("div", { className: "vs-ring" }, svg,
+     h("div", { className: "vs-ring-center" },
+       h("div", { className: "vs-ring-pct" }, pctInt + "%"),
+       h("div", { className: "vs-ring-sub" }, done + " / " + total)));
+   const rows = [ h("div", { className: "vs-row now" },
+     h("span", { className: "vs-row-lbl" }, "今年"),
+     h("div", { className: "vs-track" }, h("i", { style: { width: pctInt + "%" } })),
+     h("span", { className: "vs-row-val" }, pctInt + "% (" + done + ")")) ];
+   if (prev) {
+     const ppct = Math.round((prev.pct || 0) * 100);
+     rows.push(h("div", { className: "vs-row prev" },
+       h("span", { className: "vs-row-lbl" }, "昨年"),
+       h("div", { className: "vs-track" }, h("i", { style: { width: ppct + "%" } })),
+       h("span", { className: "vs-row-val" }, ppct + "% (" + (prev.done || 0) + ")")));
+     const d = prev.delta || 0;
+     const dcls = d > 0 ? "up" : d < 0 ? "down" : "even";
+     const dtxt = d > 0 ? ["昨年同時刻より ", h("b", {}, "+" + d + "試合"), " 先行"]
+       : d < 0 ? ["昨年同時刻より ", h("b", {}, Math.abs(d) + "試合"), " 遅れ"]
+       : ["昨年とほぼ同ペース"];
+     rows.push(h("div", { className: "vs-delta " + dcls }, ...dtxt));
+   } else {
+     rows.push(h("div", { className: "vs-row prev" },
+       h("span", { className: "vs-row-lbl" }, "昨年"),
+       h("div", { className: "vs-track" }, h("i", { style: { width: "0%" } })),
+       h("span", { className: "vs-row-val" }, "記録なし")));
+     rows.push(h("div", { className: "vs-delta none" }, "今年が基準年 ・ 昨年との比較は次回大会から"));
+   }
+   const eta = s.progress && s.progress.eta_text;
+   const head = h("div", { className: "vs-hero-head" },
+     h("span", { className: "vs-kicker" }, "大会の進捗"),
+     eta ? h("span", { className: "vs-eta" }, "終了見込み ", h("b", {}, eta), " 頃") : null);
+   return h("div", { className: "vs-hero" }, head,
+     h("div", { className: "vs-hero-main" }, ring, h("div", { className: "vs-rows" }, ...rows)));
  },
 
  // タブ切替 (再取得せず L.state から再描画。参照タブは fillTab 内で遅延取得)
