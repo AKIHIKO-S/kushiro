@@ -819,7 +819,7 @@
   function _hslPair(hue, sat, light) {
     return {
       bg: `hsl(${hue}, ${sat}%, ${light}%)`,
-      fg: `hsl(${hue}, ${Math.min(sat + 10, 88)}%, 30%)`,
+      fg: `hsl(${hue}, ${Math.min(sat + 4, 78)}%, 32%)`,
     };
   }
   // 北海道の公式支部 (地名部分のみ)。表示は「地名+支部」。順序=色の割当順 (固定)
@@ -888,15 +888,18 @@
       style: Object.assign({ background: c.bg, color: c.fg }, extraStyle || {}) }, label);
   }
   // 支部に応じたヒーロー用グラデ(濃色)。対象外/未設定はトンマナの緑系。
+  // 破壊的レビュー後の調整: 24支部を見分ける機能自体は残しつつ、彩度を落として
+  // 「AIダッシュボードの原色グラデ」感を抑える(accentは旧85%→55%でdesign-core
+  // の彩度80%未満規範内に。from/toも中彩度に)。
   function branchGradient(raw) {
     const base = _branchBase(raw);
     if (base == null) return { from: "#0f766e", to: "#134e4a", accent: "#5eead4", hue: 172, official: false };
     const idx = HOKKAIDO_BRANCHES.indexOf(base);
     const hue = Math.round(idx * 137.508) % 360;
     return {
-      from: "hsl(" + hue + ", 58%, 40%)",
-      to: "hsl(" + ((hue + 26) % 360) + ", 64%, 23%)",
-      accent: "hsl(" + hue + ", 85%, 68%)",
+      from: "hsl(" + hue + ", 32%, 46%)",
+      to: "hsl(" + ((hue + 26) % 360) + ", 38%, 28%)",
+      accent: "hsl(" + hue + ", 55%, 66%)",
       hue, official: true,
     };
   }
