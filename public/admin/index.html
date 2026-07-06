@@ -1315,6 +1315,13 @@
  <button class="btn btn-sm btn-ghost" onclick="O.reload()">更新</button>
  <a class="btn btn-sm btn-ghost" id="opLiveLink" href="#" target="_blank">観戦ビュー</a>
  </div>
+ <!-- 対昨年 進捗レース: 「昨年の同大会」を手動で指定(観戦画面のvs昨年バーが点灯)。系列リンクが無いため運営が選ぶ。 -->
+ <div class="flex gap-2" style="flex-wrap:wrap;align-items:center;margin-top:8px">
+ <span class="text-xs text-sub">対昨年比較:</span>
+ <select class="input input-sm" id="opCompareSel"
+         onchange="O.setCompare(this.value)" style="width:280px"></select>
+ <span class="text-xs text-sub" id="opCompareHint">昨年の同じ大会を選ぶと、観戦画面に「昨年同時刻との差」が表示されます</span>
+ </div>
  </div>
  <div id="opMain">
  <div class="empty-state" style="padding:30px">
@@ -7292,6 +7299,9 @@ const O = {
      `[${sl}] ${t.name} (${t.date || ""})`));
  });
  TT.mountTournamentSelect(sel, { accent: "#0e8fa3", accentBg: "#e6f6f8" });
+ // 対昨年比較セレクタ用に全大会を保持し、比較対象プルダウンを構築
+ O._allTournaments = ts;
+ O._populateCompare();
 
  // 進行中があれば自動選択。それ以外は明示選択を促す。
  const ongoing = sorted.find(t => t.status === "ongoing");
@@ -7328,10 +7338,35 @@ const O = {
  }
  },
 
+ // 対昨年比較プルダウンを構築(選択中の大会に対する「昨年の同大会」を運営が指定)。
+ _populateCompare() {
+   const csel = document.getElementById("opCompareSel");
+   if (!csel) return;
+   const ts = O._allTournaments || [];
+   const cur = ts.find(t => t.id === O.tournamentId);
+   clear(csel);
+   csel.appendChild(h("option", { value: "" }, "なし（表示しない）"));
+   ts.filter(t => t.id !== O.tournamentId)
+     .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+     .forEach(t => csel.appendChild(h("option", { value: t.id }, `${t.name}（${t.date || "日付未定"}）`)));
+   csel.value = (cur && cur.compare_tournament_id) || "";
+   csel.disabled = !O.tournamentId;
+ },
+ async setCompare(compareId) {
+   if (!O.tournamentId) return;
+   const r = await api.put(`/api/admin/tournaments/${O.tournamentId}/compare`, { compare_id: compareId || "" });
+   if (r && r.error) { toast(r.error, "err"); return; }
+   const cur = (O._allTournaments || []).find(t => t.id === O.tournamentId);
+   if (cur) cur.compare_tournament_id = compareId || "";
+   toast(compareId ? "対昨年の比較対象を設定しました" : "対昨年の比較を解除しました", "ok");
+   O.reload();
+ },
+
  selectTournament(id) {
  O.tournamentId = id;
  if (O.poller) clearInterval(O.poller);
  O._closeOpsStream();
+ O._populateCompare();
  const liveLink = document.getElementById("opLiveLink");
  if (liveLink) {
    liveLink.href = id ? ("/viewer/live/?t=" + encodeURIComponent(id)) : "#";

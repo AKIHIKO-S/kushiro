@@ -2964,6 +2964,7 @@ function slimPublicState(st) {
     recent_finished: (st.recent_finished || []).slice(0, 12).map(liveMatch),
     finished_count: st.finished_count,
     event_stats: st.event_stats, total_matches: st.total_matches, progress: st.progress,
+    vs_prev: st.vs_prev,   // 対昨年 進捗レース(未指定/データ無しは null=フロントはグレースフル)
   };
 }
 // /live は直列化済みJSON文字列をフィンガープリント単位でキャッシュ。
@@ -3471,6 +3472,12 @@ app.post("/api/admin/tournaments/:id/referee-token", requireAdmin, (req, res) =>
 app.put("/api/admin/tournaments/:id/referee-input", requireAdmin, (req, res) => {
   const r = db.setRefereeInputEnabled(req.params.id, !!(req.body && req.body.enabled));
   if (r && r.error) return res.status(404).json(r);
+  res.json(r);
+});
+// 対昨年 進捗レース: 「昨年の同大会」への手動リンク設定/解除。body: { compare_id?:string(空で解除) }
+app.put("/api/admin/tournaments/:id/compare", requireAdmin, (req, res) => {
+  const r = db.setCompareTournament(req.params.id, (req.body && req.body.compare_id) || "");
+  if (r && r.error) return res.status(400).json(r);
   res.json(r);
 });
 // 会場パスコード (#261): 要求ON/OFF・再生成・任意指定。会場で審判に伝える暗証番号。

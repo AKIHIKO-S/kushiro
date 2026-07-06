@@ -493,6 +493,9 @@ try {
   addTCol("organizer", "TEXT DEFAULT ''");
   // 大会レベル: 'district'(地区) | 'hokkaido'(全道) | 'national'(全国) | 'other'
   addTCol("level", "TEXT DEFAULT 'district'");
+  // 対昨年 進捗レース: 「昨年の同大会」への手動リンク(系列リンクが無いため運営が指定)。
+  // 空=未指定(ヒーローは今年のみのグレースフル縮退)。指定時は同経過時点のペースを比較。
+  addTCol("compare_tournament_id", "TEXT DEFAULT ''");
   // 審判結果入力 (本部に来ずに審判が結果報告): トークン + ON/OFFフラグ
   // referee_token: ランダム文字列 (空=未発行)。referee_input_enabled=1 のときのみ有効。
   // 既定OFF。テスト大会で先に有効化して裏側検証 → 問題なければ本番大会で解禁する運用。
@@ -5529,6 +5532,76 @@ function getTeamRosters(tournamentId) {
 }
 
 // 進行状況サマリ
+// ── 対昨年 進捗レース(vs 昨年バー)の計算 ──────────────────────────
+// finished_at は "YYYY-MM-DD HH:MM:SS"(localtime)。Node/V8 は空白区切りを確実に解釈しないため T 区切りへ。
+function _parseTs(ts) {
+  if (!ts) return null;
+  const t = new Date(String(ts).replace(" ", "T")).getTime();
+  return isNaN(t) ? null : t;
+}
+// 大会の「開始基準時刻」= 最初の活動(呼出/開始/完了のいずれか最小)。専用の開始列が無いため導出。
+function _minActivity(matches) {
+  let min = null;
+  for (const m of matches) {
+    for (const f of [m.called_at, m.started_at, m.finished_at]) {
+      const t = _parseTs(f);
+      if (t != null && (min == null || t < min)) min = t;
+    }
+  }
+  return min;
+}
+// 純ロジック(DB非依存・テスト可能): 昨年の試合配列・昨年の開始時刻(ms)・今年の経過分・
+// 今年の完了数から、同経過時点の昨年ペースと差を算出。データ不足は null。
+function _vsPrevCore(prevMatches, startPrev, elapsedMin, doneNow, compareName) {
+  const isReal = (m) => m.winner_name !== "BYE" && m.loser_name !== "BYE" && !m.is_walkover;
+  const prevTotal = prevMatches.filter(isReal).length;
+  const prevReal = prevMatches.filter((m) => isReal(m) && m.status === "completed" && m.finished_at);
+  if (!prevReal.length || !prevTotal) return null;
+  const prevDoneAtElapsed = prevReal.filter((m) => {
+    const t = _parseTs(m.finished_at);
+    return t != null && (t - startPrev) / 60000 <= elapsedMin;
+  }).length;
+  return {
+    name: compareName,
+    total: prevTotal,
+    done: prevDoneAtElapsed,
+    pct: prevTotal ? prevDoneAtElapsed / prevTotal : 0,
+    delta: doneNow - prevDoneAtElapsed,
+    elapsed_min: elapsedMin,
+  };
+}
+// 今年の同経過時点における昨年ペースとの差を算出。比較対象未指定/データ無しは null(グレースフル)。
+// 返却: { name, total, done(=昨年が同経過時点で完了していた数), pct, delta(=今年-昨年), elapsed_min }
+function _computeVsPrev(tournament, allMatches, doneNow) {
+  try {
+    const compareId = tournament && tournament.compare_tournament_id;
+    if (!compareId) return null;
+    const compare = getTournament(compareId);
+    if (!compare || compare.id === tournament.id) return null;
+    const startNow = _minActivity(allMatches);
+    if (startNow == null) return null;
+    const elapsedMin = Math.max(0, Math.round((Date.now() - startNow) / 60000));
+    const prevMatches = sqlite.prepare(
+      "SELECT called_at, started_at, finished_at, winner_name, loser_name, is_walkover, status FROM matches WHERE tournament_id=?"
+    ).all(compareId);
+    if (!prevMatches.length) return null;
+    const startPrev = _minActivity(prevMatches);
+    if (startPrev == null) return null;
+    return _vsPrevCore(prevMatches, startPrev, elapsedMin, doneNow, compare.name);
+  } catch (_) { return null; }
+}
+// 「昨年の同大会」への手動リンクを設定/解除。空文字で解除。自分自身/不在は拒否。
+function setCompareTournament(tournamentId, compareId) {
+  const t = getTournament(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  const cid = compareId ? String(compareId) : "";
+  if (cid && cid === tournamentId) return { error: "自分自身は比較対象にできません" };
+  if (cid && !getTournament(cid)) return { error: "比較対象の大会が見つかりません" };
+  sqlite.prepare("UPDATE tournaments SET compare_tournament_id=?, updated_at=datetime('now','localtime') WHERE id=?")
+    .run(cid, tournamentId);
+  return { ok: true, compare_tournament_id: cid };
+}
+
 function getOperationState(tournamentId) {
   const tournament = getTournament(tournamentId);
   if (!tournament) return null;
@@ -5725,6 +5798,10 @@ function getOperationState(tournamentId) {
     eventStats[e][m.status] = (eventStats[e][m.status] || 0) + 1;
   });
 
+  // 対昨年 進捗レース(比較対象大会が指定されていれば同経過時点の昨年ペースと差を算出)
+  const _vsDoneNow = finished.filter(m => m.winner_name !== "BYE" && m.loser_name !== "BYE" && !m.is_walkover).length;
+  const vs_prev = _computeVsPrev(tournament, allMatches, _vsDoneNow);
+
   return {
     tournament: {
       id: tournament.id, name: tournament.name, date: tournament.date,
@@ -5768,6 +5845,7 @@ function getOperationState(tournamentId) {
       }
       return { avg_match_min: avg, remaining, eta_text: etaText, eta_minutes_left: minsLeft };
     })(),
+    vs_prev: (vs_prev === undefined ? null : vs_prev),   // 対昨年 進捗レース(未指定/データ無しは null)
   };
 }
 
@@ -7268,7 +7346,7 @@ function swapDoublesOrder(tournamentId, event) {
 //   ・matches の player/entrant/referee の id(FK)は null 化(クラウドに無い選手IDでのFK違反回避・PII連鎖防止)。
 //     公開ビューは player1_name 等の非正規化名で描画するので表示は成立する。
 const SYNC_T_FIELDS = ["id", "name", "date", "venue", "court_count", "status", "description", "state_json",
-  "category", "organizer", "court_rows", "court_cols", "event_config"];
+  "category", "organizer", "court_rows", "court_cols", "event_config", "compare_tournament_id"];
 const SYNC_MATCH_NULL_FK = ["winner_id", "loser_id", "player1_id", "player2_id",
   "player1_entrant_id", "player2_entrant_id", "referee_id"];
 let _matchColCache = null;
@@ -8881,6 +8959,8 @@ module.exports = {
   getPriorityLockForPlayer, getMatchPriorityBlocks,
   getCallableMatches, getOnTableMatches, getRefereeQueue,
   getOperationState, getOpMatchList, getPlayerLiveStatus, getTeamRosters,
+  setCompareTournament,
+  _vsPrevCore, _minActivity, _parseTs,   // 対昨年レースの純ロジック(回帰テスト用)
   getBracket, deleteEventMatches, deleteRoster, rosterStats, setCourtLayout,
   // 試合検索 / H2H / 選手統計
   searchMatches, countMatchesForSearch, getSearchFilters,
