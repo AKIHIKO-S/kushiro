@@ -423,11 +423,14 @@
  }
  .op-stat .op-stat-ic { font-size: 14px; line-height: 1; margin-bottom: 4px; }
  .op-stat-num { font-size: 26px; font-weight: 800; line-height: 1;
-   font-family: var(--font-display); }
- .op-stat-num.red { color: #15803d; }      /* 進行中=緑 (動いている=good) */
- .op-stat-num.orange { color: #b45309; }    /* 呼べる=橙 (要対応) */
- .op-stat-num.green { color: var(--ink-500); } /* 終了=灰 */
- .op-stat-num.blue { color: #1d4ed8; }      /* 待機=青 */
+   font-family: var(--font-display); font-variant-numeric: tabular-nums; }
+ /* 状態色は viewer/観戦大画面と共通の --state-* トークンに統一(破壊的レビュー#1: 旧実装は
+    「進行中=緑」「終了=灰」という他画面と正反対のマッピングで、クラス名(red/green)と
+    実色も食い違っていた)。 */
+ .op-stat-num.st-ongoing { color: var(--state-ongoing); }
+ .op-stat-num.st-callable { color: var(--state-callable); }
+ .op-stat-num.st-waiting { color: var(--state-waiting); }
+ .op-stat-num.st-done { color: var(--state-done); }
  .op-stat-label { font-size: 11px; color: var(--ink-600); margin-top: 4px; font-weight: 600; }
  /* サマリをタブ化: クリック可能 + アクティブ表示 */
  .op-summary.tabs .op-stat { cursor: pointer; user-select: none;
@@ -437,10 +440,10 @@
  .op-summary.tabs .op-stat.active { box-shadow: 0 0 0 2px var(--accent, #2563eb); border-top-width: 4px; }
  /* 参照タブ(待機/総試合)のコンパクト行 */
  #opTabContent .op-browse-empty { text-align: center; color: var(--ink-500); padding: 26px 10px; }
- .op-stat.s-ongoing { border-top-color: #16a34a; background: linear-gradient(180deg,#f0fdf4,#fff); }
- .op-stat.s-callable { border-top-color: #d97706; background: linear-gradient(180deg,#fffbeb,#fff); }
- .op-stat.s-waiting { border-top-color: #2563eb; background: linear-gradient(180deg,#eff6ff,#fff); }
- .op-stat.s-done { border-top-color: var(--sub); }
+ .op-stat.s-ongoing { border-top-color: var(--state-ongoing); }
+ .op-stat.s-callable { border-top-color: var(--state-callable); }
+ .op-stat.s-waiting { border-top-color: var(--state-waiting); }
+ .op-stat.s-done { border-top-color: var(--state-done); }
  .op-stat.s-total { border-top-color: var(--ink-700); }
  /* ツール折りたたみ (右寄せ・縦並びドロップダウン) #278 */
  .op-tools { display: inline-block; margin-left: auto; position: relative; }
@@ -536,7 +539,7 @@
  }
  .court-cell-match .cc-name { font-size: 16px; font-weight: 800; }   /* 高齢者配慮で大きめ */
  .court-cell-match .cc-furi { font-size: 10px; color: var(--sub); font-weight: 500; letter-spacing: .02em; }
- .court-cell-match .cc-ref { font-size: 12px; color: #6d28d9; margin-top: 2px; font-weight: 700; }
+ .court-cell-match .cc-ref { font-size: 12px; color: var(--ink-600); margin-top: 2px; font-weight: 700; }
  .court-cell-match .cc-team { font-size: 12px; color: var(--ink-600); font-weight: 600;
    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
  .court-cell-vs { font-size: 11px; color: var(--sub); font-weight: 600; margin: 2px 0; }
@@ -573,17 +576,18 @@
  writing-mode: vertical-rl; text-orientation: upright; letter-spacing: .35em;
  }
 
- /* 呼べる対戦リスト */
+ /* 呼べる対戦リスト。左縁の色付きアクセント線(border-left)は破壊的レビューで再犯と指摘された
+    禁止パターン(オーナー最頻指摘)のため、viewer側で採用済みの inset box-shadow に統一する。 */
  .callable-row {
  display: grid; grid-template-columns: auto 1fr auto auto;
  gap: 10px; align-items: center;
  background: #fff; border: 1px solid var(--border);
- border-left: 4px solid var(--accent);
+ box-shadow: inset 3px 0 0 var(--accent);
  border-radius: var(--radius); padding: 10px 14px;
  margin-bottom: 6px;
  }
  .callable-row.waiting {
- border-left-color: var(--sub-l); background: #f8fafc;
+ box-shadow: inset 3px 0 0 var(--sub-l); background: #f8fafc;
  }
  /* 呼出順 番号 */
  .call-order {
@@ -621,9 +625,9 @@
  .lock-tag { background: var(--accent); color: #fff; font-size: 14px; font-weight: 800;
    border-radius: 6px; padding: 2px 10px; flex: 0 0 auto; }
  .lock-text { font-size: 15px; font-weight: 700; color: #b91c1c; line-height: 1.4; }
- /* 大会運営ガイド (5ステップ導線) #195 */
- .flow-guide { background: linear-gradient(135deg,#eef2ff 0%,#fff 60%);
-   border-left: 4px solid var(--pri, #4f46e5); }
+ /* 大会運営ガイド (5ステップ導線) #195。左縁アクセント線(禁止パターン)と薄い青紫グラデ
+    (死にフォールバック #4f46e5 含む)を撤去し、上端の細罫のみに統一。 */
+ .flow-guide { background: #fff; border: 1px solid var(--border); border-top: 3px solid var(--accent); }
  .flow-guide-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
  .flow-guide-title { font-size:16px; font-weight:800; color:var(--ink-900); }
  .flow-guide-sub { font-size:11px; color:var(--sub); }
@@ -676,7 +680,7 @@
    display: flex; align-items: flex-start; gap: 8px;
    margin-top: 6px; padding: 6px 9px;
    background: #f0fdfa; border: 1px solid #99f6e4;
-   border-left: 3px solid #0d9488; border-radius: 7px;
+   border-radius: 7px;
  }
  .team-roster .trl-cap {
    flex: 0 0 auto; font-size: 10px; font-weight: 800;
@@ -1076,10 +1080,12 @@
  .table-chip:hover { border-color: var(--pri-l); background: var(--pri-bg); }
  .table-chip.busy { background: #fef2f2; border-color: var(--accent); color: var(--accent); cursor: not-allowed; }
  .table-chip.selected { background: var(--pri); color: #fff; border-color: var(--pri); }
- .table-chip.extra { background: #ddd6fe; color: #4c1d95; border-color: #7c3aed; }
- .court-cell.extra { border-color: #7c3aed; background: linear-gradient(135deg, #faf5ff, #f3e8ff); }
+ /* 団体戦の追加コート識別色: 旧・紫#7c3aedから金/琥珀系(--gold)へ変更しAI-tell排除
+    (viewer/live側で既に採用済みの「墨がかった琥珀」と同じ方向性)。 */
+ .table-chip.extra { background: #fef3c7; color: #78350f; border-color: var(--gold); }
+ .court-cell.extra { border-color: var(--gold); background: linear-gradient(135deg, #fffbeb, #fef3c7); }
  .court-cell.extra::after { content: "+"; position: absolute; top: 2px; right: 4px;
-   color: #7c3aed; font-weight: 700; font-size: 12px; }
+   color: var(--gold); font-weight: 700; font-size: 12px; }
 
  /* ═══════════ 丹頂デイ・管制 (白基調・寒色アクセント / admin専用) ═══════════
     フルダークは可読性が落ちたため白基調へ。viewer(白＋丹頂レッド・編集的)と明確に分けるため、
@@ -1115,10 +1121,11 @@
  .btn-danger:hover{ background:var(--tancho); color:#fff; }
 
  /* ── 丹頂デイ: 選手画面の統計(共有 playerStatsSection)を admin トーンに統一 ──
-    緑ヒーロー → スレート白カード＋氷青の左帯。タイル/フォーム/内訳も白基調へ。
+    緑ヒーロー → スレート白カード＋氷青の上端帯(左縁アクセント線は禁止パターンのため
+    上端帯に変更、破壊的レビュー#5)。タイル/フォーム/内訳も白基調へ。
     勝=緑/敗=赤 は意味色として維持。admin専用<style>なので viewer(別doc)には非干渉。 */
  .psum{ background:#eef2f7!important; color:var(--txt)!important; border:1px solid var(--border);
-   border-left:5px solid var(--accent); border-radius:14px; box-shadow:none; }
+   border-top:4px solid var(--accent); border-radius:14px; box-shadow:none; }
  .psum-rate-v{ color:var(--txt); }
  .psum-rate-k, .psum-rec{ color:var(--sub); opacity:1; }
  .psum-rec b{ color:var(--txt); }
@@ -6252,11 +6259,11 @@ const A = {
   const sec = (title, items, color) => {
    if (!items.length) return;
    body.appendChild(h("div", { style: { fontWeight: "700", fontSize: "13px", margin: "12px 0 6px", color } }, `${title} (${items.length})`));
-   items.forEach(t => body.appendChild(h("div", { className: "card", style: { padding: "8px 10px", marginBottom: "6px", fontSize: "12.5px", borderLeft: `4px solid ${color}` } }, t)));
+   items.forEach(t => body.appendChild(h("div", { className: "card", style: { padding: "8px 10px", marginBottom: "6px", fontSize: "12.5px", borderTop: `3px solid ${color}` } }, t)));
   };
   sec("エラー: 重複・氏名未入力", errs.map(e => e.message), "#dc2626");
   sec("警告: seed重複・相方未入力・所属相違", warns.map(w => w.message), "#d97706");
-  sec("氏名の表記ゆれ (同一人物の可能性)", ex.nameVariants.map(n => `「${n.name}」: 表記[${n.raws.join(" / ")}]` + (n.teams.length > 1 ? ` 所属[${n.teams.join(" / ")}]` : "") + (n.furis.length > 1 ? ` ふりがな[${n.furis.join(" / ")}]` : "")), "#7c3aed");
+  sec("氏名の表記ゆれ (同一人物の可能性)", ex.nameVariants.map(n => `「${n.name}」: 表記[${n.raws.join(" / ")}]` + (n.teams.length > 1 ? ` 所属[${n.teams.join(" / ")}]` : "") + (n.furis.length > 1 ? ` ふりがな[${n.furis.join(" / ")}]` : "")), "#0e8fa3");
   sec("性別と種目の不一致", ex.genderConflicts.map(g => `${g.name}${g.team ? `(${g.team})` : ""}: 選手は${g.pg === "female" ? "女子" : "男子"}だが種目「${g.event}」は${g.eg === "female" ? "女子" : "男子"}`), "#be185d");
   sec("男女種目の掛け持ち (要確認)", ex.crossList.map(c => `${c.name}${c.team ? `(${c.team})` : ""}: ${c.evs.join(" / ")}`), "#be185d");
   if (!cnt) body.appendChild(h("div", { className: "card", style: { padding: "14px", textAlign: "center", color: "#15803d", fontWeight: "700" } }, "問題なし。申込データは良好です"));
@@ -6672,7 +6679,7 @@ const A = {
  // ─── 大会レベル別 戦績 (全道/全国を別記録) ───
  (() => {
    const ls = p.level_stats || {};
-   const levels = [["national","全国","#7c3aed"],["hokkaido","全道","#b91c1c"],
+   const levels = [["national","全国","#a16207"],["hokkaido","全道","#b91c1c"],
                    ["district","地区・市民","#2563eb"],["other","オープン","#15803d"]];
    const rows = levels.filter(([k]) => ls[k] && (ls[k].wins + ls[k].losses) > 0);
    if (!rows.length) return null;
@@ -6812,7 +6819,7 @@ const A = {
  _levelInfo(level) {
    switch (level) {
      case "hokkaido": return { label: "全道大会", bg: "#fef2f2", color: "#b91c1c", border: "#fca5a5" };
-     case "national": return { label: "全国大会", bg: "#faf5ff", color: "#7c3aed", border: "#d8b4fe" };
+     case "national": return { label: "全国大会", bg: "#fefce8", color: "#a16207", border: "#fde68a" };
      case "other": return { label: "オープン", bg: "#f0fdf4", color: "#15803d", border: "#86efac" };
      default: return null; // district = バッジなし
    }
@@ -7693,7 +7700,7 @@ const O = {
      const isDone = total > 0 && done >= total;
      progList.appendChild(h("div", { className: "ev-progress" + (isDone ? " done" : "") },
        h("span", { className: "ev-name" },
-         h("span", { className: "ev-priority", style: { background: O._eventPriorityColor(ev) } }), ev),
+         h("span", { className: "ev-priority", style: { background: TT.eventColor(ev).bg } }), ev),
        h("span", { className: "ev-count" },
          isDone ? h("span", { className: "ev-done-tag" }, "完了") : `${done} / ${total}`),
        h("span", { className: "ev-bar" }, h("span", { style: { width: epct + "%" } }))));
@@ -7704,10 +7711,10 @@ const O = {
 
  // サマリをタブ化 (クリックで該当状態の試合に振り分け)。バッジ件数は従来どおり。
  const opTabDefs = [
-   { key: "ongoing", scls: "s-ongoing", numCls: "red", label: "進行中", num: O.state.on_table.length },
-   { key: "callable", scls: "s-callable", numCls: "orange", label: "呼べる", num: O.state.callable.length },
-   { key: "waiting", scls: "s-waiting", numCls: "blue", label: "待機", num: O.state.waiting },
-   { key: "done", scls: "s-done", numCls: "green", label: "終了", num: totalCompleted },
+   { key: "ongoing", scls: "s-ongoing", numCls: "st-ongoing", label: "進行中", num: O.state.on_table.length },
+   { key: "callable", scls: "s-callable", numCls: "st-callable", label: "呼べる", num: O.state.callable.length },
+   { key: "waiting", scls: "s-waiting", numCls: "st-waiting", label: "待機", num: O.state.waiting },
+   { key: "done", scls: "s-done", numCls: "st-done", label: "終了", num: totalCompleted },
    { key: "all", scls: "s-total", numCls: "", label: "総試合", num: O.state.total_matches },
  ];
  if (!O.activeOpTab) { const fn = opTabDefs.find(t => t.num > 0); O.activeOpTab = fn ? fn.key : "ongoing"; }
@@ -7777,8 +7784,7 @@ const O = {
  h("div", { className: "op-tools-body" },
  // 見出しでグルーピングし、散らばりを解消(#12)。
  h("div", { className: "op-tools-adv", style: { marginTop: 0, paddingTop: 0, borderTop: "none" } }, "表示・編集"),
- h("button", { className: "btn btn-sm", style: { background: "#7c3aed" },
-   onClick: () => O.openVisualBracket() }, "トーナメント表"),
+ h("button", { className: "btn btn-sm", onClick: () => O.openVisualBracket() }, "トーナメント表"),
  h("button", { className: "btn btn-sm", onClick: () => O.openBracketGen() }, "トーナメント生成"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openLayoutSettings() },
  `コートレイアウト (${O.state.tournament.court_rows}×${O.state.tournament.court_cols}=${O.state.tournament.court_rows * O.state.tournament.court_cols}コート)`),
@@ -7825,8 +7831,10 @@ const O = {
  ),
  h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center" } },
  h("span", { style: { fontSize: "11px", color: "var(--sub)" } }, "優先:"),
- prioDot("#7c3aed", "団体"), prioDot("#db2777", "混合D"),
- prioDot("#2563eb", "男D"), prioDot("#dc2626", "女D"),
+ /* 凡例の色は TT.eventColor() から動的取得(破壊的レビュー#2: 以前はここだけ独自のハードコード値
+    を持ち、コート表示側の色と食い違っていた=同じ「団体」が画面内で2色になるバグ) */
+ prioDot(TT.eventColor("団体戦").bg, "団体"), prioDot(TT.eventColor("混合ダブルス").bg, "混合D"),
+ prioDot(TT.eventColor("男子ダブルス").bg, "男D"), prioDot(TT.eventColor("女子ダブルス").bg, "女D"),
  prioDot("var(--sub)", "シングルス")),
  ),
  );
@@ -7880,7 +7888,7 @@ const O = {
  Object.entries(byEv).forEach(([ev, rs]) => {
    refCard.appendChild(h("div", { style: { marginBottom: "8px" } },
    h("div", { className: "flex gap-1", style: { alignItems: "center", marginBottom: "4px" } },
-     h("span", { className: "ev-priority", style: { background: O._eventPriorityColor(ev) } }),
+     h("span", { className: "ev-priority", style: { background: TT.eventColor(ev).bg } }),
      h("span", { style: { fontSize: "11px", fontWeight: "700", color: "var(--ink-700)" } }, ev),
      h("span", { className: "text-xs text-sub" }, `(${rs.length}名)`)),
    h("div", { className: "flex gap-2 flex-wrap" },
@@ -8158,7 +8166,7 @@ const O = {
 
  const toolbar = h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", margin: "8px 0" } },
    h("button", { className: "btn btn-sm btn-ok", onClick: () => O.openAddMatch(sel) }, "＋ 対戦を追加"),
-   h("button", { className: "btn btn-sm", style: { background: "#7c3aed", color: "#fff" },
+   h("button", { className: "btn btn-sm",
      title: "トーナメント表にシード選手を追加。既存の対戦はそのまま保持し、表の上/下に登場回戦から合流(BYE上がり)します。",
      onClick: () => O.openAddSeed(sel) }, "＋ シードを追加"),
    h("button", { className: "btn btn-sm", style: { background: "#a16207", color: "#fff" },
@@ -8184,8 +8192,7 @@ const O = {
        onClick: () => { zoom = Math.min(2, Math.round((zoom + 0.1) * 10) / 10); applyZoom(); } }, "＋")),
    h("button", { className: "btn btn-sm btn-ghost", title: "横スクロール無しで全体が入るよう倍率を自動調整",
      onClick: fitWidth }, "⤢ 画面に合わせる"),
-   h("button", { className: "btn btn-sm", style: { background: "#7c3aed" },
-     onClick: () => O.openVisualBracket() }, "全画面・印刷"),
+   h("button", { className: "btn btn-sm", onClick: () => O.openVisualBracket() }, "全画面・印刷"),
    h("button", { className: "btn btn-sm", style: { background: "#1f6f3f", color: "#fff" },
      title: "両山トーナメント表(左右対向・中央決勝)をExcelで出力。手修正・印刷用。",
      onClick: () => A.downloadAuthedFile(`/api/tournaments/${O.tournamentId}/bracket/export.xlsx?event=${encodeURIComponent(sel)}`, `トーナメント表_${sel}.xlsx`) }, "表をExcel出力"),
@@ -8794,14 +8801,6 @@ const O = {
  openModal("審判の割当 / 変更", body, foot);
  },
 
- // 種目の呼出優先色 (団体=紫 / 混合D=桃 / 男D=青 / 女D=赤 / シングルス=灰)
- _eventPriorityColor(ev) {
-   ev = ev || "";
-   if (/団体|チーム/.test(ev)) return "#7c3aed";
-   if (/混合|ミックス/.test(ev)) return "#db2777";
-   if (/ダブルス/.test(ev)) return /女/.test(ev) ? "#dc2626" : "#2563eb";
-   return "var(--sub)";
- },
  // 姓のみ抽出
  _surname(full) { return (full || "").split(/[\s　]/)[0] || full || ""; },
 
@@ -8882,7 +8881,7 @@ const O = {
    m.player1_team, m.player2_team].filter(Boolean).join(" ").toLowerCase();
  const num1 = m.player1_bracket_number || m.entrant1_bracket_number;
  const num2 = m.player2_bracket_number || m.entrant2_bracket_number;
- const pColor = O._eventPriorityColor(m.event);
+ const pColor = TT.eventColor(m.event).bg;
  // 選手ピル (番号 + 氏名 + ふりがな + 所属)
  const pill = (name, furi, team, num) => h("span", { className: "player-pill" },
    num ? h("span", { className: "pnum" }, "#" + num) : null,
@@ -8891,7 +8890,7 @@ const O = {
    h("span", { className: "pteam" }, team ? "(" + team + ")" : ""));
  const row = h("div", { className: "callable-row" + (blocked ? " waiting" : "") + (isNext ? " next-up" : "") + (announced ? " announced" : ""),
  "data-names": namesKey,
- style: blocked ? { borderLeftColor: "var(--accent)", background: "#fef2f2" } : {} },
+ style: blocked ? { boxShadow: "inset 3px 0 0 var(--accent)", background: "#fef2f2" } : {} },
  // 順番番号 + コール済みチェック
  h("div", { className: "call-order-wrap" },
    h("div", { className: "call-order" }, idx != null ? String(idx + 1) : "未定"),
@@ -8994,7 +8993,7 @@ const O = {
    Object.entries(byEv).forEach(([ev, ms]) => {
      matchListWrap.appendChild(h("div", { style: { display: "flex", alignItems: "center", gap: "6px",
        margin: "4px 2px 3px", fontSize: "11px", fontWeight: 700, color: "var(--ink-700)" } },
-       h("span", { className: "ev-priority", style: { background: O._eventPriorityColor(ev) } }), ev,
+       h("span", { className: "ev-priority", style: { background: TT.eventColor(ev).bg } }), ev,
        h("span", { className: "text-xs text-sub" }, "(" + ms.length + ")")));
      ms.forEach(m => {
        const blocked = (m.blocks || []).length > 0;
@@ -10373,7 +10372,7 @@ const O = {
    h("button", { className: "btn btn-sm btn-ghost", title: "横スクロール無しで全体が入るよう倍率を自動調整",
      onClick: fitWidth }, "⤢ 画面に合わせる"),
    h("button", { className: "btn btn-sm", style: { background: "#0ea5e9" }, onClick: toggleFs }, "⛶ 全画面"),
-   h("button", { className: "btn btn-sm", style: { background: "#7c3aed" }, onClick: printBracket }, "印刷 (A3横)"),
+   h("button", { className: "btn btn-sm", onClick: printBracket }, "印刷 (A3横)"),
    h("span", { className: "text-xs text-sub", style: { marginLeft: "auto" } },
      "1回戦の選手は、名前を指やマウスで動かして入れ替えできます"),
  );
@@ -10869,7 +10868,7 @@ const O = {
        "この選手を外して、選んだ登場回戦のシードとして上/下に再配置します（元の相手は不戦勝で繰り上がり、枠は自動で広がります）。"),
      h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
        seedRoundSel, seedSideSel,
-       h("button", { className: "btn btn-sm", style: { background: "#7c3aed", color: "#fff" },
+       h("button", { className: "btn btn-sm btn-ok",
          onClick: async () => {
            if (!confirm(`「${currentName}」を ${seedRoundSel.value}回戦からのシードに繰り上げます。よろしいですか？`)) return;
            const payload = { event, pos, slot, entry_round: parseInt(seedRoundSel.value) || 2, side: seedSideSel.value, base_rev: ctx.getRev() };
@@ -12319,7 +12318,7 @@ const TMgmt = {
     const opRow = h("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" } });
     opRow.appendChild(h("button", { className: "btn btn-sm", onClick: () => TMgmt._openReplacePicker(row, modal) }, has ? "別の選手に置換" : "選手を設定"));
     // 選手マスタDBから選択(未エントリーは自動で出場追加)。ダブルス枠はv1非対象(ペアは出場/相方入替で対応)。
-    if (!row.is_doubles) opRow.appendChild(h("button", { className: "btn btn-sm", style: { background: "#7c3aed", color: "#fff" },
+    if (!row.is_doubles) opRow.appendChild(h("button", { className: "btn btn-sm",
       onClick: () => { if (modal) modal.remove(); O._editSlot(TMgmt._treeCtx(), row.pos, row.slot, has ? (row.display_name || row.name || "") : ""); } }, "選手DBから選択…"));
     if (!row.is_bye) opRow.appendChild(h("button", { className: "btn btn-sm", style: { background: "#0ea5e9" }, onClick: () => TMgmt._doSetSlot(row, { mode: "bye" }, modal) }, "BYE(シード扱い)にする"));
     if (has || row.is_bye) opRow.appendChild(h("button", { className: "btn btn-sm btn-ghost", onClick: () => TMgmt._doSetSlot(row, { mode: "clear" }, modal) }, "空きにする"));

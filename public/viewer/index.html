@@ -394,10 +394,11 @@
  .live-court-hq { width: 100% !important; }
  }
 
- /* 進行中試合カード */
+ /* 進行中試合カード。左縁アクセント線とグラデ背景(禁止パターン)を撤去し、
+    inset box-shadow + フラット白背景に統一(破壊的レビューで再犯と指摘)。 */
  .live-match-card {
- background: linear-gradient(90deg, #fffbeb 0%, #fff 100%);
- border: 1px solid var(--warn); border-left: 4px solid var(--accent);
+ background: #fff;
+ border: 1px solid var(--warn); box-shadow: inset 3px 0 0 var(--accent);
  border-radius: var(--radius); padding: 10px 14px;
  margin-bottom: 6px;
  display: grid; grid-template-columns: auto 1fr;
@@ -681,9 +682,10 @@
  #tab-search .pdb-winrate-bar>span{background:var(--tc-green)}
  #tab-search #searchStatus{color:var(--tc-ink3)}
 
- /* ── プロフィール: 通算勝率ヒーロー(緑ベタ→白カード+丹頂赤帯) ── */
+ /* ── プロフィール: 通算勝率ヒーロー(緑ベタ→白カード+丹頂赤の上端帯)。
+    左縁アクセント線は禁止パターンのため上端帯に変更(破壊的レビュー#5)。 ── */
  #tab-player .psum{background:#fff!important;color:var(--tc-ink)!important;border:1px solid var(--tc-line);
-   border-left:5px solid var(--tc-red);border-radius:16px;box-shadow:var(--tc-sh);padding:20px 22px}
+   border-top:4px solid var(--tc-red);border-radius:16px;box-shadow:var(--tc-sh);padding:20px 22px}
  #tab-player .psum-rate-v{color:var(--tc-ink);font-size:48px}
  #tab-player .psum-rate-k,#tab-player .psum-rec{color:var(--tc-ink2);opacity:1}
  #tab-player .psum-rec b{color:var(--tc-ink)}
@@ -2965,11 +2967,12 @@ const L = {
  // ── 進行状態タブ (サマリカードをタブ化し、該当試合を振り分け) ──
  const finCount = (s.finished_count != null) ? s.finished_count
    : (s.recent_finished || []).filter(m => m.winner_name !== "BYE" && m.loser_name !== "BYE" && !m.is_walkover).length;
+ // 状態色は admin・観戦大画面と共通の --state-* トークンに統一(破壊的レビュー#1)。
  const tabs = [
-   { key: "ongoing", label: "進行中", color: "var(--accent)", count: s.on_table.length },
-   { key: "callable", label: "次に呼ぶ", color: "var(--warn)", count: s.callable.length },
-   { key: "waiting", label: "待機中", color: "var(--pri)", count: s.waiting },
-   { key: "finished", label: "終了", color: "var(--ok)", count: finCount },
+   { key: "ongoing", label: "進行中", color: "var(--state-ongoing)", count: s.on_table.length },
+   { key: "callable", label: "コート待ち", color: "var(--state-callable)", count: s.callable.length },
+   { key: "waiting", label: "待機中", color: "var(--state-waiting)", count: s.waiting },
+   { key: "finished", label: "終了", color: "var(--state-done)", count: finCount },
    { key: "all", label: "総試合", color: "var(--ink-900)", count: s.total_matches },
  ];
  if (!L.activeTab) { const fn = tabs.find(t => t.count > 0); L.activeTab = fn ? fn.key : "ongoing"; }
