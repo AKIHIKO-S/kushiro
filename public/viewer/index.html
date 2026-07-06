@@ -1053,6 +1053,12 @@ body{ background:#fbfaf7; }
 #tab-live .live-stats.tabs .live-stat-num{ font-size:19px; }
 #tab-live .live-stats.tabs .stat-label{ font-size:9.5px; margin-top:2px; color:var(--sub); line-height:1.2; }
 #tab-live .live-stats.tabs .live-stat.active{ box-shadow:0 0 0 2px var(--accent); background:#fffaf5; }
+/* コートセル(白磁): 進行中も白セル(赤の淡グラデ塗りをやめる)、氏名は墨で可読性優先、
+   種目は小さな中立ラベルで識別(全面色塗り=混合ダブルスの紫等を廃止)。 */
+#tab-live .live-court-cell.active{ background:#fff; }
+#tab-live .live-court-match{ color:var(--txt); }
+#tab-live .live-court-ev{ font-size:9px; color:var(--sub); font-weight:700; margin-top:1px;
+  text-align:center; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; letter-spacing:.02em; }
 </style>
 </head>
 <body>
@@ -3279,18 +3285,12 @@ const L = {
    style: t.match ? { cursor: "pointer" } : {},
    title: t.match ? "タップで試合詳細" : "",
    onClick: () => { if (t.match) L.showCourtDetail(t); } });
- // 進行中のコートは種目ごとに色分け (#182)
- let ec = null;
+ // コートは白磁トーン(白セル+進行中は丹頂赤の縁と番号=CSS .active)。
+ // 種目色の全面塗り(混合=紫等のAI-tell)を廃し、種目は小さな中立ラベルで識別する。
+ cell.appendChild(h("div", { className: "live-court-no" }, "コート" + t.table_no));
  if (t.match) {
-   ec = TT.eventColor(t.match.event);
-   cell.style.borderColor = ec.border;
-   cell.style.background = ec.soft;
- }
- cell.appendChild(h("div", { className: "live-court-no",
-   style: t.match ? { background: ec.bg, color: ec.fg } : {} }, "コート" + t.table_no));
- if (t.match) {
- cell.appendChild(h("div", { className: "live-court-match",
-   style: { color: ec.border } },
+ if (t.match.event) cell.appendChild(h("div", { className: "live-court-ev" }, t.match.event));
+ cell.appendChild(h("div", { className: "live-court-match" },
  h("div", {}, t.match.player1_name),
  h("div", { style: { fontSize: "10px", color: "var(--sub)" } }, "vs"),
  h("div", {}, t.match.player2_name),
@@ -3306,18 +3306,8 @@ const L = {
  });
 
  wrap.appendChild(grid);
- // 種目色の凡例(進行中のコートに出ている種目のみ・男女/形式で自動色分け #2)
- const activeEvents = [...new Set(s.tables.filter(t => t.match && t.match.event).map(t => t.match.event))];
- if (activeEvents.length) {
- const lg = h("div", { style: { display: "flex", flexWrap: "wrap", gap: "5px 12px",
-   margin: "8px 4px 0", fontSize: "11px", color: "var(--sub)", justifyContent: "center" } });
- activeEvents.forEach(ev => { const ec = TT.eventColor(ev);
-   lg.appendChild(h("span", { style: { display: "inline-flex", alignItems: "center", gap: "4px" } },
-     h("span", { style: { width: "12px", height: "12px", borderRadius: "3px", background: ec.bg,
-       border: "1px solid " + ec.border, flex: "0 0 auto" } }),
-     h("span", {}, ev))); });
- wrap.appendChild(lg);
- }
+ // 種目色の凡例は廃止(コートを白磁トーンに沈静化し全面色塗りをやめたため凡例が無意味に。
+ // 種目は各コートセルの中立ラベルで識別する)。
  if (hq_position === "bottom") {
  wrap.appendChild(h("div", { className: "live-court-hq",
  style: { width: `${gridW}px`, marginLeft: "auto", marginRight: "auto" } },
