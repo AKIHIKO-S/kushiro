@@ -976,7 +976,7 @@ input:focus, select:focus, textarea:focus {
 }
 /* 勝率バー */
 .wr-bar { height: 5px; border-radius: 3px; background: #fee2e2; overflow: hidden; }
-.wr-bar > span { display: block; height: 100%; background: linear-gradient(90deg, #22c55e, #15803d); }
+.wr-bar > span { display: block; height: 100%; background: var(--state-done, #15803d); }
 
 /* リッチ大会カード (共通 — 左アクセントバー型) */
 .tcard {
@@ -1179,7 +1179,7 @@ input:focus, select:focus, textarea:focus {
 }
 .pdb-winrate-bar > span {
   display: block; height: 100%;
-  background: linear-gradient(90deg, #22c55e, #15803d);
+  background: var(--state-done, #15803d);
 }
 
 /* ─── アクセシビリティ補強 ─────────────────────── */
