@@ -571,9 +571,10 @@ input:focus, select:focus, textarea:focus {
 .player-guide-portrait.female {
   background: linear-gradient(135deg, rgba(255,255,255,.20), rgba(190,24,93,.6));
 }
-/* 個別選手ヒーロー強化 (#193 個別ページ) */
-.pg-head-rich { background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 55%, #4f46e5 120%); }
-.pg-head-rich.female { background: linear-gradient(135deg, #1e1b4b 0%, #9d174d 60%, #db2777 120%); }
+/* 個別選手ヒーロー(#193 個別ページ)。破壊的レビューで発覚: 男性=紺→青→インディゴ紫
+   (#4f46e5)、女性=紺紫→マゼンタ→ピンク(#db2777)という高彩度グラデ+性別ステレオタイプの
+   配色が生きたコードとして残存していた(監督・顧問タブの選手ガイドカード)。撤去し、
+   .player-guide-head の既定(墨系グラデ)をそのまま使う単色トーンに統一する。 */
 .pg-id { min-width: 0; }
 .pg-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
 .pg-cat-badge { background: rgba(255,255,255,.24); color: #fff; font-size: 14px; font-weight: 800;
@@ -996,30 +997,35 @@ input:focus, select:focus, textarea:focus {
 .tcard .tcard-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .tcard .tcard-arrow { display: flex; align-items: center; padding: 0 16px; font-size: 22px; color: var(--ink-300); }
 
-/* 登録人数を大きく表示 (viewer 選手DB) */
+/* 登録人数を大きく表示 (選手DB 共通ヒーロー)。
+   破壊的レビューで発覚: このcommon.css自体のデフォルト値が紫グラデ(#4f46e5含む死に
+   フォールバック)・左縁5pxアクセント線という禁止パターンで、viewer側はスコープ内で
+   !important上書き済みだったが、admin側には対応する上書きが一切無く、admin選手DBタブに
+   紺→スレート→紫のAIグラデが本番稼働していた。共通の祖先であるここを白基調に是正し、
+   admin/viewerどちらもこの安全な既定値を継承するようにする(viewerの!important上書きは
+   そのまま残置・無害)。 */
 .pdb-total {
   display: flex; align-items: center; gap: 16px;
-  background: linear-gradient(135deg, var(--pri-bg, #eef2ff) 0%, #fff 70%);
-  border: 1px solid var(--border); border-left: 5px solid var(--pri, #4f46e5);
+  background: #fff;
+  border: 1px solid var(--border); border-top: 3px solid var(--ink-900);
   border-radius: 12px; padding: 14px 20px; margin-bottom: 12px;
 }
 .pdb-total .pdb-total-main { display: flex; align-items: baseline; gap: 4px; }
 .pdb-total .pdb-total-num {
   font-size: 44px; font-weight: 800; line-height: 1;
-  font-family: var(--font-display, inherit); color: var(--pri, #4f46e5);
+  font-family: var(--font-display, inherit); color: var(--ink-900);
   letter-spacing: -0.02em;
 }
 .pdb-total .pdb-total-unit { font-size: 18px; font-weight: 700; color: var(--ink-700); }
 .pdb-total .pdb-total-side { display: flex; flex-direction: column; gap: 3px; }
 .pdb-total .pdb-total-lbl { font-size: 13px; font-weight: 700; color: var(--ink-800); }
 .pdb-total .pdb-total-sub { font-size: 12px; color: var(--sub); }
-/* スタイリッシュ強化 (#193) */
-.pdb-hero { background: linear-gradient(135deg, #1e293b 0%, #334155 55%, #4f46e5 130%);
-  border: none; border-left: none; color: #fff; box-shadow: 0 8px 24px rgba(30,41,59,.28); }
-.pdb-hero .pdb-total-num { color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,.25); }
-.pdb-hero .pdb-total-unit { color: rgba(255,255,255,.85); }
-.pdb-hero .pdb-total-lbl { color: #fff; }
-.pdb-hero .pdb-total-sub { color: rgba(255,255,255,.8); }
+.pdb-hero { background: #fff; border: 1px solid var(--border); border-top: 3px solid var(--ink-900);
+  color: var(--ink-900); box-shadow: none; }
+.pdb-hero .pdb-total-num { color: var(--ink-900); text-shadow: none; }
+.pdb-hero .pdb-total-unit { color: var(--ink-700); }
+.pdb-hero .pdb-total-lbl { color: var(--ink-800); }
+.pdb-hero .pdb-total-sub { color: var(--sub); }
 /* グループ切替セグメント */
 .pdb-seg { display: flex; gap: 4px; background: var(--ink-100, #f1f5f9);
   border-radius: 11px; padding: 4px; margin-bottom: 14px; }
