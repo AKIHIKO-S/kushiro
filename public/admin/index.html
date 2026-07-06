@@ -36,10 +36,13 @@
  .admin-badge { display: none; }
  }
 
- /* ─── 大会カード (一覧) ─── */
+ /* ─── 大会カード (一覧) ───
+    破壊的レビュー致命傷#1: 左縁6px色付きアクセント線(オーナー最頻指摘の禁止パターン)が
+    生きたコードとして残っていた(admin-tourn-d.pngで緑の太い左バーとして実視認)。
+    viewer側で既に採用済みの「上端の帯」方式に統一し、進行中の色も--state-ongoingに揃える。 */
  .t-card {
    display: flex; align-items: stretch; gap: 0;
-   background: #fff; border: 1px solid var(--border);
+   background: #fff; border: 1px solid var(--border); border-top: 3px solid var(--border-strong);
    border-radius: 12px; margin-bottom: 10px; overflow: hidden;
    transition: all .15s; cursor: pointer; position: relative;
  }
@@ -47,15 +50,11 @@
    border-color: var(--border-strong);
    transform: translateY(-2px); box-shadow: var(--shadow-lg);
  }
- .t-card .t-accent {
-   width: 6px; flex-shrink: 0;
-   background: var(--ink-300);
- }
- .t-card.st-ongoing .t-accent { background: #16a34a; }
- .t-card.st-preparation .t-accent { background: #d97706; }
- .t-card.st-scheduled .t-accent { background: #2563eb; }
- .t-card.st-completed .t-accent { background: var(--ink-400); }
- .t-card.st-cancelled .t-accent { background: var(--ink-300); }
+ .t-card.st-ongoing { border-top-color: var(--state-ongoing); }
+ .t-card.st-preparation { border-top-color: #d97706; }
+ .t-card.st-scheduled { border-top-color: #2563eb; }
+ .t-card.st-completed { border-top-color: var(--ink-400); }
+ .t-card.st-cancelled { border-top-color: var(--ink-300); }
  .t-card-body { flex: 1; padding: 14px 18px; min-width: 0; }
  .t-card-top {
    display: flex; align-items: flex-start; gap: 10px;
@@ -74,7 +73,7 @@
    content: ""; width: 6px; height: 6px; border-radius: 50%;
    background: currentColor;
  }
- .t-status.st-ongoing { background: #dcfce7; color: #15803d; }
+ .t-status.st-ongoing { background: var(--accent-bg, #fdecee); color: var(--state-ongoing); }
  .t-status.st-preparation { background: #fef3c7; color: #b45309; }
  .t-status.st-scheduled { background: #dbeafe; color: #1d4ed8; }
  .t-status.st-completed { background: var(--ink-100); color: var(--ink-600); }
@@ -96,7 +95,7 @@
  }
  .t-progress > span {
    display: block; height: 100%;
-   background: linear-gradient(90deg, #22c55e, #16a34a);
+   background: var(--state-done);
    transition: width .3s;
  }
  .t-card-actions {
@@ -2369,7 +2368,6 @@ const A = {
 
  el.appendChild(h("div", { className: "t-card st-" + st,
    onClick: () => A.openTournament(t.id) },
-   h("div", { className: "t-accent" }),
    h("div", { className: "t-card-body" },
      h("div", { className: "t-card-top" },
        h("div", { className: "t-card-name" }, t.name),
