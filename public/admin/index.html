@@ -6098,8 +6098,7 @@ const A = {
  const changes = Object.keys(pj).filter(k => labelMap[k] && pj[k] !== "" && pj[k] != null)
  .map(k => labelMap[k] + "→「" + pj[k] + "」").join(" / ");
  const row = h("div", { className: "card", style: { padding: "10px 12px", marginBottom: "8px",
- background: r.status === "pending" ? "#fffbeb" : "#f8fafc",
- borderLeft: "4px solid " + (r.type === "delete" ? "#dc2626" : "#d97706") } },
+ background: r.status === "pending" ? "#fffbeb" : "#f8fafc" } },
  h("div", { className: "flex", style: { justifyContent: "space-between", gap: "8px", flexWrap: "wrap", alignItems: "baseline" } },
  h("div", {},
  h("span", { style: { fontWeight: 800, color: r.type === "delete" ? "#b91c1c" : "#78350f" } }, r.type === "delete" ? "削除申請" : "修正申請"),
