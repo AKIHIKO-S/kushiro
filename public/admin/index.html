@@ -461,6 +461,18 @@
  }
  .op-tools-adv { margin-top: 4px; padding-top: 7px; border-top: 1px dashed var(--border);
    font-size: 10px; font-weight: 700; color: var(--sub-l); letter-spacing: .04em; }
+ /* ブラケットツールバーの折りたたみグループ(大会準備/記録・出力)。当日ほぼ使わない
+    操作を畳んで常時表示のボタン数を絞る(破壊的レビュー案3)。 */
+ .op-tools-group { margin-bottom: 6px; }
+ .op-tools-group > summary { cursor: pointer; font-size: 12px; font-weight: 700;
+   color: var(--sub); padding: 4px 2px; list-style: none; }
+ .op-tools-group > summary::-webkit-details-marker { display: none; }
+ .op-tools-group > summary::before { content: "▸ "; }
+ .op-tools-group[open] > summary::before { content: "▾ "; }
+ /* 「次にやること」バナー(破壊的レビュー案3): 視線の起点を明示する1行 */
+ .op-next-banner { display: flex; justify-content: space-between; align-items: center;
+   background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
+   padding: 9px 14px; margin-bottom: 12px; font-size: 13px; font-weight: 700; color: #78350f; }
  /* 種目別進捗 (全体直下・複数列で省スペース) */
  .ev-progress-list { display: grid; gap: 8px;
    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
@@ -506,9 +518,12 @@
  justify-content: center;
  }
  .court-cell.empty:hover { background: #eff6ff; border-color: #60a5fa; }
+ /* 進行中コートの色は状態色(--state-ongoing)に統一(破壊的レビュー案3: 種目色でカード全体を
+    染めるとコートが「色面」として目に飛び込み、種目識別の情報価値もなく視認性を損なっていた。
+    種目識別は下の .cc-evbadge の小バッジのみで行う)。 */
  .court-cell.active {
- background: #f6fef9;
- border-color: #16a34a;
+ background: #fff;
+ border-color: var(--state-ongoing);
  }
  /* 承認待ち (審判が結果報告 → 本部承認待ち) #223 */
  .court-cell.approval {
@@ -530,7 +545,10 @@
  background: var(--ink-700);
  border-radius: 8px 8px 0 0; padding: 6px 2px; letter-spacing: .02em;
  }
- .court-cell.active .court-cell-no { background: #16a34a; }
+ .court-cell.active .court-cell-no { background: var(--state-ongoing); }
+ /* 種目識別バッジ(小)。カード全体の着色はやめ、ここだけに種目色を限定する。 */
+ .cc-evbadge { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 8px;
+   border-radius: 999px; margin-top: 6px; }
  .court-cell.warn .court-cell-no { background: var(--accent); }
  .court-cell-match {
  text-align: center; font-weight: 700; font-size: 14px;
@@ -7728,6 +7746,15 @@ const O = {
    h("div", { className: "op-stat-label" }, t.label))));
  main.appendChild(opSummary);
 
+ // 「次にやること」バナー(破壊的レビュー案3): KPIタイルの数字を見るだけでなく、
+ // 視線の起点になる1行を置く。呼べる対戦が無ければ表示しない。
+ if (O.state.callable.length > 0 && O.activeOpTab !== "callable") {
+   main.appendChild(h("div", { className: "op-next-banner" },
+     h("span", {}, "呼べる対戦が" + O.state.callable.length + "件あります"),
+     h("button", { className: "btn btn-sm", style: { background: "var(--state-callable)", color: "#fff" },
+       onClick: () => O.setOpTab("callable") }, "呼べる対戦を見る")));
+ }
+
  // (種目別進捗は上の「大会全体の進捗」カードに統合済み #移動)
 
  // ── 運用バー (常時表示: 種目フィルタ + 敗者審判ルール) ──
@@ -7735,7 +7762,7 @@ const O = {
    style: { alignItems: "center" } },
  // 手動更新 (#238): 自動更新(2秒)を待たず即座に最新化。スマホは下方向スワイプでも更新可。
  h("button", { className: "btn btn-sm", id: "opRefreshBtn",
-   style: { background: "#0ea5e9", color: "#fff", borderColor: "#0ea5e9", fontWeight: 700 },
+   style: { background: "var(--accent)", color: "#fff", borderColor: "var(--accent)", fontWeight: 700 },
    title: "最新の進行状況に手動で更新します（スマホは画面を下に引いても更新）",
    onClick: () => O.manualRefresh() }, "↻ 更新"),
  events.length ? h("select", {
@@ -7754,8 +7781,7 @@ const O = {
  },
  (O.state.tournament.enforce_referee_rule !== 0 ? "● " : "○ ") + "敗者審判ルール"),
  // 直前の操作を取り消す (誤操作/抗議対応 #203)
- h("button", { className: "btn btn-sm",
-   style: { background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" },
+ h("button", { className: "btn btn-sm btn-ghost",
    title: "結果入力・呼出・修正などの直前の操作を1つ取り消します",
    onClick: () => O.undoLast() }, "↶ 取り消し"),
  // 大会終了 / 再開 (#6 全試合終了で閲覧側からクローズ・結果編集はいつでも可)
@@ -7764,17 +7790,16 @@ const O = {
        title: "閲覧側で『終了』表示中。クリックで再開(進行中に戻す)",
        onClick: () => O.reopenTournament() }, "● 終了済（再開）")
    : ((O.state.total_matches > 0 && totalCompleted >= O.state.total_matches)
-       ? h("button", { className: "btn btn-sm",
-           style: { background: "#15803d", color: "#fff", borderColor: "#15803d", fontWeight: 700 },
+       ? h("button", { className: "btn btn-sm btn-ok",
            title: "全試合終了。閲覧側で『終了した大会』として表示します(結果編集は引き続き可能)",
            onClick: () => O.closeTournament() }, "大会を終了する")
        : null),
  // 審判結果入力 (本部に来ず審判が報告。テスト→本番の段階運用 #211)
  h("button", {
    className: "btn btn-sm",
-   style: { background: O.state.tournament.referee_input_enabled ? "#0ea5e9" : "var(--surface)",
+   style: { background: O.state.tournament.referee_input_enabled ? "var(--accent)" : "var(--surface)",
             color: O.state.tournament.referee_input_enabled ? "#fff" : "var(--sub)",
-            borderColor: "#0ea5e9" },
+            borderColor: "var(--accent)" },
    title: "審判が結果報告できる専用リンクを発行/管理（テスト→本番）",
    onClick: () => O.openRefereeInput() },
    (O.state.tournament.referee_input_enabled ? "● " : "○ ") + "審判入力"),
@@ -7807,14 +7832,17 @@ const O = {
  // ── コート配置図 (運用の中心) ──
  main.appendChild(O.renderCourtGrid());
 
- // ── トーナメント表 (常時表示・対戦の追加/削除) #194: 下部→上部(コート直下)へ ──
+ // ── 進行状態タブの内容 (サマリのタブで選択した状態の試合のみ表示) ──
+ // 進行中/呼べる/終了 は従来どおり操作可。待機/総試合 は一覧(遅延取得)。審判プール・ベスト8は常時表示。
+ // 破壊的レビュー案3: 「今やること」をコート配置の直後に置き、トーナメント表(準備・確認用)は
+ // その後段に回して主導線を明確にする。
+ const opContent = h("div", { id: "opTabContent" });
+ main.appendChild(opContent);
+
+ // ── トーナメント表 (対戦の追加/削除・準備確認用) #194: 「今やること」の後段に配置 ──
  try { main.appendChild(O._getOpBracketPanel()); }
  catch (e) { console.warn("[opBracket]", e); }
 
- // ── 進行状態タブの内容 (サマリのタブで選択した状態の試合のみ表示) ──
- // 進行中/呼べる/終了 は従来どおり操作可。待機/総試合 は一覧(遅延取得)。審判プール・ベスト8は常時表示。
- const opContent = h("div", { id: "opTabContent" });
- main.appendChild(opContent);
  const _opTab = O.activeOpTab;
  if (_opTab === "waiting" || _opTab === "all") O._fillOpBrowse(opContent, _opTab);
 
@@ -8164,42 +8192,55 @@ const O = {
  };
  renderTabs();
 
- const toolbar = h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", margin: "8px 0" } },
-   h("button", { className: "btn btn-sm btn-ok", onClick: () => O.openAddMatch(sel) }, "＋ 対戦を追加"),
-   h("button", { className: "btn btn-sm",
-     title: "トーナメント表にシード選手を追加。既存の対戦はそのまま保持し、表の上/下に登場回戦から合流(BYE上がり)します。",
-     onClick: () => O.openAddSeed(sel) }, "＋ シードを追加"),
-   h("button", { className: "btn btn-sm", style: { background: "#a16207", color: "#fff" },
-     title: "シードを選手DB(Elo+過去成績)から客観スコア順に提案。根拠を見て人手で採否・順位を決めて一括設定。抽選の前に。",
-     onClick: () => O.openSeedSuggest(sel) }, "シード提案"),
-   h("button", { className: "btn btn-sm", style: { background: "#1a7a45", color: "#fff" },
-     title: "個人戦をシード固定＋ランダム抽選でトーナメント表を作成。1回戦は配置するだけで自動進行しません(編集後に『進行開始』で進める)。",
-     onClick: () => O.openDrawBracket(sel) }, "抽選ドロー"),
-   h("button", { className: "btn btn-sm", style: { background: "#b45309", color: "#fff" },
-     title: "抽選で配置・編集した1回戦を確定し、不戦勝(vs BYE)を繰り上げて進行を開始します。抽選直後は自動進行しないので、編集が済んだらこれを押してください。",
-     onClick: () => O.advanceByes(sel) }, "▶ 進行開始(不戦勝確定)"),
-   h("button", { className: "btn btn-sm", style: { background: "#0e8fa3", color: "#fff" },
-     title: "団体種目を総当たり(リーグ)で生成。各ブロックで全チームが対戦し、勝敗→セット率→得点率で順位。",
-     onClick: () => O.openLeagueGen(sel) }, "リーグ生成"),
-   h("button", { className: "btn btn-sm", style: { background: "#c01526", color: "#fff" },
-     title: "釧路リーグ: 前回大会の各部順位から今回の部(1〜25部)を昇降格ルールで提案→手動調整して生成。",
-     onClick: () => O.openKushiroLeagueAssign(sel) }, "釧路リーグ振り分け"),
-   h("div", { className: "flex", style: { alignItems: "center", gap: "2px" } },
-     h("button", { className: "btn btn-sm btn-ghost", title: "縮小",
-       onClick: () => { zoom = Math.max(0.4, Math.round((zoom - 0.1) * 10) / 10); applyZoom(); } }, "−"),
-     zlbl,
-     h("button", { className: "btn btn-sm btn-ghost", title: "拡大",
-       onClick: () => { zoom = Math.min(2, Math.round((zoom + 0.1) * 10) / 10); applyZoom(); } }, "＋")),
-   h("button", { className: "btn btn-sm btn-ghost", title: "横スクロール無しで全体が入るよう倍率を自動調整",
-     onClick: fitWidth }, "⤢ 画面に合わせる"),
-   h("button", { className: "btn btn-sm", onClick: () => O.openVisualBracket() }, "全画面・印刷"),
-   h("button", { className: "btn btn-sm", style: { background: "#1f6f3f", color: "#fff" },
-     title: "両山トーナメント表(左右対向・中央決勝)をExcelで出力。手修正・印刷用。",
-     onClick: () => A.downloadAuthedFile(`/api/tournaments/${O.tournamentId}/bracket/export.xlsx?event=${encodeURIComponent(sel)}`, `トーナメント表_${sel}.xlsx`) }, "表をExcel出力"),
-   h("button", { className: "btn btn-sm", style: { background: "#0f766e", color: "#fff" },
-     title: "出力したExcelを直して取り込み、その並びを正しい組み合わせとして反映します(選手や結果はそのまま、位置だけ更新)。",
-     onClick: () => O.importBracketXlsx(sel) }, "Excel取込で反映"),
-   h("span", { className: "text-xs text-sub" },
+ // 破壊的レビュー案3: 9種類のハードコード色を持つ12ボタンの1本ツールバーを、
+ // 「常時表示(当日の運用)」+「大会準備」「記録・出力」の折りたたみ2グループに再編。
+ // 色は既定(墨)/btn-ok(緑・肯定操作)の2系統に統一し、意味のない多色を排した。
+ const toolGroup = (label, buttons) => h("details", { className: "op-tools-group" },
+   h("summary", {}, label),
+   h("div", { className: "flex gap-2", style: { flexWrap: "wrap", padding: "8px 0 2px" } }, ...buttons));
+
+ const toolbar = h("div", { style: { margin: "8px 0" } },
+   h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } },
+     h("button", { className: "btn btn-sm btn-ok", onClick: () => O.openAddMatch(sel) }, "＋ 対戦を追加"),
+     h("button", { className: "btn btn-sm",
+       title: "個人戦をシード固定＋ランダム抽選でトーナメント表を作成。1回戦は配置するだけで自動進行しません(編集後に『進行開始』で進める)。",
+       onClick: () => O.openDrawBracket(sel) }, "抽選ドロー"),
+     h("button", { className: "btn btn-sm",
+       title: "抽選で配置・編集した1回戦を確定し、不戦勝(vs BYE)を繰り上げて進行を開始します。抽選直後は自動進行しないので、編集が済んだらこれを押してください。",
+       onClick: () => O.advanceByes(sel) }, "進行開始(不戦勝確定)"),
+     h("div", { className: "flex", style: { alignItems: "center", gap: "2px", marginLeft: "auto" } },
+       h("button", { className: "btn btn-sm btn-ghost", title: "縮小",
+         onClick: () => { zoom = Math.max(0.4, Math.round((zoom - 0.1) * 10) / 10); applyZoom(); } }, "−"),
+       zlbl,
+       h("button", { className: "btn btn-sm btn-ghost", title: "拡大",
+         onClick: () => { zoom = Math.min(2, Math.round((zoom + 0.1) * 10) / 10); applyZoom(); } }, "＋")),
+     h("button", { className: "btn btn-sm btn-ghost", title: "横スクロール無しで全体が入るよう倍率を自動調整",
+       onClick: fitWidth }, "画面に合わせる"),
+   ),
+   toolGroup("大会準備(シード・リーグ)", [
+     h("button", { className: "btn btn-sm",
+       title: "トーナメント表にシード選手を追加。既存の対戦はそのまま保持し、表の上/下に登場回戦から合流(BYE上がり)します。",
+       onClick: () => O.openAddSeed(sel) }, "＋ シードを追加"),
+     h("button", { className: "btn btn-sm",
+       title: "シードを選手DB(Elo+過去成績)から客観スコア順に提案。根拠を見て人手で採否・順位を決めて一括設定。抽選の前に。",
+       onClick: () => O.openSeedSuggest(sel) }, "シード提案"),
+     h("button", { className: "btn btn-sm",
+       title: "団体種目を総当たり(リーグ)で生成。各ブロックで全チームが対戦し、勝敗→セット率→得点率で順位。",
+       onClick: () => O.openLeagueGen(sel) }, "リーグ生成"),
+     h("button", { className: "btn btn-sm",
+       title: "釧路リーグ: 前回大会の各部順位から今回の部(1〜25部)を昇降格ルールで提案→手動調整して生成。",
+       onClick: () => O.openKushiroLeagueAssign(sel) }, "釧路リーグ振り分け"),
+   ]),
+   toolGroup("記録・出力(印刷・Excel)", [
+     h("button", { className: "btn btn-sm", onClick: () => O.openVisualBracket() }, "全画面・印刷"),
+     h("button", { className: "btn btn-sm",
+       title: "両山トーナメント表(左右対向・中央決勝)をExcelで出力。手修正・印刷用。",
+       onClick: () => A.downloadAuthedFile(`/api/tournaments/${O.tournamentId}/bracket/export.xlsx?event=${encodeURIComponent(sel)}`, `トーナメント表_${sel}.xlsx`) }, "表をExcel出力"),
+     h("button", { className: "btn btn-sm",
+       title: "出力したExcelを直して取り込み、その並びを正しい組み合わせとして反映します(選手や結果はそのまま、位置だけ更新)。",
+       onClick: () => O.importBracketXlsx(sel) }, "Excel取込で反映"),
+   ]),
+   h("div", { className: "text-xs text-sub", style: { marginTop: "6px" } },
      "1回戦: ドラッグで入替 / クリックで編集 ・ 各対戦の × で削除"),
  );
 
@@ -8511,18 +8552,17 @@ const O = {
                  : "クリックで結果入力" + (cc >= 2 ? " (呼出" + cc + "回・未着の可能性)" : ""))
    : "クリックでコールOKの対戦を表示"),
  });
- // 進行中のコートは種目ごとに色分け (#182)。承認待ち/warnは専用色で注意喚起。
- if (m && cls === "active") {
-   const ec = TT.eventColor(m.event);
-   cell.style.borderColor = ec.border;
-   cell.style.background = ec.soft;
- }
- cell.appendChild(h("div", { className: "court-cell-no",
-   style: (m && cls === "active") ? { background: TT.eventColor(m.event).bg, color: TT.eventColor(m.event).fg } : {} },
-   "コート" + t.table_no));
+ // 進行中コートは状態色(--state-ongoing、CSS側)で統一。種目識別はカード全体の着色ではなく
+ // 下の .cc-evbadge 小バッジのみで行う(破壊的レビュー案3: カードの色面化を解消)。
+ cell.appendChild(h("div", { className: "court-cell-no" }, "コート" + t.table_no));
  if (m) {
  // 姓だけ + ふりがな (呼出重視)。ダブルスは "姓 名 / 姓 名" 連結なので、各人を姓に縮約しつつペアを保持(#ダブルス表示)。
  const shortName = (full) => (full || "").split(" / ").map(p => p.split(/[\s　]/)[0] || p).join(" / ") || full || "";
+ if (m.event) {
+   const ec = TT.eventColor(m.event);
+   cell.appendChild(h("div", { className: "cc-evbadge",
+     style: { background: ec.soft, color: ec.border } }, m.event));
+ }
  cell.appendChild(h("div", { className: "court-cell-match" },
  h("div", { className: "cc-name" }, shortName(m.player1_name)),
  m.player1_furigana ? h("div", { className: "cc-furi" }, m.player1_furigana) : null,
