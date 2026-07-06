@@ -2585,7 +2585,7 @@ const A = {
    A.showTab("operations");
    setTimeout(() => {
      const sel = document.getElementById("opTournamentSel");
-     if (sel) sel.value = t.id;
+     if (sel) { sel.value = t.id; TT.mountTournamentSelect(sel, { accent: "#0e8fa3", accentBg: "#e6f6f8" }); }
      if (typeof O !== "undefined") O.selectTournament(t.id);
    }, 60);
  } }, "進行管理を開く"),
@@ -2675,7 +2675,7 @@ const A = {
    A.showTab("operations");
    setTimeout(() => {
      const sel = document.getElementById("opTournamentSel");
-     if (sel) sel.value = t.id;
+     if (sel) { sel.value = t.id; TT.mountTournamentSelect(sel, { accent: "#0e8fa3", accentBg: "#e6f6f8" }); }
      if (typeof O !== "undefined") O.selectTournament(t.id);
    }, 60);
  };
@@ -7288,17 +7288,20 @@ const O = {
  };
  sorted.forEach(t => {
    const sl = statusLabel[t.status] || "予定";
-   sel.appendChild(h("option", { value: t.id },
+   sel.appendChild(h("option", { value: t.id, dataset: { status: t.status || "", date: t.date || "", name: t.name || "" } },
      `[${sl}] ${t.name} (${t.date || ""})`));
  });
+ TT.mountTournamentSelect(sel, { accent: "#0e8fa3", accentBg: "#e6f6f8" });
 
  // 進行中があれば自動選択。それ以外は明示選択を促す。
  const ongoing = sorted.find(t => t.status === "ongoing");
  if (ongoing && !O.tournamentId) {
    sel.value = ongoing.id;
+   TT.mountTournamentSelect(sel, { accent: "#0e8fa3", accentBg: "#e6f6f8" });
    O.selectTournament(ongoing.id);
  } else if (O.tournamentId && ts.find(t => t.id === O.tournamentId)) {
    sel.value = O.tournamentId;
+   TT.mountTournamentSelect(sel, { accent: "#0e8fa3", accentBg: "#e6f6f8" });
    O.reload();
  } else if (sorted.length) {
    // 進行中なし。最初の項目 (準備中 or 予定 or 終了) を選んでもらう
@@ -11163,14 +11166,18 @@ const EnT = {
  const ts = await api.get("/api/tournaments");
  clear(sel);
  sel.appendChild(h("option", { value: "" }, "— 大会を選択 —"));
- ts.forEach(t => sel.appendChild(h("option", { value: t.id }, t.name)));
+ ts.forEach(t => sel.appendChild(h("option",
+   { value: t.id, dataset: { status: t.status || "", date: t.date || "", name: t.name || "" } }, t.name)));
+ TT.mountTournamentSelect(sel, { accent: "#0e8fa3", accentBg: "#e6f6f8" });
 
  if (ts.length && !EnT.tournamentId) {
  const def = ts.find(t => t.status === "ongoing") || ts[0];
  sel.value = def.id;
+ TT.mountTournamentSelect(sel, { accent: "#0e8fa3", accentBg: "#e6f6f8" });
  EnT.selectTournament(def.id);
  } else if (EnT.tournamentId) {
  sel.value = EnT.tournamentId;
+ TT.mountTournamentSelect(sel, { accent: "#0e8fa3", accentBg: "#e6f6f8" });
  EnT.reload();
  } else {
  document.getElementById("enMain").innerHTML = '<div class="empty-state">大会を選択してください。</div>';
@@ -11810,16 +11817,19 @@ const TMgmt = {
     if (!sel) return;
     let ts = (A.state && A.state.tournaments) || [];
     if (!ts.length) ts = (await api.get("/api/tournaments")) || [];
-    sel.innerHTML = "";
+    clear(sel);
     sel.appendChild(h("option", { value: "" }, "大会を選択…"));
-    ts.forEach(t => sel.appendChild(h("option", { value: t.id }, t.name)));
+    ts.forEach(t => sel.appendChild(h("option",
+      { value: t.id, dataset: { status: t.status || "", date: t.date || "", name: t.name || "" } }, t.name)));
     sel.onchange = () => TMgmt.selectTournament(sel.value);
+    TT.mountTournamentSelect(sel, { accent: "#0e8fa3", accentBg: "#e6f6f8" });
     const evSel = document.getElementById("tmEventSel");
     evSel.onchange = () => TMgmt.selectEvent(evSel.value);
     // メモリに無ければ localStorage から直近選択を復元(リロード対策)。
     if (!TMgmt.tournamentId) { const s = TMgmt._loadState(); if (s && s.tid) { TMgmt.tournamentId = s.tid; TMgmt.event = s.event || null; } }
     if (TMgmt.tournamentId && ts.find(t => t.id === TMgmt.tournamentId)) {
       sel.value = TMgmt.tournamentId;
+      TT.mountTournamentSelect(sel, { accent: "#0e8fa3", accentBg: "#e6f6f8" });
       await TMgmt.selectTournament(TMgmt.tournamentId, TMgmt.event);
     }
   },

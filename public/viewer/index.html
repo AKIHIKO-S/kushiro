@@ -2864,11 +2864,14 @@ const L = {
  clear(sel);
  sel.appendChild(h("option", { value: "" }, ongoing.length ? "— 大会を選択 —" : "— 進行中の大会はありません —"));
  ongoing.forEach(t =>
- sel.appendChild(h("option", { value: t.id }, t.name + (t.date ? "（" + t.date + "）" : ""))));
+ sel.appendChild(h("option",
+   { value: t.id, dataset: { status: t.status || "", date: t.date || "", name: t.name || "" } },
+   t.name + (t.date ? "（" + t.date + "）" : ""))));
+ TT.mountTournamentSelect(sel, { accent: "#c01526", accentBg: "#fdecee" });
  sel.addEventListener("change", () => L.select(sel.value));
  // デフォルト: 進行中の先頭大会を自動選択
  const def = ongoing[0];
- if (def) { sel.value = def.id; L.select(def.id); return; }
+ if (def) { sel.value = def.id; TT.mountTournamentSelect(sel, { accent: "#c01526", accentBg: "#fdecee" }); L.select(def.id); return; }
  } else {
  // 再開: データ再取得 + SSE が閉じていれば再接続
  if (L.tournamentId) { L.fetch(); if (!L._es) L._initOpsStream(); L._updateConnBadge(); }

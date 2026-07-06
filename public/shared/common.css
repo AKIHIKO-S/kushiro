@@ -1185,3 +1185,65 @@ input:focus, select:focus, textarea:focus {
 /* ─── アクセシビリティ補強 ─────────────────────── */
 @media (max-width: 640px) { .input, select, textarea { font-size: 16px; } } /* iOSフォーカス時自動ズーム防止 */
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+
+/* ─── 大会選択ドロップダウン (カード/チップ型・見本承認案2) ───
+   ネイティブ<select>はsr-only(視覚的に隠すがDOM上に残す)にしつつ、既存のvalue/change
+   イベントベースのJSロジックとの互換のためだけに保持する。tabindex=-1でTab経路から外し、
+   フォーカスの主経路・キーボード操作(↑↓/Enter/Esc/Home/End)は .tsel-trig ボタンと
+   .tsel-menu(role=listbox)側で自前実装する(見本のメニュー表現を実際に再現するため)。 */
+.tsel { position: relative; display: inline-flex; min-width: 220px; max-width: 100%; }
+.tsel select.tsel-native {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0; padding: 0; margin: -1px;
+}
+.tsel-trig {
+  width: 100%; display: flex; align-items: center; gap: 9px;
+  background: #fff; border: 1.5px solid var(--border, #e4e4e7); border-radius: 10px;
+  padding: 7px 11px; font-family: inherit; text-align: left; cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+}
+.tsel-trig:hover { border-color: var(--tsel-accent, var(--accent, #0e8fa3)); }
+.tsel-trig:focus-visible {
+  outline: none; border-color: var(--tsel-accent, var(--accent, #0e8fa3));
+  box-shadow: 0 0 0 3px var(--tsel-accent-bg, var(--accent-bg, #e6f6f8));
+}
+.tsel-badge { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; position: relative; background: var(--ink-300, #d4d4d8); }
+.tsel-badge.on { background: var(--state-ongoing, #c01526); }
+.tsel-badge.on::after {
+  content: ""; position: absolute; inset: -4px; border-radius: 50%;
+  border: 1.5px solid var(--state-ongoing, #c01526); opacity: .4;
+  animation: tselPulse 1.8s infinite;
+}
+@keyframes tselPulse { 0% { transform: scale(.7); opacity: .5; } 100% { transform: scale(1.6); opacity: 0; } }
+.tsel-tx { min-width: 0; flex: 1; }
+.tsel-name, .tsel-placeholder {
+  font-size: 13.5px; font-weight: 800; color: var(--ink-900, #18181b);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;
+}
+.tsel-placeholder { font-weight: 700; color: var(--sub, #71717a); }
+.tsel-meta { font-size: 10.5px; color: var(--sub, #71717a); margin-top: 1px; display: block; }
+.tsel-chev-wrap { flex-shrink: 0; display: flex; color: var(--sub, #71717a); transition: transform .18s; }
+.tsel.open .tsel-chev-wrap { transform: rotate(180deg); }
+.tsel-trig:focus-visible .tsel-chev-wrap { color: var(--tsel-accent, var(--accent, #0e8fa3)); }
+.tsel-chev { width: 15px; height: 15px; }
+.tsel-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; min-width: 100%; width: max-content; max-width: 360px;
+  background: #fff; border: 1px solid var(--border, #e4e4e7); border-radius: 12px;
+  box-shadow: 0 14px 30px -8px rgba(24,24,27,.18); padding: 6px; z-index: 30;
+  display: none; max-height: 280px; overflow: auto;
+}
+.tsel.open .tsel-menu { display: block; }
+.tsel-opt { padding: 9px 10px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 9px; }
+.tsel-opt:hover, .tsel-opt.active { background: var(--ink-100, #f4f4f5); }
+.tsel-opt .tsel-odot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--ink-300, #d4d4d8); }
+.tsel-opt .tsel-odot.on { background: var(--state-ongoing, #c01526); }
+.tsel-opt .tsel-odot.prep { background: var(--state-callable, #b45309); }
+.tsel-opt .tsel-ot { min-width: 0; }
+.tsel-opt .tsel-oname { font-size: 12.5px; font-weight: 700; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tsel-opt .tsel-odate { font-size: 10.5px; color: var(--sub, #71717a); }
+/* ダークヘッダー用(観戦大画面) */
+.tsel.on-dark .tsel-trig { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.22); }
+.tsel.on-dark .tsel-trig:hover { border-color: #fff; }
+.tsel.on-dark .tsel-name, .tsel.on-dark .tsel-placeholder { color: #fff; }
+.tsel.on-dark .tsel-meta { color: rgba(255,255,255,.62); }
+.tsel.on-dark .tsel-chev-wrap { color: rgba(255,255,255,.75); }

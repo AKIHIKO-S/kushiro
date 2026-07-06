@@ -1085,6 +1085,159 @@
     return wrap;
   }
 
+  // trig の開閉シェブロンを DOM API で生成(innerHTML不使用)。
+  function _tselChevIcon() {
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("class", "tsel-chev"); svg.setAttribute("viewBox", "0 0 20 20"); svg.setAttribute("fill", "none");
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("d", "M5 8l5 5 5-5");
+    path.setAttribute("stroke", "currentColor"); path.setAttribute("stroke-width", "1.8");
+    path.setAttribute("stroke-linecap", "round"); path.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(path);
+    return svg;
+  }
+  // 大会選択ドロップダウンのカスタムUI化(見本承認案2: カード/チップ型)。
+  // ネイティブ<select>はsr-only化してvalue/changeベースの既存ロジックと完全互換を保ちつつ、
+  // trigger+メニュー(進行中パルスドット付き)を自前描画する。options/valueが変わるたびに
+  // 呼び直す想定で冪等(2回目以降はラッパーを使い回し中身だけ再構築)。
+  // opts: { accent, accentBg, dark }
+  function mountTournamentSelect(selectEl, opts) {
+    if (!selectEl) return;
+    opts = opts || {};
+    const statusLabelMap = { ongoing: "進行中", preparation: "準備中", scheduled: "予定", completed: "終了", cancelled: "中止" };
+    let wrap = selectEl._tselWrap;
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "tsel" + (opts.dark ? " on-dark" : "");
+      if (opts.accent) wrap.style.setProperty("--tsel-accent", opts.accent);
+      if (opts.accentBg) wrap.style.setProperty("--tsel-accent-bg", opts.accentBg);
+      selectEl.parentNode.insertBefore(wrap, selectEl);
+      selectEl.classList.add("tsel-native");
+      selectEl.tabIndex = -1;
+      wrap.appendChild(selectEl);
+      const trig = document.createElement("button");
+      trig.type = "button";
+      trig.className = "tsel-trig";
+      trig.setAttribute("aria-haspopup", "listbox");
+      trig.setAttribute("aria-expanded", "false");
+      const menu = document.createElement("div");
+      menu.className = "tsel-menu";
+      menu.setAttribute("role", "listbox");
+      wrap.appendChild(trig);
+      wrap.appendChild(menu);
+      selectEl._tselWrap = wrap;
+      wrap._trig = trig;
+      wrap._menu = menu;
+
+      const closeMenu = () => { wrap.classList.remove("open"); trig.setAttribute("aria-expanded", "false"); };
+      const moveActive = (dir) => {
+        const items = [...menu.querySelectorAll(".tsel-opt")];
+        if (!items.length) return;
+        let idx = items.findIndex(it => it.classList.contains("active"));
+        idx = (idx + dir + items.length) % items.length;
+        items.forEach(it => it.classList.remove("active"));
+        items[idx].classList.add("active");
+        items[idx].scrollIntoView({ block: "nearest" });
+      };
+      const openMenu = () => {
+        wrap.classList.add("open"); trig.setAttribute("aria-expanded", "true");
+        const items = [...menu.querySelectorAll(".tsel-opt")];
+        items.forEach(it => it.classList.remove("active"));
+        const cur = items.find(it => it.dataset.value === selectEl.value) || items[0];
+        if (cur) { cur.classList.add("active"); cur.scrollIntoView({ block: "nearest" }); }
+      };
+      trig.addEventListener("click", () => {
+        if (wrap.classList.contains("open")) closeMenu(); else openMenu();
+      });
+      trig.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          if (!wrap.classList.contains("open")) openMenu(); else moveActive(1);
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          if (!wrap.classList.contains("open")) openMenu(); else moveActive(-1);
+        } else if (e.key === "Escape") { closeMenu(); }
+      });
+      menu.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowDown") { e.preventDefault(); moveActive(1); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); moveActive(-1); }
+        else if (e.key === "Enter") {
+          e.preventDefault();
+          const active = menu.querySelector(".tsel-opt.active");
+          if (active) active.click();
+        } else if (e.key === "Escape") { closeMenu(); trig.focus(); }
+      });
+      document.addEventListener("click", (e) => { if (!wrap.contains(e.target)) closeMenu(); });
+      wrap._close = closeMenu;
+    }
+    // 中身を再構築(options変化・value変化のたびに呼ばれる想定)
+    const trig = wrap._trig, menu = wrap._menu;
+    menu.innerHTML = "";
+    [...selectEl.options].forEach(o => {
+      if (o.value === "") return;
+      const status = o.dataset.status || "";
+      const dateTxt = o.dataset.date || "";
+      const name = o.dataset.name || o.textContent;
+      const item = document.createElement("div");
+      item.className = "tsel-opt";
+      item.setAttribute("role", "option");
+      item.dataset.value = o.value;
+      item.setAttribute("aria-selected", String(o.value === selectEl.value));
+      const dot = document.createElement("span");
+      dot.className = "tsel-odot " + (status === "ongoing" ? "on" : status === "preparation" ? "prep" : "");
+      const ot = document.createElement("span");
+      ot.className = "tsel-ot";
+      const nm = document.createElement("span"); nm.className = "tsel-oname"; nm.textContent = name;
+      ot.appendChild(nm);
+      if (dateTxt || status) {
+        const od = document.createElement("span"); od.className = "tsel-odate";
+        od.textContent = (statusLabelMap[status] || "") + (statusLabelMap[status] && dateTxt ? " ・ " : "") + dateTxt;
+        ot.appendChild(od);
+      }
+      item.appendChild(dot); item.appendChild(ot);
+      item.addEventListener("mouseenter", () => {
+        menu.querySelectorAll(".tsel-opt").forEach(i => i.classList.remove("active"));
+        item.classList.add("active");
+      });
+      item.addEventListener("click", () => {
+        selectEl.value = o.value;
+        selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+        wrap.classList.remove("open");
+        trig.setAttribute("aria-expanded", "false");
+        trig.focus();
+        mountTournamentSelect(selectEl, opts);
+      });
+      menu.appendChild(item);
+    });
+    const cur = selectEl.options[selectEl.selectedIndex];
+    while (trig.firstChild) trig.removeChild(trig.firstChild);
+    if (!cur || cur.value === "") {
+      const ph = document.createElement("span");
+      ph.className = "tsel-placeholder";
+      ph.textContent = cur ? cur.textContent : "大会を選択";
+      trig.appendChild(ph);
+    } else {
+      const status = cur.dataset.status || "";
+      const dateTxt = cur.dataset.date || "";
+      const name = cur.dataset.name || cur.textContent;
+      const badge = document.createElement("span");
+      badge.className = "tsel-badge " + (status === "ongoing" ? "on" : "");
+      const tx = document.createElement("span"); tx.className = "tsel-tx";
+      const nm = document.createElement("span"); nm.className = "tsel-name"; nm.textContent = name;
+      tx.appendChild(nm);
+      if (dateTxt || status) {
+        const meta = document.createElement("span"); meta.className = "tsel-meta";
+        meta.textContent = (statusLabelMap[status] || "") + (statusLabelMap[status] && dateTxt ? " ・ " : "") + dateTxt;
+        tx.appendChild(meta);
+      }
+      trig.appendChild(badge); trig.appendChild(tx);
+    }
+    const chevWrap = document.createElement("span"); chevWrap.className = "tsel-chev-wrap";
+    chevWrap.appendChild(_tselChevIcon());
+    trig.appendChild(chevWrap);
+  }
+
   // Export
   global.TT = {
     GENDERS, CATS, EV_TYPES, ROUNDS, PLACES,
@@ -1099,5 +1252,6 @@
     HOKKAIDO_BRANCHES, normalizeBranch, officialBranch, branchColor, branchColorMap, branchBadge,
     branchGradient, branchHeroBg,
     eventColor, eventBadge, catLabel,
+    mountTournamentSelect,
   };
 })(window);

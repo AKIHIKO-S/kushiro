@@ -1094,10 +1094,12 @@ const LV = {
       } else {
         sel.appendChild(h("option", { value: "" }, "— 大会を選択 —"));
         LV.tournaments.forEach(t => {
-          sel.appendChild(h("option", { value: t.id },
+          sel.appendChild(h("option",
+            { value: t.id, dataset: { status: t.status || "", date: fmtDate(t.date) || "", name: t.name || "" } },
             `${t.name} (${fmtDate(t.date) || ""})`));
         });
       }
+      TT.mountTournamentSelect(sel, { accent: "#fff", dark: true });
     } catch (e) { console.error(e); }
   },
 
@@ -1129,7 +1131,9 @@ const LV = {
     LV.tournamentId = id;
     LV._ver = null;
     LV._tickFails = 0;
-    document.getElementById("tournSel").value = id || "";
+    const tsel = document.getElementById("tournSel");
+    tsel.value = id || "";
+    TT.mountTournamentSelect(tsel, { accent: "#fff", dark: true });
     if (LV.poller) clearInterval(LV.poller);
     if (!id) {
       LV._closeOpsStream();
