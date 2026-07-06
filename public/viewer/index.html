@@ -746,15 +746,17 @@
       --accent に伝播しない(変数は使用箇所でなく定義箇所の値で確定)。--accent 系を直接上書きして
       viewer 全体を真の丹頂レッド #c01526 にする(これまで #dc2626 のままだった)。 */
    --accent:#c01526; --accent-l:#9c0f1c; --accent-bg:#fdecee; --accent-d:#9c0f1c;
-   --bg:#ffffff; --border:#e9e9ec; --border-strong:#dcdce0;
-   --radius:7px; --radius-lg:12px; --radius-xl:16px;
-   --shadow-sm:0 1px 2px rgba(20,16,12,.05);
-   --shadow:0 2px 10px -5px rgba(20,16,12,.14);
-   --shadow-lg:0 14px 34px -18px rgba(20,16,12,.22);
+   /* V2「白磁」層(2026-07・承認: 案2白磁+案3の明快さ): 温白の地に白の浮遊カード、
+      角丸を大きく、影を温かく柔らかく。丹頂赤アクセントは維持。 */
+   --bg:#faf9f7; --border:#ece8e2; --border-strong:#ded8ce;
+   --radius:10px; --radius-lg:16px; --radius-xl:20px;
+   --shadow-sm:0 1px 3px rgba(72,58,46,.06);
+   --shadow:0 5px 18px -10px rgba(72,58,46,.13);
+   --shadow-lg:0 14px 34px -16px rgba(72,58,46,.16);
    /* 団体リーグ星取表(TT.leagueTableEl)を丹頂トンマナに */
    --lg-win:#1a7a45; --lg-lose:#c01526; --lg-head:#faf7f5; --lg-line:#ece7e3; --lg-self:#f3efeb; --lg-bg:#ffffff;
    --lg-win-bg:#e9f5ee;   /* 勝利の淡い背景(汎用 #f0fdf4/#dcfce7 の丹頂harmonized置換) */
-   background:#ffffff;
+   background:#faf9f7;
  }
  /* 緑(ティール)ヘッダー → 白の丹頂ヘッダー(下端に墨の罫) */
  .hero{ background:#ffffff; color:var(--txt); border-bottom:2px solid var(--ink-900);
@@ -909,8 +911,7 @@ body{ background:#fbfaf7; }
 .tab.active:hover{ background:var(--accent-l); }
 /* 選手名鑑バナー: 紫グラデ・左縁インディゴを撤去 → 白地・墨の太上罫・大きな黒数字・赤キッカー */
 .pdb-total,.pdb-hero{ background:#fff !important; border:1px solid var(--border) !important;
-  border-top:3px solid var(--ink-900) !important; border-left:1px solid var(--border) !important;
-  border-radius:0 !important; box-shadow:none !important; padding:16px 20px; }
+  border-radius:var(--radius-lg) !important; box-shadow:var(--shadow) !important; padding:18px 22px; }
 .pdb-total .pdb-total-num,.pdb-hero .pdb-total-num{ color:var(--ink-900) !important; text-shadow:none !important;
   font-variant-numeric:tabular-nums; }
 .pdb-total .pdb-total-unit,.pdb-hero .pdb-total-unit{ color:var(--ink-700) !important; }
@@ -921,26 +922,26 @@ body{ background:#fbfaf7; }
 .pm-row.win,.pm-row.loss{ border-left:none !important; }
 .pm-row.win{ box-shadow:inset 3px 0 0 var(--lg-win); }   /* 左バーの代わりに控えめなinset */
 .pm-row.loss{ box-shadow:inset 3px 0 0 var(--accent); }
-/* 大会カード: 左バー型をやめ、上端に細い赤帯+白カード(新聞のセクション見出し風) */
-.tcard{ border-radius:0; border-left:1px solid var(--border); }
-/* 大会カードは新聞のセクション見出し風: 上端に細い赤帯(左バーは廃止済) */
-.tcard{ border-top:2px solid var(--accent); }
-.tcard.is-completed,.tcard.is-cancelled{ border-top-color:var(--border-strong); }
+/* 大会カード(白磁): 白の浮遊カード・丸み・柔らかい影。左縁色線は不使用、
+   状態は本文の状態ピルで示す(色付き左罫/上帯に依存しない)。 */
+.tcard{ border-radius:var(--radius-lg); border:1px solid var(--border);
+  background:#fff; box-shadow:var(--shadow); transition:box-shadow .18s ease, transform .18s ease; }
+.tcard:hover{ box-shadow:var(--shadow-lg); transform:translateY(-1px); }
 /* 状態バッジ: 進行中=丹頂赤(LIVEと統一)、他は墨系の中立。高彩度多色をやめる */
 .st-pill.is-ongoing{ background:var(--accent-bg); color:var(--accent); }
 .st-pill.is-preparation{ background:#f4efe7; color:var(--ink-700); }
 .st-pill.is-scheduled{ background:var(--ink-100); color:var(--ink-700); }
 .st-pill.is-ongoing::before{ background:var(--accent); }
 .st-pill.is-preparation::before,.st-pill.is-scheduled::before{ background:var(--ink-500); }
-/* 進捗バー: 緑グラデ→単色(完了の意味色)、赤みトラック→中立 */
-.wr-bar{ background:var(--line2, #f0ebe1); border-radius:0; height:6px; }
-.wr-bar > span{ background:var(--lg-win, #1a7a45); }
+/* 進捗バー(白磁): 単色・丸めたトラック */
+.wr-bar{ background:var(--line2, #f0ebe1); border-radius:999px; height:6px; overflow:hidden; }
+.wr-bar > span{ background:var(--lg-win, #1a7a45); border-radius:999px; }
 /* 選手名鑑のグループ切替(セグメント制御): CSS未定義で375pxで見切れていた。横スクロール可能に。 */
 .pdb-seg{ display:flex; gap:2px; overflow-x:auto; -webkit-overflow-scrolling:touch;
-  border:1px solid var(--border); border-radius:0; background:#fff; padding:3px; margin:14px 0;
+  border:1px solid var(--border); border-radius:12px; background:#fff; padding:3px; margin:14px 0;
   scrollbar-width:thin; }
 .pdb-seg-btn{ flex:none; white-space:nowrap; padding:8px 16px; font-size:13px; font-weight:700;
-  color:var(--sub); background:transparent; border:none; border-radius:0; cursor:pointer; }
+  color:var(--sub); background:transparent; border:none; border-radius:9px; cursor:pointer; }
 .pdb-seg-btn.active{ color:#fff; background:var(--accent); }
 /* 検索バーの固定幅 select を可変に(375pxで見切れ解消) */
 #searchGender,#searchCat{ width:auto !important; min-width:96px; flex:1 1 auto; }
@@ -971,7 +972,7 @@ body{ background:#fbfaf7; }
 .rk-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
 .rk-filters .input{width:auto;min-width:120px}
 .rk-toggle{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--sub);margin-left:auto}
-.rk-table{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
+.rk-table{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow)}
 .rk-head,.rk-row{display:grid;grid-template-columns:44px 1fr 96px 58px 66px;gap:10px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--border)}
 .rk-head{background:var(--bg);font-size:11px;color:var(--sub);font-weight:700;letter-spacing:.04em}
 .rk-head .num,.rk-row .rk-wins,.rk-row .rk-rate,.rk-row .rk-champ{text-align:right;font-variant-numeric:tabular-nums}
@@ -989,12 +990,12 @@ body{ background:#fbfaf7; }
 .rk-champ .none{color:var(--sub-l)}
 .rk-foot{font-size:12px;color:var(--sub);text-align:center;padding:12px 4px 0}
 .st-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px}
-.st-tile{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
+.st-tile{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px;box-shadow:var(--shadow)}
 .st-tile .v{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1}
 .st-tile .k{font-size:12px;color:var(--sub);margin-top:4px}
 .st-tile.accent .v{color:var(--accent)}
 .st-duo{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
-.st-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+.st-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;box-shadow:var(--shadow)}
 .st-card .big{font-size:24px;font-weight:800;color:var(--accent);font-variant-numeric:tabular-nums}
 .st-card .lbl{font-size:12px;color:var(--ink);font-weight:600;margin-top:2px}
 .st-card .sub{font-size:11px;color:var(--sub);margin-top:2px}
