@@ -186,7 +186,7 @@
     margin-bottom: 7px; flex-wrap: wrap; gap: 4px;
   }
   .lv-progress-title { font-size: 14px; font-weight: 700; }
-  .lv-progress-figure { font-size: 13px; color: var(--lv-sub); }
+  .lv-progress-figure { font-size: 13px; color: var(--lv-sub); font-variant-numeric: tabular-nums; }
   .lv-progress-figure strong { color: var(--lv-ok); font-size: 17px; }
   .lv-progress-remain { color: var(--lv-accent); font-weight: 700; }
   .lv-progress-bar {
@@ -221,6 +221,7 @@
     font-family: var(--font-mono);
     font-size: 24px; font-weight: 800;
     line-height: 1;
+    font-variant-numeric: tabular-nums;
   }
   .lv-stat-num.red { color: var(--lv-accent); }
   .lv-stat-num.yellow { color: var(--lv-warn); }
@@ -955,10 +956,12 @@
     .lv-board-inner { grid-template-columns: repeat(var(--lv-cols, 4), 92px); max-width: none; width: max-content; }
     .lv-court { min-height: 64px; padding: 16px 3px 14px; }
     .lv-court-p { font-size: 10px; }
-    .lv-court-team { font-size: 8px; }
-    .lv-court-vs { font-size: 7px; margin: 1px 0; }
-    .lv-court-no { font-size: 8px; left: 4px; top: 3px; }
-    .lv-court-round { font-size: 7px; padding: 1px 3px; }
+    /* 破壊的レビュー: 7-8pxは実用下限を割り込み読みづらい(380px以下では既に9px以上に
+       底上げ済みだったが、381-640px幅の一般的なスマホでは反映されていなかった)。統一。 */
+    .lv-court-team { font-size: 9px; }
+    .lv-court-vs { font-size: 9px; margin: 1px 0; }
+    .lv-court-no { font-size: 9px; left: 4px; top: 3px; }
+    .lv-court-round { font-size: 9px; padding: 1px 3px; }
     .lv-match { grid-template-columns: 50px 1fr; gap: 10px; padding: 10px 12px; }
     .lv-match-table { font-size: 12px; padding: 4px; }
     .lv-match-name { font-size: 13px; }

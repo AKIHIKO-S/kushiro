@@ -251,8 +251,10 @@
    padding: 1px 7px; border-radius: 10px;
    font-size: 10px; font-weight: 700; line-height: 1.5;
  }
- .pdb-stat .pdb-stat-lbl { font-size: 8px; opacity: 0.7; font-weight: 600; }
- .pdb-stat.app { background: #eef2ff; color: #3730a3; }
+ .pdb-stat .pdb-stat-lbl { font-size: 11px; opacity: 0.7; font-weight: 600; }
+ /* 破壊的レビュー: 出場バッジの青紫(#eef2ff/#3730a3)を中立グレーへ(紫は勝/敗以外の
+    意味を持たないため不要な色相を増やしていた)。 */
+ .pdb-stat.app { background: var(--ink-100); color: var(--ink-700); }
  .pdb-stat.win { background: #dcfce7; color: #15803d; }
  .pdb-stat.loss { background: #fee2e2; color: #b91c1c; }
  .pdb-stat.medal { background: #fef9c3; color: #854d0e; }
@@ -389,7 +391,7 @@
  margin-bottom: 8px; flex-wrap: wrap; gap: 4px;
  }
  .op-progress-title { font-size: 13px; font-weight: 700; color: var(--ink-800); }
- .op-progress-figure { font-size: 13px; color: var(--ink-600); }
+ .op-progress-figure { font-size: 13px; color: var(--ink-600); font-variant-numeric: tabular-nums; }
  .op-progress-figure strong { color: var(--ink-900); }
  .op-progress-bar {
  height: 22px; border-radius: 11px; background: var(--ink-100);
@@ -563,7 +565,8 @@
  .court-cell-vs { font-size: 11px; color: var(--sub); font-weight: 600; margin: 2px 0; }
  /* 経過時間: 氏名・所属から区切り線で分離して見やすく #222 */
  .cc-elapsed { font-size: 12px !important; font-weight: 800; color: #475569;
-   margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--ink-300); width: 88%; }
+   margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--ink-300); width: 88%;
+   font-variant-numeric: tabular-nums; }
  /* 承認待ちバッジ */
  .cc-await { font-size: 13px; font-weight: 800; color: #1d4ed8;
    background: #dbeafe; border-radius: 6px; padding: 2px 8px; margin-top: 6px; line-height: 1.3; }
@@ -762,7 +765,7 @@
 
  /* 経過時間バッジ + 推定終了 #204 */
  .elapsed-badge { font-size: 11px; font-weight: 800; padding: 1px 8px; border-radius: 9px;
-   white-space: nowrap; font-family: var(--font-mono); }
+   white-space: nowrap; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
  .elapsed-ok { background: #f1f5f9; color: #475569; }
  .elapsed-amber { background: #fef3c7; color: #92400e; }
  .elapsed-red { background: #fee2e2; color: #b91c1c; animation: callPulse 1.6s infinite; }
