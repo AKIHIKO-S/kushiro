@@ -1390,19 +1390,8 @@ const LV = {
         h("span", {}, "団体追加コート (" + extraCount + "コート)")) : null,
     ));
 
-    // 種目ごとの色 凡例 (進行中のコートに出ている種目のみ) #182
-    const activeEvents = [...new Set(s.tables.filter(t => t.match && t.match.event)
-      .map(t => t.match.event))];
-    if (activeEvents.length) {
-      const legend2 = h("div", { className: "lv-ev-legend" });
-      activeEvents.forEach(ev => {
-        const ec = TT.eventColor(ev);
-        legend2.appendChild(h("div", { className: "lv-ev-item" },
-          h("span", { className: "lv-ev-swatch", style: { background: ec.bg } }),
-          h("span", {}, ev)));
-      });
-      wrap.appendChild(legend2);
-    }
+    // 種目色の凡例は撤去(コートを白磁トーン=丹頂赤に一本化し全面色塗りをやめたため無意味に。
+    // 種目は各コートヘッダの中立ラベルで識別する)。
 
     // 横スクロール案内 (スマホでオーバーフロー時のみ JS で表示)
     const scrollHint = h("div", { className: "lv-scroll-hint" }, "← 横にスワイプで全てのコートを表示 →");
@@ -1419,13 +1408,8 @@ const LV = {
         onClick: () => t.match && LV.showCourtDetail(t),
         title: t.match ? "クリックで詳細" : "空きコート",
       });
-      // 進行中のコートは種目ごとに色分け (#182)
-      if (t.match) {
-        const ec = TT.eventColor(t.match.event);
-        cell.style.background = ec.bg;
-        cell.style.borderColor = ec.border;
-        cell.style.color = ec.fg;
-      }
+      // 白磁: 進行中コートは種目色の全面塗り(混合=紫等のAI-tell)をやめ、CSSの丹頂赤(.lv-court.active)
+      // に一本化。種目はヘッダの中立ラベルで識別する(会場ディスプレイでも遠目に判別しやすい)。
       // 上部ストリップ: コート番号 + 種目 (重なり解消)
       const eventLabel = t.match
         ? ((t.match.event || "") + (t.match.round ? " " + t.match.round : ""))
