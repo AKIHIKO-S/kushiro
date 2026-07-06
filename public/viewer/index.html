@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>KTTA Platform - 試合結果・選手検索</title>
 <!-- PWA / iOS ホーム画面追加 (マイ番号のプッシュ通知に必要) #268-push -->
 <meta name="theme-color" content="#15803d">
@@ -1059,6 +1059,34 @@ body{ background:#fbfaf7; }
 #tab-live .live-court-match{ color:var(--txt); }
 #tab-live .live-court-ev{ font-size:9px; color:var(--sub); font-weight:700; margin-top:1px;
   text-align:center; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; letter-spacing:.02em; }
+/* ═══════════ モバイル下部ナビ(白磁・≤640pxのみ) ═══════════ */
+.v-bnav{ display:none; }
+.v-bnav-btn{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+  background:none; border:none; cursor:pointer; padding:7px 2px 5px; min-height:54px;
+  color:var(--sub); font-size:10px; font-weight:700; font-family:inherit; -webkit-tap-highlight-color:transparent; }
+.v-bnav-btn svg{ width:22px; height:22px; }
+.v-bnav-btn span{ line-height:1; letter-spacing:.01em; }
+.v-bnav-btn.active, .v-bnav-more.is-open{ color:var(--accent); }
+/* .tab の新聞スタイル(赤ブロック地/右罫/padding)を下部ナビ内で打ち消す */
+.v-bnav .tab{ border:none !important; padding:7px 2px 5px !important; background:none !important; color:var(--sub) !important; }
+.v-bnav .tab.active{ background:none !important; color:var(--accent) !important; }
+@media(max-width:640px){
+  body > .tabs{ display:none; }                      /* 上部ナビ(バーガー行含む)は下部ナビに集約 */
+  .v-bnav{ display:grid; grid-template-columns:repeat(5,1fr);
+    position:fixed; inset:auto 0 0 0; z-index:60; background:#fff; border-top:1px solid var(--border);
+    padding-bottom:env(safe-area-inset-bottom); box-shadow:0 -2px 14px -6px rgba(72,58,46,.16); }
+  body{ padding-bottom:calc(56px + env(safe-area-inset-bottom)); }
+  .hero{ padding-top:env(safe-area-inset-top); }
+  /* 「メニュー」: 上部タブ一覧(#tabsIn)を下部シートとして開く */
+  body.v-menu-open > .tabs{ display:block; position:fixed; left:0; right:0; top:auto;
+    bottom:calc(56px + env(safe-area-inset-bottom)); z-index:59; max-height:66vh; overflow:auto;
+    background:#fff; border-top:1px solid var(--border); border-bottom:none;
+    box-shadow:0 -10px 30px -12px rgba(24,24,27,.28); border-radius:14px 14px 0 0; }
+  body.v-menu-open .v-burger{ display:none; }
+  body.v-menu-open .tabs-in{ display:flex; }
+  /* トーストが下部固定ナビに隠れないよう、モバイルはバーの上に浮かせる */
+  .toast{ bottom:calc(56px + env(safe-area-inset-bottom) + 14px); }
+}
 </style>
 </head>
 <body>
@@ -1183,6 +1211,21 @@ body{ background:#fbfaf7; }
 
 </div>
 
+<!-- モバイル下部ナビ(≤640pxのみ表示)。4タブは class="tab" data-tab で既存のquerySelectorAll結線に自動連動、
+     「メニュー」は上部タブ一覧(#tabsIn)を下部シートとして開く(ランキング/統計/監督/観戦ビューへの導線)。 -->
+<nav class="v-bnav" id="vBnav" aria-label="メインナビ">
+ <button class="tab v-bnav-btn" data-tab="live" aria-label="大会進行">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg><span>進行</span></button>
+ <button class="tab v-bnav-btn" data-tab="myportal" aria-label="マイ番号">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 7 20M17 4l-2 16M5 9h15M4 15h15"/></svg><span>マイ番号</span></button>
+ <button class="tab v-bnav-btn" data-tab="search" aria-label="選手">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/></svg><span>選手</span></button>
+ <button class="tab v-bnav-btn" data-tab="tournaments" aria-label="大会">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h8v5a4 4 0 0 1-8 0V4zM8 5H5v1a3 3 0 0 0 3 3M16 5h3v1a3 3 0 0 0-3 3M10 20h4M12 13v4"/></svg><span>大会</span></button>
+ <button class="v-bnav-btn v-bnav-more" id="vBnavMore" aria-label="メニュー" aria-expanded="false">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span>メニュー</span></button>
+</nav>
+
 <script src="/shared/common.js"></script>
 <script>
 const { h, esc, api, toast, ratingBadge, fmtDate, fmtDateShort, createPoller, clear } = TT;
@@ -1209,6 +1252,13 @@ const V = {
  const burger = document.getElementById("vBurger");
  if (burger) burger.addEventListener("click", () =>
  document.getElementById("tabsIn")?.classList.toggle("open"));
+ // 下部ナビ「メニュー」→ 上部タブ一覧を下部シートとして開閉(ランキング/統計/監督/観戦ビューへの導線)
+ const bmore = document.getElementById("vBnavMore");
+ if (bmore) bmore.addEventListener("click", () => {
+ const open = document.body.classList.toggle("v-menu-open");
+ bmore.classList.toggle("is-open", open);
+ bmore.setAttribute("aria-expanded", open ? "true" : "false");
+ });
 
  // 検索入力
  const si = document.getElementById("searchInput");
@@ -1277,6 +1327,9 @@ const V = {
  showTab(name, skipHash) {
  V.activeTab = name;
  document.getElementById("tabsIn")?.classList.remove("open"); // 選択でメニューを閉じる
+ document.body.classList.remove("v-menu-open");               // 下部ナビのメニューシートも閉じる
+ const _bmore = document.getElementById("vBnavMore");
+ if (_bmore) { _bmore.classList.remove("is-open"); _bmore.setAttribute("aria-expanded", "false"); }
  document.querySelectorAll(".tab").forEach(t =>
  t.classList.toggle("active", t.dataset.tab === name)
  );
@@ -2127,10 +2180,10 @@ const V = {
  document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
  document.getElementById("tab-" + name)?.classList.remove("hidden");
  document.getElementById("searchBar").classList.add("hidden");
- // タブのアクティブ状態は関連するものに
+ // タブのアクティブ状態は関連するものに(上部タブと下部ナビの両方=querySelectorAllで全一致に付与)
  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
- if (name === "detail") document.querySelector('.tab[data-tab="tournaments"]')?.classList.add("active");
- if (name === "player") document.querySelector('.tab[data-tab="search"]')?.classList.add("active");
+ const _relTab = name === "detail" ? "tournaments" : name === "player" ? "search" : null;
+ if (_relTab) document.querySelectorAll('.tab[data-tab="' + _relTab + '"]').forEach(t => t.classList.add("active"));
  },
 
  // ─── ランキング ────────────────────────────────
