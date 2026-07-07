@@ -334,3 +334,48 @@ test("リーグのブロック分けで同一基部(所属)が別ブロックに
   });
   assert.strictEqual(same, 0, "同一基部が同ブロックに固まっていない(所属分散が効く)");
 });
+
+test("予選リーグ→決勝T(上位1名進出): 各ブロック1位が決勝Tへ", () => {
+  const names = ["甲", "乙", "丙", "丁", "戊", "己"];
+  const t = setup(names);
+  const idOf = (nm) => entId(t, nm);
+  const assignments = {};
+  ["甲", "乙", "丙"].forEach(n => assignments[idOf(n)] = "A");
+  ["丁", "戊", "己"].forEach(n => assignments[idOf(n)] = "B");
+  db.generateTeamLeague(t.id, EV, { assignments, regenerate: true, force: true });
+  // 強さ: 甲>乙>丙, 丁>戊>己 (上位が必ず勝つ→ブロック1位=甲/丁)
+  const strong = { "甲": 2, "乙": 1, "丙": 0, "丁": 2, "戊": 1, "己": 0 };
+  leagueMatches(t).forEach(m => {
+    const win = strong[m.player1_name] > strong[m.player2_name] ? m.player1_name : m.player2_name;
+    recordTie(t, m.id, win, db.getMatchesByTournament(t.id).find(x => x.id === m.id), 3, 0);
+  });
+  const r = db.generateLeaguePlayoff(t.id, EV, { mode: "top", advance_n: 1, force: true });
+  assert.ok(!r.error, "生成成功: " + JSON.stringify(r.error || ""));
+  assert.strictEqual(r.created.length, 1, "決勝T1つ");
+  const poEnts = db.getEntrants(t.id, EV + " 決勝T");
+  assert.strictEqual(poEnts.length, 2, "通過者2名(各ブロック1位)");
+  assert.deepStrictEqual(poEnts.map(e => e.team).sort(), ["丁", "甲"], "甲と丁が通過");
+  // ブラケットが生成されている
+  const poMatches = db.getMatchesByTournament(t.id).filter(m => m.event === EV + " 決勝T");
+  assert.ok(poMatches.length >= 1, "決勝Tのブラケット生成");
+});
+
+test("予選リーグ→順位別トーナメント(1位T/2位T)", () => {
+  const names = ["甲", "乙", "丙", "丁", "戊", "己"];
+  const t = setup(names);
+  const idOf = (nm) => entId(t, nm);
+  const assignments = {};
+  ["甲", "乙", "丙"].forEach(n => assignments[idOf(n)] = "A");
+  ["丁", "戊", "己"].forEach(n => assignments[idOf(n)] = "B");
+  db.generateTeamLeague(t.id, EV, { assignments, regenerate: true, force: true });
+  const strong = { "甲": 2, "乙": 1, "丙": 0, "丁": 2, "戊": 1, "己": 0 };
+  leagueMatches(t).forEach(m => {
+    const win = strong[m.player1_name] > strong[m.player2_name] ? m.player1_name : m.player2_name;
+    recordTie(t, m.id, win, db.getMatchesByTournament(t.id).find(x => x.id === m.id), 3, 0);
+  });
+  const r = db.generateLeaguePlayoff(t.id, EV, { mode: "byrank", advance_n: 2, force: true });
+  assert.ok(!r.error, "生成成功: " + JSON.stringify(r.error || ""));
+  assert.strictEqual(r.created.length, 2, "1位T・2位Tの2つ");
+  assert.deepStrictEqual(db.getEntrants(t.id, EV + " 1位T").map(e => e.team).sort(), ["丁", "甲"], "1位T=甲丁");
+  assert.deepStrictEqual(db.getEntrants(t.id, EV + " 2位T").map(e => e.team).sort(), ["乙", "戊"], "2位T=乙戊");
+});

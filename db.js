@@ -4570,6 +4570,97 @@ function computeLeagueStandings(tournamentId, event, block) {
   return block ? (result[block] || []) : result;
 }
 
+// 予選リーグ→決勝トーナメント通過処理(KTTA formats.md)。予選の順位から通過者を確定し、
+// 決勝Tを「新種目」として生成する=既存のブラケット機構(生成/進行/描画/Excel)にそのまま載る。
+//   mode='top'   : 各ブロック上位 advance_n 名を集めて1つの決勝T(srcEvent+" 決勝T")。
+//   mode='byrank': 各ブロックの同順位を集めて順位別T(srcEvent+" 1位T"/" 2位T"…)を rank ごとに生成。
+// 通過者は seed=リーグ実績順(勝→セット得失差→総得点)で標準配置=外/中シードで山が割れる(主催の調整余地は残す)。
+// 決勝Tは event_config に追加(admin種目セレクタ用)。冪等: 生成先種目の既存 entrants/matches を置換
+// (結果入力済みは _destructiveGuard が force 無しでブロック)。
+function generateLeaguePlayoff(tournamentId, srcEvent, opts = {}) {
+  opts = opts || {};
+  const mode = opts.mode === "byrank" ? "byrank" : "top";
+  const advanceN = Math.max(1, Math.min(8, parseInt(opts.advance_n) || 1));
+  const standings = computeLeagueStandings(tournamentId, srcEvent);
+  const blocks = Object.keys(standings).filter(b => (standings[b] || []).length).sort();
+  if (!blocks.length) return { error: "予選リーグの結果が見つかりません(先にリーグを生成・入力してください)" };
+
+  const warnings = [];
+  // seed用の強さ比較(降順): 勝→セット得失差→総得点。KTTA順位規則と同順(直接対決は不使用)。
+  const strengthCmp = (a, b) => (b.wins - a.wins) ||
+    ((b.sets_won - b.sets_lost) - (a.sets_won - a.sets_lost)) || (b.pts_won - a.pts_won);
+  const evName = (suffix) => srcEvent + " " + suffix;
+  const targets = [];  // [{ event, entries:[{ row, block, blockRank, seed }] }]
+
+  if (mode === "top") {
+    const quals = [];
+    blocks.forEach(bk => {
+      const arr = standings[bk];
+      if (arr.length > advanceN && arr[advanceN - 1] && arr[advanceN] &&
+          arr[advanceN - 1].rank === arr[advanceN].rank) {
+        warnings.push("ブロック" + bk + ": " + advanceN + "位が同順位(抽選)で通過者が未確定。上位行を暫定採用");
+      }
+      arr.slice(0, advanceN).forEach((row, i) => {
+        if (row.played === 0) warnings.push("ブロック" + bk + ": " + (i + 1) + "位が未消化(暫定順位)");
+        quals.push({ row, block: bk, blockRank: i + 1 });
+      });
+    });
+    if (quals.length < 2) return { error: "決勝Tには2名以上の通過者が必要です(通過者" + quals.length + "名)" };
+    // 1位群→2位群…の順、各群内は実績順=1位群が上位シード。同ブロックは山が分かれるよう散る。
+    quals.sort((a, b) => (a.blockRank - b.blockRank) || strengthCmp(a.row, b.row));
+    targets.push({ event: evName("決勝T"), entries: quals.map((q, i) => ({ ...q, seed: i + 1 })) });
+  } else {
+    for (let r = 1; r <= advanceN; r++) {
+      const group = [];
+      blocks.forEach(bk => {
+        const row = standings[bk][r - 1];   // r 番目の行(同率も行順)
+        if (row) { if (row.played === 0) warnings.push("ブロック" + bk + ": " + r + "位が未消化(暫定順位)"); group.push({ row, block: bk, blockRank: r }); }
+      });
+      if (group.length < 2) { warnings.push(r + "位トーナメント: 通過者" + group.length + "名で生成をスキップ"); continue; }
+      group.sort((a, b) => strengthCmp(a.row, b.row));
+      targets.push({ event: evName(r + "位T"), entries: group.map((g, i) => ({ ...g, seed: i + 1 })) });
+    }
+    if (!targets.length) return { error: "順位別トーナメントの対象がありません(各ブロック同順位が2名以上必要)" };
+  }
+
+  // 破壊ガード: 生成先種目に結果入力済みがあれば force 無しで作り直さない。
+  for (const tg of targets) {
+    const guard = _destructiveGuard(tournamentId, tg.event, opts.force, "決勝Tを生成(作り直し)");
+    if (guard) return guard;
+  }
+
+  const txn = sqlite.transaction(() => {
+    const t = getTournament(tournamentId);
+    let cfg = [];
+    try { cfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []); } catch (e) { cfg = []; }
+    const srcCfg = cfg.find(c => c && c.name === srcEvent) || {};
+    for (const tg of targets) {
+      if (!cfg.some(c => c && c.name === tg.event)) {
+        cfg.push({ name: tg.event, type: srcCfg.type || "singles", fee: 0, note: "予選リーグからの決勝トーナメント" });
+      }
+      sqlite.prepare("DELETE FROM matches WHERE tournament_id=? AND event=?").run(tournamentId, tg.event);
+      sqlite.prepare("DELETE FROM entrants WHERE tournament_id=? AND event=?").run(tournamentId, tg.event);
+      tg.entries.forEach(en => {
+        createEntrant({
+          tournament_id: tournamentId, event: tg.event, seed: en.seed,
+          name: en.row.team_name, team: en.row.team_name, status: "confirmed",
+          note: srcEvent + " " + en.block + "ブロック" + en.blockRank + "位",
+        });
+      });
+    }
+    sqlite.prepare("UPDATE tournaments SET event_config=? WHERE id=?").run(JSON.stringify(cfg), tournamentId);
+  });
+  txn();
+
+  const created = [];
+  for (const tg of targets) {
+    const r = generateBracket(tournamentId, tg.event, { regenerate: true, force: true });
+    if (r && r.error) return { error: "決勝T(" + tg.event + ")の生成に失敗: " + r.error };
+    created.push({ event: tg.event, entrants: tg.entries.length });
+  }
+  return { ok: true, mode, advance_n: advanceN, created, warnings };
+}
+
 // 団体リーグの対戦結果一覧(星取表/交差表の描画用)。完了対戦は home/away のセット・得点・勝敗を含む。
 function getLeagueMatchResults(tournamentId, event, block) {
   const where = block ? "tournament_id=? AND event=? AND league_block=?"
@@ -9026,7 +9117,7 @@ module.exports = {
   generateBracket, addBracketSeed, promoteToSeed, drawSingleBracket, computeDrawLeaves, bracketPositions,
   checkDrawReadiness, bracketRev, undoDraw, getDrawLog, getBracketDrawDiff, importBracketRoundtrip,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
-  generateTeamLeague, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
+  generateTeamLeague, generateLeaguePlayoff, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
   setCallCount, bumpCallCount,
   getPlayerRefereeLock, getPlayerPlayingLock,
