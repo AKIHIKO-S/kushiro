@@ -320,3 +320,17 @@ test("釧路リーグ: 前回順位から昇降格を提案(1-2位昇格/3位残
   assert.strictEqual(sug.new_count, 1, "新規1");
   assert.strictEqual(sug.returning_count, 8, "復帰8");
 });
+
+test("リーグのブロック分けで同一基部(所属)が別ブロックに散る", () => {
+  // 4基部×A/B = 8チーム。num_blocks=2 で同基部(例 北陽A/北陽B)は別ブロックへ(所属分散)。
+  const names = ["北陽Ａ", "北陽 B", "森A", "森B", "星A", "星B", "空A", "空B"]; // 表記ゆれ込み
+  const t = setup(names);
+  const r = db.generateTeamLeague(t.id, EV, { num_blocks: 2, regenerate: true, force: true });
+  assert.ok(!r.error, "生成成功: " + JSON.stringify(r.error || ""));
+  const blockOf = {}; db.getEntrants(t.id, EV).forEach(e => { blockOf[e.team] = e.block; });
+  let same = 0;
+  [["北陽Ａ", "北陽 B"], ["森A", "森B"], ["星A", "星B"], ["空A", "空B"]].forEach(([a, b]) => {
+    if (blockOf[a] && blockOf[b] && blockOf[a] === blockOf[b]) same++;
+  });
+  assert.strictEqual(same, 0, "同一基部が同ブロックに固まっていない(所属分散が効く)");
+});

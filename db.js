@@ -4432,6 +4432,34 @@ function generateTeamLeague(tournamentId, event, opts = {}) {
       const cycle = Math.floor(i / nb), pos = i % nb;
       assign[t.id] = LABELS[(cycle % 2 === 0) ? pos : (nb - 1 - pos)]; // スネークでシードを分散
     });
+    // 所属分散(best-effort): 同一基部(正規化)のチーム(例 北陽A/北陽B)が同ブロックに固まらないよう、
+    // ブロック間swapで散らす。1回のswapはブロックサイズを保ち(シードバランス維持)、新たな同基部衝突を
+    // 作らないターゲットに限定=衝突を確実に1件ずつ減らす。分離不能(同基部がブロック数超)なら残す。
+    if (nb >= 2) {
+      const baseOf = (t) => _normClub(t.team || t.name || "");
+      for (let pass = 0; pass < 8; pass++) {
+        const byB = {}; teams.forEach(t => { (byB[assign[t.id]] = byB[assign[t.id]] || []).push(t); });
+        let improved = false;
+        outer:
+        for (const [blk, ts] of Object.entries(byB)) {
+          const cnt = {}; ts.forEach(t => { const b = baseOf(t); if (b) cnt[b] = (cnt[b] || 0) + 1; });
+          for (const t of ts) {
+            const b = baseOf(t);
+            if (!b || cnt[b] < 2) continue;                       // 同基部が重複しているチームtだけ動かす
+            for (const [blk2, ts2] of Object.entries(byB)) {
+              if (blk2 === blk) continue;
+              for (const u of ts2) {
+                const ub = baseOf(u);
+                const blk2HasB = ts2.some(x => x !== u && baseOf(x) === b);   // 移動先に既に基部b(=解消しない)
+                const blkHasUb = ub && ts.some(x => x !== t && baseOf(x) === ub); // 提供元が基部ubの衝突に
+                if (!blk2HasB && !blkHasUb) { assign[t.id] = blk2; assign[u.id] = blk; improved = true; break outer; }
+              }
+            }
+          }
+        }
+        if (!improved) break;
+      }
+    }
   }
   const byBlock = {};
   teams.forEach(t => { const b = assign[t.id] || "A"; (byBlock[b] = byBlock[b] || []).push(t); });
