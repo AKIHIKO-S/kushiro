@@ -3164,17 +3164,23 @@ const opStmts = {
   getRefereeFor: sqlite.prepare(`SELECT * FROM matches WHERE referee_id=? AND status IN ('pending','on_table') LIMIT 1`),
 };
 
-// ── 標準シーディング順序を生成 ──────────────────────
-// 例: bracketPositions(8) = [1,8,4,5,2,7,3,6]
-//     隣接ペアが1回戦の対戦カード
+// ── 標準ドローシート順(外/中シード)を生成 ──────────────────────
+// 卓球/テニスの紙トーナメント表の標準配置。
+//   外シード: 第1シード=最上端(slot0)、第2シード=最下端(slot size-1)。
+//   中シード: 第3/4シード=各半分の中央側(山頭)。第5-8=各1/4の中央側…と外側から内側へ。
+// 決勝[1,2]から各ラウンドで各対戦を2分割し、上位シードを外側の端へ寄せる(even/oddで向きを交互に=蛇行)。
+//   例: bracketPositions(8) = [1,8,5,4,3,6,7,2]（隣接ペアが1回戦の対戦カード）。
+// ※旧実装 [1,8,4,5,2,7,3,6] とは「物理位置(描画順)」のみ異なり、競技構造(同じ山・R1対戦カードの集合)は同一。
+//   → 描画(両山)が紙どおり S1最上端/S2最下端/S3・4中央 になり、下流(進出・番号採番)は新配置に整合して再計算される。
 function bracketPositions(size) {
-  let arr = [1];
+  if (size <= 1) return [1];
+  let arr = [1, 2];
   while (arr.length < size) {
     const next = [];
-    const len = arr.length * 2;
-    for (const v of arr) {
-      next.push(v);
-      next.push(len + 1 - v);
+    const sum = arr.length * 2 + 1;   // このラウンドの上下ペア和(外側=上位・内側=下位)
+    for (let i = 0; i < arr.length; i++) {
+      if (i % 2 === 0) { next.push(arr[i]); next.push(sum - arr[i]); }
+      else { next.push(sum - arr[i]); next.push(arr[i]); }   // 蛇行: 奇数位置は上下反転して外側に上位を残す
     }
     arr = next;
   }
@@ -3187,7 +3193,9 @@ function bracketPositions(size) {
 // 標準シードで上下に振り分けつつ、各半分の「重み容量」を尊重する。区画を単独で専有できる
 // スーパーシードは、その区画の先頭リーフに置き残りをBYE(null)にする → 既存の autoAdvanceByes が
 // 多段BYEを自動進行させ、R回戦の相手(反対側の予選サブブラケット勝者)と当たる。
-// ※全 w=1 のときは bracketPositions と完全一致する(既存の標準配置を壊さない)。
+// ※上下の「区画分割」(どのシードが上半分/下半分か)は bracketPositions と同一だが、区画内の細かな
+//   物理順は蛇行が浅く、外/中シード標準式(S2最下端等)とは鏡像方向が一部異なる。スーパーシードは
+//   登場回戦の枠が主眼で競技構造は正しいため許容。superseedの物理順の完全な標準式一致は段階1後半で対応(TODO)。
 function buildSeededLeaves(entries, size) {
   const leaves = new Array(size).fill(null);
   function place(ents, lo, span) {
