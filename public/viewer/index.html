@@ -1717,12 +1717,17 @@ const V = {
    };
    const cx = () => h("div", { className: "vbt-cx" });
    const cols = h("div", { className: "vbt-cols" });
+   // 山の判定は「存在する試合数の半分」ではなく bracket_pos(物理枠位置)で行う。
+   // viewer は BYE/不戦勝を上流で除外するため、シード付きブラケット(BYE持ち)では試合数が
+   // 上下の山で不揃いになる=件数割りだと上の山の試合が下の山に混ざる。枠位置なら常に正しい。
+   const posCnt = (r) => Math.pow(2, finalRound - r);   // このラウンドの全枠数(BYE込み)
+   const inTop = (m, r) => (m.bracket_pos || 0) < posCnt(r) / 2;
    const leftCols = [], rightCols = [];
    rounds.forEach(r => {
      if (r === finalRound) return;
-     const arr = byRound[r], half = Math.ceil(arr.length / 2);
-     leftCols.push(makeCol(r, arr.slice(0, half), "left"));
-     rightCols.push(makeCol(r, arr.slice(half), "right"));
+     const arr = byRound[r];
+     leftCols.push(makeCol(r, arr.filter(m => inTop(m, r)), "left"));
+     rightCols.push(makeCol(r, arr.filter(m => !inTop(m, r)), "right"));
    });
    leftCols.forEach(c => { cols.appendChild(c); cols.appendChild(cx()); });
    if (byRound[finalRound]) cols.appendChild(makeCol(finalRound, byRound[finalRound], "center"));
@@ -1739,8 +1744,8 @@ const V = {
    const upR = {}, dnR = {};
    rounds.forEach(r => {
      if (r === finalRound) return;
-     const arr = byRound[r], half = Math.ceil(arr.length / 2);
-     upR[r] = arr.slice(0, half); dnR[r] = arr.slice(half);
+     const arr = byRound[r];
+     upR[r] = arr.filter(m => inTop(m, r)); dnR[r] = arr.filter(m => !inTop(m, r));
    });
    const makePane = (rmap) => {
      const pane = h("div", { className: "vbt-pane" });
