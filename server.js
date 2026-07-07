@@ -1877,6 +1877,18 @@ app.post("/api/tournaments/:id/league/generate", requireAdmin, (req, res) => {
   if (r?.error) return res.status(400).json(r);
   res.json(r);
 });
+// 予選リーグ→決勝トーナメント通過処理(運営限定)。mode=top(上位N進出)|byrank(順位別T)。
+app.post("/api/tournaments/:id/league/playoff", requireAdmin, (req, res) => {
+  const event = req.body?.event;
+  if (!event) return res.status(400).json({ error: "event(予選リーグの種目)が必要です" });
+  const r = db.generateLeaguePlayoff(req.params.id, event, {
+    mode: req.body?.mode,
+    advance_n: req.body?.advance_n,
+    force: !!req.body?.force,
+  });
+  if (r?.error) return res.status(400).json(r);
+  res.json(r);
+});
 // 釧路リーグ: 前回大会の各部順位から今回の部を提案(運営限定)。
 // ?prev=<前回大会id>&prev_event=<前回の団体種目名>&event=<今回の団体種目名>&promote_top=&relegate_from=
 app.get("/api/tournaments/:id/league/promotion-suggest", requireAdmin, (req, res) => {

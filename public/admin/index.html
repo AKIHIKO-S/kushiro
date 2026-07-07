@@ -8191,6 +8191,9 @@ const O = {
        title: "団体種目を総当たり(リーグ)で生成。各ブロックで全チームが対戦し、勝敗→セット率→得点率で順位。",
        onClick: () => O.openLeagueGen(sel) }, "リーグ生成"),
      h("button", { className: "btn btn-sm",
+       title: "予選リーグの順位から決勝トーナメントを生成。上位N名進出 or 順位別T(1位T/2位T…)。決勝Tは新しい種目として追加されます。",
+       onClick: () => O.openLeaguePlayoff(sel) }, "決勝T生成"),
+     h("button", { className: "btn btn-sm",
        title: "釧路リーグ: 前回大会の各部順位から今回の部(1〜25部)を昇降格ルールで提案→手動調整して生成。",
        onClick: () => O.openKushiroLeagueAssign(sel) }, "釧路リーグ振り分け"),
    ]),
@@ -9216,6 +9219,35 @@ const O = {
  toast(`リーグ生成: ${r.blocks}ブロック・${r.total_matches}対戦`, "ok");
  if (O._vbReload) O._vbReload();
  if (O.reload) O.reload();
+ },
+
+ // ── 予選リーグ→決勝トーナメント通過処理: 上位N名進出 or 順位別T(1位T/2位T…) ──
+ async openLeaguePlayoff(event) {
+   const ev = (O._eventConfig() || []).find(c => c && c.name === event);
+   if (!ev || ev.type !== "team") return toast("予選リーグを行った団体種目を選んでから押してください", "err");
+   const modeStr = prompt(
+     "「" + event + "」の予選リーグ順位から決勝トーナメントを生成します。\n方式を選んでください:\n" +
+     "  1 = 上位N名進出(各ブロックの上位を集めて1つの決勝T)\n" +
+     "  2 = 順位別トーナメント(1位T/2位T…を順位ごとに別生成)", "1");
+   if (modeStr == null) return;
+   const mode = String(modeStr).trim() === "2" ? "byrank" : "top";
+   const nStr = prompt(mode === "top"
+     ? "各ブロックから上位何名が決勝Tへ進出しますか？(例: 1 または 2)"
+     : "何位まで順位別トーナメントを作りますか？(例: 2 → 1位T・2位T)", mode === "top" ? "1" : "2");
+   if (nStr == null) return;
+   const advance_n = Math.max(1, parseInt(nStr) || 1);
+   if (!confirm("決勝トーナメントを生成します。決勝T種目が新しく追加され、種目一覧から選べるようになります。よろしいですか？")) return;
+   let r = await api.post(`/api/tournaments/${O.tournamentId}/league/playoff`, { event, mode, advance_n });
+   if (r && r.needs_force) {
+     if (!confirm(r.error + "\n\n結果入力済みも消して作り直しますか？")) return;
+     r = await api.post(`/api/tournaments/${O.tournamentId}/league/playoff`, { event, mode, advance_n, force: true });
+   }
+   if (r.error) return toast(r.error, "err");
+   const names = (r.created || []).map(c => c.event + "(" + c.entrants + "名)").join(" ／ ");
+   toast("決勝T生成: " + names, "ok");
+   if ((r.warnings || []).length) alert("決勝T生成の注意:\n・" + r.warnings.join("\n・"));
+   if (O._vbReload) O._vbReload();
+   if (O.reload) O.reload();
  },
 
  // ── 抽選ドロー(個人戦): シード固定＋非シードのランダム抽選(同一所属/地区を分散) ──
