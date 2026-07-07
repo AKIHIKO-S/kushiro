@@ -4335,6 +4335,30 @@ function summarizeTie(tieResults) {
   };
 }
 
+// 個人戦(単一試合)のリーグ集計。tie_results が無い試合から home(選手1)/away(選手2)視点の
+// セット数・総得点・勝敗を求める。セットは sets_json(選手1視点 [p1,p2])から、無ければ winner_sets/
+// loser_sets を勝敗で割当(得点は不明=0)。summarizeTie と同じ返り値形状(slots は空=個人戦印)。
+function _singlesSummary(m) {
+  let sets = [];
+  try { sets = Array.isArray(m.sets) ? m.sets : JSON.parse(m.sets_json || "[]"); } catch (e) { sets = []; }
+  let hs = 0, as = 0, hp = 0, ap = 0;
+  sets.forEach(g => {
+    if (Array.isArray(g) && g.length === 2) {
+      const h = parseInt(g[0]) || 0, a = parseInt(g[1]) || 0;
+      hp += h; ap += a; if (h > a) hs++; else if (a > h) as++;
+    }
+  });
+  const p1Won = !!m.winner_name && m.winner_name === m.player1_name && m.winner_name !== m.player2_name;
+  const p2Won = !!m.winner_name && m.winner_name === m.player2_name && m.winner_name !== m.player1_name;
+  if (!hs && !as) {   // セット内訳なし(直接スコア入力): winner_sets/loser_sets を勝敗で割当
+    const ws = parseInt(m.winner_sets) || 0, ls = parseInt(m.loser_sets) || 0;
+    if (p1Won) { hs = ws; as = ls; } else if (p2Won) { hs = ls; as = ws; }
+  }
+  return { slots: [], home_wins: p1Won ? 1 : 0, away_wins: p2Won ? 1 : 0,
+    home_sets: hs, away_sets: as, home_pts: hp, away_pts: ap,
+    winner: p1Won ? "home" : p2Won ? "away" : "" };
+}
+
 // 団体戦の「勝者指定(winner_slot/winner_id)」と「星取内訳(tie_results)」の矛盾を検出する防御。
 // クライアントは内訳から勝者を導くため通常一致するが、入力ミスや別経路だとブラケット進出と
 // 対戦詳細/順位表が恒久的に食い違う。矛盾時はエラー文字列を返し、呼出側が書込み前に reject する。
@@ -4520,13 +4544,16 @@ function computeLeagueStandings(tournamentId, event, block) {
         wins: 0, losses: 0, draws: 0, played: 0, sets_won: 0, sets_lost: 0, pts_won: 0, pts_lost: 0 };
       return teams[key];
     };
-    // ブロック所属チームを先に登録(未消化でも順位表に出す)
+    // ブロック所属を先に登録(未消化でも順位表に出す)。表示名は name 優先=団体はチーム名・個人は選手名。
+    // (試合側の ensure は player1_name を使うため、name 優先にすると個人戦でも表示が一致する)
     sqlite.prepare("SELECT id, team, name FROM entrants WHERE tournament_id=? AND event=? AND block=?")
-      .all(tournamentId, event, bk).forEach(e => ensure(e.id, e.team || e.name));
+      .all(tournamentId, event, bk).forEach(e => ensure(e.id, e.name || e.team));
     const matches = sqlite.prepare(`SELECT * FROM matches WHERE tournament_id=? AND event=? AND league_block=?
       AND status='completed' AND COALESCE(is_walkover,0)=0`).all(tournamentId, event, bk);
     matches.forEach(m => {
-      const sum = summarizeTie(_parseTieResults(m.tie_results));
+      // 団体(tie_results)は内訳から、個人戦(単一試合)は試合自体からセット/得点を集計。
+      const tie = _parseTieResults(m.tie_results);
+      const sum = (Array.isArray(tie) && tie.length) ? summarizeTie(tie) : _singlesSummary(m);
       const t1 = ensure(m.player1_entrant_id, m.player1_name);
       const t2 = ensure(m.player2_entrant_id, m.player2_name);
       t1.played++; t2.played++;

@@ -8188,7 +8188,7 @@ const O = {
        title: "シードを選手DB(Elo+過去成績)から客観スコア順に提案。根拠を見て人手で採否・順位を決めて一括設定。抽選の前に。",
        onClick: () => O.openSeedSuggest(sel) }, "シード提案"),
      h("button", { className: "btn btn-sm",
-       title: "団体種目を総当たり(リーグ)で生成。各ブロックで全チームが対戦し、勝敗→セット率→得点率で順位。",
+       title: "種目を総当たり(リーグ)で生成。個人戦・団体戦どちらも可。各ブロックで全員が対戦し、勝敗→セット得失差→総得点で順位。",
        onClick: () => O.openLeagueGen(sel) }, "リーグ生成"),
      h("button", { className: "btn btn-sm",
        title: "予選リーグの順位から決勝トーナメントを生成。上位N名進出 or 順位別T(1位T/2位T…)。決勝Tは新しい種目として追加されます。",
@@ -9202,7 +9202,7 @@ const O = {
  // ── 団体リーグ(総当たり)を生成 ──
  async openLeagueGen(event) {
  const ev = (O._eventConfig() || []).find(c => c && c.name === event);
- if (!ev || ev.type !== "team") return toast("団体種目を選んでから「リーグ生成」を押してください", "err");
+ if (!ev) return toast("種目を選んでから「リーグ生成」を押してください", "err");
  const teamCnt = ((O.state && O.state.event_stats && O.state.event_stats[event]) || {}).entrants;
  const nbStr = prompt(
    "「" + event + "」を総当たりリーグで生成します。\nブロック数を入力してください(1=全チームで1リーグ。複数なら各ブロックで総当たり)。" +
@@ -9224,7 +9224,7 @@ const O = {
  // ── 予選リーグ→決勝トーナメント通過処理: 上位N名進出 or 順位別T(1位T/2位T…) ──
  async openLeaguePlayoff(event) {
    const ev = (O._eventConfig() || []).find(c => c && c.name === event);
-   if (!ev || ev.type !== "team") return toast("予選リーグを行った団体種目を選んでから押してください", "err");
+   if (!ev) return toast("予選リーグを行った種目を選んでから押してください", "err");
    const modeStr = prompt(
      "「" + event + "」の予選リーグ順位から決勝トーナメントを生成します。\n方式を選んでください:\n" +
      "  1 = 上位N名進出(各ブロックの上位を集めて1つの決勝T)\n" +

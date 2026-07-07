@@ -379,3 +379,31 @@ test("予選リーグ→順位別トーナメント(1位T/2位T)", () => {
   assert.deepStrictEqual(db.getEntrants(t.id, EV + " 1位T").map(e => e.team).sort(), ["丁", "甲"], "1位T=甲丁");
   assert.deepStrictEqual(db.getEntrants(t.id, EV + " 2位T").map(e => e.team).sort(), ["乙", "戊"], "2位T=乙戊");
 });
+
+test("個人戦の予選リーグ: セット得失差・総得点が集計される(単一試合)", () => {
+  // 個人戦(singles)3名の総当たり。tie_results 無しの単一試合から順位を集計できることを断定。
+  const EVS = "男子シングルス";
+  const tt = db.createTournament({ name: "個人L" + (++_seq), date: "2027-01-01" });
+  db.updateEntrySettings(tt.id, { entries_open: 1, event_config: [{ name: EVS, type: "singles", fee: 0 }] });
+  ["甲", "乙", "丙"].forEach((nm, i) => db.createEntrant({ tournament_id: tt.id, event: EVS, name: nm, team: "T" + i, seed: i + 1, status: "confirmed" }));
+  const g = db.generateTeamLeague(tt.id, EVS, { num_blocks: 1, regenerate: true, force: true });
+  assert.ok(!g.error, "個人戦リーグ生成成功: " + JSON.stringify(g.error || ""));
+  // 甲>乙>丙: 甲が全勝、乙は丙に勝つ
+  const strong = { "甲": 2, "乙": 1, "丙": 0 };
+  db.getMatchesByTournament(tt.id).filter(m => m.event === EVS && m.league_block).forEach(m => {
+    const p1s = strong[m.player1_name], p2s = strong[m.player2_name];
+    const winSlot = p1s > p2s ? 1 : 2;
+    // 勝者3-1(セット/得点に差を作る): 勝者セット11-7×3、敗者セット9-11×1(選手1視点)
+    const sets = winSlot === 1 ? [[11, 7], [11, 7], [7, 11], [11, 7]] : [[7, 11], [7, 11], [11, 7], [7, 11]];
+    db.finishMatchOp(m.id, { winner_slot: winSlot, sets });
+  });
+  const st = db.computeLeagueStandings(tt.id, EVS);
+  const arr = st["A"] || st[""] || Object.values(st)[0];
+  assert.ok(arr && arr.length === 3, "3名の順位表");
+  assert.strictEqual(arr[0].team_name, "甲", "1位=甲(全勝・個人戦は選手名で表示)");
+  assert.strictEqual(arr[0].wins, 2, "甲は2勝");
+  // 単一試合から集計されている=セット得失差が0でない(修正前は tie_results 無しで常に0だった)
+  assert.ok(arr[0].sets_won > 0, "甲の取得セット>0(単一試合から集計)");
+  assert.ok(arr[0].set_diff > 0, "甲のセット得失差>0");
+  assert.ok(arr[0].pts_won > 0, "甲の総得点>0(sets_jsonから集計)");
+});
