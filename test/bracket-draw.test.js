@@ -95,6 +95,24 @@ test("同一所属が1回戦で当たらない(クラブ分散)", () => {
   }
 });
 
+test("類似チーム名(表記ゆれ/A・Bチーム)も1回戦で離れる", () => {
+  // 8つの基部にそれぞれ A/B の2名 = 16人。_normClub で同一視され、同基部は1回戦で当たらない。
+  const bases = ["スター", "月", "星", "空", "森", "川", "海", "山"];
+  const list = [];
+  bases.forEach((b, k) => {
+    list.push({ id: "a" + k, display_name: b + "A選手", seed: 0, team: b + "Ａ" });   // 全角A(表記ゆれ)
+    list.push({ id: "b" + k, display_name: b + "B選手", seed: 0, team: b + " B" });   // 空白+B
+  });
+  for (const seed of [1, 7, 99]) {
+    const { leaves } = db.computeDrawLeaves(list, 16, mulberry32(seed), { separateBy: "team" });
+    let same = 0;
+    for (let i = 0; i < 16; i += 2) {
+      if (leaves[i] && leaves[i + 1] && db._normClub(leaves[i].team) === db._normClub(leaves[i + 1].team)) same++;
+    }
+    assert.strictEqual(same, 0, "seed=" + seed + ": 同一基部(類似名)の1回戦対戦0件");
+  }
+});
+
 test("不均衡だが分離可能な分布でもR1同所属0件(大所属先+swap修復の契約)", () => {
   // レビュー指摘の退行防止: 単純シャッフル貪欲だと「大クラブ1+多数の単独所属」で回避可能な
   // R1同所属が出ていた。most-constrained-first + swap修復で、分離可能なら必ず0件にする。

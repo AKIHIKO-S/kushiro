@@ -3842,8 +3842,26 @@ function generateBracket(tournamentId, event, options) {
 //   ③ 確定したリーフ配列を generateBracket({fixedLeaves}) で凍結(seed=シードランクは非破壊)
 // ════════════════════════════════════════════════════════════════════
 
+// 所属名の正規化(表記ゆれ・類似チーム名の分散用)。KTTA規範: 名前が似た別チームも1回戦で離す。
+//   ・全角英数→半角、空白除去(「北陽 高校」=「北陽高校」、「ＴＴＣ」=「TTC」)
+//   ・末尾のチーム区分マーカーを保守的に除去(「ワンスターA」「ワンスターB」→「ワンスター」)。
+//     ただし基部の直前が和字のときのみ(「ワンスターTTC」の末尾Cのような英字連結は誤除去しない)。
+// 過剰統合(別チームを同一視)は「不要に離すだけ」で誤対戦は作らないため軽害。基部が短すぎる時は非除去。
+function _normClub(s) {
+  let t = String(s == null ? "" : s).trim();
+  if (!t) return "";
+  t = t.replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)); // 全角英数→半角
+  t = t.replace(/[\s　]+/g, "");                                                          // 空白除去
+  // 末尾のチーム区分マーカーはA-Dの英字のみ除去(数字は「第2/クラブ1」等の別チームが多いため残す)。
+  const a = t.replace(/[（(][A-D][)）]$/, "");                                            // 末尾 (A)/（B）
+  if (a.length >= 2) t = a;
+  const b = t.replace(/([^\x00-\x7F])[A-D](チーム|隊|組)?$/, "$1");                        // 和字+A の区分
+  if (b.length >= 2) t = b;
+  return t;
+}
 // 所属(クラブ)集合の重なり判定。シングルスは [team] の1要素、ダブルスは [team, partner_team] の
 // 2要素。どれか1つでも共有すれば「同所属」とみなす(別クラブ混成ペアの片方一致も衝突)。
+// 集合の要素は clubsOf で _normClub 済み=表記ゆれ/類似チーム名も一致扱いで分散対象になる。
 function _clubsOverlap(xs, ys) { for (const x of xs) if (ys.indexOf(x) >= 0) return true; return false; }
 
 // あるブロック(2,4,8,…サイズ)に所属集合の重なる相手が既に居るほど高い「衝突スコア」。
@@ -3875,12 +3893,13 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   const sep = opts.separateBy === "region" ? "region" : opts.separateBy === "none" ? "none" : "team";
   // 所属集合: region=[地区], none=[], team=シングルス[team]/ダブルス[team,partner_team](重複・空除去)。
   // ※シングルス(is_doubles無・partner_team無)は [team] の1要素=従来の単一キー挙動と完全に等価。
+  // 所属名は _normClub で正規化(表記ゆれ・類似チーム名も同一視して1回戦で離す。KTTA規範 formats.md)。
   const clubsOf = sep === "region"
-    ? (e => { const r = String(e.region || "").trim(); return r ? [r] : []; })
+    ? (e => { const r = _normClub(e.region); return r ? [r] : []; })
     : sep === "none" ? (() => [])
     : (e => {
-      const a = String(e.team || "").trim();
-      const b = (parseInt(e.is_doubles) || 0) ? String(e.partner_team || "").trim() : "";
+      const a = _normClub(e.team);
+      const b = (parseInt(e.is_doubles) || 0) ? _normClub(e.partner_team) : "";
       const out = []; if (a) out.push(a); if (b && b !== a) out.push(b); return out;
     });
   const primaryKey = (e) => { const c = clubsOf(e); return c.length ? c.join("") : ""; };  // グループ化(配置順)の代表キー
@@ -8989,6 +9008,7 @@ module.exports = {
   getOperationState, getOpMatchList, getPlayerLiveStatus, getTeamRosters,
   setCompareTournament,
   _vsPrevCore, _minActivity, _parseTs,   // 対昨年レースの純ロジック(回帰テスト用)
+  _normClub,   // 所属名の正規化(類似チーム名分散・回帰テスト用)
   getBracket, deleteEventMatches, deleteRoster, rosterStats, setCourtLayout,
   // 試合検索 / H2H / 選手統計
   searchMatches, countMatchesForSearch, getSearchFilters,
