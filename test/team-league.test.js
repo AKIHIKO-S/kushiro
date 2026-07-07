@@ -407,3 +407,28 @@ test("個人戦の予選リーグ: セット得失差・総得点が集計され
   assert.ok(arr[0].set_diff > 0, "甲のセット得失差>0");
   assert.ok(arr[0].pts_won > 0, "甲の総得点>0(sets_jsonから集計)");
 });
+
+test("同率抽選の順位確定: tiebreak_rank でグループ内順位が確定し「抽選済」になる", () => {
+  // A,B,C の3チーム。A>B, B>C, C>A の三すくみを同一スコアで作ると3者同率(1勝1敗・セット/得点も同一)。
+  const t = setup(["A", "B", "C"]);
+  db.generateTeamLeague(t.id, EV, { num_blocks: 1, regenerate: true, force: true });
+  const pairs = { "A|B": "A", "B|C": "B", "C|A": "C", "B|A": "A", "C|B": "B", "A|C": "C" };
+  leagueMatches(t).forEach(m => {
+    const win = pairs[m.player1_name + "|" + m.player2_name];
+    recordTie(t, m.id, win, db.getMatchesByTournament(t.id).find(x => x.id === m.id), 3, 0);
+  });
+  let st = db.computeLeagueStandings(t.id, EV, "A");
+  assert.ok(st.every(x => x.rank === 1), "3者同率1位");
+  assert.ok(st.every(x => x.tiebreak === "抽選"), "全員「抽選」フラグ");
+  // 抽選結果: C→A→B の順に確定
+  const idOf = (nm) => entId(t, nm);
+  const r = db.setLeagueTiebreak(t.id, EV, { [idOf("C")]: 1, [idOf("A")]: 2, [idOf("B")]: 3 });
+  assert.ok(!r.error, "保存成功");
+  st = db.computeLeagueStandings(t.id, EV, "A");
+  assert.deepStrictEqual(st.map(x => x.team_name), ["C", "A", "B"], "抽選順 C→A→B");
+  assert.deepStrictEqual(st.map(x => x.rank), [1, 2, 3], "順位が1,2,3に確定");
+  assert.ok(st.every(x => x.tiebreak === "抽選済"), "全員「抽選済」");
+  // 対象外entrantは拒否
+  const bad = db.setLeagueTiebreak(t.id, EV, { "not-exist": 1 });
+  assert.ok(bad.error, "対象外は拒否");
+});

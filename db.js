@@ -622,6 +622,8 @@ try {
   // スーパーシード(登場ラウンド): 上位選手の予選免除。1=1回戦から(既定), R=R回戦から登場。
   // 標準配置の生成時に 2^(entry_round-1) ラウンドぶん BYE 上がりにする。
   addECol("entry_round", "INTEGER DEFAULT 1");
+  // リーグ同率の抽選結果(手動確定順位)。0=未確定。同率グループ内の並び順にのみ使う(勝敗等の上位判定は覆さない)
+  addECol("tiebreak_rank", "INTEGER DEFAULT 0");
   // シード根拠の記録(説明責任): 誰が・何を根拠に・いつシードを付けたか。
   // source 例: 'manual'(手動) / 'auto:blend'(Elo+成績の自動提案) / 'region_rep' / 'recommend'。
   addECol("seed_source", "TEXT DEFAULT ''");
@@ -4546,8 +4548,8 @@ function computeLeagueStandings(tournamentId, event, block) {
     };
     // ブロック所属を先に登録(未消化でも順位表に出す)。表示名は name 優先=団体はチーム名・個人は選手名。
     // (試合側の ensure は player1_name を使うため、name 優先にすると個人戦でも表示が一致する)
-    sqlite.prepare("SELECT id, team, name FROM entrants WHERE tournament_id=? AND event=? AND block=?")
-      .all(tournamentId, event, bk).forEach(e => ensure(e.id, e.name || e.team));
+    sqlite.prepare("SELECT id, team, name, tiebreak_rank FROM entrants WHERE tournament_id=? AND event=? AND block=?")
+      .all(tournamentId, event, bk).forEach(e => { ensure(e.id, e.name || e.team).tiebreak_rank = e.tiebreak_rank || 0; });
     const matches = sqlite.prepare(`SELECT * FROM matches WHERE tournament_id=? AND event=? AND league_block=?
       AND status='completed' AND COALESCE(is_walkover,0)=0`).all(tournamentId, event, bk);
     matches.forEach(m => {
@@ -4592,9 +4594,43 @@ function computeLeagueStandings(tournamentId, event, block) {
       const grp = arr.filter(x => x.rank === t.rank);
       t.tiebreak = (grp.length > 1 && grp.every(x => x.played > 0)) ? "抽選" : "";
     });
+    // 同率抽選の確定: 同率グループ全員に tiebreak_rank(手動入力の抽選結果・重複なし)が入っていれば、
+    // グループ内をその順に並べ替えて順位を確定(rank r..r+k-1)し「抽選済」を付ける。
+    // 上位判定(勝敗/セット得失差/総得点)は覆さない=グループ内の並びにのみ作用。部分入力は未確定のまま。
+    for (let i = 0; i < arr.length;) {
+      let j = i; while (j < arr.length && arr[j].rank === arr[i].rank) j++;
+      const grp = arr.slice(i, j);
+      if (grp.length > 1 && grp[0].tiebreak === "抽選") {
+        const tbs = grp.map(x => parseInt(x.tiebreak_rank) || 0);
+        if (tbs.every(v => v > 0) && new Set(tbs).size === grp.length) {
+          const base = grp[0].rank;
+          grp.sort((a, b) => (parseInt(a.tiebreak_rank) || 0) - (parseInt(b.tiebreak_rank) || 0));
+          grp.forEach((t, k) => { arr[i + k] = t; t.rank = base + k; t.tiebreak = "抽選済"; });
+        }
+      }
+      i = j;
+    }
     result[bk] = arr;
   });
   return block ? (result[block] || []) : result;
+}
+
+// リーグ同率の抽選結果(手動確定順位)を保存。ranks = { entrantId: 1..k }(同率グループ内の抽選順)。
+// 0/null で解除。対象 entrant が大会+種目に属することを検証してから書き込む。
+function setLeagueTiebreak(tournamentId, event, ranks) {
+  if (!ranks || typeof ranks !== "object") return { error: "ranks(entrantId→順位)が必要です" };
+  const ids = Object.keys(ranks);
+  if (!ids.length) return { error: "対象がありません" };
+  const own = sqlite.prepare("SELECT id FROM entrants WHERE id=? AND tournament_id=? AND event=?");
+  for (const id of ids) {
+    if (!own.get(id, tournamentId, event)) return { error: "対象外の選手/チームが含まれています: " + id };
+  }
+  const upd = sqlite.prepare("UPDATE entrants SET tiebreak_rank=?, updated_at=datetime('now','localtime') WHERE id=?");
+  const txn = sqlite.transaction(() => {
+    ids.forEach(id => upd.run(Math.max(0, Math.min(99, parseInt(ranks[id]) || 0)), id));
+  });
+  txn();
+  return { ok: true, updated: ids.length };
 }
 
 // 予選リーグ→決勝トーナメント通過処理(KTTA formats.md)。予選の順位から通過者を確定し、
@@ -9144,7 +9180,7 @@ module.exports = {
   generateBracket, addBracketSeed, promoteToSeed, drawSingleBracket, computeDrawLeaves, bracketPositions,
   checkDrawReadiness, bracketRev, undoDraw, getDrawLog, getBracketDrawDiff, importBracketRoundtrip,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
-  generateTeamLeague, generateLeaguePlayoff, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
+  generateTeamLeague, generateLeaguePlayoff, setLeagueTiebreak, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
   setCallCount, bumpCallCount,
   getPlayerRefereeLock, getPlayerPlayingLock,

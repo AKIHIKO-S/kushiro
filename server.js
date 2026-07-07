@@ -1877,6 +1877,14 @@ app.post("/api/tournaments/:id/league/generate", requireAdmin, (req, res) => {
   if (r?.error) return res.status(400).json(r);
   res.json(r);
 });
+// リーグ同率の抽選結果(手動確定順位)の保存(運営限定)。ranks={entrantId: 1..k}。0で解除。
+app.post("/api/tournaments/:id/league/tiebreak", requireAdmin, (req, res) => {
+  const event = req.body?.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.setLeagueTiebreak(req.params.id, event, req.body?.ranks);
+  if (r?.error) return res.status(400).json(r);
+  res.json(r);
+});
 // 予選リーグ→決勝トーナメント通過処理(運営限定)。mode=top(上位N進出)|byrank(順位別T)。
 app.post("/api/tournaments/:id/league/playoff", requireAdmin, (req, res) => {
   const event = req.body?.event;
