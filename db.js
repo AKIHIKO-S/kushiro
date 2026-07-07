@@ -3900,12 +3900,31 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   const byeSlot = new Array(size).fill(false);
   for (let i = 0; i < size; i++) if (positions[i] > N) byeSlot[i] = true;
 
-  // (A) シード固定: rank 1..size を標準位置へ。範囲外/重複は非シードに格下げして警告。
+  // (A) シード配置: rank 1..size を標準位置へ。範囲外/重複は非シードに格下げして警告。
   const seeded = entrants.filter(e => seedOf(e) >= 1).sort((a, b) => seedOf(a) - seedOf(b));
+  // 同格シードの山割り抽選: 完全に埋まったシード階層({3,4}/{5-8}/{9-16}…)内で、どのランクが
+  // どの標準スロット(山頭)に入るかを RNG で抽選する。外シード(1,2)は固定。部分的にしか埋まらない
+  // 階層・BYE階層は触らない(BYEを上位シードの相手に付ける不変条件を保つ)。rng無し(標準生成)は固定配置。
+  const seededRanks = new Set(seeded.map(e => seedOf(e)).filter(r => posOfRank[r] != null));
+  const seedSlotOf = {};
+  for (const r of seededRanks) seedSlotOf[r] = posOfRank[r];
+  if (rng) {
+    let lo = 3;
+    while (lo <= size) {
+      const hi = Math.min(size, lo * 2 - 2);
+      let full = true;
+      for (let r = lo; r <= hi; r++) if (!seededRanks.has(r)) { full = false; break; }
+      if (full) {
+        const perm = shuffle([...Array(hi - lo + 1)].map((_, k) => posOfRank[lo + k]), rng);
+        for (let r = lo; r <= hi; r++) seedSlotOf[r] = perm[r - lo];
+      }
+      lo = hi + 1;
+    }
+  }
   const demoted = [];
   for (const e of seeded) {
     const rank = seedOf(e);
-    const idx = posOfRank[rank];
+    const idx = (rank in seedSlotOf) ? seedSlotOf[rank] : posOfRank[rank];
     if (idx == null) {
       warnings.push("シード番号" + rank + "(" + nameOf(e) + ")は枠数" + size + "を超えるため抽選に回しました");
       demoted.push(e); continue;
@@ -3995,7 +4014,8 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   return { leaves, warnings, r1_same_club: r1SameClub };
 }
 
-const DRAW_ALGO_VERSION = "1";   // computeDrawLeaves のアルゴリズム版数(再現/検証の固定キー)
+const DRAW_ALGO_VERSION = "2";   // computeDrawLeaves のアルゴリズム版数(再現/検証の固定キー)
+// v2: 標準ドローシート配置(外/中シード)+ 同格シード階層の山割り抽選を導入(v1は旧再帰配置・同格固定)
 function _sha256(s) { return crypto.createHash("sha256").update(String(s)).digest("hex"); }
 function _drawEntrantSnapshot(ents) {
   return ents.map(e => ({ id: e.id, name: e.display_name || e.name, team: e.team || "", region: e.region || "", seed: parseInt(e.seed) || 0 }));

@@ -38,21 +38,37 @@ function ents(n, seedFn, teamFn) {
 // computeDrawLeaves: 純ロジック
 // ─────────────────────────────────────────────────────────────
 
-test("シードが標準シード位置に固定される", () => {
+test("シードが標準シード階層に配置される(外1,2固定+同格は山割り)", () => {
   const size = 16;
   const positions = db.bracketPositions(size); // positions[slot]=その枠の標準ランク
   const posOfRank = {}; positions.forEach((r, i) => { posOfRank[r] = i; });
+  const tierSlots = (lo, hi) => { const s = new Set(); for (let r = lo; r <= hi; r++) s.add(posOfRank[r]); return s; };
   const list = ents(16, (i) => (i <= 8 ? i : 0), (i) => "T" + i); // seed1..8
   const { leaves } = db.computeDrawLeaves(list, size, mulberry32(1), { separateBy: "none" });
-  for (let rank = 1; rank <= 8; rank++) {
-    const slot = posOfRank[rank];
-    assert.strictEqual(leaves[slot] && leaves[slot].seed, rank,
-      "シード" + rank + " は標準位置 slot" + slot);
+  const slotOfSeed = {}; leaves.forEach((e, i) => { if (e && e.seed) slotOfSeed[e.seed] = i; });
+  // 外シード: 第1=最上端、第2=最下端(紙どおり)
+  assert.strictEqual(slotOfSeed[1], 0, "第1シードは最上端 slot0");
+  assert.strictEqual(slotOfSeed[2], size - 1, "第2シードは最下端 slot" + (size - 1));
+  // 中シード/下位シードは各階層の標準スロット(山頭)のいずれか
+  const t34 = tierSlots(3, 4);
+  assert.ok(t34.has(slotOfSeed[3]) && t34.has(slotOfSeed[4]), "第3/4は中央側の山頭");
+  const t58 = tierSlots(5, 8);
+  for (let r = 5; r <= 8; r++) assert.ok(t58.has(slotOfSeed[r]), "第" + r + "は1/4の山頭");
+  assert.strictEqual(new Set(Object.values(slotOfSeed)).size, 8, "シードのスロット重複なし");
+});
+
+test("同格シードの山割りが draw_seed で変わる(第1,2は不変)", () => {
+  const size = 16;
+  const list = ents(16, (i) => (i <= 8 ? i : 0), (i) => "T" + i);
+  const s3slots = new Set();
+  for (let seed = 1; seed <= 30; seed++) {
+    const { leaves } = db.computeDrawLeaves(list, size, mulberry32(seed), { separateBy: "none" });
+    const slotOfSeed = {}; leaves.forEach((e, i) => { if (e && e.seed) slotOfSeed[e.seed] = i; });
+    assert.strictEqual(slotOfSeed[1], 0, "第1は常に最上端");
+    assert.strictEqual(slotOfSeed[2], size - 1, "第2は常に最下端");
+    s3slots.add(slotOfSeed[3]);
   }
-  // 第1シードは slot0、第2シードは最深(下半分)に分かれる(1位と2位が決勝まで当たらない)
-  assert.strictEqual(leaves[0].seed, 1);
-  const s2slot = leaves.findIndex(x => x && x.seed === 2);
-  assert.ok(s2slot >= size / 2, "第2シードは下半分(" + s2slot + ")");
+  assert.ok(s3slots.size >= 2, "第3シードの配置が seed により複数(同格の山割り抽選が効く)");
 });
 
 test("BYE(不戦勝)が上位シードに割り当たる(満たない枠)", () => {
