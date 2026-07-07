@@ -795,6 +795,64 @@
  .badge.status-ongoing, .status-ongoing{ background:var(--accent-bg); color:var(--accent-l); }
  .badge.status-scheduled, .status-scheduled{ background:var(--ink-100); color:var(--ink-700); }
 
+ /* ═══════════ 両山トーナメント表(公開・白磁・ハイブリッド) ═══════════
+    モバイル(≤640px)=縦型(上の山/下の山/決勝タブ・横スクロール不要)、タブレット以上=両山全体。 */
+ .vbt{ margin:2px 0 6px; }
+ .vbt-hint{ font-size:10.5px; color:var(--sub); font-family:var(--font-mono); text-align:center; padding:2px 0 6px; }
+ /* 対戦カード(共通) */
+ .vbt-m{ background:#fff; border:1px solid var(--border); border-radius:11px; box-shadow:0 3px 10px -6px rgba(72,58,46,.16); overflow:hidden; cursor:pointer; }
+ .vbt-m .vp{ display:flex; align-items:center; gap:7px; padding:6px 9px; }
+ .vbt-m .vp + .vp{ border-top:1px solid var(--line2, #f2efe9); }
+ .vbt-seed{ font-family:var(--font-mono); font-size:9.5px; font-weight:800; color:var(--accent); background:var(--accent-bg);
+   min-width:17px; height:17px; display:flex; align-items:center; justify-content:center; border-radius:5px; flex:0 0 auto; }
+ .vbt-seed.none{ visibility:hidden; }
+ .vbt-nm{ font-size:12.5px; font-weight:700; line-height:1.15; flex:1; min-width:0; color:var(--ink-800); }
+ .vbt-nm a{ color:inherit; text-decoration:none; }
+ .vbt-nm .vtm{ display:block; font-size:10px; font-weight:600; color:var(--sub); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+ .vbt-sc{ font-family:var(--font-mono); font-size:12px; font-weight:800; color:#b8b2a8; flex:0 0 auto; }
+ .vbt-p-w{ background:#fff8f4; }
+ .vbt-p-w .vbt-nm{ color:var(--ink-900); font-weight:800; }
+ .vbt-p-w .vbt-sc{ color:var(--accent); }
+ .vbt-p-l .vbt-nm{ color:#a49e95; }
+ .vbt-m.live{ border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-bg), 0 3px 10px -6px rgba(72,58,46,.16); }
+ .vbt-live-badge{ font-size:9px; font-weight:800; color:#fff; background:var(--accent); border-radius:999px; padding:1px 7px; }
+ .vbt-champ{ background:linear-gradient(135deg,#fff,#fffaf6); border:1.5px solid var(--accent); border-radius:12px;
+   box-shadow:0 8px 20px -12px rgba(72,58,46,.2); padding:9px 8px; text-align:center; }
+ .vbt-champ .vt{ font-size:9px; font-weight:800; color:var(--accent); letter-spacing:.06em; }
+ .vbt-champ .vwho{ font-size:12.5px; font-weight:800; margin-top:2px; color:var(--ink-900); }
+
+ /* 両山(wide): 横並び列 + 接続罫線 */
+ .vbt-wide{ display:none; }
+ .vbt-scroll{ overflow-x:auto; overflow-y:hidden; padding:4px 2px 10px; -webkit-overflow-scrolling:touch; }
+ .vbt-cols{ display:flex; align-items:stretch; min-width:max-content; }
+ .vbt-col{ display:flex; flex-direction:column; min-width:132px; padding:0 5px; }
+ .vbt-col.center{ justify-content:center; min-width:140px; }
+ .vbt-rlab{ font-size:9.5px; font-weight:800; letter-spacing:.03em; color:var(--sub); text-align:center; margin-bottom:4px; }
+ .vbt-cbody{ flex:1; display:flex; flex-direction:column; }
+ .vbt-cbody.center{ justify-content:center; }
+ .vbt-slot{ display:flex; flex-direction:column; justify-content:center; }
+ .vbt-cx{ position:relative; width:12px; flex:0 0 auto; }
+ .vbt-cx::before{ content:""; position:absolute; left:0; top:25%; bottom:25%; width:1px; background:var(--border-strong,#ded8ce); }
+ .vbt-cx::after{ content:""; position:absolute; left:0; right:0; top:50%; height:1px; background:var(--border-strong,#ded8ce); }
+
+ /* 縦型(mobile): 山タブ + ラウンド積み */
+ .vbt-narrow{ display:block; }
+ .vbt-tabs{ display:flex; gap:6px; margin:2px 0 10px; }
+ .vbt-tabs button{ flex:1; font:inherit; font-size:12px; font-weight:800; padding:7px 0; border-radius:9px;
+   border:1px solid var(--border); background:#fff; color:var(--sub); box-shadow:0 3px 10px -6px rgba(72,58,46,.14); cursor:pointer; }
+ .vbt-tabs button.on{ background:var(--accent); color:#fff; border-color:var(--accent); }
+ .vbt-pane{ display:none; }
+ .vbt-pane.on{ display:block; }
+ .vbt-rsec{ margin-bottom:13px; }
+ .vbt-rsec-h{ display:flex; align-items:center; gap:8px; margin:0 2px 7px; }
+ .vbt-rsec-h .rl{ font-size:12px; font-weight:800; color:var(--ink-800); }
+ .vbt-rsec-h .rn{ flex:1; height:1px; background:var(--border); }
+ .vbt-rsec-h .rc{ font-size:10px; color:var(--sub); font-family:var(--font-mono); }
+ .vbt-narrow .vbt-m{ margin-bottom:7px; }
+ .vbt-tof{ display:flex; align-items:center; justify-content:center; gap:6px; font-size:10.5px; color:var(--sub); font-family:var(--font-mono); margin:2px 0 6px; }
+ .vbt-tof::before, .vbt-tof::after{ content:""; height:1px; width:24px; background:var(--border); }
+ @media (min-width:641px){ .vbt-wide{ display:block; } .vbt-narrow{ display:none; } }
+
  /* ═══════════ 丹頂: 選手プロフィール/H2H/ランキング/進行の総仕上げ ═══════════
     紺(--pri)・旧赤(#dc2626)・汎用緑赤(#15803d/#16a34a/#b91c1c)・汎用灰(#f1f5f9)のまま
     だった残りのビューを丹頂トークンへ統一する。元CSSは触らず後勝ちで上書き。 */
@@ -1534,11 +1592,16 @@ const V = {
    h("span", { className: "mr-acc-count" }, ms.length + "試合"));
  const bodyEl = h("div", { className: "mr-acc-body" });
 
- // 団体リーグ(総当たり)なら順位表(星取表)を先頭に。観客に分かりやすく順位/セット率/得点率を提示。
- if (ms.some(m => m.round === "予選リーグ" || m.league_block)) {
+ // 団体リーグ(総当たり)なら順位表(星取表)、ノックアウトなら両山トーナメント表を先頭に。
+ const isLeague = ms.some(m => m.round === "予選リーグ" || m.league_block);
+ if (isLeague) {
    const stWrap = h("div", { className: "lg-standings" });
    bodyEl.appendChild(stWrap);
    V._loadStandings(t.id, event, stWrap);
+ } else {
+   // ノックアウト種目: 両山トーナメント表(勝ち上がりを山で見せる)を先頭に。詳細な結果は下のラウンド一覧。
+   const tree = V.renderBracketTree(event, ms);
+   if (tree) bodyEl.appendChild(tree);
  }
 
  // ラウンドごと (round_order 昇順)
@@ -1625,6 +1688,118 @@ const V = {
  },
 
  // トーナメント表の対戦をタップ → 詳細 + 選手個人DBリンク (シングルス/ダブルス両対応 #255)
+ // 両山トーナメント表(公開・白磁・ハイブリッド)。ノックアウト種目の勝ち上がりを「山」で見せる。
+ // モバイル(≤640px)=縦型(上の山/下の山/決勝タブ・横スクロール不要)、タブレット以上=両山全体(横スクロール)。
+ // 分割は admin と同じ: 各ラウンドを bracket_pos 順に並べ前半=左山/後半=右山、決勝を中央に。BYEは呼出元で除外済み。
+ renderBracketTree(event, ms) {
+   const byRound = {};
+   ms.forEach(m => { const r = m.bracket_round || 1; (byRound[r] = byRound[r] || []).push(m); });
+   const rounds = Object.keys(byRound).map(Number).sort((a, b) => a - b);
+   if (!rounds.length) return null;
+   rounds.forEach(r => byRound[r].sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0)));
+   const finalRound = rounds[rounds.length - 1];
+   const roundName = (r) => r === finalRound ? "決勝" : r === finalRound - 1 ? "準決勝"
+     : r === finalRound - 2 ? "準々決勝" : r + "回戦";
+   const wrap = h("div", { className: "vbt" });
+
+   // ── wide: 両山全体(横スクロール) ──
+   const wide = h("div", { className: "vbt-wide" });
+   const matchHeight = 74;
+   const makeCol = (r, list, side) => {
+     const col = h("div", { className: "vbt-col" + (side === "center" ? " center" : "") },
+       h("div", { className: "vbt-rlab" }, roundName(r)));
+     const cbody = h("div", { className: "vbt-cbody" + (side === "center" ? " center" : "") });
+     const factor = Math.pow(2, r - 1);
+     list.forEach(m => cbody.appendChild(h("div", { className: "vbt-slot",
+       style: side === "center" ? {} : { minHeight: (matchHeight * factor) + "px" } }, V._bracketCard(m))));
+     col.appendChild(cbody);
+     return col;
+   };
+   const cx = () => h("div", { className: "vbt-cx" });
+   const cols = h("div", { className: "vbt-cols" });
+   const leftCols = [], rightCols = [];
+   rounds.forEach(r => {
+     if (r === finalRound) return;
+     const arr = byRound[r], half = Math.ceil(arr.length / 2);
+     leftCols.push(makeCol(r, arr.slice(0, half), "left"));
+     rightCols.push(makeCol(r, arr.slice(half), "right"));
+   });
+   leftCols.forEach(c => { cols.appendChild(c); cols.appendChild(cx()); });
+   if (byRound[finalRound]) cols.appendChild(makeCol(finalRound, byRound[finalRound], "center"));
+   else cols.appendChild(h("div", { className: "vbt-col center" },
+     h("div", { className: "vbt-rlab" }, "決勝"),
+     h("div", { className: "vbt-cbody center" }, h("div", { className: "vbt-champ" },
+       h("div", { className: "vt" }, "決勝"), h("div", { className: "vwho" }, "勝者を待機")))));
+   rightCols.reverse().forEach(c => { cols.appendChild(cx()); cols.appendChild(c); });
+   wide.appendChild(h("div", { className: "vbt-hint" }, "← 横にスクロールで全体 →"));
+   wide.appendChild(h("div", { className: "vbt-scroll" }, cols));
+
+   // ── narrow: 山タブ + ラウンド積み ──
+   const narrow = h("div", { className: "vbt-narrow" });
+   const upR = {}, dnR = {};
+   rounds.forEach(r => {
+     if (r === finalRound) return;
+     const arr = byRound[r], half = Math.ceil(arr.length / 2);
+     upR[r] = arr.slice(0, half); dnR[r] = arr.slice(half);
+   });
+   const makePane = (rmap) => {
+     const pane = h("div", { className: "vbt-pane" });
+     rounds.forEach(r => {
+       if (r === finalRound) return;
+       const list = rmap[r] || [];
+       if (!list.length) return;
+       const sec = h("div", { className: "vbt-rsec" },
+         h("div", { className: "vbt-rsec-h" }, h("span", { className: "rl" }, roundName(r)),
+           h("span", { className: "rn" }), h("span", { className: "rc" }, list.length + "試合")));
+       list.forEach(m => sec.appendChild(V._bracketCard(m)));
+       pane.appendChild(sec);
+     });
+     pane.appendChild(h("div", { className: "vbt-tof" }, "この山の勝者が決勝へ"));
+     return pane;
+   };
+   const finalPane = h("div", { className: "vbt-pane" });
+   const fms = byRound[finalRound] || [];
+   if (fms.length) { finalPane.appendChild(h("div", { className: "vbt-rsec-h" },
+     h("span", { className: "rl" }, "決勝"), h("span", { className: "rn" })));
+     fms.forEach(m => finalPane.appendChild(V._bracketCard(m))); }
+   else finalPane.appendChild(h("div", { className: "vbt-champ" },
+     h("div", { className: "vt" }, "決勝"), h("div", { className: "vwho" }, "勝者を待機")));
+   const panes = [makePane(upR), makePane(dnR), finalPane];
+   panes[0].classList.add("on");
+   const tabs = h("div", { className: "vbt-tabs" });
+   ["上の山", "下の山", "決勝"].forEach((lab, i) => {
+     tabs.appendChild(h("button", { className: i === 0 ? "on" : "", onClick: () => {
+       Array.from(tabs.children).forEach((x, j) => x.classList.toggle("on", j === i));
+       panes.forEach((p, j) => p.classList.toggle("on", j === i));
+     } }, lab));
+   });
+   narrow.appendChild(tabs);
+   panes.forEach(p => narrow.appendChild(p));
+
+   wrap.appendChild(wide); wrap.appendChild(narrow);
+   return wrap;
+ },
+
+ // 両山の1試合カード(白磁)。勝者=太字+赤スコア+淡い暖色行、敗者=淡色。進行中=赤枠。タップで詳細。
+ _bracketCard(m) {
+   const done = m.status === "completed" && !!m.winner_name;
+   const live = m.status === "on_table";
+   const p1Win = done && m.winner_name === m.player1_name && m.winner_name !== m.player2_name;
+   const p2Win = done && m.winner_name === m.player2_name && m.winner_name !== m.player1_name;
+   const p1Sets = done ? (p1Win ? m.winner_sets : m.loser_sets) : null;
+   const p2Sets = done ? (p2Win ? m.winner_sets : m.loser_sets) : null;
+   const row = (name, team, seed, isW, isL, sets) =>
+     h("div", { className: "vp" + (isW ? " vbt-p-w" : "") + (isL ? " vbt-p-l" : "") },
+       h("span", { className: "vbt-seed" + (seed ? "" : " none") }, seed ? String(seed) : "0"),
+       h("div", { className: "vbt-nm" }, (name && name !== "BYE") ? name : "?",
+         team ? h("span", { className: "vtm" }, team) : null),
+       h("div", { className: "vbt-sc" }, sets != null ? String(sets) : (live ? "・" : "")));
+   return h("div", { className: "vbt-m" + (live ? " live" : ""),
+     onClick: () => { if (done) V.showBracketMatchDetail(m); } },
+     row(m.player1_name, m.player1_team, m.player1_bracket_number, p1Win, done && !p1Win, p1Sets),
+     row(m.player2_name, m.player2_team, m.player2_bracket_number, p2Win, done && !p2Win, p2Sets));
+ },
+
  showBracketMatchDetail(m) {
  let sets = [];
  try { sets = m.sets || JSON.parse(m.sets_json || "[]"); } catch (e) {}
