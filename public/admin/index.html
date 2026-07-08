@@ -10719,11 +10719,24 @@ const O = {
  });
  const centerCol = byRound[finalRound] ? makeCol(finalRound, byRound[finalRound], "center") : null;
 
+ // 列間の接続罫線(viewer両山と同じ意匠: 縦線25%〜75% + 中央横線)。
+ // インラインstyleで書く: printBracket は innerHTML を新規windowへ移植するため、クラスCSSだと
+ // 印刷側<style>への二重定義が要る(既存クラス装飾が印刷で欠落する前例あり)。インラインなら自動追従。
+ // pointerEvents:none で呼出クリック・DnDに不干渉。editOnly/通常ともスロット高は共通なので分岐不要。
+ const makeCx = () => {
+   const cx = h("div", { style: { position: "relative", width: "14px", flex: "0 0 auto",
+     alignSelf: "stretch", pointerEvents: "none" } });
+   cx.appendChild(h("div", { style: { position: "absolute", left: 0, top: "25%", bottom: "25%",
+     width: 0, borderLeft: "1.5px solid #94a3b8" } }));
+   cx.appendChild(h("div", { style: { position: "absolute", left: 0, right: 0, top: "50%",
+     height: 0, borderTop: "1.5px solid #94a3b8" } }));
+   return cx;
+ };
  const cols = h("div", { className: "vb-cols",
-   style: { display: "flex", gap: "12px", alignItems: "stretch", minWidth: "min-content" } });
- leftCols.forEach(c => cols.appendChild(c));
+   style: { display: "flex", gap: "4px", alignItems: "stretch", minWidth: "min-content" } });
+ leftCols.forEach(c => { cols.appendChild(c); cols.appendChild(makeCx()); });
  if (centerCol) cols.appendChild(centerCol);
- rightCols.reverse().forEach(c => cols.appendChild(c));
+ rightCols.reverse().forEach(c => { cols.appendChild(makeCx()); cols.appendChild(c); });
 
  // 凡例 + 件数
  const stats = {
