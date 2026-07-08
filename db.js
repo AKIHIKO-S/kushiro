@@ -3915,11 +3915,7 @@ function computeDrawLeaves(entrants, size, rng, opts) {
 
   const leaves = new Array(size).fill(null);     // null = BYE
   const warnings = [];
-
-  // BYE枠の確定: 標準シードのランクが参加人数N を超える物理スロット(=ファントム枠)は BYE 固定。
-  // 標準配置では「上位シードの1回戦相手」が最高位ファントムになるので、上位シードに自動でBYEが付く。
-  const byeSlot = new Array(size).fill(false);
-  for (let i = 0; i < size; i++) if (positions[i] > N) byeSlot[i] = true;
+  const byeSlot = new Array(size).fill(false);   // 確定は (A2) の後(スーパーシード区画を先に固定するため)
 
   // (A) シード配置: rank 1..size を標準位置へ。範囲外/重複は非シードに格下げして警告。
   const seeded = entrants.filter(e => seedOf(e) >= 1).sort((a, b) => seedOf(a) - seedOf(b));
@@ -3955,6 +3951,53 @@ function computeDrawLeaves(entrants, size, rng, opts) {
       demoted.push(e); continue;
     }
     leaves[idx] = e;
+  }
+
+  // (A2) スーパーシード(entry_round>1)の区画確保: シードの標準位置を含む「重み w=2^(R-1) の
+  //   整列区画」の他リーフを BYE 固定し、R回戦から登場する構造(多段BYE)を抽選でも保存する。
+  //   SS本人は標準シード位置のまま(第2シードなら最下端)= autoAdvanceByes が BYE同士の試合も
+  //   BYE を次戦へ送るため、区画内のどの位置でも正しく繰り上がる(as_drawn取込と同じ表現)。
+  //   衝突(他シードのスロットが区画内 / 区画同士の重複)は、抽選を止めず警告つきで通常配置(1回戦)に
+  //   降格する。BYE予算超過・w≧size は drawSingleBracket の重み込み枠数会計の下では発生しない(保険)。
+  //   ※同格階層(3-4位等)の山割り抽選が先に走るため、SSが3位以下だと draw_seed により衝突/回避が変わる
+  //     (プレビューの警告で確認できる)。実運用のSSは両端の特別シード(1・2位)で、この経路に入らない。
+  const entryROf = (e) => Math.max(1, Math.min(8, parseInt(e.entry_round) || 1));
+  const totalBye = size - N;
+  const ssRegions = [];   // {start, w, slot}
+  {
+    let forced = 0;
+    const inRegion = (i) => ssRegions.some(g => i >= g.start && i < g.start + g.w);
+    entrants.filter(e => seedOf(e) < 1 && entryROf(e) > 1).forEach(e => {
+      warnings.push("登場回戦の指定(" + nameOf(e) + ")はシード番号が無いため抽選では1回戦扱いになります");
+    });
+    for (const e of seeded) {
+      const R = entryROf(e);
+      if (R <= 1) continue;
+      const w = Math.pow(2, R - 1);
+      const slot = leaves.indexOf(e);
+      if (slot < 0) continue;   // 格下げ済み(範囲外/重複)は対象外(警告済み)
+      const label = "登場" + R + "回戦(" + nameOf(e) + ")";
+      if (w >= size) { warnings.push(label + "は枠数" + size + "に対し大きすぎるため1回戦扱いにしました"); continue; }
+      const start = Math.floor(slot / w) * w;
+      let conflict = "";
+      for (let i = start; i < start + w && !conflict; i++) {
+        if (i !== slot && leaves[i]) conflict = "区画内に他のシードがあるため";
+        else if (i !== slot && inRegion(i)) conflict = "他のスーパーシード区画と重なるため";
+      }
+      if (!conflict && forced + (w - 1) > totalBye) conflict = "不戦勝(BYE)枠が足りないため";
+      if (conflict) { warnings.push(label + "は" + conflict + "1回戦扱いにしました"); continue; }
+      for (let i = start; i < start + w; i++) if (i !== slot) byeSlot[i] = true;
+      forced += w - 1;
+      ssRegions.push({ start, w, slot });
+    }
+    // BYE枠の確定: スーパーシード区画で使った残りの予算を、標準どおり「上位シードの1回戦相手」
+    // (最高位ファントムランク)から降順に割り当てる。区画なしのときは従来の positions[i] > N と完全一致。
+    let marked = forced;
+    for (let rank = size; rank >= 1 && marked < totalBye; rank--) {
+      const i = posOfRank[rank];
+      if (i == null || byeSlot[i] || leaves[i]) continue;
+      byeSlot[i] = true; marked++;
+    }
   }
 
   // (B) 非シード(+格下げシード)を配置。
@@ -4035,8 +4078,9 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   return { leaves, warnings, r1_same_club: r1SameClub };
 }
 
-const DRAW_ALGO_VERSION = "2";   // computeDrawLeaves のアルゴリズム版数(再現/検証の固定キー)
+const DRAW_ALGO_VERSION = "3";   // computeDrawLeaves のアルゴリズム版数(再現/検証の固定キー)
 // v2: 標準ドローシート配置(外/中シード)+ 同格シード階層の山割り抽選を導入(v1は旧再帰配置・同格固定)
+// v3: 抽選でもスーパーシード(entry_round>1)を保存(重み区画のBYE固定+枠数の重み込み確保)
 function _sha256(s) { return crypto.createHash("sha256").update(String(s)).digest("hex"); }
 function _drawEntrantSnapshot(ents) {
   return ents.map(e => ({ id: e.id, name: e.display_name || e.name, team: e.team || "", region: e.region || "", seed: parseInt(e.seed) || 0 }));
@@ -4070,7 +4114,13 @@ function checkDrawReadiness(tournamentId, event) {
   if (confirmed.length < 2) issues.push({ level: "block", code: "too_few", msg: `承認済みの出場者が${confirmed.length}人です(2人以上必要)` });
   const pending = all.filter(e => (e.status || "confirmed") !== "confirmed" && (e.status || "") !== "rejected");
   if (pending.length) issues.push({ level: "warn", code: "pending", msg: `承認待ちが${pending.length}件あります(このままだと抽選対象外)。先に承認するか確認してください` });
-  const size = Math.pow(2, Math.ceil(Math.log2(Math.max(2, confirmed.length))));
+  // 枠数は drawSingleBracket と同じ会計(シード付きのみスーパーシード重み 2^(min(R,8)-1)、
+  // シード無しの entry_round 指定は抽選で1回戦扱いのため重みに数えない) → 表示と実抽選を一致させる。
+  const totalW = confirmed.reduce((s, e) => {
+    const R = Math.max(1, Math.min(8, parseInt(e.entry_round) || 1));
+    return s + (((parseInt(e.seed) || 0) >= 1) ? Math.pow(2, R - 1) : 1);
+  }, 0);
+  const size = Math.pow(2, Math.ceil(Math.log2(Math.max(2, totalW))));
   const seedMap = {};
   confirmed.forEach(e => { const s = parseInt(e.seed) || 0; if (s >= 1) (seedMap[s] = seedMap[s] || []).push(e); });
   const dups = Object.keys(seedMap).filter(s => seedMap[s].length > 1);
@@ -4079,12 +4129,32 @@ function checkDrawReadiness(tournamentId, event) {
   if (over.length) issues.push({ level: "warn", code: "seed_over", msg: `枠数(${size})を超えるシード番号があります(抽選に回されます)` });
   const seedNonConf = all.filter(e => (parseInt(e.seed) || 0) >= 1 && (e.status || "confirmed") !== "confirmed");
   if (seedNonConf.length) issues.push({ level: "warn", code: "seed_unconfirmed", msg: `未承認なのにシードが付いた選手が${seedNonConf.length}件あります` });
-  // スーパーシード(登場ラウンド)の枠数会計: 2^(entry_round-1) の総重み・最大免除ラウンドが枠を超えないか
+  // スーパーシード(登場ラウンド)の妥当性
   if (confirmed.some(e => (parseInt(e.entry_round) || 1) > 1)) {
-    const totalW = confirmed.reduce((s, e) => s + Math.pow(2, Math.max(1, parseInt(e.entry_round) || 1) - 1), 0);
-    const sizeW = Math.pow(2, Math.ceil(Math.log2(Math.max(2, totalW))));
-    const maxR = Math.max(1, ...confirmed.map(e => Math.max(1, parseInt(e.entry_round) || 1)));
-    if (Math.pow(2, maxR - 1) > sizeW / 2) issues.push({ level: "block", code: "entry_round_overflow", msg: "登場ラウンド(スーパーシード)が選手数に対し大きすぎます。登場ラウンドを下げてください" });
+    const maxR = Math.max(1, ...confirmed.filter(e => (parseInt(e.seed) || 0) >= 1)
+      .map(e => Math.max(1, Math.min(8, parseInt(e.entry_round) || 1))));
+    if (Math.pow(2, maxR - 1) > size / 2) issues.push({ level: "block", code: "entry_round_overflow", msg: "登場ラウンド(スーパーシード)が選手数に対し大きすぎます。登場ラウンドを下げてください" });
+    const ssNoSeed = confirmed.filter(e => (parseInt(e.seed) || 0) < 1 && (parseInt(e.entry_round) || 1) > 1);
+    if (ssNoSeed.length) issues.push({ level: "warn", code: "entry_round_no_seed", msg: `登場回戦の指定があるのにシード番号が無い選手が${ssNoSeed.length}名います(抽選では1回戦扱い)` });
+    // SS区画とシード標準位置の空間衝突を事前検知: 区画(重み2^(R-1)の整列区画)に他シードの標準
+    // スロットが入ると抽選でそのSSは1回戦扱いに降格される。3位以下は山割り抽選次第で回避も
+    // あり得るため block ではなく warn(降格時も抽選側が警告する)。
+    const posArr = bracketPositions(size);
+    const posOf = {}; posArr.forEach((r, i) => { posOf[r] = i; });
+    const slotRank = {};
+    confirmed.forEach(e => { const r = parseInt(e.seed) || 0; if (r >= 1 && posOf[r] != null) slotRank[posOf[r]] = r; });
+    for (const e of confirmed) {
+      const r = parseInt(e.seed) || 0;
+      const R = Math.max(1, Math.min(8, parseInt(e.entry_round) || 1));
+      if (r < 1 || R <= 1 || posOf[r] == null) continue;
+      const w = Math.pow(2, R - 1), slot = posOf[r], start = Math.floor(slot / w) * w;
+      for (let i = start; i < start + w; i++) {
+        if (i !== slot && slotRank[i] != null) {
+          issues.push({ level: "warn", code: "entry_round_conflict", msg: `シード${r}の登場${R}回戦の区画にシード${slotRank[i]}の標準位置が重なっています(抽選で1回戦扱いに降格されます)。登場回戦かシード番号を調整してください` });
+          break;
+        }
+      }
+    }
   }
   return { ok: !issues.some(i => i.level === "block"), issues, confirmed: confirmed.length, bracket_size: size, bye_count: size - confirmed.length, seeded: Object.keys(seedMap).length, bracket_rev: bracketRev(tournamentId, event) };
 }
@@ -4108,7 +4178,13 @@ function drawSingleBracket(tournamentId, event, opts) {
   if (entrants.length < 2) {
     return { error: "承認済みの出場選手が2人未満です。申込管理で承認してから抽選してください。", count: entrants.length };
   }
-  const size = Math.pow(2, Math.ceil(Math.log2(entrants.length)));
+  // 枠数はスーパーシードの消費リーフ(重み 2^(entry_round-1))込みで確保する(checkDrawReadiness と同式)。
+  // シード無しの entry_round 指定は抽選では1回戦扱い(computeDrawLeaves が警告)のため重みに数えない。
+  const totalW = entrants.reduce((s, e) => {
+    const R = Math.max(1, Math.min(8, parseInt(e.entry_round) || 1));
+    return s + (((parseInt(e.seed) || 0) >= 1) ? Math.pow(2, R - 1) : 1);
+  }, 0);
+  const size = Math.pow(2, Math.ceil(Math.log2(Math.max(2, totalW))));
   if (size > 2048) {
     return { error: "選手数が多すぎます(最大約1024名)。", count: entrants.length };
   }
@@ -4122,9 +4198,11 @@ function drawSingleBracket(tournamentId, event, opts) {
   const byeCount = size - entrants.length;
   const cell = (e) => e ? { name: e.display_name || e.name, team: e.team || "", seed: (parseInt(e.seed) || 0) || null }
     : { bye: true };
+  const ssCount = entrants.filter(e => (parseInt(e.seed) || 0) >= 1 && (parseInt(e.entry_round) || 1) > 1).length;
   const meta = {
     draw_seed: drawSeed, separate_by: sep, warnings, seeded_count: seededCount,
     bracket_size: size, bye_count: byeCount, r1_same_club: r1SameClub, algo_version: DRAW_ALGO_VERSION,
+    ...(ssCount ? { super_seed_count: ssCount } : {}),
   };
 
   // ── 確定前プレビュー(dry_run): DBを書かず組合せだけ返す ──

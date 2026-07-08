@@ -416,3 +416,98 @@ test("drawSingleBracket: 地区(region)分散モード", () => {
   assert.ok(r.success, "地区分散でも成功: " + JSON.stringify(r));
   assert.strictEqual(r.separate_by, "region");
 });
+
+// ─────────────────────────────────────────────────────────────
+// スーパーシード(entry_round>1)の抽選保存 (algo v3)
+// ─────────────────────────────────────────────────────────────
+
+test("スーパーシード: 抽選でも重み区画がBYE固定され登場回戦が保存される", () => {
+  // 8人 seed1..4、seed1=登場2回戦(w=2)。総重み9→枠数16(drawSingleBracketと同じ会計)。
+  const list = ents(8, (i) => (i <= 4 ? i : 0), (i) => "T" + i);
+  list[0].entry_round = 2;   // seed1(選手001)
+  const size = 16;
+  for (const seed of [1, 7, 99]) {
+    const { leaves, warnings } = db.computeDrawLeaves(list, size, mulberry32(seed), { separateBy: "none" });
+    const s1 = leaves.findIndex(x => x && x.seed === 1);
+    assert.strictEqual(s1, 0, "seed1は最上端 slot0");
+    const w = 2, start = Math.floor(s1 / w) * w;
+    for (let i = start; i < start + w; i++) {
+      if (i !== s1) assert.strictEqual(leaves[i], null, "SS区画の他リーフはBYE(slot" + i + ")");
+    }
+    assert.strictEqual(leaves.filter(Boolean).length, 8, "実選手8名(seed=" + seed + ")");
+    assert.ok(!warnings.some(x => /1回戦扱い/.test(x)), "降格警告なし");
+  }
+});
+
+test("スーパーシード: 第2シードのSS区画は最下端側に確保される", () => {
+  const list = ents(8, (i) => (i <= 4 ? i : 0), (i) => "T" + i);
+  list[1].entry_round = 3;   // seed2(選手002) w=4
+  const size = 16;
+  const { leaves } = db.computeDrawLeaves(list, size, mulberry32(5), { separateBy: "none" });
+  const s2 = leaves.findIndex(x => x && x.seed === 2);
+  assert.strictEqual(s2, size - 1, "seed2は最下端");
+  const w = 4, start = Math.floor(s2 / w) * w;   // [12..15]
+  let byeInRegion = 0;
+  for (let i = start; i < start + w; i++) if (!leaves[i]) byeInRegion++;
+  assert.strictEqual(byeInRegion, w - 1, "区画内BYEがw-1=3");
+  assert.strictEqual(leaves.filter(Boolean).length, 8, "実選手8名");
+});
+
+test("スーパーシード: 同一draw_seedで再現(SSあり)", () => {
+  const mk = () => { const l = ents(10, (i) => (i <= 4 ? i : 0), (i) => "クラブ" + ((i - 1) % 3)); l[0].entry_round = 2; l[1].entry_round = 2; return l; };
+  const size = 16;
+  const a = db.computeDrawLeaves(mk(), size, mulberry32(777), { separateBy: "team" });
+  const b = db.computeDrawLeaves(mk(), size, mulberry32(777), { separateBy: "team" });
+  assert.deepStrictEqual(a.leaves.map(x => x && x.id), b.leaves.map(x => x && x.id), "同一seed=同一配置");
+});
+
+test("スーパーシード: BYE予算が足りなければ警告つきで1回戦扱いに降格", () => {
+  // 8人で枠8(BYE予算0)なのに seed1 が登場3回戦(w=4) → 区画を確保できず降格。
+  const list = ents(8, (i) => (i <= 2 ? i : 0), (i) => "T" + i);
+  list[0].entry_round = 3;
+  const { leaves, warnings } = db.computeDrawLeaves(list, 8, mulberry32(1), { separateBy: "none" });
+  assert.strictEqual(leaves.filter(Boolean).length, 8, "全員配置(取り残しなし)");
+  assert.ok(warnings.some(x => /1回戦扱い/.test(x)), "降格警告あり");
+});
+
+test("スーパーシード: シード無しの登場回戦指定は警告のみ(通常配置)", () => {
+  const list = ents(8, (i) => (i <= 2 ? i : 0), (i) => "T" + i);
+  list[7].entry_round = 2;   // 非シード
+  const { leaves, warnings } = db.computeDrawLeaves(list, 8, mulberry32(1), { separateBy: "none" });
+  assert.strictEqual(leaves.filter(Boolean).length, 8, "全員配置");
+  assert.ok(warnings.some(x => /シード番号が無い/.test(x)), "非シードSSの警告");
+});
+
+test("drawSingleBracket: スーパーシード指定が抽選後も保持され、進行開始でR回戦から登場", () => {
+  const { t } = setupDraw(6, 2);   // 6人 seed1,2
+  const es = db.getEntrants(t.id, EV);
+  const ss = es.find(e => e.seed === 1);
+  db.setEntrantEntryRound(ss.id, 2);   // seed1=登場2回戦(手動指定の運用)
+  const r = db.drawSingleBracket(t.id, EV, { draw_seed: 42, separate_by: "team" });
+  assert.ok(r.success, "抽選成功: " + JSON.stringify(r.error || r));
+  // 総重み = 6 + (2-1) = 7 → 枠8
+  assert.strictEqual(r.bracket_size, 8, "枠数はSS重み込み(7→8)");
+  assert.strictEqual(r.super_seed_count, 1, "SS数がmetaに載る");
+  assert.ok(!(r.warnings || []).some(x => /1回戦扱い/.test(x)), "降格なし");
+  // SSの1回戦相手はBYE(区画固定)
+  const ssName = ss.display_name || ss.name;
+  const r1 = r1Of(t);
+  const ssR1 = r1.find(m => m.player1_name === ssName || m.player2_name === ssName);
+  assert.ok(ssR1, "SSの1回戦が存在");
+  const opp = ssR1.player1_name === ssName ? ssR1.player2_name : ssR1.player1_name;
+  assert.strictEqual(opp, "BYE", "SSの1回戦相手はBYE");
+  // 進行開始(不戦勝確定)→ SSの最初の実対戦は2回戦
+  db.autoAdvanceByes(t.id, EV);
+  const ms = db.getMatchesByTournament(t.id).filter(m => m.event === EV);
+  const firstReal = ms.filter(m => (m.player1_name === ssName || m.player2_name === ssName) && !m.is_walkover && m.player1_name !== "BYE" && m.player2_name !== "BYE")
+    .sort((a, b) => a.bracket_round - b.bracket_round)[0];
+  // 2回戦の枠にSSが繰り上がっている(相手は1回戦の勝者待ちでも、SS本人が round2 に居ること)
+  const inR2 = ms.some(m => m.bracket_round === 2 && (m.player1_name === ssName || m.player2_name === ssName));
+  assert.ok(inR2, "SSは2回戦の枠に繰り上がる");
+  // 同一draw_seedの再現(SSあり・DB経由)
+  const t2 = setupDraw(6, 2), es2 = db.getEntrants(t2.t.id, EV);
+  db.setEntrantEntryRound(es2.find(e => e.seed === 1).id, 2);
+  const ra = db.drawSingleBracket(t2.t.id, EV, { draw_seed: 42, separate_by: "team", preview: true });
+  const rb = db.drawSingleBracket(t2.t.id, EV, { draw_seed: 42, separate_by: "team", preview: true });
+  assert.deepStrictEqual(ra.pairs, rb.pairs, "同一draw_seed=同一プレビュー(SSあり)");
+});
