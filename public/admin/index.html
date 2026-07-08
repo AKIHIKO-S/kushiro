@@ -8182,11 +8182,8 @@ const O = {
    ),
    toolGroup("大会準備(シード・リーグ)", [
      h("button", { className: "btn btn-sm",
-       title: "エントリー名簿Excel(男女シングルス/男女ダブルスのシート)から出場者を取込。プレビューで支部を修正してから確定。",
-       onClick: () => O.openRosterImport() }, "名簿取込(Excel)"),
-     h("button", { className: "btn btn-sm",
-       title: "エントリーリストExcelから直接取込。タブ名がそのまま種目になります(例: 男子シングルス)。列は氏名/チーム名/支部(支部列が無い小規模大会にも対応)。",
-       onClick: () => O.openEntryListImport() }, "エントリーリスト取込"),
+       title: "Excelから取り込む。最初に「トーナメント形式(組合せ済みの表をそのまま反映)」か「名簿方式(出場者名簿→このあとアプリで抽選)」を選びます。",
+       onClick: () => O.openImportChooser() }, "Excelから取り込む"),
      h("button", { className: "btn btn-sm",
        title: "トーナメント表にシード選手を追加。既存の対戦はそのまま保持し、表の上/下に登場回戦から合流(BYE上がり)します。",
        onClick: () => O.openAddSeed(sel) }, "＋ シードを追加"),
@@ -9228,6 +9225,52 @@ const O = {
  toast(`リーグ生成: ${r.blocks}ブロック・${r.total_matches}対戦`, "ok");
  if (O._vbReload) O._vbReload();
  if (O.reload) O.reload();
+ },
+
+ // ── 取込形式の選択(トーナメント形式 / 名簿方式) ──
+ // トーナメント形式=組合せ済みの表(会長杯/VICTAS杯の組合せ表・取込テンプレ)をその並びのまま反映(抽選しない)。
+ // 名簿方式=出場者の名簿を取り込み、このあとアプリで抽選してトーナメントを作成する。
+ openImportChooser() {
+   if (!O.tournamentId) return toast("先に大会を選んでください", "err");
+   const card = (title, desc, note, onClick) => h("button", {
+     className: "btn", style: { display: "block", width: "100%", textAlign: "left",
+       padding: "14px 16px", marginBottom: "10px", border: "1px solid var(--border, #d1d5db)",
+       borderRadius: "10px", background: "#fff", cursor: "pointer" },
+     onClick: () => { document.querySelector(".modal-bg")?.remove(); onClick(); } },
+     h("div", { style: { fontWeight: 800, fontSize: "15px", marginBottom: "3px" } }, title),
+     h("div", { className: "text-sm text-sub" }, desc),
+     h("div", { className: "text-xs", style: { color: "#b45309", marginTop: "4px" } }, note));
+   const body = h("div", {},
+     h("div", { className: "text-sm text-sub", style: { marginBottom: "12px" } },
+       "取り込むExcelの形式を選んでください。"),
+     card("トーナメント形式（組合せ表）",
+       "組合せがもう決まっている表(会長杯・VICTAS杯の組合せ表や取込テンプレ)を、その並びのまま取り込みます。",
+       "→ 抽選はしません。書かれた対戦・シード・登場回戦をそのまま反映します。",
+       () => A.openExcelUpload(O.tournamentId)),
+     card("名簿方式（出場者リスト → 抽選）",
+       "出場者の名簿を取り込みます。このあとアプリの抽選でトーナメント表を作成します。",
+       "→ 取込後に「抽選ドロー」で組合せを作成(近接警告・シード/スーパーシード対応)。",
+       () => O.openRosterMethodChooser()));
+   openModal("取り込み形式を選ぶ", body, null);
+ },
+ // 名簿方式のサブ選択(申込集計 / エントリーリスト)
+ openRosterMethodChooser() {
+   const card = (title, desc, onClick) => h("button", {
+     className: "btn", style: { display: "block", width: "100%", textAlign: "left",
+       padding: "14px 16px", marginBottom: "10px", border: "1px solid var(--border, #d1d5db)",
+       borderRadius: "10px", background: "#fff", cursor: "pointer" },
+     onClick: () => { document.querySelector(".modal-bg")?.remove(); onClick(); } },
+     h("div", { style: { fontWeight: 800, fontSize: "15px", marginBottom: "3px" } }, title),
+     h("div", { className: "text-sm text-sub" }, desc));
+   const body = h("div", {},
+     h("div", { className: "text-sm text-sub", style: { marginBottom: "12px" } }, "名簿Excelの体裁を選んでください。"),
+     card("申込集計(男女シングルス/男女ダブルスのシート・区分列あり)",
+       "1シートに全種目を区分列で分けた申込集計。オープン(男女別)/カテゴリ別を取込時に選べます。",
+       () => O.openRosterImport()),
+     card("エントリーリスト(タブ名=種目)",
+       "タブ名がそのまま種目のエントリーリスト。列は氏名/チーム名/支部。支部列が無い小規模大会にも対応。",
+       () => O.openEntryListImport()));
+   openModal("名簿方式: 体裁を選ぶ", body, null);
  },
 
  // ── 名簿(エントリー表)Excel取込: プレビュー(支部修正可)→確定 ──
