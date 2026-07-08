@@ -4720,6 +4720,10 @@ function setLeagueTiebreak(tournamentId, event, ranks) {
 // (結果入力済みは _destructiveGuard が force 無しでブロック)。
 function generateLeaguePlayoff(tournamentId, srcEvent, opts = {}) {
   opts = opts || {};
+  // 再帰ガード: 生成済みの決勝T/順位別T種目を元にさらに決勝Tを作らせない(「〜決勝T 決勝T」防止)
+  if (/(決勝T|\d+位T)\s*$/.test(String(srcEvent || ""))) {
+    return { error: "決勝T・順位別トーナメントからは再生成できません。元の予選リーグ種目を指定してください" };
+  }
   const mode = opts.mode === "byrank" ? "byrank" : "top";
   const advanceN = Math.max(1, Math.min(8, parseInt(opts.advance_n) || 1));
   const standings = computeLeagueStandings(tournamentId, srcEvent);

@@ -131,3 +131,49 @@ test("両山: N=2..64 でクラッシュせず種目シートを生成", () => {
     assert.strictEqual(found, n, "N=" + n + ": 全選手配置");
   }
 });
+
+test("スーパーシード: 紙式描画(登場R回戦の位置に直接記載・長線・walkover非表示・_import不変)", () => {
+  // 12人 seed1..4、seed1=登場3回戦(w=4)。標準生成で seed1 は slot0・区画[0..3](bye3つ)。
+  const t = db.createTournament({ name: "表検証SS", date: "2027-05-05", venue: "体育館" });
+  db.updateEntrySettings(t.id, { entries_open: 1, event_config: [{ name: EV, type: "singles", fee: 0 }] });
+  const entries = [];
+  for (let i = 1; i <= 12; i++) entries.push({ event: EV, type: "singles", name: "選手" + String(i).padStart(2, "0"), team: "ク" + ((i - 1) % 4) });
+  db.createTeamEntry(t.id, { team_name: "X", contact_name: "x", contact_email: "x@y.jp", entries });
+  const es = db.getEntrants(t.id, EV);
+  es.slice(0, 4).forEach((e, k) => db.setEntrantSeed(e.id, k + 1));
+  db.setEntrantEntryRound(es[0].id, 3);
+  db.generateBracket(t.id, EV, { regenerate: true, force: true });
+  // 前提の確認: R1 pos0 = SS vs BYE、pos1 = BYE vs BYE(区画[0..3])
+  const r1 = db.getMatchesByTournament(t.id).filter(m => m.event === EV && m.bracket_round === 1)
+    .sort((a, b) => a.bracket_pos - b.bracket_pos);
+  assert.strictEqual(r1[0].player1_name, "選手01", "前提: SSはslot0");
+  assert.strictEqual(r1[0].player2_name, "BYE", "前提: slot1=BYE");
+  assert.strictEqual(r1[1].player1_name, "BYE", "前提: slot2=BYE");
+  assert.strictEqual(r1[1].player2_name, "BYE", "前提: slot3=BYE");
+
+  const buf = reports.buildBracketXlsx(t, db.getMatchesByTournament(t.id), db.getEntrants(t.id), { event: EV });
+  const { vals, merges } = readSheet(buf, EV.slice(0, 30));
+  // (i) SS名は登場3回戦のアンカー行に1回だけ(R1リーフ非表示+walkover勝者名の消滅)
+  const ssCells = Object.entries(vals).filter(([, v]) => v === "選手01");
+  assert.strictEqual(ssCells.length, 1, "SS名は1回だけ: " + JSON.stringify(ssCells));
+  // (ii) 期待セル = B8(anchor(2,0)=行8(0始まり) → 名前は行7=Excel行8)・縦2行merge
+  assert.strictEqual(vals["B8"], "選手01", "SS名がB8(登場3回戦のアンカー位置)");
+  assert.ok(merges.some(m => m.s.r === 7 && m.e.r === 8 && m.s.c === 1), "SS名の縦2行merge(r7..8, col1)");
+  // (iii) 表示される「ｂｙｅ」= 全bye(4) - 区画内(3) = 1
+  const byeCount = Object.values(vals).filter(v => v === "ｂｙｅ").length;
+  assert.strictEqual(byeCount, 1, "区画内のｂｙｅは非表示(表示bye=1): " + byeCount);
+  // (iv) _import はラウンドトリップ不変: 全16行 + 区画byeが bye=1 で残存 + SSは正準位置(pos0,slot1)
+  const imp = readSheet(buf, "_import");
+  // 行1=マーカー・行2=列ヘッダ・行3〜=データ(正準リーフ位置)
+  const rows = [];
+  Object.entries(imp.vals).forEach(([addr]) => {
+    const m = addr.match(/^A(\d+)$/); if (m && +m[1] >= 3) rows.push(+m[1]);
+  });
+  assert.strictEqual(rows.length, 16, "_importは全16リーフ行: " + rows.length);
+  // pos0 slot1 = SS entrant / pos0 slot2 は区画内bye=1
+  const impRow = (r) => ["A","B","C","D","E","F","G","H"].map(c => imp.vals[c + r]);
+  const row3 = impRow(3);   // 先頭リーフ(pos0, slot1)
+  assert.strictEqual(String(row3[5] || ""), "選手01", "_import先頭=SS本人(正準位置)");
+  const row4 = impRow(4);   // pos0, slot2 = 区画内bye
+  assert.strictEqual(parseInt(row4[7]) || 0, 1, "_importの区画byeは残存(bye=1)");
+});
