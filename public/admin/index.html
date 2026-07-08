@@ -8185,6 +8185,9 @@ const O = {
        title: "エントリー名簿Excel(男女シングルス/男女ダブルスのシート)から出場者を取込。プレビューで支部を修正してから確定。",
        onClick: () => O.openRosterImport() }, "名簿取込(Excel)"),
      h("button", { className: "btn btn-sm",
+       title: "エントリーリストExcelから直接取込。タブ名がそのまま種目になります(例: 男子シングルス)。列は氏名/チーム名/支部(支部列が無い小規模大会にも対応)。",
+       onClick: () => O.openEntryListImport() }, "エントリーリスト取込"),
+     h("button", { className: "btn btn-sm",
        title: "トーナメント表にシード選手を追加。既存の対戦はそのまま保持し、表の上/下に登場回戦から合流(BYE上がり)します。",
        onClick: () => O.openAddSeed(sel) }, "＋ シードを追加"),
      h("button", { className: "btn btn-sm",
@@ -9267,7 +9270,7 @@ const O = {
      const f = fileIn.files && fileIn.files[0];
      if (!f) return toast("Excelファイルを選んでください", "err");
      stat.textContent = "解析中…";
-     const fd = new FormData(); fd.append("file", f);
+     const fd = new FormData(); fd.append("file", f); fd.append("format", "meibo");
      const resp = await fetch(`/api/tournaments/${O.tournamentId}/roster/preview`, {
        method: "POST", headers: api.adminKey ? { "X-Admin-Key": api.adminKey } : {}, body: fd });
      const r = await resp.json();
@@ -9288,6 +9291,73 @@ const O = {
      h("div", { className: "text-sm text-sub mt-2" },
        "支部は自動正規化(「支部」「市」除去・根室管内卓球連盟→根室 等)されます。黄色の欄=支部未定(保留)。修正してから確定してください。"));
    openModal("名簿取込(エントリー表Excel)", body, h("div", {}, commitBtn));
+ },
+
+ // ── エントリーリストExcel直接取込(タブ=種目): プレビュー(支部修正可)→確定 ──
+ openEntryListImport() {
+   if (!O.tournamentId) return toast("先に大会を選んでください", "err");
+   let parsed = null;
+   const fileIn = h("input", { type: "file", accept: ".xlsx,.xls" });
+   const openChk = h("input", { type: "checkbox" });
+   const openLabel = h("label", { className: "text-sm", style: { display: "inline-flex", alignItems: "center", gap: "4px" } },
+     openChk, "オープン大会(スーパーシード必須チェックを有効化)");
+   const stat = h("div", { className: "text-sm text-sub", style: { margin: "6px 0" } }, "ファイルを選んで「解析」を押してください。タブ名がそのまま種目名になります");
+   const issuesBox = h("div", { style: { maxHeight: "120px", overflowY: "auto", fontSize: "12px", margin: "6px 0" } });
+   const tableBox = h("div", { style: { maxHeight: "300px", overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: "6px" } });
+   const renderPreview = () => {
+     clear(tableBox); clear(issuesBox);
+     if (!parsed) return;
+     const warns = parsed.issues.filter(i => i.level === "warn");
+     const infos = parsed.issues.filter(i => i.level !== "warn");
+     stat.textContent = `種目: ${(parsed.stats.sheets || []).join("・")} / シングルス ${parsed.stats.singles}名 / ダブルス ${parsed.stats.doubles}組 / スキップ ${parsed.stats.skipped}行 / 警告 ${warns.length}件`;
+     warns.forEach(i => issuesBox.appendChild(h("div", { style: { color: "#b45309" } }, "[" + i.sheet + " " + i.row + "] " + i.msg)));
+     infos.slice(0, 40).forEach(i => issuesBox.appendChild(h("div", { style: { color: "#64748b" } }, "[" + i.sheet + " " + i.row + "] " + i.msg)));
+     if (infos.length > 40) issuesBox.appendChild(h("div", { style: { color: "#94a3b8" } }, "…ほか正規化 " + (infos.length - 40) + "件"));
+     const tbl = h("table", { className: "table", style: { fontSize: "12px" } },
+       h("thead", {}, h("tr", {}, ...["種目", "氏名", "チーム", "支部(修正可)", "パートナー", "P.チーム", "P.支部(修正可)"].map(x => h("th", {}, x)))));
+     const tb = h("tbody", {});
+     const regionInput = (e, key) => h("input", { className: "input", value: e[key] || "",
+       style: { width: "72px", padding: "2px 6px", fontSize: "12px", background: e[key] ? "#fff" : "#fef3c7" },
+       onInput: (ev) => { e[key] = ev.target.value.trim(); } });
+     parsed.entries.forEach(e => {
+       tb.appendChild(h("tr", {},
+         h("td", {}, e.event),
+         h("td", {}, e.name), h("td", {}, e.team || "(空欄)"),
+         h("td", {}, regionInput(e, "region")),
+         h("td", {}, e.partner_name || ""), h("td", {}, e.type === "doubles" ? (e.partner_team || "(空欄)") : ""),
+         h("td", {}, e.type === "doubles" ? regionInput(e, "partner_region") : "")));
+     });
+     tbl.appendChild(tb); tableBox.appendChild(tbl);
+   };
+   const analyzeBtn = h("button", { className: "btn btn-sm", onClick: async () => {
+     const f = fileIn.files && fileIn.files[0];
+     if (!f) return toast("Excelファイルを選んでください", "err");
+     stat.textContent = "解析中…";
+     const fd = new FormData(); fd.append("file", f); fd.append("format", "entrylist");
+     const resp = await fetch(`/api/tournaments/${O.tournamentId}/roster/preview`, {
+       method: "POST", headers: api.adminKey ? { "X-Admin-Key": api.adminKey } : {}, body: fd });
+     const r = await resp.json();
+     if (r.error) { stat.textContent = "解析に失敗しました"; return toast(r.error, "err"); }
+     parsed = r;
+     // タブが「男子シングルス」等の男女別のみ=オープン大会らしければチェックを既定ON
+     const sheets = (r.stats && r.stats.sheets) || [];
+     openChk.checked = sheets.length > 0 && sheets.every(s => /^(男子|女子|混合)(シングルス|ダブルス)$/.test(s));
+     renderPreview();
+   } }, "解析(プレビュー)");
+   const commitBtn = h("button", { className: "btn btn-primary btn-sm", onClick: async () => {
+     if (!parsed || !parsed.entries.length) return toast("先に解析してください", "err");
+     if (!confirm("この内容で " + parsed.entries.length + " 件を取り込みます。よろしいですか？(既に取込済みの同一エントリはスキップされます)")) return;
+     const r = await api.post(`/api/tournaments/${O.tournamentId}/roster/commit`, { mode: "direct", open: openChk.checked, entries: parsed.entries });
+     if (r.error) return toast(r.error, "err");
+     toast(`エントリーリスト取込: ${r.created}件作成 / ${r.skipped_duplicate}件スキップ(重複) / 種目: ${r.events.join("・")}`, "ok");
+     if (O.reload) O.reload();
+   } }, "取込を確定");
+   const body = h("div", {},
+     h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } }, fileIn, analyzeBtn, openLabel),
+     stat, issuesBox, tableBox,
+     h("div", { className: "text-sm text-sub mt-2" },
+       "タブ名=種目名。支部は自動正規化され、支部列が無い場合はDB照合で補完(無ければ保留)。黄色の欄=支部未定。修正してから確定してください。"));
+   openModal("エントリーリスト取込(タブ=種目)", body, h("div", {}, commitBtn));
  },
 
  // ── 予選リーグ→決勝トーナメント通過処理: 上位N名進出 or 順位別T(1位T/2位T…) ──

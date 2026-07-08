@@ -3936,12 +3936,11 @@ function parseRosterRows(sheets) {
     if (!team2) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name2 + ": パートナーのチーム名が空欄(プレビューで確認してください)" });
     const kb = _parseKubun(cell(r, 2));
     const shibuRaw = cell(r, 7);
-    // 連記(・区切り)は氏名1/氏名2に対応。1つだけなら両者共通。
-    const parts = shibuRaw.split(/[・･、,，/／]/).map(x => x.trim()).filter(Boolean);
-    const region1 = normalizeShibuName(parts[0] || "");
-    const region2 = normalizeShibuName(parts[1] || parts[0] || "");
-    if (parts.length > 2) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name1 + "組: 支部の連記が3つ以上「" + shibuRaw + "」(先頭2つを採用)" });
-    else if (parts.length === 2) issues.push({ sheet: "D", row: idx + 1, level: "info", msg: name1 + "組: 支部連記「" + shibuRaw + "」→ " + name1 + "=「" + region1 + "」/ " + name2 + "=「" + region2 + "」" });
+    // 連記(・区切り)は氏名1/氏名2に対応。1つだけなら両者共通(_shibuPair に統一・位置保持)。
+    const sp = _shibuPair(shibuRaw);
+    const region1 = sp.r1, region2 = sp.r2;
+    if (sp.multi > 2) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name1 + "組: 支部の連記が3つ以上「" + shibuRaw + "」(先頭2つを採用)" });
+    else if (sp.multi === 2) issues.push({ sheet: "D", row: idx + 1, level: "info", msg: name1 + "組: 支部連記「" + shibuRaw + "」→ " + name1 + "=「" + region1 + "」/ " + name2 + "=「" + region2 + "」" });
     else if (shibuRaw && region1 !== shibuRaw) issues.push({ sheet: "D", row: idx + 1, level: "info", msg: name1 + "組: 支部「" + shibuRaw + "」→「" + region1 + "」に正規化" });
     if (!shibuRaw) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name1 + "/" + name2 + "組: 支部が空欄(DB照合で補完・無ければ保留)" });
     entries.push({ type: "doubles", kubun: kb.label, gender: kb.gender, division: kb.division,
@@ -3952,6 +3951,115 @@ function parseRosterRows(sheets) {
 
   return { entries, issues, stats: { singles: entries.filter(e => e.type === "singles").length,
     doubles: entries.filter(e => e.type === "doubles").length, skipped } };
+}
+
+
+// ── エントリーリスト形式(タブ=種目)の直接取込 ──
+// シート名がそのまま種目名(例「男子シングルス」「一般女子ダブルス」)。列はヘッダ行で判定:
+//   シングルス: 氏名 / チーム名(所属) / 支部(無い場合あり=小規模大会) / 備考(不考慮)
+//   ダブルス:   氏名1 / 氏名2 / チーム名1 / チーム名2 / 支部(連記あり)
+// 種目シートの条件=「氏名(または氏名1)」と「チーム名(所属)」の両ヘッダを持つこと。
+// ※「参加人数」シートはヘッダが氏名で始まるが「申込チーム」でありチーム名ヘッダが無い→対象外。
+//   重複チェック/差し込み用等のユーティリティシートも名前で除外する。
+// 支部の連記(氏名1・氏名2に対応)。位置保持: 「・札幌」(先頭空=氏名1側空)は r1='' のまま(DB補完に回す)。
+// 区切りが無ければ単一値=両者共通。multi は非空要素の数(=2で連記・3以上で警告)。
+function _shibuPair(raw) {
+  const s = String(raw || "").trim();
+  if (!/[・･、,，/／]/.test(s)) { const r = normalizeShibuName(s); return { r1: r, r2: r, multi: s ? 1 : 0 }; }
+  const parts = s.split(/[・･、,，/／]/).map(x => x.trim());
+  return { r1: normalizeShibuName(parts[0] || ""), r2: normalizeShibuName(parts[1] || ""), multi: parts.filter(Boolean).length };
+}
+function parseEntryListSheets(sheets) {
+  const entries = [], issues = [];
+  let skipped = 0;
+  const usedSheets = [];
+  const UTIL = /重複|差し込み|参加人数/;   // 明確なユーティリティシートのみ除外(「マスターズ」等の種目名を巻き込まない)
+  (sheets || []).forEach(sh => {
+    const name = String((sh && sh.name) || "").trim();
+    const rows = Array.isArray(sh && sh.rows) ? sh.rows : [];
+    if (!name || !rows.length) return;
+    const isEventLike = /シングルス|ダブルス/.test(name);   // シート名が種目らしいか(黙殺を避けるため警告対象)
+    if (UTIL.test(name)) {
+      if (isEventLike) issues.push({ sheet: name, row: 1, level: "warn", msg: "シート「" + name + "」はユーティリティ名(重複/差し込み/参加人数)を含むため取り込みません。種目シートなら名前を変えてください" });
+      return;
+    }
+    const head = (rows[0] || []).map(v => String(v == null ? "" : v).trim());
+    const col = (labels) => head.findIndex(x => labels.indexOf(x) >= 0);
+    const iName1 = col(["氏名1", "名前1"]);
+    const iName = col(["氏名", "名前", "選手名"]);
+    const kubunLabel = name.replace(/(シングルス|ダブルス)\s*$/, "").trim() || name;
+    const kb = _parseKubun(kubunLabel);
+    const cellAt = (r, i) => (i >= 0 ? String((r && r[i]) == null ? "" : r[i]).trim() : "");
+
+    if (iName1 >= 0) {
+      // ダブルス種目シート
+      const iName2 = col(["氏名2", "名前2"]);
+      const iTeam1 = col(["チーム名1", "所属1", "チーム1"]);
+      const iTeam2 = col(["チーム名2", "所属2", "チーム2"]);
+      const iShibu = col(["支部", "支部名"]);
+      if (iName2 < 0 || iTeam1 < 0) {
+        issues.push({ sheet: name, row: 1, level: "warn", msg: "シート「" + name + "」はダブルスの列(氏名2/チーム名1)が見つからないため取り込みません。ヘッダを確認してください" });
+        return;
+      }
+      usedSheets.push(name);
+      if (iShibu < 0) issues.push({ sheet: name, row: 1, level: "info", msg: "シート「" + name + "」に支部列がありません(支部はDB照合で補完・無ければ保留)" });
+      rows.slice(1).forEach((r, k) => {
+        const idx = k + 2;
+        const n1 = cellAt(r, iName1), n2 = cellAt(r, iName2);
+        if (!n1 && !n2) { if ((r || []).some(v => String(v || "").trim())) skipped++; return; }
+        if (!n1 || !n2) {
+          issues.push({ sheet: name, row: idx, level: "warn", msg: "ペア不成立(氏名が片方だけ): " + (n1 || n2) + " — この行は取り込みません" });
+          skipped++; return;
+        }
+        const t1 = cellAt(r, iTeam1), t2 = cellAt(r, iTeam2);
+        if (!t2) issues.push({ sheet: name, row: idx, level: "warn", msg: n2 + ": パートナーのチーム名が空欄(プレビューで確認してください)" });
+        const raw = cellAt(r, iShibu);
+        const sp = _shibuPair(raw);
+        if (sp.multi > 2) issues.push({ sheet: name, row: idx, level: "warn", msg: n1 + "組: 支部の連記が3つ以上「" + raw + "」(先頭2つを採用)" });
+        else if (sp.multi === 2) issues.push({ sheet: name, row: idx, level: "info", msg: n1 + "組: 支部連記「" + raw + "」→ " + n1 + "=「" + sp.r1 + "」/ " + n2 + "=「" + sp.r2 + "」" });
+        else if (raw && sp.r1 !== raw) issues.push({ sheet: name, row: idx, level: "info", msg: n1 + "組: 支部「" + raw + "」→「" + sp.r1 + "」に正規化" });
+        if (iShibu >= 0 && !raw) issues.push({ sheet: name, row: idx, level: "warn", msg: n1 + "/" + n2 + "組: 支部が空欄(DB照合で補完・無ければ保留)" });
+        entries.push({ type: "doubles", event: name, kubun: kb.label, gender: kb.gender, division: kb.division,
+          name: n1, team: t1, region: sp.r1, partner_name: n2, partner_team: t2, partner_region: sp.r2,
+          srcRow: idx, sheet: name });
+      });
+    } else if (iName >= 0) {
+      // シングルス種目シート。シート名は「ダブルス」なのに氏名1が無い=列がシングルス型
+      // → 種目タイプ不整合を下流に流さないよう取り込まず警告(プレビューで確認)。
+      if (/ダブルス/.test(name)) {
+        issues.push({ sheet: name, row: 1, level: "warn", msg: "シート「" + name + "」はダブルスですが氏名1/氏名2の列がありません(個人戦の列に見えます)。ヘッダを確認してください。このシートは取り込みません" });
+        return;
+      }
+      const iTeam = col(["チーム名", "所属", "チーム"]);
+      const iShibu = col(["支部", "支部名"]);
+      if (iTeam < 0) {
+        // 種目らしいシートでチーム名列が無いのは異常→警告。氏名+申込チーム型(参加人数等)は静かにスキップ。
+        if (isEventLike) issues.push({ sheet: name, row: 1, level: "warn", msg: "シート「" + name + "」はチーム名(所属)の列が見つからないため取り込みません。ヘッダを確認してください" });
+        return;
+      }
+      usedSheets.push(name);
+      if (iShibu < 0) issues.push({ sheet: name, row: 1, level: "info", msg: "シート「" + name + "」に支部列がありません(支部はDB照合で補完・無ければ保留)" });
+      rows.slice(1).forEach((r, k) => {
+        const idx = k + 2;
+        const nm = cellAt(r, iName);
+        if (!nm) { if ((r || []).some(v => String(v || "").trim())) skipped++; return; }
+        const tm = cellAt(r, iTeam);
+        const raw = cellAt(r, iShibu);
+        const region = normalizeShibuName(raw);
+        if (raw && region !== raw) issues.push({ sheet: name, row: idx, level: "info", msg: nm + ": 支部「" + raw + "」→「" + region + "」に正規化" });
+        if (iShibu >= 0 && !raw) issues.push({ sheet: name, row: idx, level: "warn", msg: nm + "(" + tm + "): 支部が空欄(DB照合で補完・無ければ保留)" });
+        entries.push({ type: "singles", event: name, kubun: kb.label, gender: kb.gender, division: kb.division,
+          name: nm, team: tm, region, srcRow: idx, sheet: name });
+      });
+    } else if (isEventLike) {
+      // 種目名なのに氏名列すら無い→黙殺せず警告
+      issues.push({ sheet: name, row: 1, level: "warn", msg: "シート「" + name + "」に氏名の列が見つかりません。ヘッダを確認してください" });
+    }
+  });
+  if (!usedSheets.length) issues.push({ sheet: "-", row: 0, level: "warn",
+    msg: "種目シートが見つかりません(タブ名=種目・1行目に「氏名」と「チーム名」のヘッダが必要)" });
+  return { entries, issues, stats: { singles: entries.filter(e => e.type === "singles").length,
+    doubles: entries.filter(e => e.type === "doubles").length, skipped, sheets: usedSheets } };
 }
 
 // 種目名のマッピング。mode='open'(オープン大会)=年齢カテゴリ無視で男女別S/D(4種目)。
@@ -3988,12 +4096,16 @@ function enrichRosterRegions(entries) {
 }
 
 // 名簿取込の確定: 種目を event_config に追加し、entrants を冪等に作成(既存はスキップ)。
-// entries はプレビューで手修正済みの値を受けるが、種目名はサーバ側で mode から再計算する(安全)。
+// entries はプレビューで手修正済みの値を受ける。open/category は種目名をサーバ側で mode から再計算する。
+// direct(エントリーリスト形式)のみ e.event(=シート名)を使うが、制御文字除去+長さ上限でサニタイズする
+// (種目名が改行/巨大文字列だと event_config・/live・fingerprint を汚し、種目完全一致の下流が壊れるため)。
 function importRoster(tournamentId, payload) {
   payload = payload || {};
   const t = getTournament(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
-  const mode = payload.mode === "open" ? "open" : "category";
+  const mode = payload.mode === "open" ? "open" : payload.mode === "direct" ? "direct" : "category";
+  // direct(エントリーリスト形式)は種目=シート名をそのまま使う。payload.open=true でオープン扱い(SS必須)。
+  const markOpen = mode === "open" || (mode === "direct" && payload.open === true);
   const entries = Array.isArray(payload.entries) ? payload.entries : [];
   if (!entries.length) return { error: "取込対象がありません" };
   const dup = sqlite.prepare(`SELECT id FROM entrants WHERE tournament_id=? AND event=? AND name=? AND team=? AND partner_name=? LIMIT 1`);
@@ -4002,7 +4114,10 @@ function importRoster(tournamentId, payload) {
   const txn = sqlite.transaction(() => {
     for (const e of entries) {
       if (!e || !String(e.name || "").trim()) continue;
-      const ev = rosterEventName(e, mode);
+      const ev = mode === "direct"
+        ? String(e.event || "").replace(/[ -]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60)   // 制御文字除去+空白圧縮+60字上限
+        : rosterEventName(e, mode);
+      if (!ev) continue;
       eventsUsed.set(ev, e.type === "doubles" ? "doubles" : "singles");
       // 重複チェックは「格納と同じ正規化後の氏名」で照合する(buildEntrantNames が空白を整えるため、
       // 生の氏名で照合すると全角空白などの表記で二重登録がすり抜ける)。
@@ -4024,7 +4139,7 @@ function importRoster(tournamentId, payload) {
     try { cfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []); } catch (err) { cfg = []; }
     let cfgChanged = false;
     for (const [name, type] of eventsUsed) {
-      if (!cfg.some(c => c && c.name === name)) { cfg.push(Object.assign({ name, type, fee: 0, note: "名簿取込" }, mode === "open" ? { open: true } : {})); cfgChanged = true; }
+      if (!cfg.some(c => c && c.name === name)) { cfg.push(Object.assign({ name, type, fee: 0, note: "名簿取込" }, markOpen ? { open: true } : {})); cfgChanged = true; }
     }
     if (cfgChanged) sqlite.prepare("UPDATE tournaments SET event_config=? WHERE id=?").run(JSON.stringify(cfg), tournamentId);
   });
@@ -9521,6 +9636,7 @@ module.exports = {
   _vsPrevCore, _minActivity, _parseTs,   // 対昨年レースの純ロジック(回帰テスト用)
   _normClub,   // 所属名の正規化(類似チーム名分散・回帰テスト用)
   parseRosterRows, rosterEventName, enrichRosterRegions, importRoster, normalizeShibuName,   // 名簿(エントリー表)取込
+  parseEntryListSheets,   // エントリーリスト形式(タブ=種目)取込
   proximityFromLeaves, computeBracketProximity,   // トーナメント近接警告(作成プラン)
   getBracket, deleteEventMatches, deleteRoster, rosterStats, setCourtLayout,
   // 試合検索 / H2H / 選手統計

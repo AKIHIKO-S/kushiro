@@ -1901,18 +1901,39 @@ app.post("/api/tournaments/:id/roster/preview", requireAdmin, upload.single("fil
     if (!req.file) return res.status(400).json({ error: "ファイルが添付されていません" });
     const XLSX = require("xlsx");
     const wb = XLSX.readFile(filePath);
-    const sheetRows = (kw) => {
-      const n = wb.SheetNames.find(s => s.includes(kw));
-      return n ? XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: "" }) : [];
-    };
-    const singles = sheetRows("シングルス");
-    const doubles = sheetRows("ダブルス");
-    if (!singles.length && !doubles.length) {
-      return res.status(400).json({ error: "「男女シングルス」「男女ダブルス」シートが見つかりません(シート名を確認してください)" });
+    // 形式: meibo=大会申込集計(「男女シングルス/男女ダブルス」シート・区分列で種目分け) /
+    //       entrylist=タブ=種目のエントリーリスト(区分列なし)。
+    // 明示指定を最優先。未指定は「区分」列を持つシートがあれば meibo(=meibo は必ず区分列を持つ・
+    // entrylist は持たない=決定的に区別できる。シート名が『シングルス』変種の meibo も正しく判定)。
+    let format = req.body && req.body.format;
+    if (format !== "meibo" && format !== "entrylist") {
+      const hasKubun = wb.SheetNames.some(s => {
+        const hdr = (XLSX.utils.sheet_to_json(wb.Sheets[s], { header: 1, defval: "" })[0] || []).map(v => String(v).trim());
+        return hdr.includes("区分") && (hdr.includes("氏名") || hdr.includes("氏名1"));
+      });
+      format = hasKubun ? "meibo" : "entrylist";
     }
-    const parsed = db.parseRosterRows({ singles, doubles });
+    let parsed;
+    if (format === "meibo") {
+      const sheetRows = (kw) => {
+        const n = wb.SheetNames.find(s => s.includes(kw));
+        return n ? XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: "" }) : [];
+      };
+      const singles = sheetRows("シングルス");
+      const doubles = sheetRows("ダブルス");
+      if (!singles.length && !doubles.length) {
+        return res.status(400).json({ error: "「男女シングルス」「男女ダブルス」シートが見つかりません(シート名を確認してください)" });
+      }
+      parsed = db.parseRosterRows({ singles, doubles });
+    } else {
+      const sheets = wb.SheetNames.map(n => ({ name: n, rows: XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: "" }) }));
+      parsed = db.parseEntryListSheets(sheets);
+      if (!parsed.entries.length) {
+        return res.status(400).json({ error: "種目シートが見つかりません(タブ名=種目・1行目に「氏名」と「チーム名」のヘッダが必要)" });
+      }
+    }
     const dbIssues = db.enrichRosterRegions(parsed.entries);
-    res.json({ ok: true, entries: parsed.entries, issues: parsed.issues.concat(dbIssues), stats: parsed.stats });
+    res.json({ ok: true, format, entries: parsed.entries, issues: parsed.issues.concat(dbIssues), stats: parsed.stats });
   } catch (e) {
     res.status(400).json({ error: "名簿の解析に失敗しました: " + e.message });
   } finally {
@@ -1921,7 +1942,7 @@ app.post("/api/tournaments/:id/roster/preview", requireAdmin, upload.single("fil
 });
 // 名簿取込の確定(プレビューで修正済みの entries を受けて entrants を冪等作成)
 app.post("/api/tournaments/:id/roster/commit", requireAdmin, (req, res) => {
-  const r = db.importRoster(req.params.id, { mode: req.body?.mode, entries: req.body?.entries });
+  const r = db.importRoster(req.params.id, { mode: req.body?.mode, open: req.body?.open === true, entries: req.body?.entries });
   if (r?.error) return res.status(400).json(r);
   res.json(r);
 });

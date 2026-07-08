@@ -191,3 +191,134 @@ test("オープン種目のスーパーシード必須: 未指定は確定ブロ
   const ok2 = db.drawSingleBracket(t2.id, "一般男子シングルス", { draw_seed: 5, drawn_by: "検証" });
   assert.ok(ok2.success, "カテゴリ種目はSS不要: " + JSON.stringify(ok2.error || ""));
 });
+
+// ── エントリーリスト形式(タブ=種目)の直接取込 ──
+
+test("エントリーリスト: タブ=種目・S/D列判定・支部連記・ユーティリティシート除外", () => {
+  const sheets = [
+    { name: "男子シングルス", rows: [
+      ["氏名", "チーム名", "支部", "備考"],
+      ["北野 一", "星クラブ", "釧路市", ""],
+      ["青木 五", "月クラブ", "帯広", "何かメモ"],
+      ["", "", "", ""],
+    ]},
+    { name: "男子ダブルス", rows: [
+      ["氏名1", "氏名2", "チーム名1", "チーム名2", "支部"],
+      ["北野 一", "東山 三", "星高校", "空中学校", "深川支部・札幌支部"],
+      ["白鳥 七", "", "月クラブ", "", "釧路"],
+    ]},
+    // 罠: 参加人数シートはヘッダが「氏名」で始まるがチーム名ヘッダが無い→対象外
+    { name: "参加人数", rows: [["氏名", "申込チーム", "一般男子", "高校男子"], ["誰か", "", "", ""]] },
+    { name: "重複チェック", rows: [["シングルス", "", "ダブルス"], ["名前名前", "", "組"]] },
+  ];
+  const { entries, issues, stats } = db.parseEntryListSheets(sheets);
+  assert.deepStrictEqual(stats.sheets, ["男子シングルス", "男子ダブルス"], "種目シートのみ対象");
+  assert.strictEqual(stats.singles, 2, "S2名");
+  assert.strictEqual(stats.doubles, 1, "D1組(不成立1除外)");
+  const s1 = entries.find(e => e.name === "北野 一" && e.type === "singles");
+  assert.deepStrictEqual([s1.event, s1.region, s1.gender], ["男子シングルス", "釧路", "male"]);
+  const d1 = entries.find(e => e.type === "doubles");
+  assert.deepStrictEqual([d1.event, d1.region, d1.partner_region], ["男子ダブルス", "深川", "札幌"], "連記対応");
+  assert.ok(issues.some(i => /ペア不成立/.test(i.msg)), "不成立warn");
+  assert.ok(!entries.some(e => e.name === "誰か"), "参加人数シートは取り込まない");
+});
+
+test("エントリーリスト: 支部列なし(小規模大会)は行ごとの警告を出さずシート単位のinfo", () => {
+  const sheets = [
+    { name: "一般男子シングルス", rows: [
+      ["氏名", "チーム名"],
+      ["北野 一", "星クラブ"],
+      ["青木 五", "月クラブ"],
+    ]},
+  ];
+  const { entries, issues } = db.parseEntryListSheets(sheets);
+  assert.strictEqual(entries.length, 2);
+  assert.ok(entries.every(e => e.region === ""), "支部は空(保留)");
+  assert.ok(issues.some(i => i.level === "info" && /支部列がありません/.test(i.msg)), "シート単位のinfo");
+  assert.ok(!issues.some(i => i.level === "warn" && /支部が空欄/.test(i.msg)), "行ごとの空欄warnは出さない");
+  // 種目名から区分も取れている(一般男子シングルス→一般/male)
+  assert.deepStrictEqual([entries[0].division, entries[0].gender], ["一般", "male"]);
+});
+
+test("エントリーリスト: direct取込は種目=タブ名・open指定でSS必須が有効化", () => {
+  const t = db.createTournament({ name: "直接取込大会", date: "2027-10-01" });
+  const sheets = [
+    { name: "男子シングルス", rows: [
+      ["氏名", "チーム名", "支部"],
+      ["北野 一", "星クラブ", "釧路"], ["青木 五", "月クラブ", "帯広"],
+      ["東山 三", "空クラブ", "北見"], ["西川 四", "海クラブ", "根室"],
+    ]},
+  ];
+  const { entries } = db.parseEntryListSheets(sheets);
+  const r = db.importRoster(t.id, { mode: "direct", open: true, entries });
+  assert.ok(r.ok && r.created === 4, "4件作成: " + JSON.stringify(r));
+  assert.deepStrictEqual(r.events, ["男子シングルス"], "種目=タブ名");
+  // openフラグ→SS必須のreadiness block
+  const es = db.getEntrants(t.id, "男子シングルス");
+  db.setEntrantSeed(es[0].id, 1);
+  const rdy = db.checkDrawReadiness(t.id, "男子シングルス");
+  assert.ok(rdy.issues.some(i => i.code === "open_needs_super_seed"), "open指定でSS必須が効く");
+  // 冪等
+  const r2 = db.importRoster(t.id, { mode: "direct", open: true, entries });
+  assert.strictEqual(r2.created, 0, "再実行は作成0");
+  // open未指定なら SS必須は付かない
+  const t2 = db.createTournament({ name: "直接取込小規模", date: "2027-10-02" });
+  db.importRoster(t2.id, { mode: "direct", entries });
+  const es2 = db.getEntrants(t2.id, "男子シングルス");
+  db.setEntrantSeed(es2[0].id, 1);
+  const rdy2 = db.checkDrawReadiness(t2.id, "男子シングルス");
+  assert.ok(!rdy2.issues.some(i => i.code === "open_needs_super_seed"), "open未指定はSS必須なし");
+});
+
+// ── 反証で挙がった辺縁の修正(UTIL緩和/type不整合/列黙殺/支部連記の位置/event検証) ──
+
+test("エントリーリスト: マスターズ等の実在種目を除外しない・列不足シートは警告を出す(黙殺しない)", () => {
+  const sheets = [
+    { name: "マスターズ男子シングルス", rows: [["氏名", "チーム名", "支部"], ["北野 一", "星クラブ", "釧路"]] },
+    { name: "男子ダブルス", rows: [["氏名1", "氏名2", "所属"], ["甲", "乙", "共通クラブ"]] },
+    { name: "女子ダブルス", rows: [["氏名", "チーム名", "支部"], ["丙 花", "港クラブ", "釧路"]] },
+    { name: "重複チェック", rows: [["シングルス", "", "ダブルス"], ["x", "", "y"]] },
+  ];
+  const { entries, issues, stats } = db.parseEntryListSheets(sheets);
+  assert.ok(entries.some(e => e.name === "北野 一"), "マスターズ種目を取り込む");
+  assert.deepStrictEqual(stats.sheets, ["マスターズ男子シングルス"], "有効シートはマスターズのみ");
+  assert.ok(issues.some(i => i.level === "warn" && /男子ダブルス.*見つからない/.test(i.msg)), "ダブルス列不足の警告");
+  assert.ok(issues.some(i => i.level === "warn" && /女子ダブルス.*個人戦の列/.test(i.msg)), "type不整合の警告");
+  assert.ok(!entries.some(e => e.name === "丙 花"), "type不整合シートは取り込まない");
+});
+
+test("支部連記: 先頭区切りは氏名1側を空欄(DB補完へ)・末尾区切りは氏名2側を空欄", () => {
+  const sheets = [{ name: "男子ダブルス", rows: [
+    ["氏名1", "氏名2", "チーム名1", "チーム名2", "支部"],
+    ["甲", "乙", "A", "B", "・札幌"],
+    ["丙", "丁", "C", "D", "釧路・"],
+    ["戊", "己", "E", "F", "釧路・札幌・帯広"],
+  ]}];
+  const { entries, issues } = db.parseEntryListSheets(sheets);
+  assert.deepStrictEqual([entries[0].region, entries[0].partner_region], ["", "札幌"], "先頭空=氏名1側は保留");
+  assert.deepStrictEqual([entries[1].region, entries[1].partner_region], ["釧路", ""], "末尾空=氏名2側は保留");
+  assert.deepStrictEqual([entries[2].region, entries[2].partner_region], ["釧路", "札幌"], "3つ以上は先頭2つ");
+  assert.ok(issues.some(i => /連記が3つ以上/.test(i.msg)), "3連記の警告");
+});
+
+test("direct取込: e.event の制御文字・巨大文字列はサニタイズ(60字上限)", () => {
+  const t = db.createTournament({ name: "サニタイズ検証", date: "2027-11-03" });
+  const CTRL = String.fromCharCode(10), TAB = String.fromCharCode(9);
+  const entries = [
+    { type: "singles", event: "男子" + CTRL + "シングルス" + TAB, name: "甲 太郎", team: "A", gender: "male" },
+    { type: "singles", event: "Z".repeat(200), name: "乙 次郎", team: "B", gender: "male" },
+  ];
+  const r = db.importRoster(t.id, { mode: "direct", entries });
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.ok(r.events.includes("男子 シングルス"), "改行/タブは空白1つに圧縮: " + JSON.stringify(r.events));
+  assert.ok(r.events.every(ev => ev.length <= 60), "60字上限");
+  const ctrlRe = new RegExp("[" + String.fromCharCode(0) + "-" + String.fromCharCode(31) + "]");
+  assert.ok(!r.events.some(ev => ctrlRe.test(ev)), "制御文字が残らない");
+});
+
+test("format判定用: meibo(区分列あり)連記も位置保持後に既存挙動を維持", () => {
+  const { entries } = db.parseRosterRows({
+    singles: [], doubles: [H_D, ["星", 1, "一般男子", "甲", "乙", "星高", "空中", "深川支部・札幌支部", ""]],
+  });
+  assert.deepStrictEqual([entries[0].region, entries[0].partner_region], ["深川", "札幌"], "meibo連記も位置保持で正しい");
+});
