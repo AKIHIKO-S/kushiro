@@ -122,3 +122,72 @@ test("importRoster: 冪等・event_config追加・ダブルスのpartner格納",
   const r3 = db.importRoster(t2.id, { mode: "category", entries: parsed.entries });
   assert.ok(r3.events.includes("中学女子シングルス"), "カテゴリ別種目: " + r3.events.join(","));
 });
+
+// ── P2: トーナメント作成プラン(近接警告+オープン種目のスーパーシード必須) ──
+
+test("近接警告: 同チーム/同支部が10番以内で警告・釧路支部同士は除外", () => {
+  // 6人(全番号が互いに5以内)で構成: 同チーム遠征組=警告 / 同支部(北見)=警告 / 釧路同士の同チーム=除外
+  const mk = (name, team, region) => ({ display_name: name, name, team, partner_team: "", region, partner_region: "" });
+  const leaves = [
+    mk("旅人A", "遠征クラブ", "帯広"), mk("旅人B", "遠征クラブ", "帯広"),   // 同チーム(非釧路)→警告
+    mk("北見X", "氷クラブ", "北見"), mk("北見Y", "雪クラブ", "北見"),       // 別チーム同支部(北見)→警告
+    mk("地元P", "港クラブ", "釧路"), mk("地元Q", "港クラブ", "釧路"),       // 同チームだが釧路同士→除外
+  ];
+  const warns = db.proximityFromLeaves(leaves);
+  assert.ok(warns.some(w => w.reason === "同チーム" && /旅人A/.test(w.msg) && /旅人B/.test(w.msg)), "遠征同チーム警告");
+  assert.ok(warns.some(w => /同支部/.test(w.reason) && /北見X/.test(w.msg) && /北見Y/.test(w.msg)), "同支部(北見)警告");
+  assert.ok(!warns.some(w => /地元P/.test(w.msg) && /地元Q/.test(w.msg)), "釧路支部同士は警告なし");
+});
+
+test("近接警告: 10番より離れていれば警告なし・BYEは番号に数えない", () => {
+  const mk = (name, team, region) => ({ display_name: name, name, team, partner_team: "", region, partner_region: "" });
+  // 同チーム2人の間に BYE(null) を挟んでも「番号」は実選手のみで数える
+  const leaves = [mk("甲", "遠征ク", "帯広"), null, null, mk("乙", "遠征ク", "帯広")];
+  const w1 = db.proximityFromLeaves(leaves);
+  assert.ok(w1.some(w => w.reason === "同チーム"), "BYE挟みでも番号距離1=警告");
+  // 12人離せば警告なし
+  const far = [mk("甲", "遠征ク", "帯広")];
+  for (let i = 0; i < 11; i++) far.push(mk("他" + i, "チーム" + i, "支部" + i));
+  far.push(mk("乙", "遠征ク", "帯広"));
+  const w2 = db.proximityFromLeaves(far);
+  assert.ok(!w2.some(w => /甲/.test(w.msg) && /乙/.test(w.msg)), "距離12は警告なし");
+});
+
+test("オープン種目のスーパーシード必須: 未指定は確定ブロック(needs_force)・指定/強制で通る", () => {
+  const t = db.createTournament({ name: "オープン大会", date: "2027-09-01" });
+  const parsed = db.parseRosterRows({
+    singles: [H_S,
+      ["星", 1, "一般男子", "北野 一", "星クラブ", "釧路", ""],
+      ["星", 2, "一般男子", "青木 五", "月クラブ", "帯広", ""],
+      ["星", 3, "中学男子", "東山 三", "空クラブ", "北見", ""],
+      ["星", 4, "高校男子", "西川 四", "海クラブ", "根室", ""]],
+    doubles: [],
+  });
+  db.importRoster(t.id, { mode: "open", entries: parsed.entries });
+  const EVO = "男子シングルス";
+  // readiness が block を出す
+  const rdy = db.checkDrawReadiness(t.id, EVO);
+  assert.ok(rdy.issues.some(i => i.code === "open_needs_super_seed" && i.level === "block"), "readinessにSS必須block");
+  // プレビューは通る(プラン確認可能)・確定は needs_force
+  const es = db.getEntrants(t.id, EVO);
+  db.setEntrantSeed(es[0].id, 1); db.setEntrantSeed(es[1].id, 2);
+  const pv = db.drawSingleBracket(t.id, EVO, { draw_seed: 5, preview: true });
+  assert.ok(pv.preview, "プレビューは通る");
+  assert.ok(Array.isArray(pv.proximity_warnings), "プレビューに近接警告フィールド");
+  const ng = db.drawSingleBracket(t.id, EVO, { draw_seed: 5, drawn_by: "検証" });
+  assert.ok(ng.error && ng.needs_force, "SS未指定の確定はブロック: " + JSON.stringify(ng.error));
+  // SS指定で通る
+  db.setEntrantEntryRound(es[0].id, 2);
+  const ok = db.drawSingleBracket(t.id, EVO, { draw_seed: 5, drawn_by: "検証" });
+  assert.ok(ok.success, "SS指定後は確定できる: " + JSON.stringify(ok.error || ""));
+  // 確定後の再チェックAPI相当
+  const px = db.computeBracketProximity(t.id, EVO);
+  assert.ok(px.ok && typeof px.count === "number", "確定後の近接再チェックが動く");
+  // カテゴリ別種目(openフラグなし)はSS無しでも確定できる
+  const t2 = db.createTournament({ name: "カテゴリ大会2", date: "2027-09-02" });
+  db.importRoster(t2.id, { mode: "category", entries: parsed.entries });
+  const es2 = db.getEntrants(t2.id, "一般男子シングルス");
+  assert.ok(es2.length >= 2, "カテゴリ種目に2名");
+  const ok2 = db.drawSingleBracket(t2.id, "一般男子シングルス", { draw_seed: 5, drawn_by: "検証" });
+  assert.ok(ok2.success, "カテゴリ種目はSS不要: " + JSON.stringify(ok2.error || ""));
+});

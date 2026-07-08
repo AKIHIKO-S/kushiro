@@ -1885,6 +1885,14 @@ app.post("/api/tournaments/:id/league/tiebreak", requireAdmin, (req, res) => {
   if (r?.error) return res.status(400).json(r);
   res.json(r);
 });
+// トーナメント近接警告の再チェック(手修正後): 同チーム/同支部が番号10以内(釧路支部同士は除外)
+app.get("/api/tournaments/:id/bracket/proximity", requireAdmin, (req, res) => {
+  const event = req.query.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.computeBracketProximity(req.params.id, event);
+  if (r?.error) return res.status(400).json(r);
+  res.json(r);
+});
 // 名簿(エントリー表)Excel取込: プレビュー(解析のみ・DB非書込)。「男女シングルス」「男女ダブルス」
 // シートを行配列に落とし、純関数パーサ(db.parseRosterRows)+支部DB照合(enrichRosterRegions)の結果を返す。
 app.post("/api/tournaments/:id/roster/preview", requireAdmin, upload.single("file"), (req, res) => {

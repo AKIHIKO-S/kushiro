@@ -9397,12 +9397,34 @@ const O = {
    if (!(rdy.issues || []).length) issuesBox.appendChild(h("div", { style: { color: "#1a7a45", fontSize: "12px" } },
      `抽選OK: 承認${rdy.confirmed}名 / 枠${rdy.bracket_size} / BYE${rdy.bye_count} / シード${rdy.seeded}`));
  }
+ // 既存配置の近接警告(手修正後の再チェック): 抽選済みの現在の並びに対して表示
+ if (diff && diff.has_draw) {
+   try {
+     const px = await api.get(`/api/tournaments/${tid}/bracket/proximity?event=${encodeURIComponent(event)}`);
+     if (px && px.count) {
+       const det = h("details", { style: { margin: "4px 0" } },
+         h("summary", { style: { color: "#b45309", fontSize: "12px", fontWeight: 700, cursor: "pointer" } },
+           `現在の配置に近接警告 ${px.count}件(同チーム/同支部が10番以内・釧路支部同士は除く)`));
+       (px.warnings || []).forEach(w => det.appendChild(h("div", { style: { color: "#b45309", fontSize: "12px", paddingLeft: "12px" } }, w)));
+       issuesBox.appendChild(det);
+     }
+   } catch (e) {}
+ }
 
  const renderPreview = (r) => {
    clear(previewBox);
    previewBox.appendChild(h("div", { style: { fontWeight: 700, marginBottom: "4px" } },
      `プレビュー: ${r.bracket_size}枠 / シード${r.seeded_count} / BYE${r.bye_count}` + (r.r1_same_club ? ` / 1回戦同所属${r.r1_same_club}` : "")));
    (r.warnings || []).forEach(w => previewBox.appendChild(h("div", { style: { color: "#c01526", fontSize: "12px" } }, "" + w)));
+   // 近接警告(プラン確認): 同チーム/同支部が番号10以内(釧路支部同士は除外)。引き直しや確定後の入替で調整する。
+   if (r.proximity_count) {
+     const px = h("details", { style: { margin: "4px 0" } },
+       h("summary", { style: { color: "#b45309", fontSize: "12px", fontWeight: 700, cursor: "pointer" } },
+         `近接警告 ${r.proximity_count}件: 同チーム/同支部が10番以内(釧路支部同士は除く)`));
+     (r.proximity_warnings || []).forEach(w => px.appendChild(h("div", { style: { color: "#b45309", fontSize: "12px", paddingLeft: "12px" } }, w)));
+     if (r.proximity_count > (r.proximity_warnings || []).length) px.appendChild(h("div", { style: { color: "#94a3b8", fontSize: "11px", paddingLeft: "12px" } }, "…ほか"));
+     previewBox.appendChild(px);
+   }
    const nm = (c) => c.bye ? "（BYE）" : (c.name + (c.seed ? ` [${c.seed}]` : "") + (c.team ? ` ・${c.team}` : ""));
    const tb = h("tbody", {});
    r.pairs.forEach(p => tb.appendChild(h("tr", {},

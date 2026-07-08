@@ -4024,12 +4024,65 @@ function importRoster(tournamentId, payload) {
     try { cfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []); } catch (err) { cfg = []; }
     let cfgChanged = false;
     for (const [name, type] of eventsUsed) {
-      if (!cfg.some(c => c && c.name === name)) { cfg.push({ name, type, fee: 0, note: "名簿取込" }); cfgChanged = true; }
+      if (!cfg.some(c => c && c.name === name)) { cfg.push(Object.assign({ name, type, fee: 0, note: "名簿取込" }, mode === "open" ? { open: true } : {})); cfgChanged = true; }
     }
     if (cfgChanged) sqlite.prepare("UPDATE tournaments SET event_config=? WHERE id=?").run(JSON.stringify(cfg), tournamentId);
   });
   txn();
   return { ok: true, created, skipped_duplicate: skippedDup, events: [...eventsUsed.keys()], mode };
+}
+
+// ── トーナメント近接警告(作成プランのポカヨケ) ──
+// 「同チーム or 同支部の2者が、トーナメント番号(BYEを除く通し番号)で10番以内」を列挙する。
+// 例外: 両者の支部がすべて釧路なら警告しない(地元同士は近くても問題なしの運用)。
+// ダブルスは所属・支部とも集合(本人+パートナー)で判定。支部未定(空欄)は釧路と確認できないため除外しない。
+function _proximityWarnings(list, opts) {
+  const windowN = Math.max(1, parseInt(opts && opts.window) || 10);
+  const homeRegion = (opts && opts.home_region) || "釧路";
+  const clubsOf = (e) => { const a = _normClub(e.team), b = _normClub(e.partner_team); const o = []; if (a) o.push(a); if (b && b !== a) o.push(b); return o; };
+  const regionsOf = (e) => { const a = normalizeShibuName(e.region), b = normalizeShibuName(e.partner_region); const o = []; if (a) o.push(a); if (b && b !== a) o.push(b); return o; };
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length && (list[j].num - list[i].num) <= windowN; j++) {
+      const A = list[i], B = list[j];
+      const ra = regionsOf(A), rb = regionsOf(B);
+      if (ra.length && rb.length && ra.concat(rb).every(r => r === homeRegion)) continue;   // 釧路同士は問題なし
+      const ca = clubsOf(A);
+      let reason = "";
+      if (ca.length && _clubsOverlap(ca, clubsOf(B))) reason = "同チーム";
+      else if (ra.length && _clubsOverlap(ra, rb)) reason = "同支部(" + ra.filter(r => rb.indexOf(r) >= 0).join("・") + ")";
+      if (!reason) continue;
+      out.push({ reason, a_num: A.num, b_num: B.num,
+        msg: reason + "が近接: " + A.num + "番 " + A.name + (A.team ? "(" + A.team + ")" : "") +
+          " ↔ " + B.num + "番 " + B.name + (B.team ? "(" + B.team + ")" : "") + " (距離" + (B.num - A.num) + ")" });
+    }
+  }
+  return out;
+}
+// 抽選のリーフ配列(確定前の並び)に番号を振って近接警告(プレビュー/確定の両方で使う)
+function proximityFromLeaves(leaves) {
+  const list = []; let n = 0;
+  (leaves || []).forEach(e => { if (!e) return; n++;
+    list.push({ num: n, name: e.display_name || e.name || "?", team: e.team || "", partner_team: e.partner_team || "",
+      region: e.region || "", partner_region: e.partner_region || "" }); });
+  return _proximityWarnings(list, {});
+}
+// 確定済みブラケット(R1)から近接警告を再計算(手修正後の再チェック用)
+function computeBracketProximity(tournamentId, event) {
+  const r1 = sqlite.prepare(`SELECT * FROM matches WHERE tournament_id=? AND event=? AND bracket_round=1 ORDER BY bracket_pos`)
+    .all(tournamentId, event);
+  if (!r1.length) return { error: "この種目のトーナメント表がありません" };
+  const ents = new Map(entrantStmts.listByEvent.all(tournamentId, event).map(e => [e.id, e]));
+  const list = []; let n = 0;
+  r1.forEach(m => [[m.player1_name, m.player1_entrant_id], [m.player2_name, m.player2_entrant_id]].forEach(([nm, eid]) => {
+    if (!nm || nm === "BYE") return;
+    n++;
+    const e = eid != null ? ents.get(eid) : null;
+    list.push({ num: n, name: nm, team: e ? e.team : "", partner_team: e ? e.partner_team : "",
+      region: e ? e.region : "", partner_region: e ? e.partner_region : "" });
+  }));
+  const warns = _proximityWarnings(list, {});
+  return { ok: true, count: warns.length, warnings: warns.map(w => w.msg).slice(0, 60), entrants: n };
 }
 
 // あるブロック(2,4,8,…サイズ)に所属集合の重なる相手が既に居るほど高い「衝突スコア」。
@@ -4302,6 +4355,18 @@ function checkDrawReadiness(tournamentId, event) {
     if (Math.pow(2, maxR - 1) > size / 2) issues.push({ level: "block", code: "entry_round_overflow", msg: "登場ラウンド(スーパーシード)が選手数に対し大きすぎます。登場ラウンドを下げてください" });
     const ssNoSeed = confirmed.filter(e => (parseInt(e.seed) || 0) < 1 && (parseInt(e.entry_round) || 1) > 1);
     if (ssNoSeed.length) issues.push({ level: "warn", code: "entry_round_no_seed", msg: `登場回戦の指定があるのにシード番号が無い選手が${ssNoSeed.length}名います(抽選では1回戦扱い)` });
+  }
+  // オープン種目(名簿取込 mode=open)はスーパーシード必須
+  {
+    let isOpenEvent = false;
+    try {
+      const _t = getTournament(tournamentId);
+      const _cfg = typeof _t.event_config === "string" ? JSON.parse(_t.event_config || "[]") : (_t.event_config || []);
+      isOpenEvent = !!_cfg.find(c => c && c.name === event && c.open);
+    } catch (e) { isOpenEvent = false; }
+    if (isOpenEvent && !confirmed.some(e => (parseInt(e.seed) || 0) >= 1 && (parseInt(e.entry_round) || 1) > 1)) {
+      issues.push({ level: "block", code: "open_needs_super_seed", msg: "オープン大会の種目はスーパーシード(登場回戦)が必須です。シード選手に登場回戦を指定してください(確定時に強制も可)" });
+    }
     // SS区画とシード標準位置の空間衝突を事前検知: 区画(重み2^(R-1)の整列区画)に他シードの標準
     // スロットが入ると抽選でそのSSは1回戦扱いに降格される。3位以下は山割り抽選次第で回避も
     // あり得るため block ではなく warn(降格時も抽選側が警告する)。
@@ -4355,6 +4420,19 @@ function drawSingleBracket(tournamentId, event, opts) {
     return { error: "選手数が多すぎます(最大約1024名)。", count: entrants.length };
   }
 
+  // オープン種目(名簿取込 mode=open)はスーパーシード必須: 両端の特別シード(登場回戦)を指定してから
+  // 抽選する運用。プレビューは通し(プランの確認はできる)、確定のみ needs_force でブロック(強制可)。
+  if (!opts.preview && !opts.force) {
+    let isOpenEvent = false;
+    try {
+      const _t = getTournament(tournamentId);
+      const _cfg = typeof _t.event_config === "string" ? JSON.parse(_t.event_config || "[]") : (_t.event_config || []);
+      isOpenEvent = !!_cfg.find(c => c && c.name === event && c.open);
+    } catch (e) { isOpenEvent = false; }
+    if (isOpenEvent && !entrants.some(e => (parseInt(e.seed) || 0) >= 1 && (parseInt(e.entry_round) || 1) > 1)) {
+      return { error: "オープン大会の種目はスーパーシード(登場回戦)が必須です。申込管理でシード選手に登場回戦を指定してから抽選を確定してください。", needs_force: true };
+    }
+  }
   const drawSeed = (opts.draw_seed != null && Number.isFinite(+opts.draw_seed))
     ? ((+opts.draw_seed) >>> 0) : randomSeed();
   const rng = mulberry32(drawSeed);
@@ -4365,10 +4443,13 @@ function drawSingleBracket(tournamentId, event, opts) {
   const cell = (e) => e ? { name: e.display_name || e.name, team: e.team || "", seed: (parseInt(e.seed) || 0) || null }
     : { bye: true };
   const ssCount = entrants.filter(e => (parseInt(e.seed) || 0) >= 1 && (parseInt(e.entry_round) || 1) > 1).length;
+  // 近接警告(プラン段階のポカヨケ): 同チーム/同支部が番号10以内(釧路支部同士は除外)
+  const prox = proximityFromLeaves(leaves);
   const meta = {
     draw_seed: drawSeed, separate_by: sep, warnings, seeded_count: seededCount,
     bracket_size: size, bye_count: byeCount, r1_same_club: r1SameClub, algo_version: DRAW_ALGO_VERSION,
     ...(ssCount ? { super_seed_count: ssCount } : {}),
+    proximity_count: prox.length, proximity_warnings: prox.map(w => w.msg).slice(0, 40),
   };
 
   // ── 確定前プレビュー(dry_run): DBを書かず組合せだけ返す ──
@@ -9440,6 +9521,7 @@ module.exports = {
   _vsPrevCore, _minActivity, _parseTs,   // 対昨年レースの純ロジック(回帰テスト用)
   _normClub,   // 所属名の正規化(類似チーム名分散・回帰テスト用)
   parseRosterRows, rosterEventName, enrichRosterRegions, importRoster, normalizeShibuName,   // 名簿(エントリー表)取込
+  proximityFromLeaves, computeBracketProximity,   // トーナメント近接警告(作成プラン)
   getBracket, deleteEventMatches, deleteRoster, rosterStats, setCourtLayout,
   // 試合検索 / H2H / 選手統計
   searchMatches, countMatchesForSearch, getSearchFilters,
