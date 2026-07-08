@@ -1885,6 +1885,38 @@ app.post("/api/tournaments/:id/league/tiebreak", requireAdmin, (req, res) => {
   if (r?.error) return res.status(400).json(r);
   res.json(r);
 });
+// 名簿(エントリー表)Excel取込: プレビュー(解析のみ・DB非書込)。「男女シングルス」「男女ダブルス」
+// シートを行配列に落とし、純関数パーサ(db.parseRosterRows)+支部DB照合(enrichRosterRegions)の結果を返す。
+app.post("/api/tournaments/:id/roster/preview", requireAdmin, upload.single("file"), (req, res) => {
+  const filePath = req.file && req.file.path;
+  try {
+    if (!req.file) return res.status(400).json({ error: "ファイルが添付されていません" });
+    const XLSX = require("xlsx");
+    const wb = XLSX.readFile(filePath);
+    const sheetRows = (kw) => {
+      const n = wb.SheetNames.find(s => s.includes(kw));
+      return n ? XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: "" }) : [];
+    };
+    const singles = sheetRows("シングルス");
+    const doubles = sheetRows("ダブルス");
+    if (!singles.length && !doubles.length) {
+      return res.status(400).json({ error: "「男女シングルス」「男女ダブルス」シートが見つかりません(シート名を確認してください)" });
+    }
+    const parsed = db.parseRosterRows({ singles, doubles });
+    const dbIssues = db.enrichRosterRegions(parsed.entries);
+    res.json({ ok: true, entries: parsed.entries, issues: parsed.issues.concat(dbIssues), stats: parsed.stats });
+  } catch (e) {
+    res.status(400).json({ error: "名簿の解析に失敗しました: " + e.message });
+  } finally {
+    if (filePath) { try { fs.unlinkSync(filePath); } catch (e) {} }
+  }
+});
+// 名簿取込の確定(プレビューで修正済みの entries を受けて entrants を冪等作成)
+app.post("/api/tournaments/:id/roster/commit", requireAdmin, (req, res) => {
+  const r = db.importRoster(req.params.id, { mode: req.body?.mode, entries: req.body?.entries });
+  if (r?.error) return res.status(400).json(r);
+  res.json(r);
+});
 // 予選リーグ→決勝トーナメント通過処理(運営限定)。mode=top(上位N進出)|byrank(順位別T)。
 app.post("/api/tournaments/:id/league/playoff", requireAdmin, (req, res) => {
   const event = req.body?.event;

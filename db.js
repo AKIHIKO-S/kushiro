@@ -619,6 +619,7 @@ try {
   addECol("submission_id", "TEXT DEFAULT ''");
   // 混合ダブルス等で相方の性別を別途保持(集計の男女別が崩れないように)。
   addECol("partner_gender", "TEXT DEFAULT ''");
+  addECol("partner_region", "TEXT DEFAULT ''");   // ダブルスでパートナーの支部が異なる場合(名簿取込)
   // スーパーシード(登場ラウンド): 上位選手の予選免除。1=1回戦から(既定), R=R回戦から登場。
   // 標準配置の生成時に 2^(entry_round-1) ラウンドぶん BYE 上がりにする。
   addECol("entry_round", "INTEGER DEFAULT 1");
@@ -2501,7 +2502,7 @@ const entrantStmts = {
       display_name, display_short,
       name, surname, given_name, furigana, team,
       partner_name, partner_surname, partner_given_name, partner_furigana, partner_team,
-      category, gender, partner_gender, age_group, region,
+      category, gender, partner_gender, age_group, region, partner_region,
       player_id, partner_player_id,
       division, fee, team_members, contact_name, contact_email, contact_tel,
       applied_at, submission_id,
@@ -2511,7 +2512,7 @@ const entrantStmts = {
       @display_name, @display_short,
       @name, @surname, @given_name, @furigana, @team,
       @partner_name, @partner_surname, @partner_given_name, @partner_furigana, @partner_team,
-      @category, @gender, @partner_gender, @age_group, @region,
+      @category, @gender, @partner_gender, @age_group, @region, @partner_region,
       @player_id, @partner_player_id,
       @division, @fee, @team_members, @contact_name, @contact_email, @contact_tel,
       @applied_at, @submission_id,
@@ -2526,7 +2527,7 @@ const entrantStmts = {
       partner_name=@partner_name, partner_surname=@partner_surname,
       partner_given_name=@partner_given_name, partner_furigana=@partner_furigana,
       partner_team=@partner_team,
-      category=@category, gender=@gender, partner_gender=@partner_gender,
+      category=@category, gender=@gender, partner_gender=@partner_gender, partner_region=@partner_region,
       age_group=@age_group, region=@region,
       player_id=@player_id, partner_player_id=@partner_player_id,
       division=@division, fee=@fee, team_members=@team_members,
@@ -2596,6 +2597,7 @@ function createEntrant(data) {
     category: data.category || "general",
     gender: data.gender || "male",
     partner_gender: data.partner_gender || "",
+    partner_region: normalizeName(data.partner_region),
     age_group: data.age_group || "",
     region: normalizeName(data.region),
     player_id: data.player_id || null,
@@ -2652,6 +2654,7 @@ function updateEntrant(id, data) {
     category: data.category !== undefined ? data.category : existing.category,
     gender: data.gender !== undefined ? data.gender : existing.gender,
     partner_gender: data.partner_gender !== undefined ? data.partner_gender : (existing.partner_gender || ""),
+    partner_region: data.partner_region !== undefined ? normalizeName(data.partner_region) : (existing.partner_region || ""),
     age_group: data.age_group !== undefined ? data.age_group : existing.age_group,
     region: data.region !== undefined ? normalizeName(data.region) : existing.region,
     player_id: data.player_id !== undefined ? data.player_id : existing.player_id,
@@ -3865,6 +3868,169 @@ function _normClub(s) {
 // 2要素。どれか1つでも共有すれば「同所属」とみなす(別クラブ混成ペアの片方一致も衝突)。
 // 集合の要素は clubsOf で _normClub 済み=表記ゆれ/類似チーム名も一致扱いで分散対象になる。
 function _clubsOverlap(xs, ys) { for (const x of xs) if (ys.indexOf(x) >= 0) return true; return false; }
+
+// ════════════════════════════════════════════════════════════════════
+// 名簿(エントリー表)Excel取込: 大会申込集計の「男女シングルス/男女ダブルス」シートから
+// entrants を作る。パーサは純関数(行配列→正規化レコード+issues)でテスト可能に保つ。
+// ════════════════════════════════════════════════════════════════════
+
+// 支部名の正規化(取込プレビューで手修正可能な初期値)。
+//   「支部」「市」「県」の接尾辞を除去(釧路市→釧路・札幌支部→札幌・秋田県→秋田)、
+//   根室管内卓球連盟/根室管内→根室、根釧→釧根(表記ゆれ統一)、括弧/閉じ括弧の残骸を除去。
+function normalizeShibuName(s) {
+  let t = String(s == null ? "" : s).trim().replace(/[()（）]/g, "");
+  if (!t) return "";
+  if (/根室管内/.test(t)) return "根室";
+  t = t.replace(/(支部|市|県)$/, "");
+  if (t === "根釧") return "釧根";
+  return t;
+}
+
+// 区分(一般男子/高校女子/…)→ 性別・年代区分
+function _parseKubun(k) {
+  const s = String(k || "").trim();
+  const gender = /女/.test(s) ? "female" : "male";
+  const division = /小学/.test(s) ? "小学生" : /中学/.test(s) ? "中学生" : /高校/.test(s) ? "高校生" : "一般";
+  return { gender, division, label: s };
+}
+
+// 名簿の行配列(ヘッダ込み)→ 正規化レコード + issues。純関数(DB非依存)。
+//   singles: [申込チーム, No, 区分, 氏名, チーム名, 支部, 備考]
+//   doubles: [申込チーム, No, 区分, 氏名1, 氏名2, チーム名1, チーム名2, 支部, 備考]
+//     支部は「深川・札幌」の連記あり(・区切り=氏名1/氏名2に対応。1つなら両者共通)。
+//   規則: 氏名空白の行はスキップ / 備考・申込チーム番号は不考慮 / チーム名と氏名を優先
+//   (チーム名空欄のみ申込チーム名でフォールバック)。
+function parseRosterRows(sheets) {
+  const singles = Array.isArray(sheets && sheets.singles) ? sheets.singles : [];
+  const doubles = Array.isArray(sheets && sheets.doubles) ? sheets.doubles : [];
+  const entries = [];
+  const issues = [];
+  const cell = (r, i) => String((r && r[i]) == null ? "" : r[i]).trim();
+  const isHeader = (r) => /氏名|区分/.test(cell(r, 2) + cell(r, 3));
+  let skipped = 0;
+
+  singles.forEach((r, idx) => {
+    if (idx === 0 && isHeader(r)) return;
+    const name = cell(r, 3);
+    if (!name) { if ((r || []).some(v => String(v || "").trim())) skipped++; return; }   // 氏名空白=スキップ
+    const team = cell(r, 4) || cell(r, 0);
+    const kb = _parseKubun(cell(r, 2));
+    const shibuRaw = cell(r, 5);
+    const region = normalizeShibuName(shibuRaw);
+    if (shibuRaw && region !== shibuRaw) issues.push({ sheet: "S", row: idx + 1, level: "info", msg: name + ": 支部「" + shibuRaw + "」→「" + region + "」に正規化" });
+    if (!shibuRaw) issues.push({ sheet: "S", row: idx + 1, level: "warn", msg: name + "(" + team + "): 支部が空欄(DB照合で補完・無ければ保留)" });
+    entries.push({ type: "singles", kubun: kb.label, gender: kb.gender, division: kb.division,
+      name, team, region, srcRow: idx + 1, sheet: "S" });
+  });
+
+  doubles.forEach((r, idx) => {
+    if (idx === 0 && isHeader(r)) return;
+    const name1 = cell(r, 3), name2 = cell(r, 4);
+    if (!name1 && !name2) { if ((r || []).some(v => String(v || "").trim())) skipped++; return; }
+    if (!name1 || !name2) {
+      issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: "ペア不成立(氏名が片方だけ): " + (name1 || name2) + " — この行は取り込みません" });
+      skipped++; return;
+    }
+    const team1 = cell(r, 5) || cell(r, 0);
+    const team2 = cell(r, 6);
+    if (!team2) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name2 + ": パートナーのチーム名が空欄(プレビューで確認してください)" });
+    const kb = _parseKubun(cell(r, 2));
+    const shibuRaw = cell(r, 7);
+    // 連記(・区切り)は氏名1/氏名2に対応。1つだけなら両者共通。
+    const parts = shibuRaw.split(/[・･、,，/／]/).map(x => x.trim()).filter(Boolean);
+    const region1 = normalizeShibuName(parts[0] || "");
+    const region2 = normalizeShibuName(parts[1] || parts[0] || "");
+    if (parts.length > 2) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name1 + "組: 支部の連記が3つ以上「" + shibuRaw + "」(先頭2つを採用)" });
+    else if (parts.length === 2) issues.push({ sheet: "D", row: idx + 1, level: "info", msg: name1 + "組: 支部連記「" + shibuRaw + "」→ " + name1 + "=「" + region1 + "」/ " + name2 + "=「" + region2 + "」" });
+    else if (shibuRaw && region1 !== shibuRaw) issues.push({ sheet: "D", row: idx + 1, level: "info", msg: name1 + "組: 支部「" + shibuRaw + "」→「" + region1 + "」に正規化" });
+    if (!shibuRaw) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name1 + "/" + name2 + "組: 支部が空欄(DB照合で補完・無ければ保留)" });
+    entries.push({ type: "doubles", kubun: kb.label, gender: kb.gender, division: kb.division,
+      name: name1, team: team1, region: region1,
+      partner_name: name2, partner_team: team2, partner_region: region2,
+      srcRow: idx + 1, sheet: "D" });
+  });
+
+  return { entries, issues, stats: { singles: entries.filter(e => e.type === "singles").length,
+    doubles: entries.filter(e => e.type === "doubles").length, skipped } };
+}
+
+// 種目名のマッピング。mode='open'(オープン大会)=年齢カテゴリ無視で男女別S/D(4種目)。
+// mode='category'=区分ごと(一般男子シングルス等)。
+function rosterEventName(entry, mode) {
+  const sd = entry.type === "doubles" ? "ダブルス" : "シングルス";
+  if (mode === "open") return (entry.gender === "female" ? "女子" : "男子") + sd;
+  return entry.kubun + sd;
+}
+
+// 支部が空欄のレコードを過去の entrants 履歴から補完する(DB照合)。見つからなければ保留(空のまま)。
+// 氏名は空白(半角/全角)を除いた完全一致で照合し、直近の登録の支部を使う。
+function enrichRosterRegions(entries) {
+  const stmt = sqlite.prepare(`
+    SELECT region FROM entrants
+    WHERE replace(replace(name,' ',''),'　','') = ? AND region != ''
+    ORDER BY created_at DESC LIMIT 1`);
+  const issues = [];
+  const key = (nm) => String(nm || "").replace(/[ 　]/g, "");
+  (entries || []).forEach(e => {
+    if (!e.region) {
+      const hit = stmt.get(key(e.name));
+      if (hit && hit.region) { e.region = hit.region; e.region_from_db = true;
+        issues.push({ sheet: e.sheet, row: e.srcRow, level: "info", msg: e.name + ": 支部をDBから補完 →「" + hit.region + "」" }); }
+      else issues.push({ sheet: e.sheet, row: e.srcRow, level: "warn", msg: e.name + ": 支部未定(保留のまま取込)" });
+    }
+    if (e.type === "doubles" && !e.partner_region) {
+      const hit = stmt.get(key(e.partner_name));
+      if (hit && hit.region) { e.partner_region = hit.region; e.partner_region_from_db = true;
+        issues.push({ sheet: e.sheet, row: e.srcRow, level: "info", msg: e.partner_name + ": 支部をDBから補完 →「" + hit.region + "」" }); }
+    }
+  });
+  return issues;
+}
+
+// 名簿取込の確定: 種目を event_config に追加し、entrants を冪等に作成(既存はスキップ)。
+// entries はプレビューで手修正済みの値を受けるが、種目名はサーバ側で mode から再計算する(安全)。
+function importRoster(tournamentId, payload) {
+  payload = payload || {};
+  const t = getTournament(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  const mode = payload.mode === "open" ? "open" : "category";
+  const entries = Array.isArray(payload.entries) ? payload.entries : [];
+  if (!entries.length) return { error: "取込対象がありません" };
+  const dup = sqlite.prepare(`SELECT id FROM entrants WHERE tournament_id=? AND event=? AND name=? AND team=? AND partner_name=? LIMIT 1`);
+  let created = 0, skippedDup = 0;
+  const eventsUsed = new Map();   // name → type
+  const txn = sqlite.transaction(() => {
+    for (const e of entries) {
+      if (!e || !String(e.name || "").trim()) continue;
+      const ev = rosterEventName(e, mode);
+      eventsUsed.set(ev, e.type === "doubles" ? "doubles" : "singles");
+      // 重複チェックは「格納と同じ正規化後の氏名」で照合する(buildEntrantNames が空白を整えるため、
+      // 生の氏名で照合すると全角空白などの表記で二重登録がすり抜ける)。
+      const nm = String(e.name).trim(), tm = normalizeName(e.team || ""), pn = String(e.partner_name || "").trim();
+      const canon = buildEntrantNames({ name: nm, partner_name: pn });
+      if (dup.get(tournamentId, ev, canon.name, tm, canon.partner_name || "")) { skippedDup++; continue; }
+      createEntrant({
+        tournament_id: tournamentId, event: ev,
+        name: nm, team: tm, region: e.region || "",
+        partner_name: pn, partner_team: e.partner_team || "", partner_region: e.partner_region || "",
+        gender: e.gender || "male", partner_gender: e.gender || "male",
+        division: e.division || "", category: "general",
+        status: "confirmed", note: "名簿取込",
+      });
+      created++;
+    }
+    // event_config に不足種目を追加(admin種目セレクタ用)
+    let cfg = [];
+    try { cfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []); } catch (err) { cfg = []; }
+    let cfgChanged = false;
+    for (const [name, type] of eventsUsed) {
+      if (!cfg.some(c => c && c.name === name)) { cfg.push({ name, type, fee: 0, note: "名簿取込" }); cfgChanged = true; }
+    }
+    if (cfgChanged) sqlite.prepare("UPDATE tournaments SET event_config=? WHERE id=?").run(JSON.stringify(cfg), tournamentId);
+  });
+  txn();
+  return { ok: true, created, skipped_duplicate: skippedDup, events: [...eventsUsed.keys()], mode };
+}
 
 // あるブロック(2,4,8,…サイズ)に所属集合の重なる相手が既に居るほど高い「衝突スコア」。
 // 浅い(小さい)ブロックほど重く罰する → まず1回戦同士、次に同1/4・同1/8…の順で散る。
@@ -9273,6 +9439,7 @@ module.exports = {
   setCompareTournament,
   _vsPrevCore, _minActivity, _parseTs,   // 対昨年レースの純ロジック(回帰テスト用)
   _normClub,   // 所属名の正規化(類似チーム名分散・回帰テスト用)
+  parseRosterRows, rosterEventName, enrichRosterRegions, importRoster, normalizeShibuName,   // 名簿(エントリー表)取込
   getBracket, deleteEventMatches, deleteRoster, rosterStats, setCourtLayout,
   // 試合検索 / H2H / 選手統計
   searchMatches, countMatchesForSearch, getSearchFilters,
