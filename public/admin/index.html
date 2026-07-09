@@ -9327,17 +9327,21 @@ const O = {
      if (r.error) { stat.textContent = "解析に失敗しました"; return toast(r.error, "err"); }
      parsed = r; renderPreview();
    } }, "解析(プレビュー)");
+   const regChk = h("input", { type: "checkbox", checked: true });
+   const regLabel = h("label", { className: "text-sm", style: { display: "inline-flex", alignItems: "center", gap: "4px" } },
+     regChk, "初参加を選手DBに登録(フリガナは推定・後で選手DBで修正可)");
    const commitBtn = h("button", { className: "btn btn-primary btn-sm", onClick: async () => {
      if (!parsed || !parsed.entries.length) return toast("先に解析してください", "err");
      if (!confirm("この内容で " + parsed.entries.length + " 件を取り込みます。よろしいですか？(既に取込済みの同一エントリはスキップされます)")) return;
-     const r = await api.post(`/api/tournaments/${O.tournamentId}/roster/commit`, { mode: modeSel.value, entries: parsed.entries });
+     const r = await api.post(`/api/tournaments/${O.tournamentId}/roster/commit`, { mode: modeSel.value, register_players: regChk.checked, entries: parsed.entries });
      if (r.error) return toast(r.error, "err");
-     toast(`名簿取込: ${r.created}件作成 / ${r.skipped_duplicate}件スキップ(重複) / 種目: ${r.events.join("・")}`, "ok");
+     const reg = regChk.checked ? ` / 選手DB: 新規${r.players_new || 0}・連携${r.players_linked || 0}` : "";
+     toast(`名簿取込: ${r.created}件作成 / ${r.skipped_duplicate}件スキップ(重複)${reg} / 種目: ${r.events.join("・")}`, "ok");
      if (O.reload) O.reload();
    } }, "取込を確定");
    const body = h("div", {},
      h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } }, fileIn, modeSel, analyzeBtn),
-     stat, issuesBox, tableBox,
+     stat, issuesBox, tableBox, h("div", { className: "mt-2" }, regLabel),
      h("div", { className: "text-sm text-sub mt-2" },
        "支部は自動正規化(「支部」「市」除去・根室管内卓球連盟→根室 等)されます。黄色の欄=支部未定(保留)。修正してから確定してください。"));
    openModal("名簿取込(エントリー表Excel)", body, h("div", {}, commitBtn));
@@ -9397,14 +9401,18 @@ const O = {
    const commitBtn = h("button", { className: "btn btn-primary btn-sm", onClick: async () => {
      if (!parsed || !parsed.entries.length) return toast("先に解析してください", "err");
      if (!confirm("この内容で " + parsed.entries.length + " 件を取り込みます。よろしいですか？(既に取込済みの同一エントリはスキップされます)")) return;
-     const r = await api.post(`/api/tournaments/${O.tournamentId}/roster/commit`, { mode: "direct", open: openChk.checked, entries: parsed.entries });
+     const r = await api.post(`/api/tournaments/${O.tournamentId}/roster/commit`, { mode: "direct", open: openChk.checked, register_players: regChk.checked, entries: parsed.entries });
      if (r.error) return toast(r.error, "err");
-     toast(`エントリーリスト取込: ${r.created}件作成 / ${r.skipped_duplicate}件スキップ(重複) / 種目: ${r.events.join("・")}`, "ok");
+     const reg = regChk.checked ? ` / 選手DB: 新規${r.players_new || 0}・連携${r.players_linked || 0}` : "";
+     toast(`申込一覧取込: ${r.created}件作成 / ${r.skipped_duplicate}件スキップ(重複)${reg} / 種目: ${r.events.join("・")}`, "ok");
      if (O.reload) O.reload();
    } }, "取込を確定");
+   const regChk = h("input", { type: "checkbox", checked: true });
+   const regLabel = h("label", { className: "text-sm", style: { display: "inline-flex", alignItems: "center", gap: "4px" } },
+     regChk, "初参加を選手DBに登録(フリガナは推定・後で選手DBで修正可)");
    const body = h("div", {},
      h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } }, fileIn, analyzeBtn, openLabel),
-     stat, issuesBox, tableBox,
+     stat, issuesBox, tableBox, h("div", { className: "mt-2" }, regLabel),
      h("div", { className: "text-sm text-sub mt-2" },
        "タブ名=種目名。支部は自動正規化され、支部列が無い場合はDB照合で補完(無ければ保留)。黄色の欄=支部未定。修正してから確定してください。"));
    openModal("申込一覧(エントリーリスト・タブ=種目)の取込", body, h("div", {}, commitBtn));

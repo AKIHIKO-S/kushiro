@@ -680,7 +680,27 @@ const FD = {
   "川崎":"かわさき","小池":"こいけ","五十嵐":"いがらし","青木":"あおき","福島":"ふくしま",
   "白石":"しらいし","浅野":"あさの","安田":"やすだ","広瀬":"ひろせ","石原":"いしはら",
   "小島":"こじま","上原":"うえはら","青山":"あおやま","大谷":"おおたに","高野":"たかの",
-  "成田":"なりた","栗原":"くりはら","北川":"きたがわ"
+  "成田":"なりた","栗原":"くりはら","北川":"きたがわ",
+  // ── 一般的な苗字の読み(公開の姓読み参照データ・網羅拡充。フリガナ推定の的中率向上) ──
+  "大西":"おおにし","村田":"むらた","增田":"ますだ","中野":"なかの","原":"はら","高田":"たかだ","上野":"うえの","千田":"せんだ",
+  "菅原":"すがわら","野口":"のぐち","菊地":"きくち","小山":"こやま","古川":"ふるかわ","大塚":"おおつか","樋口":"ひぐち","川口":"かわぐち",
+  "松岡":"まつおか","星野":"ほしの","高山":"たかやま","河野":"こうの","石橋":"いしばし","荒木":"あらき","土屋":"つちや","浅田":"あさだ",
+  "内藤":"ないとう","堀":"ほり","大島":"おおしま","早川":"はやかわ","梅田":"うめだ","西田":"にしだ","堀内":"ほりうち","矢野":"やの",
+  "川上":"かわかみ","本間":"ほんま","浜田":"はまだ","岡崎":"おかざき","小田":"おだ","森本":"もりもと","関":"せき","服部":"はっとり",
+  "平田":"ひらた","栗山":"くりやま","沢田":"さわだ","澤田":"さわだ","浜野":"はまの","相沢":"あいざわ","相澤":"あいざわ","須藤":"すどう",
+  "武藤":"むとう","伊東":"いとう","有田":"ありた","篠原":"しのはら","南":"みなみ","東":"ひがし","西":"にし","泉":"いずみ",
+  "越智":"おち","天野":"あまの","小森":"こもり","森川":"もりかわ","山内":"やまうち","山中":"やまなか","山根":"やまね","山際":"やまぎわ",
+  "田口":"たぐち","田島":"たじま","田辺":"たなべ","中田":"なかた","中西":"なかにし","松浦":"まつうら","松村":"まつむら","松原":"まつばら",
+  "森下":"もりした","森山":"もりやま","石塚":"いしづか","井口":"いぐち","井田":"いだ","今田":"いまだ","大森":"おおもり","大橋":"おおはし",
+  "大石":"おおいし","大山":"おおやま","大内":"おおうち","川島":"かわしま","川村":"かわむら","川端":"かわばた","河合":"かわい","河村":"かわむら",
+  "北野":"きたの","小野寺":"おのでら","小柳":"こやなぎ","斉藤":"さいとう","齊藤":"さいとう","坂口":"さかぐち","櫻井":"さくらい","篠田":"しのだ",
+  "下田":"しもだ","白鳥":"しらとり","菅野":"かんの","鈴田":"すずた","瀬戸":"せと","高松":"たかまつ","武井":"たけい","立花":"たちばな",
+  "田畑":"たばた","土田":"つちだ","寺田":"てらだ","戸田":"とだ","富田":"とみた","長尾":"ながお","長田":"ながた","永田":"ながた",
+  "中尾":"なかお","楢崎":"ならさき","西川":"にしかわ","野田":"のだ","萩原":"はぎわら","橋口":"はしぐち","長谷部":"はせべ","畑中":"はたなか",
+  "馬場":"ばば","東野":"ひがしの","日野":"ひの","平山":"ひらやま","福井":"ふくい","福本":"ふくもと","古田":"ふるた","堀田":"ほった",
+  "前川":"まえかわ","牧田":"まきた","増井":"ますい","町田":"まちだ","三上":"みかみ","水口":"みずぐち","溝口":"みぞぐち","宮川":"みやがわ",
+  "宮田":"みやた","向井":"むかい","村山":"むらやま","百瀬":"ももせ","諸星":"もろほし","矢田":"やだ","柳":"やなぎ","山岸":"やまぎし",
+  "湯浅":"ゆあさ","横田":"よこた","吉川":"よしかわ","吉岡":"よしおか","吉村":"よしむら","米田":"よねだ"
 };
 
 // ═══════════════════════════════════════════════════════
@@ -777,7 +797,10 @@ function lookupFurigana(name) {
   if (!name) return "";
   const n = String(name).replace(/\s+/g, "");
   if (FD[n]) return FD[n];
-  for (let len = Math.min(4, n.length); len >= 1; len--) {
+  // prefix フォールバックは2文字以上に限定する。1文字だと「西野→西(にし)」「関口→関(せき)」のように
+  // 実在の複漢字姓が単漢字姓へ誤マッチし、誤読が無言で確定してブラケットのふりがな順が崩れる。
+  // 単漢字姓(原・南 等)は上の完全一致(n===キー)で拾えるため、prefix で1文字を許す必要はない。
+  for (let len = Math.min(4, n.length); len >= 2; len--) {
     const prefix = n.substring(0, len);
     if (FD[prefix]) return FD[prefix];
   }
@@ -1943,6 +1966,9 @@ function deleteAchievement(id) { stmts.deleteAchievement.run(id); }
 // 名前から選手を検索（厳密一致のみ）
 // includes での部分一致はシングル選手とダブル選手の誤リンクを起こすので使わない。
 // 緩い検索は明示的に opts.fuzzy=true で有効化（外部アプリ連動など限られた用途向け）
+// opts.requireTeam=true かつ team 指定時は「氏名のみ一致」フォールバックを禁じる（無人の一括取込で
+// 同姓同名・別所属を誤って束ねるのを防ぐ。見つからなければ null=新規作成に回す＝誤結合より重複の方が
+// 後から統合で救える）。
 function findPlayerByName(name, team, opts) {
   if (!name) return null;
   const norm = String(name).replace(/\s+/g, "");
@@ -1952,6 +1978,7 @@ function findPlayerByName(name, team, opts) {
     p.name.replace(/\s+/g, "") === norm &&
     (!team || p.team === team));
   if (hit) return hit;
+  if (opts && opts.requireTeam && team) return null;   // 所属一致必須：氏名のみ一致には落ちない
   // 2. 完全一致 (name のみ)
   hit = all.find(p => p.name.replace(/\s+/g, "") === norm);
   if (hit) return hit;
@@ -3053,13 +3080,14 @@ function suggestPlayerForEntrant(name, team) {
 }
 
 // マスタ player 作成して entrant にリンク
-function createPlayerFromEntrant(entrantId, isPartner) {
+function createPlayerFromEntrant(entrantId, isPartner, opts) {
   const e = entrantStmts.get.get(entrantId);
   if (!e) return null;
   const name = isPartner ? e.partner_name : e.name;
   const team = isPartner ? e.partner_team : e.team;
   if (!name) return null;
-  let player = findPlayerByName(name, team);
+  // 一括取込(opts.requireTeam)では所属一致必須＝同姓同名別所属を誤連携しない。手動連携は従来どおり(緩い)。
+  let player = findPlayerByName(name, team, opts && opts.requireTeam ? { requireTeam: true } : undefined);
   if (!player) {
     // 性別: 明記された種目はその性別。混合/不明は本人/相方の性別を使う(手動連携なので作成自体はする)。
     const _eg = _eventGender(e.event);
@@ -4108,8 +4136,11 @@ function importRoster(tournamentId, payload) {
   const markOpen = mode === "open" || (mode === "direct" && payload.open === true);
   const entries = Array.isArray(payload.entries) ? payload.entries : [];
   if (!entries.length) return { error: "取込対象がありません" };
+  // 初参加(DB未登録)を選手DBに登録するか(既定=する)。氏名+所属の完全一致で照合し、無ければ作成して
+  // entrant に player_id を張る=以降 選手DBで修正でき、結果入力で成績/Eloに反映される。組合せ表取込と同方針。
+  const registerPlayers = payload.register_players !== false;
   const dup = sqlite.prepare(`SELECT id FROM entrants WHERE tournament_id=? AND event=? AND name=? AND team=? AND partner_name=? LIMIT 1`);
-  let created = 0, skippedDup = 0;
+  let created = 0, skippedDup = 0, playerNew = 0, playerLinked = 0, playerSkipped = 0;
   const eventsUsed = new Map();   // name → type
   const txn = sqlite.transaction(() => {
     for (const e of entries) {
@@ -4124,7 +4155,7 @@ function importRoster(tournamentId, payload) {
       const nm = String(e.name).trim(), tm = normalizeName(e.team || ""), pn = String(e.partner_name || "").trim();
       const canon = buildEntrantNames({ name: nm, partner_name: pn });
       if (dup.get(tournamentId, ev, canon.name, tm, canon.partner_name || "")) { skippedDup++; continue; }
-      createEntrant({
+      const ent = createEntrant({
         tournament_id: tournamentId, event: ev,
         name: nm, team: tm, region: e.region || "",
         partner_name: pn, partner_team: e.partner_team || "", partner_region: e.partner_region || "",
@@ -4133,6 +4164,19 @@ function importRoster(tournamentId, payload) {
         status: "confirmed", note: "名簿取込",
       });
       created++;
+      // 選手DB連携: 本人(と相方)を find-or-create してリンク。1件失敗しても取込全体は止めない。
+      if (registerPlayers && ent && ent.id) {
+        const sides = e.type === "doubles" && pn ? [false, true] : [false];
+        for (const isP of sides) {
+          const who = isP ? pn : nm, wTeam = isP ? (e.partner_team || "") : tm;
+          if (!who || who === "BYE") continue;
+          try {
+            const existed = !!findPlayerByName(who, wTeam, { requireTeam: true });
+            const p = createPlayerFromEntrant(ent.id, isP, { requireTeam: true });   // 所属一致必須で連携・初参加は作成(誤結合防止)
+            if (p) { if (existed) playerLinked++; else playerNew++; }
+          } catch (err) { playerSkipped++; }
+        }
+      }
     }
     // event_config に不足種目を追加(admin種目セレクタ用)
     let cfg = [];
@@ -4144,7 +4188,8 @@ function importRoster(tournamentId, payload) {
     if (cfgChanged) sqlite.prepare("UPDATE tournaments SET event_config=? WHERE id=?").run(JSON.stringify(cfg), tournamentId);
   });
   txn();
-  return { ok: true, created, skipped_duplicate: skippedDup, events: [...eventsUsed.keys()], mode };
+  return { ok: true, created, skipped_duplicate: skippedDup, events: [...eventsUsed.keys()], mode,
+    players_new: playerNew, players_linked: playerLinked, players_skipped: playerSkipped, register_players: registerPlayers };
 }
 
 // ── トーナメント近接警告(作成プランのポカヨケ) ──
@@ -7680,10 +7725,14 @@ function findEntrantDataIssues(tournamentId) {
       issues.push({ code: "category_mismatch", field: "category",
         label: `区分が種目(${inf.category})と不一致`, suggested: inf.category });
     }
-    // ふりがな欠落(団体は対象外)
+    // ふりがな欠落(団体は対象外)。提案は「連携済み選手のふりがな」を最優先(選手DBで直したら伝播)、
+    // 無ければ苗字辞書の推定。連携選手にふりがながあれば辞書に無い苗字でも一括修正で埋まる。
     if (!isTeam && (!e.furigana || !String(e.furigana).trim())) {
+      let sug = "";
+      if (e.player_id) { const pl = getPlayer(e.player_id); if (pl && pl.furigana) sug = pl.furigana; }
+      if (!sug) sug = lookupFurigana(e.surname) || lookupFurigana(e.name) || "";
       issues.push({ code: "missing_furigana", field: "furigana",
-        label: "ふりがな未設定(ふりがな順が崩れる)", suggested: lookupFurigana(e.surname) || "" });
+        label: "ふりがな未設定(ふりがな順が崩れる)", suggested: sug });
     }
     // 氏名空
     if (!e.name || !String(e.name).trim()) {

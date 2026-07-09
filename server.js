@@ -1942,7 +1942,11 @@ app.post("/api/tournaments/:id/roster/preview", requireAdmin, upload.single("fil
 });
 // 名簿取込の確定(プレビューで修正済みの entries を受けて entrants を冪等作成)
 app.post("/api/tournaments/:id/roster/commit", requireAdmin, (req, res) => {
-  const r = db.importRoster(req.params.id, { mode: req.body?.mode, open: req.body?.open === true, entries: req.body?.entries });
+  const r = db.importRoster(req.params.id, {
+    mode: req.body?.mode, open: req.body?.open === true,
+    register_players: req.body?.register_players !== false,   // 既定=初参加を選手DBに登録
+    entries: req.body?.entries,
+  });
   if (r?.error) return res.status(400).json(r);
   res.json(r);
 });
