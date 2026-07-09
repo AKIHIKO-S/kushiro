@@ -2572,7 +2572,7 @@ const A = {
  h("div", { className: "card-title" }, "トーナメント表 (取込)"),
  h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm",
-   onClick: () => A.openExcelUpload(t.id) }, "組合せ表・名簿を取込"),
+   onClick: () => O.openImportChooser(t.id) }, "Excelから取り込む"),
  h("button", { className: "btn btn-sm btn-ghost",
    onClick: () => A.openManualMatchCreate(t) }, "試合追加"),
  ),
@@ -2704,7 +2704,7 @@ const A = {
  const s3 = chip("確認中…", "");
  mk(3, "名簿を作る（抽選番号・確認）",
    "申込Excelを取込み、抽選番号を付与。重複・所属相違をチェックして名簿確定。", s3, [
-   h("button", { className: "btn btn-sm", onClick: () => A.openExcelUpload(t.id) }, "組合せ表・名簿を取込"),
+   h("button", { className: "btn btn-sm", onClick: () => O.openImportChooser(t.id) }, "Excelから取り込む"),
    h("button", { className: "btn btn-sm",
      style: { background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" },
      onClick: () => A.openDrawNumberDialog(t) }, "抽選番号 付与"),
@@ -2714,7 +2714,7 @@ const A = {
  const s4 = matches > 0 ? chip(matches + "試合 作成済", "ok") : chip("未作成", "todo");
  mk(4, "トーナメント表を作る",
    "名簿からトーナメント表を自動作成、またはExcel/PDFの組合せ表を取込。", s4, [
-   h("button", { className: "btn btn-sm", onClick: () => A.openExcelUpload(t.id) }, "組合せ表・名簿を取込"),
+   h("button", { className: "btn btn-sm", onClick: () => O.openImportChooser(t.id) }, "Excelから取り込む"),
    h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openEntrantsTab(t.id) }, "名簿から生成"),
  ]);
 
@@ -4303,7 +4303,7 @@ const A = {
  h("div", { className: "flex gap-2 flex-wrap" },
  // 運営に必須の名簿操作 (主役)
  h("button", { className: "btn btn-sm",
- onClick: () => A.openExcelUpload(t.id) }, "組合せ表・名簿を取込"),
+ onClick: () => O.openImportChooser(t.id) }, "Excelから取り込む"),
  h("button", { className: "btn btn-sm",
  style: { background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" },
  onClick: () => A.openDrawNumberDialog(t) }, "抽選番号 自動付与"),
@@ -4600,7 +4600,12 @@ const A = {
          overflow: "auto", maxHeight: "260px", whiteSpace: "pre-wrap" } },
          r.stderr)) : null,
      h("div", { className: "text-xs text-sub mt-2" },
-       "Excel ファイルが標準フォーマット (罫線あり) か、")
+       "この取込は「組合せ表(トーナメント形式)」用です。組合せがもう決まっている表(罫線ありの表)を読み取ります。"),
+     h("div", { className: "text-xs mt-1", style: { color: "#b45309", fontWeight: 700 } },
+       "出場者の名簿(申込一覧・エントリーリスト)を取り込む場合は、こちらではなく "),
+     h("button", { className: "btn btn-sm mt-1",
+       onClick: () => { document.querySelectorAll(".modal-bg").forEach(m => m.remove()); O.openImportChooser(tournamentId); } },
+       "→ 名簿方式で取り込む")
    );
    const ef = h("button", { className: "btn",
      onClick: () => document.querySelectorAll(".modal-bg").forEach(m => m.remove()) },
@@ -9230,8 +9235,10 @@ const O = {
  // ── 取込形式の選択(トーナメント形式 / 名簿方式) ──
  // トーナメント形式=組合せ済みの表(会長杯/VICTAS杯の組合せ表・取込テンプレ)をその並びのまま反映(抽選しない)。
  // 名簿方式=出場者の名簿を取り込み、このあとアプリで抽選してトーナメントを作成する。
- openImportChooser() {
-   if (!O.tournamentId) return toast("先に大会を選んでください", "err");
+ openImportChooser(tid) {
+   const id = tid || O.tournamentId;
+   if (!id) return toast("先に大会を選んでください", "err");
+   O.tournamentId = id;   // 以降の取込(名簿方式=O.*)が参照する操作対象を確定
    const card = (title, desc, note, onClick) => h("button", {
      className: "btn", style: { display: "block", width: "100%", textAlign: "left",
        padding: "14px 16px", marginBottom: "10px", border: "1px solid var(--border, #d1d5db)",
