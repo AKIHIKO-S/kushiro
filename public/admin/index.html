@@ -1136,6 +1136,37 @@
  .admin-badge{ background:var(--accent); color:#fff; }
  .tab.active{ color:var(--accent); }
 
+ /* 案A: .op-tools-body は display:flex 固定でネイティブ details の閉時非表示を上書きしてしまうため、
+    閉じているときは明示的に隠す(ポップオーバーが常時開いて幅を食う/モバイルで溢れるのを防ぐ)。 */
+ details.op-tools:not([open]) > .op-tools-body{ display:none; }
+
+ /* 案A: タブオーバーフロー「設定・連携▾」。summaryは.tabを付けない(委譲配線がundefinedを呼ぶため)=独自クラス */
+ .nav-more{ margin-left:0; align-self:center; }
+ .tab-more{ flex:0 0 auto; padding:13px 16px; background:transparent; border:none; border-bottom:2px solid transparent;
+   color:var(--sub); font:inherit; font-weight:600; font-size:14px; white-space:nowrap; cursor:pointer; list-style:none; }
+ .tab-more::-webkit-details-marker{ display:none; }
+ .tab-more.active{ color:var(--accent); border-bottom-color:var(--accent); }
+ #navMoreDot{ display:none; width:8px; height:8px; border-radius:50%; background:var(--tancho); margin-left:5px; vertical-align:middle; }
+ .op-tools-body .tab{ display:block; width:100%; text-align:left; border-bottom:none; padding:9px 12px; border-radius:7px; font-size:13.5px; color:var(--ink,#23272a); }
+ .op-tools-body .tab.active{ background:var(--pri-bg); color:var(--accent); font-weight:700; }
+ .op-tools-body .tab:hover{ background:var(--pri-bg); }
+
+ /* 案A: 進行管理ツールバーのフェーズ集約(準備/進行/記録)。AI-tellの左縁アクセント線は使わず、
+    小ラベル+点線縦罫で区切る。核心3ボタンは btn-ok btn-lg(緑・大)で主役化。 */
+ .op-phases{ display:flex; gap:0; flex-wrap:wrap; align-items:flex-start; row-gap:10px; }
+ .op-phase{ display:flex; flex-direction:column; gap:5px; }
+ .op-phase + .op-phase{ padding-left:14px; margin-left:2px; border-left:1px dashed var(--border); }
+ .op-phase-label{ font-size:10px; font-weight:800; letter-spacing:.1em; color:var(--sub-l,var(--sub)); }
+ .op-phase-row{ display:flex; gap:7px; flex-wrap:wrap; align-items:center; }
+ .op-phase .btn-lg{ padding:11px 18px; font-size:13.5px; }
+ .op-view{ margin-left:auto; display:flex; gap:6px; align-items:center; }
+ @media(max-width:520px){
+   .op-phase + .op-phase{ padding-left:0; margin-left:0; border-left:none; border-top:1px dashed var(--border); padding-top:8px; margin-top:2px; width:100%; }
+   .op-phase, .op-phase-row{ width:100%; }
+   .op-phase .btn-ok.btn-lg{ flex:1 1 46%; justify-content:center; }
+   .op-view{ margin-left:0; width:100%; justify-content:flex-end; }
+ }
+
  /* 危険操作(取消/削除/不可逆)= 丹頂レッド */
  .btn-danger{ background:transparent; color:var(--tancho); border:1px solid var(--tancho); }
  .btn-danger:hover{ background:var(--tancho); color:#fff; }
@@ -1193,17 +1224,22 @@
  </div>
 </div>
 
-<!-- タブ -->
+<!-- タブ(案A: 常用3 + 設定・連携ドロップダウン) -->
 <div class="tabs">
  <div class="tabs-in">
- <button class="tab active" data-tab="tournaments">大会管理</button>
- <button class="tab" data-tab="operations">進行管理 (LIVE)</button>
- <button class="tab" data-tab="bracket-mgmt">トーナメント管理</button>
- <button class="tab" data-tab="players">選手データベース</button>
- <button class="tab" data-tab="import">インポート/エクスポート</button>
- <button class="tab" data-tab="external-forms">外部申込フォーム</button>
- <button class="tab" data-tab="api">API連携</button>
- <button class="tab" data-tab="coaches">監督・申請 <span id="coachReqBadge" class="tab-badge" style="display:none"></span></button>
+ <button class="tab active" data-tab="tournaments">大会</button>
+ <button class="tab" data-tab="operations">進行 LIVE</button>
+ <button class="tab" data-tab="players">選手</button>
+ <details class="op-tools nav-more" id="navMore">
+   <summary class="tab-more" id="navMoreSummary">設定・連携 <span aria-hidden="true">▾</span><span id="navMoreDot"></span></summary>
+   <div class="op-tools-body">
+   <button class="tab" data-tab="bracket-mgmt">トーナメント管理</button>
+   <button class="tab" data-tab="import">インポート/エクスポート</button>
+   <button class="tab" data-tab="external-forms">外部申込フォーム</button>
+   <button class="tab" data-tab="api">API連携</button>
+   <button class="tab" data-tab="coaches">監督・申請 <span id="coachReqBadge" class="tab-badge" style="display:none"></span></button>
+   </div>
+ </details>
  </div>
 </div>
 
@@ -1625,7 +1661,7 @@ const A = {
      A.showTab("tournaments", true);
    }
  } else {
-   A.showTab(["tournaments","players","operations","entrants","bracket-mgmt"].includes(type) ? type : "tournaments", true);
+   A.showTab(["tournaments","players","operations","entrants","bracket-mgmt","import","external-forms","api","coaches"].includes(type) ? type : "tournaments", true);
  }
  },
 
@@ -1640,6 +1676,10 @@ const A = {
  }
  document.querySelectorAll(".tab").forEach(t =>
  t.classList.toggle("active", t.dataset.tab === name));
+ // 案A: オーバーフロー(設定・連携)内のタブがactiveのとき summary もactive表示にし、選択でポップオーバーを閉じる
+ const NAV_OVERFLOW = ["bracket-mgmt", "import", "external-forms", "api", "coaches"];
+ document.getElementById("navMoreSummary")?.classList.toggle("active", NAV_OVERFLOW.includes(name));
+ document.getElementById("navMore")?.removeAttribute("open");
  document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
  document.getElementById("tab-" + name)?.classList.remove("hidden");
  // 進行管理(LIVE)はPC画面いっぱいに広げる (#222 レスポンシブ幅)
@@ -5919,6 +5959,8 @@ const A = {
 
  // ─── 監督・顧問アカウント + 申請審査 (#285) ──────────
  _updateCoachBadge(n) {
+ // 監督タブは「設定・連携▾」に格納されたので、申請ありをsummaryの赤ドットにもバブルアップ
+ document.getElementById("navMoreDot")?.style.setProperty("display", n > 0 ? "inline-block" : "none");
  const b = document.getElementById("coachReqBadge");
  if (!b) return;
  if (n > 0) { b.textContent = n; b.style.cssText = "display:inline-block;background:#dc2626;color:#fff;border-radius:999px;font-size:10px;font-weight:800;padding:1px 7px;margin-left:4px;"; }
@@ -8175,69 +8217,61 @@ const O = {
  };
  renderTabs();
 
- // 破壊的レビュー案3: 9種類のハードコード色を持つ12ボタンの1本ツールバーを、
- // 「常時表示(当日の運用)」+「大会準備」「記録・出力」の折りたたみ2グループに再編。
- // 色は既定(墨)/btn-ok(緑・肯定操作)の2系統に統一し、意味のない多色を排した。
- const toolGroup = (label, buttons) => h("details", { className: "op-tools-group" },
-   h("summary", {}, label),
-   h("div", { className: "flex gap-2", style: { flexWrap: "wrap", padding: "8px 0 2px" } }, ...buttons));
+ // 案A(フェーズ集約): 進行管理ツールバーを「準備→進行→記録」の3フェーズに再編。
+ // 核心フロー(名簿を取り込む→表を作る→Excelに出力)を主役(緑・大)にし、ほかの道具はドロップダウンへ。
+ // 既存の .op-tools ポップオーバー(summary+op-tools-body 絶対配置)を流用。sel/zoom/applyZoom/fitWidth/zlbl は同一クロージャ。
+ const ddItem = (label, title, fn) => h("button", { className: "btn btn-sm", title: title || "",
+   onClick: (e) => { const d = e.target.closest("details.op-tools"); if (d) d.removeAttribute("open"); fn(); } }, label);
+ const dropdown = (label, items) => h("details", { className: "op-tools" },
+   h("summary", { className: "btn btn-sm btn-ghost" }, label + " ▾"),
+   h("div", { className: "op-tools-body" }, ...items));
+ const hero = (label, title, fn) => h("button", { className: "btn btn-ok btn-lg", title, onClick: fn }, label);
 
  const toolbar = h("div", { style: { margin: "8px 0" } },
-   h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } },
-     h("button", { className: "btn btn-sm btn-ok", onClick: () => O.openAddMatch(sel) }, "＋ 対戦を追加"),
-     h("button", { className: "btn btn-sm",
-       title: "個人戦をシード固定＋ランダム抽選でトーナメント表を作成。何度でも引き直せます。1回戦は配置するだけで自動進行しません(編集後に『進行開始』で進める)。",
-       onClick: () => O.openDrawBracket(sel) }, "抽選ドロー(シャッフル)"),
-     h("button", { className: "btn btn-sm btn-ghost",
-       title: "出場選手名簿から標準シード配置でトーナメント表を作成/作り直します。ランダムにしたい場合は『抽選ドロー』を使用。不整合があっても作成できます。",
-       onClick: () => O.openBracketGen() }, "表を作る/作り直す"),
-     h("button", { className: "btn btn-sm btn-ghost",
-       title: "この種目のトーナメント表(対戦)だけを一括削除します。出場選手名簿は残るので、すぐ作り直せます。",
-       onClick: () => O.clearBracket(sel) }, "表を削除(名簿は残す)"),
-     h("button", { className: "btn btn-sm",
-       title: "抽選で配置・編集した1回戦を確定し、不戦勝(vs BYE)を繰り上げて進行を開始します。抽選直後は自動進行しないので、編集が済んだらこれを押してください。",
-       onClick: () => O.advanceByes(sel) }, "進行開始(不戦勝確定)"),
-     h("div", { className: "flex", style: { alignItems: "center", gap: "2px", marginLeft: "auto" } },
+   h("div", { className: "op-phases" },
+     h("div", { className: "op-phase" },
+       h("span", { className: "op-phase-label" }, "準備"),
+       h("div", { className: "op-phase-row" },
+         hero("名簿を取り込む", "出場者名簿(申込集計 / エントリーリスト)のExcelを取り込みます。このあと『トーナメント表を作る』で組合せを作成。", () => O.openRosterMethodChooser()),
+         hero("トーナメント表を作る", "出場選手名簿から標準シード配置でトーナメント表を作成/作り直します。ランダムにしたい場合は『ほかの準備 → 抽選ドロー』。不整合があっても作成できます。", () => O.openBracketGen()),
+         dropdown("ほかの準備", [
+           ddItem("抽選ドロー(シャッフル)", "個人戦をシード固定＋ランダム抽選で作成。何度でも引き直せます。編集後に『進行開始』で進めます。", () => O.openDrawBracket(sel)),
+           ddItem("＋ シードを追加", "既存の対戦を保持したままシード選手を上/下端に登場回戦から合流(BYE上がり)。", () => O.openAddSeed(sel)),
+           ddItem("シード提案", "選手DB(Elo+過去成績)から客観スコア順にシード候補を提案。人手で採否・順位を決めて一括設定。", () => O.openSeedSuggest(sel)),
+           ddItem("リーグ生成", "種目を総当たり(リーグ)で生成。勝敗→セット得失差→総得点で順位。", () => O.openLeagueGen(sel)),
+           ddItem("決勝T生成", "予選リーグの順位から決勝トーナメントを生成(上位N名 or 順位別T)。", () => O.openLeaguePlayoff(sel)),
+           ddItem("同率抽選の入力", "リーグで同率になった順位を現地の抽選結果で確定。", () => O.openLeagueTiebreak(sel)),
+           ddItem("釧路リーグ振り分け", "前回大会の各部順位から今回の部を昇降格ルールで提案→手動調整して生成。", () => O.openKushiroLeagueAssign(sel)),
+           ddItem("＋ 対戦を追加", "空きスロットに手動で対戦を追加。", () => O.openAddMatch(sel)),
+           ddItem("表を削除(名簿は残す)", "この種目のトーナメント表(対戦)だけを一括削除。名簿は残るのですぐ作り直せます。", () => O.clearBracket(sel)),
+           ddItem("組合せ表をそのまま取込(稀)", "既に組合せが決まっている表を、抽選せずその並びのまま取り込みます。ふだんは『名簿を取り込む』を使います。", () => A.openExcelUpload(O.tournamentId)),
+         ]),
+       )),
+     h("div", { className: "op-phase" },
+       h("span", { className: "op-phase-label" }, "進行"),
+       h("div", { className: "op-phase-row" },
+         h("button", { className: "btn btn-lg",
+           title: "抽選で配置・編集した1回戦を確定し、不戦勝(vs BYE)を繰り上げて進行を開始します。抽選直後は自動進行しないので、編集が済んだらこれを押してください。",
+           onClick: () => O.advanceByes(sel) }, "進行開始"),
+       )),
+     h("div", { className: "op-phase" },
+       h("span", { className: "op-phase-label" }, "記録・出力"),
+       h("div", { className: "op-phase-row" },
+         hero("Excelに出力", "両山トーナメント表(パーサーデータ付き=あとで直して取り込める)をExcelで出力。手修正・印刷用。", () => A.downloadAuthedFile(`/api/tournaments/${O.tournamentId}/bracket/export.xlsx?event=${encodeURIComponent(sel)}`, `トーナメント表_${sel}.xlsx`)),
+         dropdown("印刷など", [
+           ddItem("全画面・印刷", "トーナメント表を全画面表示して印刷します。", () => O.openVisualBracket()),
+           ddItem("Excelを直して反映", "出力したExcelを直して取り込み、その並びを正しい組合せとして反映(選手・結果はそのまま、位置だけ更新)。", () => O.importBracketXlsx(sel)),
+         ]),
+       )),
+     h("div", { className: "op-view" },
        h("button", { className: "btn btn-sm btn-ghost", title: "縮小",
          onClick: () => { zoom = Math.max(0.4, Math.round((zoom - 0.1) * 10) / 10); applyZoom(); } }, "−"),
        zlbl,
        h("button", { className: "btn btn-sm btn-ghost", title: "拡大",
-         onClick: () => { zoom = Math.min(2, Math.round((zoom + 0.1) * 10) / 10); applyZoom(); } }, "＋")),
-     h("button", { className: "btn btn-sm btn-ghost", title: "横スクロール無しで全体が入るよう倍率を自動調整",
-       onClick: fitWidth }, "画面に合わせる"),
+         onClick: () => { zoom = Math.min(2, Math.round((zoom + 0.1) * 10) / 10); applyZoom(); } }, "＋"),
+       h("button", { className: "btn btn-sm btn-ghost", title: "横スクロール無しで全体が入るよう倍率を自動調整",
+         onClick: fitWidth }, "画面に合わせる")),
    ),
-   toolGroup("大会準備(シード・リーグ)", [
-     h("button", { className: "btn btn-sm",
-       title: "Excelから取り込む。最初に「トーナメント形式(組合せ済みの表をそのまま反映)」か「名簿方式(出場者名簿→このあとアプリで抽選)」を選びます。",
-       onClick: () => O.openImportChooser() }, "Excelから取り込む"),
-     h("button", { className: "btn btn-sm",
-       title: "トーナメント表にシード選手を追加。既存の対戦はそのまま保持し、表の上/下に登場回戦から合流(BYE上がり)します。",
-       onClick: () => O.openAddSeed(sel) }, "＋ シードを追加"),
-     h("button", { className: "btn btn-sm",
-       title: "シードを選手DB(Elo+過去成績)から客観スコア順に提案。根拠を見て人手で採否・順位を決めて一括設定。抽選の前に。",
-       onClick: () => O.openSeedSuggest(sel) }, "シード提案"),
-     h("button", { className: "btn btn-sm",
-       title: "種目を総当たり(リーグ)で生成。個人戦・団体戦どちらも可。各ブロックで全員が対戦し、勝敗→セット得失差→総得点で順位。",
-       onClick: () => O.openLeagueGen(sel) }, "リーグ生成"),
-     h("button", { className: "btn btn-sm",
-       title: "予選リーグの順位から決勝トーナメントを生成。上位N名進出 or 順位別T(1位T/2位T…)。決勝Tは新しい種目として追加されます。",
-       onClick: () => O.openLeaguePlayoff(sel) }, "決勝T生成"),
-     h("button", { className: "btn btn-sm",
-       title: "リーグで同率(勝敗・セット得失差・総得点が全て同じ)になった順位を、現地の抽選結果で確定します。",
-       onClick: () => O.openLeagueTiebreak(sel) }, "同率抽選の入力"),
-     h("button", { className: "btn btn-sm",
-       title: "釧路リーグ: 前回大会の各部順位から今回の部(1〜25部)を昇降格ルールで提案→手動調整して生成。",
-       onClick: () => O.openKushiroLeagueAssign(sel) }, "釧路リーグ振り分け"),
-   ]),
-   toolGroup("記録・出力(印刷・Excel)", [
-     h("button", { className: "btn btn-sm", onClick: () => O.openVisualBracket() }, "全画面・印刷"),
-     h("button", { className: "btn btn-sm",
-       title: "両山トーナメント表(左右対向・中央決勝)をExcelで出力。手修正・印刷用。",
-       onClick: () => A.downloadAuthedFile(`/api/tournaments/${O.tournamentId}/bracket/export.xlsx?event=${encodeURIComponent(sel)}`, `トーナメント表_${sel}.xlsx`) }, "表をExcel出力"),
-     h("button", { className: "btn btn-sm",
-       title: "出力したExcelを直して取り込み、その並びを正しい組み合わせとして反映します(選手や結果はそのまま、位置だけ更新)。",
-       onClick: () => O.importBracketXlsx(sel) }, "Excel取込で反映"),
-   ]),
    h("div", { className: "text-xs text-sub", style: { marginTop: "6px" } },
      "1回戦: ドラッグで入替 / クリックで編集 ・ 各対戦の × で削除"),
  );
