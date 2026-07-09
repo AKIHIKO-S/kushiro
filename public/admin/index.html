@@ -7841,9 +7841,24 @@ const O = {
    style: { width: "100%", margin: "2px 0 10px", fontSize: "15px" },
    onInput: (e) => { O.callableSearch = e.target.value; O._applyCallFilter(); },
  }));
- const callList = O.selectedEvent
+ let callList = O.selectedEvent
  ? O.state.callable.filter(m => m.event === O.selectedEvent)
  : O.state.callable;
+ // 1回戦を優先表示(2回戦以降も呼べる=ソフト優先)。同一種目内でラウンドの浅い順(予選→1回戦→2回戦→…)。
+ // 種目間は元の優先順(団体>混合D>ダブルス>シングルス)を保つ=stable sortで異種目は順序維持。
+ const roundDepth = (name) => {
+   const s = String(name || "");
+   if (s.includes("予選")) return 0;
+   const mm = s.match(/(\d+)回戦/); if (mm) return parseInt(mm[1]);
+   const bb = s.match(/ベスト(\d+)/); if (bb) return 100 - Math.log2(Math.max(2, parseInt(bb[1])));
+   return ({ "準々決勝": 200, "準決勝": 201, "決勝": 202 })[s] ?? 150;
+ };
+ const _blk = (m) => (m.blocks || []).length > 0;
+ callList = [...callList].sort((a, b) => {
+   if (_blk(a) !== _blk(b)) return _blk(a) ? 1 : -1;          // 呼出制限は末尾
+   if ((a.event || "") !== (b.event || "")) return 0;         // 異種目は元順を維持(stable)
+   return roundDepth(a.round) - roundDepth(b.round);          // 1回戦を先に
+ });
  if (!callList.length) {
  callCard.appendChild(h("div", { className: "empty-state" }, "現在コールOKの対戦はありません。"));
  } else {
@@ -8905,10 +8920,21 @@ const O = {
  const num1 = m.player1_bracket_number || m.entrant1_bracket_number;
  const num2 = m.player2_bracket_number || m.entrant2_bracket_number;
  const pColor = TT.eventColor(m.event).bg;
- // 選手ピル (番号 + 氏名 + ふりがな + 所属)
- const pill = (name, furi, team, num) => h("span", { className: "player-pill" },
+ // 選手ピル (番号 + シード印 + 氏名 + ふりがな + 所属)。シードは進行管理で明示(誰がシードか一目で)。
+ const seedBadge = (seed, entryRound) => {
+   if (!seed || seed < 1) return null;
+   const superSeed = entryRound && entryRound > 1;   // 2回戦以降から登場=スーパーシード
+   return h("span", { className: "seed-badge",
+     title: superSeed ? `第${seed}シード(${entryRound}回戦から登場=スーパーシード)` : `第${seed}シード`,
+     style: { display: "inline-block", fontSize: "11px", fontWeight: 700, lineHeight: "1.4",
+       padding: "0 5px", borderRadius: "4px", marginRight: "3px",
+       background: superSeed ? "#7c2d12" : "#b45309", color: "#fff" } },
+     superSeed ? "SS" + seed : "S" + seed);
+ };
+ const pill = (name, furi, team, num, seed, entryRound) => h("span", { className: "player-pill" },
    num ? h("span", { className: "pnum" }, "#" + num) : null,
-   " ", h("span", { className: "pname" }, name || ""),
+   " ", seedBadge(seed, entryRound),
+   h("span", { className: "pname" }, name || ""),
    furi ? h("span", { className: "pfuri" }, furi) : null,
    h("span", { className: "pteam" }, team ? "(" + team + ")" : ""));
  const row = h("div", { className: "callable-row" + (blocked ? " waiting" : "") + (isNext ? " next-up" : "") + (announced ? " announced" : ""),
@@ -8930,9 +8956,9 @@ const O = {
  isNext ? h("span", { className: "next-tag" }, "次に呼ぶ") : null,
  ),
  h("div", { className: "vs-block" },
- pill(m.player1_name, m.player1_furigana, m.player1_team, num1),
+ pill(m.player1_name, m.player1_furigana, m.player1_team, num1, m.player1_seed, m.player1_entry_round),
  h("span", { className: "vs" }, "VS"),
- pill(m.player2_name, m.player2_furigana, m.player2_team, num2),
+ pill(m.player2_name, m.player2_furigana, m.player2_team, num2, m.player2_seed, m.player2_entry_round),
  ),
  O.renderTeamMembers(m),
  ...blocks.map(b =>

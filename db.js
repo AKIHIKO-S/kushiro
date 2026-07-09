@@ -6415,6 +6415,12 @@ function getOperationState(tournamentId) {
   // survival を allMatches から1パスで事前構築(per-player の _survivalStmt 多発を排除。出力不変)。
   // enforce 時のみ使うのでその時だけ構築。
   if (enforce) { const _sv = _buildSurvivalIndex(allMatches); for (const [pid, be] of _sv) _opsCtx.survival.set(pid, be); }
+  // シード可視化: entrant→{seed, entry_round} を1クエリで引き、呼出行にシード印を出す
+  // (「シード選手が誰か・2回戦から登場するシード/スーパーシードが誰か」を進行管理で明示する)。
+  const seedByEntrant = new Map();
+  for (const e of sqlite.prepare("SELECT id, seed, entry_round FROM entrants WHERE tournament_id=? AND seed>=1").all(tournamentId))
+    seedByEntrant.set(e.id, { seed: e.seed, entry_round: Math.max(1, parseInt(e.entry_round) || 1) });
+  const seedInfo = (eid) => seedByEntrant.get(eid) || null;
   const callable = callableRaw.map(m => {
     const blocks = [];
     if (enforce) {
@@ -6445,8 +6451,11 @@ function getOperationState(tournamentId) {
         });
       });
     }
+    const s1 = seedInfo(m.player1_entrant_id), s2 = seedInfo(m.player2_entrant_id);
     return { ...m, blocks, is_blocked: blocks.length > 0,
-             event_priority: getEventPriority(m.event) };
+             event_priority: getEventPriority(m.event),
+             player1_seed: s1 ? s1.seed : 0, player1_entry_round: s1 ? s1.entry_round : 1,
+             player2_seed: s2 ? s2.seed : 0, player2_entry_round: s2 ? s2.entry_round : 1 };
   });
   // 優先度順ソート: 団体 → 混合D → ダブルス → シングルス
   // ロックなし > ロック有り の順、さらに同 priority ではラウンド順 (deep round → 早く)
