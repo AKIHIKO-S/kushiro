@@ -8171,8 +8171,14 @@ const O = {
    h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } },
      h("button", { className: "btn btn-sm btn-ok", onClick: () => O.openAddMatch(sel) }, "＋ 対戦を追加"),
      h("button", { className: "btn btn-sm",
-       title: "個人戦をシード固定＋ランダム抽選でトーナメント表を作成。1回戦は配置するだけで自動進行しません(編集後に『進行開始』で進める)。",
-       onClick: () => O.openDrawBracket(sel) }, "抽選ドロー"),
+       title: "個人戦をシード固定＋ランダム抽選でトーナメント表を作成。何度でも引き直せます。1回戦は配置するだけで自動進行しません(編集後に『進行開始』で進める)。",
+       onClick: () => O.openDrawBracket(sel) }, "抽選ドロー(シャッフル)"),
+     h("button", { className: "btn btn-sm btn-ghost",
+       title: "出場選手名簿から標準シード配置でトーナメント表を作成/作り直します。ランダムにしたい場合は『抽選ドロー』を使用。不整合があっても作成できます。",
+       onClick: () => O.openBracketGen() }, "表を作る/作り直す"),
+     h("button", { className: "btn btn-sm btn-ghost",
+       title: "この種目のトーナメント表(対戦)だけを一括削除します。出場選手名簿は残るので、すぐ作り直せます。",
+       onClick: () => O.clearBracket(sel) }, "表を削除(名簿は残す)"),
      h("button", { className: "btn btn-sm",
        title: "抽選で配置・編集した1回戦を確定し、不戦勝(vs BYE)を繰り上げて進行を開始します。抽選直後は自動進行しないので、編集が済んだらこれを押してください。",
        onClick: () => O.advanceByes(sel) }, "進行開始(不戦勝確定)"),
@@ -11230,74 +11236,79 @@ const O = {
 
  // ── トーナメント生成ダイアログ ──
  async openBracketGen() {
- const players = await api.get("/api/tournaments/" + O.tournamentId + "/players");
- if (!players.length) return toast("出場選手が登録されていません。先に選手を登録してください。", "err");
+ // ★出場選手名簿は entrants(申込・名簿取込の正本)から読む。旧 tournament_players は名簿取込で埋まらず
+ //   「出場選手が登録されていません」で止まっていた(バグ)。種目を選ぶとその種目の出場者を一覧する。
+ const entrants = await api.get("/api/tournaments/" + O.tournamentId + "/entrants") || [];
+ if (!entrants.length) return toast("出場者がいません。先に「Excelから取り込む」→名簿方式 で名簿を取り込むか、出場選手タブで登録してください。", "err");
+ const evOf = (e) => e.event || "(未分類)";
+ const eventsWithEntrants = [...new Set(entrants.map(evOf))].filter(x => x !== "(未分類)");
+ const defaultEvents = ["男子シングルス", "女子シングルス", "男子ダブルス", "女子ダブルス", "混合ダブルス", "団体戦"];
+ const allEvents = [...new Set([...eventsWithEntrants, ...defaultEvents])];
+ let curEvent = (O.selectedEvent && eventsWithEntrants.includes(O.selectedEvent)) ? O.selectedEvent : (eventsWithEntrants[0] || "男子シングルス");
 
- // 既存の event 名を取得 (大会の試合・エントリーから)
- const existingEvents = new Set();
- Object.keys(O.state.event_stats || {}).forEach(e => { if (e !== "(未分類)") existingEvents.add(e); });
- players.forEach(p => { if (p.entry_event) existingEvents.add(p.entry_event); });
- const defaultEvents = ["男子シングルス", "女子シングルス", "男子ダブルス", "女子ダブルス",
- "混合ダブルス", "団体戦"];
- const allEvents = [...new Set([...existingEvents, ...defaultEvents])];
-
+ const selEl = h("select", { className: "input", id: "bgPlayers", multiple: "", size: 8, style: { height: "200px" } });
+ const countEl = h("div", { className: "text-sm text-sub mt-1" });
+ const rebuild = () => {
+   clear(selEl);
+   const list = entrants.filter(e => evOf(e) === curEvent);
+   list.forEach(e => selEl.appendChild(h("option", { value: e.id, selected: "" },
+     `${e.display_name || e.name}${e.team ? " (" + e.team + ")" : ""}${e.seed ? " シード" + e.seed : ""}`)));
+   countEl.textContent = list.length + "名(この種目の出場者)。Ctrl/Cmdで一部だけ選択も可。";
+ };
+ const evInput = h("input", { className: "input", id: "bgEvent", list: "bgEventList",
+   placeholder: "例: 男子シングルス", value: curEvent,
+   onChange: (e) => { curEvent = e.target.value.trim(); rebuild(); },
+   onInput: (e) => { curEvent = e.target.value.trim(); rebuild(); } });
  const body = h("div", {},
- h("div", { className: "field" },
- h("label", { className: "field-label" }, "種目名（自由入力・既存名はリストから選択可）"),
- h("input", { className: "input", id: "bgEvent",
- list: "bgEventList",
- placeholder: "例: 男子シングルス、ジュニア女子S、35歳以上ダブルス…",
- value: O.selectedEvent || "男子シングルス" }),
- h("datalist", { id: "bgEventList" },
- ...allEvents.map(e => h("option", { value: e }))),
- ),
- h("div", { className: "field" },
- h("label", { className: "field-label" }, "対象選手 (Ctrl/Cmdで複数選択)"),
- h("select", { className: "input", id: "bgPlayers", multiple: "", size: 8,
- style: { height: "200px" } },
- ...players.map(p =>
- h("option", { value: p.id, selected: "" },
- `${p.name}${p.team ? " (" + p.team + ")" : ""}${p.seed ? " シード" + p.seed : ""}`))
- ),
- h("div", { className: "flex gap-1 mt-1" },
- h("button", { className: "btn btn-sm btn-ghost",
- onClick: (e) => { e.preventDefault();
- document.getElementById("bgPlayers").querySelectorAll("option")
- .forEach(o => o.selected = true); } }, "全選択"),
- h("button", { className: "btn btn-sm btn-ghost",
- onClick: (e) => { e.preventDefault();
- document.getElementById("bgPlayers").querySelectorAll("option")
- .forEach(o => o.selected = false); } }, "全解除"),
- ),
- ),
- h("label", { className: "flex gap-2", style: { alignItems: "center" } },
- h("input", { type: "checkbox", id: "bgRegen", checked: "" }),
- h("span", {}, "既存ブラケットを再生成（同種目の試合を削除して作り直す）"),
- ),
- h("div", { className: "text-sm text-sub mt-2" },
- "選手数からブラケットサイズを自動計算します（標準シーディング）。種目名は自由に入力できます。"),
- );
+   h("div", { className: "field" },
+     h("label", { className: "field-label" }, "種目名（この種目の出場者から生成します）"),
+     evInput,
+     h("datalist", { id: "bgEventList" }, ...allEvents.map(e => h("option", { value: e })))),
+   h("div", { className: "field" },
+     h("label", { className: "field-label" }, "対象の出場者 (Ctrl/Cmdで複数選択)"),
+     selEl, countEl,
+     h("div", { className: "flex gap-1 mt-1" },
+       h("button", { className: "btn btn-sm btn-ghost", onClick: (e) => { e.preventDefault(); selEl.querySelectorAll("option").forEach(o => o.selected = true); } }, "全選択"),
+       h("button", { className: "btn btn-sm btn-ghost", onClick: (e) => { e.preventDefault(); selEl.querySelectorAll("option").forEach(o => o.selected = false); } }, "全解除"))),
+   h("label", { className: "flex gap-2", style: { alignItems: "center" } },
+     h("input", { type: "checkbox", id: "bgRegen", checked: "" }),
+     h("span", {}, "既存の表を作り直す（同種目の対戦を削除して再生成）")),
+   h("div", { className: "text-sm text-sub mt-2" },
+     "標準シード配置(申込番号順)で生成します。ランダムに並べたい場合は「抽選ドロー」を使ってください。不整合(性別・ふりがな等)があっても生成できます。"));
+ rebuild();
  const foot = h("button", { className: "btn", onClick: async () => {
- const event = document.getElementById("bgEvent").value.trim();
- if (!event) return toast("種目名を入力してください", "err");
- const sel = document.getElementById("bgPlayers");
- const ids = Array.from(sel.selectedOptions).map(o => o.value);
- const regen = document.getElementById("bgRegen").checked;
- if (ids.length < 2) return toast("2人以上選択してください", "err");
- const _gbRev = O._bracketRev && O._bracketRev[event];   // 同時作業ガード: 見ていた組合せの版
- let r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event, player_ids: ids, regenerate: regen, base_rev: _gbRev });
- if (r && r.needs_force) {
- if (!confirm(r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
- r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event, player_ids: ids, regenerate: regen, force: true, base_rev: _gbRev });
- }
- if (r.error) return toast(r.error, "err");
- toast(`${r.player_count}名 ${r.total_matches}試合生成 (${r.total_rounds}ラウンド)`, "ok");
- document.querySelector(".modal-bg")?.remove();
- if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[event] = r.bracket_rev; }
- O.selectedEvent = event;
- O.reload();
+   const event = evInput.value.trim();
+   if (!event) return toast("種目名を入力してください", "err");
+   const ids = Array.from(selEl.selectedOptions).map(o => o.value);
+   const regen = document.getElementById("bgRegen").checked;
+   if (ids.length < 2) return toast("2人以上選択してください", "err");
+   const _gbRev = O._bracketRev && O._bracketRev[event];   // 同時作業ガード
+   const bodyReq = { event, entrant_ids: ids, regenerate: regen, base_rev: _gbRev };
+   let r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, bodyReq);
+   if (r && r.needs_force) {
+     if (!confirm(r.error + "\n\n結果入力済みの試合も消して作り直しますか？")) return;
+     r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { ...bodyReq, force: true });
+   }
+   if (r.error) return toast(r.error, "err");
+   toast(`${r.player_count || ids.length}名 ${r.total_matches}試合生成 (${r.total_rounds}ラウンド)`, "ok");
+   document.querySelector(".modal-bg")?.remove();
+   if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[event] = r.bracket_rev; }
+   O.selectedEvent = event;
+   O.reload();
  } }, "生成");
- openModal("トーナメント生成", body, foot);
+ openModal("トーナメント表を作る（出場選手名簿から）", body, foot);
+ },
+
+ // ── トーナメント表(対戦)だけを一括削除(名簿は残す・すぐ作り直せる) ──
+ async clearBracket(event) {
+   if (!event) return toast("種目を選んでください", "err");
+   if (!confirm(`「${event}」のトーナメント表(対戦)を全て削除します。\n出場選手名簿は残るので、すぐ作り直せます。\n※結果入力済みの試合も消えます。よろしいですか？`)) return;
+   const r = await api.del(`/api/tournaments/${O.tournamentId}/bracket?event=${encodeURIComponent(event)}`);
+   if (r && r.error) return toast(r.error, "err");
+   toast(`「${event}」のトーナメント表を削除しました(名簿は保持)`, "ok");
+   if (O._bracketRev) delete O._bracketRev[event];
+   if (O._vbReload) O._vbReload();
+   if (O.reload) O.reload();
  },
 
  // ── コートレイアウト設定 (40/44プリセット付き) ──

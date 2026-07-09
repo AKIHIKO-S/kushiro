@@ -2994,11 +2994,12 @@ app.get("/api/tournaments/:id/entrants/stats", (req, res) => {
 
 // ═══ 進行管理 (Operations) API ═══════════════════════
 app.post("/api/tournaments/:id/bracket", requireAdmin, (req, res) => {
-  const { event, regenerate, player_ids, force } = req.body || {};
+  const { event, regenerate, player_ids, entrant_ids, force } = req.body || {};
   if (!event) return res.status(400).json({ error: "event が必要です" });
   // 旧・生成口も同時作業ガード対象(regenerate でR1総入替する破壊的操作=draw/swap と同じ競合面)
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
-  const r = db.generateBracket(req.params.id, event, { regenerate, player_ids, force: !!force });
+  // entrant_ids(新・出場者ID)指定時はその選択を尊重。未指定は種目の全出場者(entrants)で生成。
+  const r = db.generateBracket(req.params.id, event, { regenerate, player_ids, entrant_ids, force: !!force });
   if (r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
