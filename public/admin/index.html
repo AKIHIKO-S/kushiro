@@ -10538,12 +10538,14 @@ const O = {
  // ── 操作ログ + Undo (誤操作/抗議対応 #203) ──
  async undoLast() {
  if (!O.tournamentId) return;
- if (!confirm("直前の操作を1つ取り消します。\n（結果入力・呼出・結果修正・コートへ戻す が対象）\nよろしいですか？")) return;
+ if (!confirm("直前の操作を1つ取り消します。\n（結果入力・呼出・結果修正・入替・枠設定、無ければ この種目の抽選 が対象）\nよろしいですか？")) return;
  let r;
- try { r = await api.post(`/api/tournaments/${O.tournamentId}/undo-last`, {}); }
+ // 統合Undo: 編集操作があればそれを、無ければ選択種目の抽選を取り消す(1ボタンで直前に戻す)。
+ try { r = await api.post(`/api/tournaments/${O.tournamentId}/undo`, { event: O.selectedEvent || "" }); }
  catch (e) { return toast("通信できません（オフライン）。接続復帰後にお試しください", "err"); }
  if (r.error) return toast(r.error, "err");
- toast("取り消しました: " + (r.summary || ""), "ok");
+ toast("取り消しました: " + (r.label || r.summary || (r.kind === "draw" ? "抽選" : "直前の操作")), "ok");
+ if (O._vbReload) O._vbReload();
  O.reload();
  },
  _opLogLabel(a) {

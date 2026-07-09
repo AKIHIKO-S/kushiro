@@ -3536,6 +3536,12 @@ app.post("/api/tournaments/:id/undo-last", requireAdmin, (req, res) => {
   if (r.error) return res.status(400).json(r);
   res.json(r);
 });
+// 統合Undo(元に戻す): 編集操作(op_log)があればそれを、無ければ種目の抽選(draw_log)を取り消す。
+app.post("/api/tournaments/:id/undo", requireAdmin, (req, res) => {
+  const r = db.undoLast(req.params.id, req.body?.event || "");
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
 
 // ─── 審判結果入力 (本部に来ずに審判が結果報告) ──────────────────
 // 管理側: トークン発行/再発行・ON/OFF・現在の設定取得。

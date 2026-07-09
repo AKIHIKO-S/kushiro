@@ -1972,7 +1972,8 @@ function deleteAchievement(id) { stmts.deleteAchievement.run(id); }
 function findPlayerByName(name, team, opts) {
   if (!name) return null;
   const norm = String(name).replace(/\s+/g, "");
-  const all = stmts.getPlayers.all();
+  // opts.pool: 呼出側が用意した選手スナップショット(配列)。名簿一括取込で毎回の全件DB走査(O(N^2))を避ける。
+  const all = (opts && opts.pool) || stmts.getPlayers.all();
   // 1. 完全一致 (name + team)
   let hit = all.find(p =>
     p.name.replace(/\s+/g, "") === norm &&
@@ -3087,7 +3088,7 @@ function createPlayerFromEntrant(entrantId, isPartner, opts) {
   const team = isPartner ? e.partner_team : e.team;
   if (!name) return null;
   // 一括取込(opts.requireTeam)では所属一致必須＝同姓同名別所属を誤連携しない。手動連携は従来どおり(緩い)。
-  let player = findPlayerByName(name, team, opts && opts.requireTeam ? { requireTeam: true } : undefined);
+  let player = findPlayerByName(name, team, opts ? { requireTeam: !!opts.requireTeam, pool: opts.pool } : undefined);
   if (!player) {
     // 性別: 明記された種目はその性別。混合/不明は本人/相方の性別を使う(手動連携なので作成自体はする)。
     const _eg = _eventGender(e.event);
@@ -4141,6 +4142,8 @@ function importRoster(tournamentId, payload) {
   const registerPlayers = payload.register_players !== false;
   const dup = sqlite.prepare(`SELECT id FROM entrants WHERE tournament_id=? AND event=? AND name=? AND team=? AND partner_name=? LIMIT 1`);
   let created = 0, skippedDup = 0, playerNew = 0, playerLinked = 0, playerSkipped = 0;
+  // 選手スナップショット(1回だけ全件取得)。連携中に作った選手は push して次の照合に反映=全件DB走査の反復を避ける。
+  const playerPool = registerPlayers ? stmts.getPlayers.all() : null;
   const eventsUsed = new Map();   // name → type
   const txn = sqlite.transaction(() => {
     for (const e of entries) {
@@ -4171,9 +4174,9 @@ function importRoster(tournamentId, payload) {
           const who = isP ? pn : nm, wTeam = isP ? (e.partner_team || "") : tm;
           if (!who || who === "BYE") continue;
           try {
-            const existed = !!findPlayerByName(who, wTeam, { requireTeam: true });
-            const p = createPlayerFromEntrant(ent.id, isP, { requireTeam: true });   // 所属一致必須で連携・初参加は作成(誤結合防止)
-            if (p) { if (existed) playerLinked++; else playerNew++; }
+            const existed = !!findPlayerByName(who, wTeam, { requireTeam: true, pool: playerPool });
+            const p = createPlayerFromEntrant(ent.id, isP, { requireTeam: true, pool: playerPool });   // 所属一致必須で連携・初参加は作成(誤結合防止)
+            if (p) { if (existed) playerLinked++; else { playerNew++; if (playerPool) playerPool.push(p); } }
           } catch (err) { playerSkipped++; }
         }
       }
@@ -4684,6 +4687,19 @@ function undoDraw(tournamentId, event) {
   });
   tx();
   return { ok: true, restored_matches: (before.matches || []).length, draw_log_id: row.id };
+}
+
+// 統合Undo(1ボタンで「元に戻す」): 未取消の編集操作(op_log・大会全体=入替/枠設定/結果入力/訂正)が
+// あればそれを先に戻し、無ければ選択種目の抽選(draw_log)を取り消す。編集は抽選の後に行われるため、
+// この順で「直前の操作」を安全に1段ずつ巻き戻せる(抽選専用Undoと編集用Undoの二本立てを1本に集約)。
+function undoLast(tournamentId, event) {
+  const op = sqlite.prepare("SELECT id, summary FROM op_log WHERE tournament_id=? AND undone=0 ORDER BY id DESC LIMIT 1").get(tournamentId);
+  if (op) { const r = undoLastOp(tournamentId); return Object.assign({ kind: "op", label: op.summary || "直前の操作" }, r); }
+  if (event) {
+    const dr = sqlite.prepare("SELECT id FROM draw_log WHERE tournament_id=? AND event=? AND status=\'committed\' ORDER BY id DESC LIMIT 1").get(tournamentId, event);
+    if (dr) { const r = undoDraw(tournamentId, event); return Object.assign({ kind: "draw", label: event + " の抽選" }, r); }
+  }
+  return { error: "取り消せる操作がありません" };
 }
 
 // 種目の抽選履歴(監査用。PIIは最小=名簿スナップショットは含めず件数とメタのみ)。
@@ -9671,7 +9687,7 @@ module.exports = {
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
   generateBracket, addBracketSeed, promoteToSeed, drawSingleBracket, computeDrawLeaves, bracketPositions,
-  checkDrawReadiness, bracketRev, undoDraw, getDrawLog, getBracketDrawDiff, importBracketRoundtrip,
+  checkDrawReadiness, bracketRev, undoDraw, undoLast, getDrawLog, getBracketDrawDiff, importBracketRoundtrip,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   generateTeamLeague, generateLeaguePlayoff, setLeagueTiebreak, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
