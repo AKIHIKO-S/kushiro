@@ -2784,9 +2784,10 @@ const A = {
 
  const s4 = matches > 0 ? chip(matches + "試合 作成済", "ok") : chip("未作成", "todo");
  mk(4, "トーナメント表を作る",
-   "名簿からトーナメント表を自動作成、またはExcel/PDFの組合せ表を取込。", s4, [
-   h("button", { className: "btn btn-sm", onClick: () => O.openImportChooser(t.id) }, "Excelから取り込む"),
-   h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openEntrantsTab(t.id) }, "名簿から生成"),
+   "取り込んだ名簿からトーナメント表を自動で作成します。組合せが決まっているExcel/PDFの取込も可。", s4, [
+   h("button", { className: "btn btn-sm", onClick: () => { O.tournamentId = t.id; O.autoCreateAllBrackets(); } }, "名簿から一括作成"),
+   h("button", { className: "btn btn-sm btn-ghost", onClick: () => openOps() }, "進行管理で作る/編集"),
+   h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openImportChooser(t.id) }, "組合せ表を取込(稀)"),
  ]);
 
  const s5 = t.status === "ongoing" ? chip("● 進行中", "ok")
@@ -8165,8 +8166,8 @@ const O = {
    h("span", { className: "text-xs text-sub" }, "対戦の確認・追加・削除 (タップで開閉)")));
 
  if (!events.length) {
-   card.appendChild(h("div", { className: "empty-state", style: { padding: "16px" } },
-     "トーナメント未生成です。「ツール・設定」→「トーナメント生成」または ファイルから読込で作成できます。"));
+   // 表がまだ無い=「名簿を取り込む→表を作る」の手順ガイドを出す(行き止まりの旧メッセージを置換)。
+   card.appendChild(O._buildFlowGuide());
    return card;
  }
 
@@ -11402,6 +11403,79 @@ const O = {
    if (O._bracketRev) delete O._bracketRev[event];
    if (O._vbReload) O._vbReload();
    if (O.reload) O.reload();
+ },
+
+ // ── 名簿からトーナメント表を一括自動作成(まだ表の無い種目だけ・作成済みは保護) ──
+ // 「名簿取り込み → トーナメント表の自動作成」を1クリックにする。既存の POST /bracket(出場者名簿から
+ // 標準シード配置で生成)を種目ごとに回すだけ=新規ロジックなし。結果入力済みの表は壊さない。
+ async autoCreateAllBrackets() {
+   if (!O.tournamentId) return toast("先に大会を選んでください", "err");
+   let ents;
+   try { ents = await api.get(`/api/tournaments/${O.tournamentId}/entrants`) || []; }
+   catch (e) { return toast("通信できません(オフライン)。接続復帰後にお試しください", "err"); }
+   if (!ents.length) return toast("名簿がありません。先に「名簿を取り込む」で取り込んでください。", "err");
+   const byEv = {};
+   ents.forEach(e => { const ev = String(e.event || "").trim(); if (ev) byEv[ev] = (byEv[ev] || 0) + 1; });
+   const existing = new Set(Object.keys((O.state && O.state.event_stats) || {}));   // 既に表がある種目
+   const todo = Object.keys(byEv).filter(ev => byEv[ev] >= 2 && !existing.has(ev));  // 2名以上かつ未作成
+   if (!todo.length) {
+     const has2 = Object.keys(byEv).some(ev => byEv[ev] >= 2);
+     return toast(has2 ? "未作成の種目はありません(全種目 作成済)。作り直しは各種目で。" : "2名以上の種目がありません。名簿を確認してください。", has2 ? "ok" : "err");
+   }
+   if (!confirm(`名簿からトーナメント表を一括作成します。\n対象 ${todo.length}種目: ${todo.join("・")}\n(標準シード配置。ランダムにしたい種目は後で「抽選ドロー」で引き直せます)\nよろしいですか？`)) return;
+   let ok = 0; const fail = [];
+   for (const ev of todo) {
+     try {
+       const r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event: ev, regenerate: true });
+       if (r && !r.error) { ok++; if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[ev] = r.bracket_rev; } }
+       else fail.push(ev);
+     } catch (e) { fail.push(ev); }
+   }
+   toast(`${ok}種目のトーナメント表を作成しました${fail.length ? ` / 未作成${fail.length}種目(${fail.join("・")}) — オープン種目はスーパーシード設定後に個別作成` : ""}`, ok ? "ok" : "err");
+   if (ok) { O.selectedEvent = todo.find(ev => !fail.includes(ev)) || O.selectedEvent; }
+   try { if (O.reload) await O.reload(); } catch (e) { /* 大会管理タブ等 O未マウント時も落とさない(APIは成功済み) */ }
+ },
+
+ // ── 表がまだ無いときの「作る手順」ガイド(進行管理の空状態を行き止まりにしない) ──
+ // 既存の flow-step 意匠を再利用。①名簿を取り込む(件数表示) → ②トーナメント表を作る。状態で現在地を強調。
+ _buildFlowGuide() {
+   const wrap = h("div", { className: "flow-guide", style: { padding: "16px", borderRadius: "10px", margin: "4px 0" } });
+   wrap.appendChild(h("div", { className: "card-title", style: { marginBottom: "3px" } }, "トーナメント表を作る手順"));
+   wrap.appendChild(h("div", { className: "text-sm text-sub", style: { marginBottom: "12px" } },
+     "名簿を取り込んで、トーナメント表を作成します。この2ステップだけです。"));
+   const steps = h("div", { className: "flow-steps" });
+   const stepEl = (n, title, hint, statusEl, actions) => {
+     const el = h("div", { className: "flow-step", dataset: { step: String(n) } },
+       h("div", { className: "flow-step-num" }, String(n)),
+       h("div", { className: "flow-step-main" },
+         h("div", { className: "flow-step-title" }, title),
+         h("div", { className: "flow-step-hint" }, hint),
+         h("div", { className: "flow-step-status" }, statusEl),
+         h("div", { className: "flow-step-actions" }, ...actions.filter(Boolean))));
+     steps.appendChild(el);
+     return el;
+   };
+   const s1 = h("span", { className: "flow-chip todo" }, "確認中…");
+   const step1 = stepEl(1, "名簿を取り込む", "出場者の名簿(申込集計 / エントリーリスト)のExcelを取り込みます。", s1, [
+     h("button", { className: "btn btn-sm btn-ok", onClick: () => O.openRosterMethodChooser() }, "名簿を取り込む"),
+   ]);
+   const s2 = h("span", { className: "flow-chip todo" }, "未作成");
+   const step2 = stepEl(2, "トーナメント表を作る", "名簿から自動で作成します(標準シード配置)。ランダムは後で抽選ドローに。", s2, [
+     h("button", { className: "btn btn-sm btn-ok", onClick: () => O.autoCreateAllBrackets() }, "名簿から一括作成"),
+     h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openBracketGen() }, "種目を選んで作成"),
+   ]);
+   (async () => {
+     let total = 0;
+     try { const st = await api.get(`/api/tournaments/${O.tournamentId}/entrants/stats`) || {};
+       total = Object.values(st).reduce((a, e) => a + (e.total || 0), 0); } catch (e) {}
+     s1.textContent = total ? (total + "名 取込済") : "まだ0名";
+     s1.className = "flow-chip " + (total ? "ok" : "todo");
+     step1.classList.toggle("done", total > 0);
+     step1.classList.toggle("active", total === 0);   // 名簿0なら①を強調
+     step2.classList.toggle("active", total > 0);      // 名簿ありなら②を強調(次はこれ)
+   })();
+   wrap.appendChild(steps);
+   return wrap;
  },
 
  // ── コートレイアウト設定 (40/44プリセット付き) ──
