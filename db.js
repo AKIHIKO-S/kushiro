@@ -3910,17 +3910,27 @@ function normalizeShibuName(s) {
   let t = String(s == null ? "" : s).trim().replace(/[()（）]/g, "");
   if (!t) return "";
   if (/根室管内/.test(t)) return "根室";
-  t = t.replace(/(支部|市|県)$/, "");
+  // 団体接尾(総合振興局・振興局・卓球連盟/協会・連盟/協会)を先に除去してから地名接尾を落とす。
+  t = t.replace(/(総合振興局|振興局|卓球連盟|卓球協会|連盟|協会)$/, "");
+  t = t.replace(/(支部|地区|市|県)$/, "");
   if (t === "根釧") return "釧根";
   return t;
 }
 
-// 区分(一般男子/高校女子/…)→ 性別・年代区分
+// 区分(一般男子/高校女子/マスターズ男子/…)→ 性別・年代区分・年代ラベル。
+// division は学種(小学生/中学生/高校生/大学生/一般)。年代カテゴリ(マスターズ/シニア/ジュニア等)は
+// division=一般 のまま age_label に保持(種目名生成や絞込に使えるよう情報を落とさない)。
 function _parseKubun(k) {
   const s = String(k || "").trim();
-  const gender = /女/.test(s) ? "female" : "male";
-  const division = /小学/.test(s) ? "小学生" : /中学/.test(s) ? "中学生" : /高校/.test(s) ? "高校生" : "一般";
-  return { gender, division, label: s };
+  const gender = /混合|ミックス|mix/i.test(s) ? "mixed" : /女/.test(s) ? "female" : "male";
+  const division = /小学|小学生|ホープス|カブ|バンビ/.test(s) ? "小学生"
+    : /中学|中学生|カデット/.test(s) ? "中学生"
+    : /高校|高等学校/.test(s) ? "高校生"
+    : /大学/.test(s) ? "大学生"
+    : "一般";
+  const ageLabel = /マスターズ/.test(s) ? "マスターズ" : /シニア/.test(s) ? "シニア"
+    : /ジュニア/.test(s) ? "ジュニア" : "";
+  return { gender, division, age_label: ageLabel, label: s };
 }
 
 // 名簿の行配列(ヘッダ込み)→ 正規化レコード + issues。純関数(DB非依存)。
@@ -3929,54 +3939,154 @@ function _parseKubun(k) {
 //     支部は「深川・札幌」の連記あり(・区切り=氏名1/氏名2に対応。1つなら両者共通)。
 //   規則: 氏名空白の行はスキップ / 備考・申込チーム番号は不考慮 / チーム名と氏名を優先
 //   (チーム名空欄のみ申込チーム名でフォールバック)。
+// ── 名簿パーサ共通ヘルパ(精度強化) ────────────────────────────────
+// 列見出し→列index(NFKC・空白除去で表記ゆれ吸収)。見つからなければ -1。
+function _colIndex(head, labels) {
+  const norm = (x) => { let t = String(x == null ? "" : x); try { t = t.normalize("NFKC"); } catch (_) {} return t.replace(/\s+/g, "").toLowerCase(); };
+  const wants = labels.map(norm);
+  for (let i = 0; i < head.length; i++) if (wants.includes(norm(head[i]))) return i;
+  return -1;
+}
+// 合計/小計/ラベル/人数 等の「選手でない行」を氏名セルで判定(取込から除外)。純関数。
+function _isNonPlayerName(name) {
+  const s = String(name || "").trim();
+  if (!s) return true;
+  if (/^(選手|参加者|申込者|代表)?(氏名|名前|選手名)([（(][^)）]*[)）])?[12１２]?$/.test(s)) return true;   // 見出し変種(選手氏名/氏名(かな)/氏名1)
+  if (/^(代表者|監督|コーチ|顧問|申込責任者|合計|小計|総計|総合計|計|人数|参加人数|参加者数|申込者数|申込数|備考|注意事項?|以上|欠席|棄権|未定|なし|No\.?|ＮＯ)$/i.test(s)) return true;
+  if (/^\d+\s*(名|人|組|ペア|チーム|件)$/.test(s)) return true;                 // 「2名」「3組」
+  if (/^[※*＊注]/.test(s)) return true;                                          // 注記
+  return false;
+}
+// 氏名見出しの柔軟判定(選手氏名/参加者氏名/氏名(かな)等の変種も拾う。ふりがな列は除外)。
+function _looksLikeNameHeader(c) {
+  let t = String(c == null ? "" : c); try { t = t.normalize("NFKC"); } catch (_) {}
+  t = t.replace(/\s+/g, "");
+  if (!/(氏名|名前|選手名)/.test(t)) return false;
+  if (/^(ふりがな|フリガナ|かな|よみ|読み|カナ|ローマ字)$/.test(t)) return false;   // 読み列は氏名でない
+  return true;
+}
+// 氏名列を柔軟に検出。which=0:番号無し(シングルス)/1:氏名1/2:氏名2。無ければ -1。
+function _nameColIndex(head, which) {
+  for (let i = 0; i < head.length; i++) {
+    let t = String(head[i] == null ? "" : head[i]); try { t = t.normalize("NFKC"); } catch (_) {}
+    t = t.replace(/\s+/g, "");
+    if (!_looksLikeNameHeader(t)) continue;
+    const m = t.match(/([12１２])\s*$/);
+    const n = m ? (/[2２]/.test(m[1]) ? 2 : 1) : 0;
+    if ((which || 0) === n) return i;
+  }
+  return -1;
+}
+// 名簿ヘッダ行を探す(氏名系見出しを含む最初の行。先頭12行を走査。変種見出しも検出)。無ければ -1。
+function _findHeaderRow(rows) {
+  const lim = Math.min((rows || []).length, 12);
+  for (let i = 0; i < lim; i++) if ((rows[i] || []).some(_looksLikeNameHeader)) return i;
+  return -1;
+}
+
+// 名簿の行配列(ヘッダ込み)→ 正規化レコード + issues。純関数(DB非依存)。
+//   singles: 見出し[氏名, チーム名, 支部, 区分, 申込チーム]をヘッダ行から検出(列順・列増減に非依存)。
+//   doubles: 見出し[氏名1, 氏名2, チーム名1, チーム名2, 支部, 区分, 申込チーム]。
+//     支部は「深川・札幌」の連記あり(・区切り=氏名1/氏名2に対応。1つなら両者共通)。
+//   規則: 氏名空=スキップ / 合計・ラベル行はスキップ / 区分は上のセルから前方補完(結合セル対策)
+//   / チーム名優先(空欄のみ申込チーム名でフォールバック)。ヘッダ未検出時のみ既定の固定列にフォールバック。
 function parseRosterRows(sheets) {
   const singles = Array.isArray(sheets && sheets.singles) ? sheets.singles : [];
   const doubles = Array.isArray(sheets && sheets.doubles) ? sheets.doubles : [];
   const entries = [];
   const issues = [];
-  const cell = (r, i) => String((r && r[i]) == null ? "" : r[i]).trim();
-  const isHeader = (r) => /氏名|区分/.test(cell(r, 2) + cell(r, 3));
+  const cell = (r, i) => (i >= 0 ? String((r && r[i]) == null ? "" : r[i]).trim() : "");
   let skipped = 0;
 
-  singles.forEach((r, idx) => {
-    if (idx === 0 && isHeader(r)) return;
-    const name = cell(r, 3);
-    if (!name) { if ((r || []).some(v => String(v || "").trim())) skipped++; return; }   // 氏名空白=スキップ
-    const team = cell(r, 4) || cell(r, 0);
-    const kb = _parseKubun(cell(r, 2));
-    const shibuRaw = cell(r, 5);
-    const region = normalizeShibuName(shibuRaw);
-    if (shibuRaw && region !== shibuRaw) issues.push({ sheet: "S", row: idx + 1, level: "info", msg: name + ": 支部「" + shibuRaw + "」→「" + region + "」に正規化" });
-    if (!shibuRaw) issues.push({ sheet: "S", row: idx + 1, level: "warn", msg: name + "(" + team + "): 支部が空欄(DB照合で補完・無ければ保留)" });
-    entries.push({ type: "singles", kubun: kb.label, gender: kb.gender, division: kb.division,
-      name, team, region, srcRow: idx + 1, sheet: "S" });
-  });
-
-  doubles.forEach((r, idx) => {
-    if (idx === 0 && isHeader(r)) return;
-    const name1 = cell(r, 3), name2 = cell(r, 4);
-    if (!name1 && !name2) { if ((r || []).some(v => String(v || "").trim())) skipped++; return; }
-    if (!name1 || !name2) {
-      issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: "ペア不成立(氏名が片方だけ): " + (name1 || name2) + " — この行は取り込みません" });
-      skipped++; return;
+  // ── シングルス ──
+  {
+    const hdr = _findHeaderRow(singles);
+    let cName, cTeam, cShibu, cKubun, cApply, dataStart;
+    if (hdr >= 0) {
+      const head = (singles[hdr] || []).map(v => String(v == null ? "" : v));
+      cName = _colIndex(head, ["氏名", "名前", "選手名"]);
+      if (cName < 0) cName = _nameColIndex(head, 0);   // 選手氏名/氏名(かな)等の変種
+      cTeam = _colIndex(head, ["チーム名", "所属", "チーム", "所属団体"]);
+      cShibu = _colIndex(head, ["支部", "支部名", "地区"]);
+      cKubun = _colIndex(head, ["区分", "種別", "部門", "カテゴリ", "種目"]);
+      cApply = _colIndex(head, ["申込チーム", "申込団体", "申込", "団体名"]);
+      dataStart = hdr + 1;
+    } else if (singles.length) {
+      cName = 3; cTeam = 4; cShibu = 5; cKubun = 2; cApply = 0; dataStart = 0;
+      issues.push({ sheet: "S", row: 1, level: "warn", msg: "シングルスのヘッダ行(氏名)が見つからないため既定の列順(氏名=4列目)で解釈します。列がずれていると全項目が誤って読まれます。必ずプレビューで氏名・所属を確認してください" });
+    } else { dataStart = 0; }
+    let lastKubun = "";
+    for (let idx = dataStart; idx < singles.length; idx++) {
+      const r = singles[idx];
+      const name = cell(r, cName);
+      if (!name) { if ((r || []).some(v => String(v || "").trim())) skipped++; continue; }
+      if (_isNonPlayerName(name)) { skipped++; issues.push({ sheet: "S", row: idx + 1, level: "info", msg: "「" + name + "」は合計/ラベル行と判断しスキップしました" }); continue; }
+      const team = cell(r, cTeam) || cell(r, cApply);
+      const kubunCell = cell(r, cKubun);
+      if (kubunCell) lastKubun = kubunCell;                          // 結合セル: 空欄は直前の区分を継承
+      else if (lastKubun && cKubun >= 0) issues.push({ sheet: "S", row: idx + 1, level: "info", msg: name + ": 区分が空欄のため直前の「" + lastKubun + "」を継承(別区分なら区分列を確認)" });
+      const kb = _parseKubun(kubunCell || lastKubun);
+      const shibuRaw = cell(r, cShibu);
+      const region = normalizeShibuName(shibuRaw);
+      if (shibuRaw && region !== shibuRaw) issues.push({ sheet: "S", row: idx + 1, level: "info", msg: name + ": 支部「" + shibuRaw + "」→「" + region + "」に正規化" });
+      if (!shibuRaw) issues.push({ sheet: "S", row: idx + 1, level: "warn", msg: name + "(" + team + "): 支部が空欄(DB照合で補完・無ければ保留)" });
+      entries.push({ type: "singles", kubun: kb.label, gender: kb.gender, division: kb.division, age_label: kb.age_label,
+        name, team, region, srcRow: idx + 1, sheet: "S" });
     }
-    const team1 = cell(r, 5) || cell(r, 0);
-    const team2 = cell(r, 6);
-    if (!team2) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name2 + ": パートナーのチーム名が空欄(プレビューで確認してください)" });
-    const kb = _parseKubun(cell(r, 2));
-    const shibuRaw = cell(r, 7);
-    // 連記(・区切り)は氏名1/氏名2に対応。1つだけなら両者共通(_shibuPair に統一・位置保持)。
-    const sp = _shibuPair(shibuRaw);
-    const region1 = sp.r1, region2 = sp.r2;
-    if (sp.multi > 2) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name1 + "組: 支部の連記が3つ以上「" + shibuRaw + "」(先頭2つを採用)" });
-    else if (sp.multi === 2) issues.push({ sheet: "D", row: idx + 1, level: "info", msg: name1 + "組: 支部連記「" + shibuRaw + "」→ " + name1 + "=「" + region1 + "」/ " + name2 + "=「" + region2 + "」" });
-    else if (shibuRaw && region1 !== shibuRaw) issues.push({ sheet: "D", row: idx + 1, level: "info", msg: name1 + "組: 支部「" + shibuRaw + "」→「" + region1 + "」に正規化" });
-    if (!shibuRaw) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name1 + "/" + name2 + "組: 支部が空欄(DB照合で補完・無ければ保留)" });
-    entries.push({ type: "doubles", kubun: kb.label, gender: kb.gender, division: kb.division,
-      name: name1, team: team1, region: region1,
-      partner_name: name2, partner_team: team2, partner_region: region2,
-      srcRow: idx + 1, sheet: "D" });
-  });
+  }
+
+  // ── ダブルス ──
+  {
+    const hdr = _findHeaderRow(doubles);
+    let cN1, cN2, cT1, cT2, cShibu, cKubun, cApply, dataStart;
+    if (hdr >= 0) {
+      const head = (doubles[hdr] || []).map(v => String(v == null ? "" : v));
+      cN1 = _colIndex(head, ["氏名1", "名前1", "選手名1"]);
+      if (cN1 < 0) cN1 = _nameColIndex(head, 1);
+      cN2 = _colIndex(head, ["氏名2", "名前2", "選手名2"]);
+      if (cN2 < 0) cN2 = _nameColIndex(head, 2);
+      cT1 = _colIndex(head, ["チーム名1", "所属1", "チーム1"]);
+      cT2 = _colIndex(head, ["チーム名2", "所属2", "チーム2"]);
+      cShibu = _colIndex(head, ["支部", "支部名", "地区"]);
+      cKubun = _colIndex(head, ["区分", "種別", "部門", "カテゴリ", "種目"]);
+      cApply = _colIndex(head, ["申込チーム", "申込団体", "申込", "団体名"]);
+      dataStart = hdr + 1;
+      // 氏名1/2 が無い(単一氏名列)ヘッダは固定列にフォールバックせず、下の既定へ委ねる。
+      if (cN1 < 0) { cN1 = 3; cN2 = 4; cT1 = 5; cT2 = 6; cShibu = 7; cKubun = 2; cApply = 0; }
+    } else if (doubles.length) {
+      cN1 = 3; cN2 = 4; cT1 = 5; cT2 = 6; cShibu = 7; cKubun = 2; cApply = 0; dataStart = 0;
+      issues.push({ sheet: "D", row: 1, level: "warn", msg: "ダブルスのヘッダ行(氏名1)が見つからないため既定の列順で解釈します。列がずれていると全項目が誤って読まれます。必ずプレビューで確認してください" });
+    } else { dataStart = 0; }
+    let lastKubun = "";
+    for (let idx = dataStart; idx < doubles.length; idx++) {
+      const r = doubles[idx];
+      const name1 = cell(r, cN1), name2 = cell(r, cN2);
+      if (!name1 && !name2) { if ((r || []).some(v => String(v || "").trim())) skipped++; continue; }
+      if (_isNonPlayerName(name1) && _isNonPlayerName(name2)) { skipped++; issues.push({ sheet: "D", row: idx + 1, level: "info", msg: "「" + (name1 || name2) + "」は合計/ラベル行と判断しスキップしました" }); continue; }
+      if (!name1 || !name2) {
+        issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: "ペア不成立(氏名が片方だけ): " + (name1 || name2) + " — この行は取り込みません" });
+        skipped++; continue;
+      }
+      const team1 = cell(r, cT1) || cell(r, cApply);
+      const team2 = cell(r, cT2);
+      if (!team2) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name2 + ": パートナーのチーム名が空欄(プレビューで確認してください)" });
+      const kubunCell = cell(r, cKubun);
+      if (kubunCell) lastKubun = kubunCell;
+      else if (lastKubun && cKubun >= 0) issues.push({ sheet: "D", row: idx + 1, level: "info", msg: name1 + "組: 区分が空欄のため直前の「" + lastKubun + "」を継承(別区分なら区分列を確認)" });
+      const kb = _parseKubun(kubunCell || lastKubun);
+      const shibuRaw = cell(r, cShibu);
+      const sp = _shibuPair(shibuRaw);
+      const region1 = sp.r1, region2 = sp.r2;
+      if (sp.multi > 2) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name1 + "組: 支部の連記が3つ以上「" + shibuRaw + "」(先頭2つを採用)" });
+      else if (sp.multi === 2) issues.push({ sheet: "D", row: idx + 1, level: "info", msg: name1 + "組: 支部連記「" + shibuRaw + "」→ " + name1 + "=「" + region1 + "」/ " + name2 + "=「" + region2 + "」" });
+      else if (shibuRaw && region1 !== shibuRaw) issues.push({ sheet: "D", row: idx + 1, level: "info", msg: name1 + "組: 支部「" + shibuRaw + "」→「" + region1 + "」に正規化" });
+      if (!shibuRaw) issues.push({ sheet: "D", row: idx + 1, level: "warn", msg: name1 + "/" + name2 + "組: 支部が空欄(DB照合で補完・無ければ保留)" });
+      entries.push({ type: "doubles", kubun: kb.label, gender: kb.gender, division: kb.division, age_label: kb.age_label,
+        name: name1, team: team1, region: region1,
+        partner_name: name2, partner_team: team2, partner_region: region2,
+        srcRow: idx + 1, sheet: "D" });
+    }
+  }
 
   return { entries, issues, stats: { singles: entries.filter(e => e.type === "singles").length,
     doubles: entries.filter(e => e.type === "doubles").length, skipped } };
@@ -4012,10 +4122,15 @@ function parseEntryListSheets(sheets) {
       if (isEventLike) issues.push({ sheet: name, row: 1, level: "warn", msg: "シート「" + name + "」はユーティリティ名(重複/差し込み/参加人数)を含むため取り込みません。種目シートなら名前を変えてください" });
       return;
     }
-    const head = (rows[0] || []).map(v => String(v == null ? "" : v).trim());
-    const col = (labels) => head.findIndex(x => labels.indexOf(x) >= 0);
-    const iName1 = col(["氏名1", "名前1"]);
-    const iName = col(["氏名", "名前", "選手名"]);
+    // タイトル行/空行が先頭にあってもヘッダ(氏名を含む行)を検出する。
+    const hdrIdx = _findHeaderRow(rows);
+    const headRowIdx = hdrIdx >= 0 ? hdrIdx : 0;
+    const head = (rows[headRowIdx] || []).map(v => String(v == null ? "" : v).trim());
+    const col = (labels) => _colIndex(head, labels);
+    let iName1 = col(["氏名1", "名前1", "選手名1"]);
+    if (iName1 < 0) iName1 = _nameColIndex(head, 1);
+    let iName = col(["氏名", "名前", "選手名"]);
+    if (iName < 0) iName = _nameColIndex(head, 0);
     const kubunLabel = name.replace(/(シングルス|ダブルス)\s*$/, "").trim() || name;
     const kb = _parseKubun(kubunLabel);
     const cellAt = (r, i) => (i >= 0 ? String((r && r[i]) == null ? "" : r[i]).trim() : "");
@@ -4032,10 +4147,11 @@ function parseEntryListSheets(sheets) {
       }
       usedSheets.push(name);
       if (iShibu < 0) issues.push({ sheet: name, row: 1, level: "info", msg: "シート「" + name + "」に支部列がありません(支部はDB照合で補完・無ければ保留)" });
-      rows.slice(1).forEach((r, k) => {
-        const idx = k + 2;
+      rows.slice(headRowIdx + 1).forEach((r, k) => {
+        const idx = k + headRowIdx + 2;
         const n1 = cellAt(r, iName1), n2 = cellAt(r, iName2);
         if (!n1 && !n2) { if ((r || []).some(v => String(v || "").trim())) skipped++; return; }
+        if (_isNonPlayerName(n1) && _isNonPlayerName(n2)) { skipped++; issues.push({ sheet: name, row: idx, level: "info", msg: "「" + (n1 || n2) + "」は合計/ラベル行と判断しスキップしました" }); return; }
         if (!n1 || !n2) {
           issues.push({ sheet: name, row: idx, level: "warn", msg: "ペア不成立(氏名が片方だけ): " + (n1 || n2) + " — この行は取り込みません" });
           skipped++; return;
@@ -4048,7 +4164,7 @@ function parseEntryListSheets(sheets) {
         else if (sp.multi === 2) issues.push({ sheet: name, row: idx, level: "info", msg: n1 + "組: 支部連記「" + raw + "」→ " + n1 + "=「" + sp.r1 + "」/ " + n2 + "=「" + sp.r2 + "」" });
         else if (raw && sp.r1 !== raw) issues.push({ sheet: name, row: idx, level: "info", msg: n1 + "組: 支部「" + raw + "」→「" + sp.r1 + "」に正規化" });
         if (iShibu >= 0 && !raw) issues.push({ sheet: name, row: idx, level: "warn", msg: n1 + "/" + n2 + "組: 支部が空欄(DB照合で補完・無ければ保留)" });
-        entries.push({ type: "doubles", event: name, kubun: kb.label, gender: kb.gender, division: kb.division,
+        entries.push({ type: "doubles", event: name, kubun: kb.label, gender: kb.gender, division: kb.division, age_label: kb.age_label,
           name: n1, team: t1, region: sp.r1, partner_name: n2, partner_team: t2, partner_region: sp.r2,
           srcRow: idx, sheet: name });
       });
@@ -4068,16 +4184,17 @@ function parseEntryListSheets(sheets) {
       }
       usedSheets.push(name);
       if (iShibu < 0) issues.push({ sheet: name, row: 1, level: "info", msg: "シート「" + name + "」に支部列がありません(支部はDB照合で補完・無ければ保留)" });
-      rows.slice(1).forEach((r, k) => {
-        const idx = k + 2;
+      rows.slice(headRowIdx + 1).forEach((r, k) => {
+        const idx = k + headRowIdx + 2;
         const nm = cellAt(r, iName);
         if (!nm) { if ((r || []).some(v => String(v || "").trim())) skipped++; return; }
+        if (_isNonPlayerName(nm)) { skipped++; issues.push({ sheet: name, row: idx, level: "info", msg: "「" + nm + "」は合計/ラベル行と判断しスキップしました" }); return; }
         const tm = cellAt(r, iTeam);
         const raw = cellAt(r, iShibu);
         const region = normalizeShibuName(raw);
         if (raw && region !== raw) issues.push({ sheet: name, row: idx, level: "info", msg: nm + ": 支部「" + raw + "」→「" + region + "」に正規化" });
         if (iShibu >= 0 && !raw) issues.push({ sheet: name, row: idx, level: "warn", msg: nm + "(" + tm + "): 支部が空欄(DB照合で補完・無ければ保留)" });
-        entries.push({ type: "singles", event: name, kubun: kb.label, gender: kb.gender, division: kb.division,
+        entries.push({ type: "singles", event: name, kubun: kb.label, gender: kb.gender, division: kb.division, age_label: kb.age_label,
           name: nm, team: tm, region, srcRow: idx, sheet: name });
       });
     } else if (isEventLike) {
