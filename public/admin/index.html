@@ -1167,6 +1167,21 @@
    .op-view{ margin-left:0; width:100%; justify-content:flex-end; }
  }
 
+ /* ③ モバイルの文字量削減(案A承認方向のレスポンシブ調整): 機能は消さず、二次情報(ふりがな・所属・チップ)を
+    小さく淡くして主役(氏名・呼ぶボタン)に余白を回す。「文字が詰まって見えづらい」を緩和する。 */
+ @media (max-width: 480px){
+   .callable-row{ gap:7px; padding:9px 10px; }
+   .vs-block{ font-size:13px; gap:5px; }
+   .pname{ font-weight:700; }
+   .pfuri{ font-size:10px; opacity:.6; }              /* ふりがなは残すが淡く小さく(密度を下げる) */
+   .pteam{ font-size:10.5px; opacity:.82; }
+   .round-badge{ font-size:10px; padding:2px 7px; }
+   .next-tag{ font-size:8px; padding:1px 5px; }
+   .op-progress-top, .op-stat{ padding:9px 10px 8px; }
+   .op-tools-body{ min-width:min(244px, calc(100vw - 40px)); }   /* ポップオーバーが画面幅を超えない */
+   .op-phase-label{ font-size:9px; }
+ }
+
  /* 危険操作(取消/削除/不可逆)= 丹頂レッド */
  .btn-danger{ background:transparent; color:var(--tancho); border:1px solid var(--tancho); }
  .btn-danger:hover{ background:var(--tancho); color:#fff; }
