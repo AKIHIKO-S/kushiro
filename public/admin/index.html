@@ -1170,6 +1170,7 @@
  /* ③ モバイルの文字量削減(案A承認方向のレスポンシブ調整): 機能は消さず、二次情報(ふりがな・所属・チップ)を
     小さく淡くして主役(氏名・呼ぶボタン)に余白を回す。「文字が詰まって見えづらい」を緩和する。 */
  @media (max-width: 480px){
+   /* 進行管理: 呼出行は氏名+呼ぶボタンを主役に、二次情報は淡く小さく */
    .callable-row{ gap:7px; padding:9px 10px; }
    .vs-block{ font-size:13px; gap:5px; }
    .pname{ font-weight:700; }
@@ -1177,9 +1178,24 @@
    .pteam{ font-size:10.5px; opacity:.82; }
    .round-badge{ font-size:10px; padding:2px 7px; }
    .next-tag{ font-size:8px; padding:1px 5px; }
+   .lock-text{ font-size:11px; }
    .op-progress-top, .op-stat{ padding:9px 10px 8px; }
    .op-tools-body{ min-width:min(244px, calc(100vw - 40px)); }   /* ポップオーバーが画面幅を超えない */
    .op-phase-label{ font-size:9px; }
+
+   /* 大会一覧カード: メタチップを圧縮し、当日進行の二次情報(試合数)は一覧では畳む(人数=名は残す) */
+   .t-card-meta{ gap:4px; margin-top:8px; }
+   .t-chip{ font-size:11px; padding:2px 7px; gap:3px; }
+   .t-chip-mc{ display:none; }
+   .t-card-name{ font-size:15px; }
+   .t-status{ padding:2px 9px; font-size:10px; }
+   .t-card-actions button{ padding:6px 10px; }
+
+   /* 選手DBカード: 一覧では氏名を優先。ふりがなは畳み(タップで編集画面で確認)、戦績バッジ/余白を圧縮 */
+   .pdb-card{ padding:11px 12px; gap:9px; }
+   .pdb-furi{ display:none; }
+   .pdb-stats{ gap:4px; margin-top:4px; }
+   .pdb-stat{ padding:1px 6px; font-size:10px; }
  }
 
  /* 危険操作(取消/削除/不可逆)= 丹頂レッド */
@@ -2425,7 +2441,7 @@ const A = {
    h("span", { className: "t-chip" }, t.venue || "会場未定"),
  );
  if (pc > 0) meta.push(h("span", { className: "t-chip" }, pc + "名"));
- if (mc > 0) meta.push(h("span", { className: "t-chip" }, mc + "試合"));
+ if (mc > 0) meta.push(h("span", { className: "t-chip t-chip-mc" }, mc + "試合"));
  if (t.entries_open) meta.push(h("span", { className: "t-chip hot" }, "申込受付中"));
 
  el.appendChild(h("div", { className: "t-card st-" + st,
@@ -6432,9 +6448,9 @@ const A = {
  const medalCount = p.total_achievements || (p.achievements ? p.achievements.length : 0) || 0;
  if (golds > 0) stats.push(h("span", { className: "pdb-stat medal" }, "優勝" + golds));
  else if (medalCount > 0) stats.push(h("span", { className: "pdb-stat medal" }, "入賞" + medalCount));
- const _bAccent = TT.branchColor(p.branch || p.team);   // 支部色を左罫線に (#支部色分け)
+ const _bAccent = TT.branchColor(p.branch || p.team);   // 支部色は上端帯に(左縁アクセント線=AI-tell最頻禁止則を回避・大会カードと統一)
  return h("div", { className: "pdb-card " + gClass,
- style: { borderLeft: "5px solid " + _bAccent.fg },
+ style: { borderTop: "3px solid " + _bAccent.fg },
  onClick: () => A.editPlayer(p) },
  h("div", { className: "pdb-avatar" }, A._initials(p.name)),
  h("div", { className: "pdb-info" },
