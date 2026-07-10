@@ -1211,6 +1211,43 @@ body{ background:#fbfaf7; }
  .h2h-table th{ background:transparent; border-bottom:1px solid var(--v3-rule); }
  .event-stat-card{ background:transparent; border:1px solid var(--v3-hair); border-radius:0; }
  .event-stat-title{ color:var(--txt); }
+
+ /* --- P3a 大会一覧(.tcard): 浮遊カード→罫線区切りの紙面行。メタチップは素の文字へ --- */
+ .tcard{ background:transparent; border:none; border-bottom:1px solid var(--v3-hair);
+   border-radius:0; margin-bottom:0; overflow:visible; box-shadow:none; }
+ .tcard:hover{ border-color:var(--v3-hair); transform:none; box-shadow:none; background:var(--v3-soft); }
+ .tcard .tcard-body{ padding:13px 4px 12px; }
+ .tcard .tcard-name{ font-size:15.5px; }
+ .tcard .tcard-meta{ gap:4px 12px; margin-top:6px; }
+ .tcard .meta-chip{ background:transparent; border:none; padding:0; border-radius:0;
+   font-size:11px; color:var(--sub); }
+ .tcard .tcard-arrow{ color:var(--sub-l); font-size:18px; padding:0 6px; }
+ .wr-bar{ height:4px; background:var(--line2,#f0ebe1); }
+ .wr-bar > span{ background:var(--accent); }                    /* 進捗=進行中の機能色(丹頂) */
+
+ /* --- P3b 大会詳細ヘッダ: 赤帯・赤縦棒→墨の太罫マストヘッド --- */
+ #tournamentDetail > .card.fi{ border-top:2.5px solid var(--v3-rule); }
+ #tournamentDetail > .card.fi .flex-1 > div:first-child{ padding-left:0; }
+ #tournamentDetail > .card.fi .flex-1 > div:first-child::before{ display:none; }
+ #tournamentDetail .stat-box{ background:transparent; border:1px solid var(--v3-hair); border-radius:0; }
+
+ /* --- P3c 両山トーナメント表: 影を捨てヘアライン箱へ。勝者は墨、赤はLIVEのみ --- */
+ .vbt-m{ border:1px solid var(--v3-hair); border-radius:0; box-shadow:none; }
+ .vbt-m .vp + .vp{ border-top:1px solid var(--v3-hair); }
+ .vbt-seed{ color:var(--sub); background:var(--v3-soft); border-radius:2px; }
+ .vbt-p-w{ background:transparent; }
+ .vbt-p-w .vbt-sc{ color:var(--txt); }
+ .vbt-p-l .vbt-nm{ color:var(--sub); }
+ .vbt-m.live{ border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-bg); }
+ .vbt-champ{ background:#fff; border:1px solid var(--v3-hair); border-top:2.5px solid var(--v3-rule);
+   border-radius:0; box-shadow:none; }
+ .vbt-champ .vt{ color:var(--txt); letter-spacing:.1em; }
+ .vbt-tabs button{ border-radius:3px; box-shadow:none; }
+
+ /* --- P3d 申込カード: ヘアライン箱・チップは紙の付箋(角丸3px) --- */
+ .entry-card{ background:transparent; border:1px solid var(--v3-hair); border-radius:0; }
+ .entry-card-head{ border-bottom:1px solid var(--v3-hair); }
+ .entry-event-chip{ background:#fff; border:1px solid var(--v3-hair); border-radius:3px; }
 </style>
 </head>
 <body>
