@@ -1179,6 +1179,38 @@ body{ background:#fbfaf7; }
    .st-duo .st-card{ border-right:none; padding-left:0; }
    .st-duo .st-card:last-child{ border-top:1px solid var(--v3-hair); padding-left:0; }
  }
+
+ /* --- P2a 選手名鑑(#tab-search): カード→段組の名鑑行。持ち上げ影を廃し罫線で区切る --- */
+ #tab-search .vp-card{ background:transparent; border:none; border-bottom:1px solid var(--v3-hair);
+   border-radius:0; padding:13px 4px 12px; }
+ #tab-search .vp-card:hover{ transform:none; box-shadow:none; background:var(--v3-soft);
+   border-color:var(--v3-hair); }
+ #tab-search .pdb-acc.open .pdb-acc-body{ gap:0 28px; padding:2px 2px 6px; }
+ #tab-search .vp-mono{ border-radius:2px; background:var(--v3-soft); color:var(--tc-ink2); }
+ #tab-search .vp-rule{ border-top:1px solid var(--v3-hair); }
+ #tab-search .vp-stat.rate .v{ color:var(--tc-green); }        /* スレートブルー→現行の勝ち緑 */
+ #tab-search .vp-bar > i{ background:var(--tc-green); }
+ #tab-search .vp-card:focus-visible{ outline-color:var(--accent); }
+
+ /* --- P2b 選手詳細: 戦績を台帳行へ(左縁線・全面ティント・白抜きバッジを撤去) --- */
+ .pm-row{ grid-template-columns:36px 1fr auto; border:none; border-bottom:1px solid var(--v3-hair);
+   border-radius:0; background:transparent; margin-bottom:0; padding:10px 2px; }
+ .pm-row.win, .pm-row.loss{ border-left:none; background:transparent; box-shadow:none; }
+ .pm-result{ border-radius:0; padding:0; font-size:14px; }
+ .pm-row.win .pm-result{ background:transparent; color:var(--tc-green,#1a7a45); }
+ .pm-row.loss .pm-result{ background:transparent; color:var(--sub); }
+ .pm-row.win .pm-score{ color:var(--txt); }
+ .pm-row.loss .pm-score{ color:var(--sub); font-weight:600; }
+ .h2h-c-row{ border:none; border-bottom:1px solid var(--v3-hair); border-radius:0;
+   background:transparent; padding:9px 2px; }
+ .h2h-clean{ gap:0; }
+ .h2h-c-row:hover{ border-color:var(--v3-hair); background:var(--v3-soft); }
+ .h2h-c-record .l{ color:var(--sub); }
+ .h2h-c-verdict{ border-radius:3px; }
+ .h2h-c-verdict.behind{ background:var(--v3-soft); color:var(--sub); }
+ .h2h-table th{ background:transparent; border-bottom:1px solid var(--v3-rule); }
+ .event-stat-card{ background:transparent; border:1px solid var(--v3-hair); border-radius:0; }
+ .event-stat-title{ color:var(--txt); }
 </style>
 </head>
 <body>
