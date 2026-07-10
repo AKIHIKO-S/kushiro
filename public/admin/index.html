@@ -1141,6 +1141,10 @@
  details.op-tools:not([open]) > .op-tools-body{ display:none; }
 
  /* 案A: タブオーバーフロー「設定・連携▾」。summaryは.tabを付けない(委譲配線がundefinedを呼ぶため)=独自クラス */
+ /* 共有 .tabs の overflow-x:auto(タブ8個時代の横スクロール用)はスクロールコンテナを作り、
+    絶対配置の設定・連携ポップオーバーをバーの高さでクリップして不可視にする(=ボタンが押せない)。
+    案Aでタブは3+ドロップダウンに集約済みで横スクロール不要のため、adminのみ解除する。 */
+ .tabs{ overflow-x:visible; overflow-y:visible; }
  .nav-more{ margin-left:0; align-self:center; }
  .tab-more{ flex:0 0 auto; padding:13px 16px; background:transparent; border:none; border-bottom:2px solid transparent;
    color:var(--sub); font:inherit; font-weight:600; font-size:14px; white-space:nowrap; cursor:pointer; list-style:none; }
