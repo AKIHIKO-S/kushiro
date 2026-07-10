@@ -1248,6 +1248,46 @@ body{ background:#fbfaf7; }
  .entry-card{ background:transparent; border:1px solid var(--v3-hair); border-radius:0; }
  .entry-card-head{ border-bottom:1px solid var(--v3-hair); }
  .entry-event-chip{ background:#fff; border:1px solid var(--v3-hair); border-radius:3px; }
+
+ /* --- P4a 進行タブの状態タブ: 白カード+赤リング→下線タブ(紙面の題字下) --- */
+ #tab-live .live-stats.tabs{ gap:0; border-bottom:1px solid var(--v3-hair); }
+ #tab-live .live-stats.tabs .live-stat{ background:transparent; border:none; border-radius:0;
+   border-bottom:2.5px solid transparent; min-height:44px; }
+ #tab-live .live-stats.tabs .live-stat:hover{ background:var(--v3-soft); border-color:transparent;
+   border-bottom-color:transparent; }
+ #tab-live .live-stats.tabs .live-stat.active{ box-shadow:none; background:transparent;
+   border-bottom-color:var(--v3-rule); }
+
+ /* --- P4b 進行中試合・呼出可能: insetの赤左線(禁止則)を根絶し罫線ブロックへ。赤はLIVE台番号のみ --- */
+ .live-match-card{ background:transparent; border:none; border-bottom:1px solid var(--v3-hair);
+   box-shadow:none; border-radius:0; padding:11px 2px; margin-bottom:0; }
+ .live-tno{ border-radius:3px; font-size:15px; }
+ .next-callable{ background:transparent; border:1px dashed var(--border-strong); border-radius:0; }
+
+ /* --- P4c コート台割: 冷灰の枠→温白の枠表 --- */
+ .live-court-wrap{ background:transparent; border:1px solid var(--v3-hair); border-radius:0; }
+ .live-court-cell{ border:1px solid var(--v3-hair); border-radius:0; }
+ .live-court-cell.empty{ background:var(--v3-soft); color:var(--sub); }
+ .live-court-no{ border-radius:0; }
+ .live-court-hq{ background:var(--v3-rule); border-radius:0; }
+
+ /* --- P4d 一覧行(待機/終了/全試合): 罫線区切り。結果スコアは墨(赤はLIVE限定) --- */
+ .tab-row{ background:transparent; border:none; border-bottom:1px solid var(--v3-hair);
+   border-radius:0; padding:9px 2px; margin-bottom:0; }
+ .tab-row-body.result .tab-score{ color:var(--txt); }
+ .tab-chip{ border-radius:3px; }
+ .tab-bnum{ border-radius:2px; }
+
+ /* --- P4e まもなく呼ばれる予定: 赤グラデ強調→墨の順位セル+琥珀の「まもなく」(呼出間近=琥珀系統) --- */
+ .un-head{ border-top:1.5px solid var(--v3-rule); padding-top:8px; }
+ .un-card{ background:transparent; border:none; border-bottom:1px solid var(--v3-hair);
+   border-radius:0; padding:10px 2px; margin-bottom:0; }
+ .un-card.is-first{ background:transparent; box-shadow:none; border-color:var(--v3-hair); }
+ .un-rank{ border-radius:2px; background:var(--v3-soft); color:var(--txt); }
+ .un-card.is-first .un-rank{ background:var(--v3-rule); color:#fff; }
+ .un-ev .un-soon{ background:#f8f0da; color:#95660f; border-radius:3px; }
+ .un-ev .un-wait-reason{ border-radius:3px; }
+ .un-p .un-num{ border-radius:2px; }
 </style>
 </head>
 <body>
