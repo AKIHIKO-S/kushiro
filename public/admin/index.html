@@ -11405,34 +11405,46 @@ const O = {
    if (O.reload) O.reload();
  },
 
- // ── 名簿からトーナメント表を一括自動作成(まだ表の無い種目だけ・作成済みは保護) ──
+ // ── 名簿からトーナメント表を一括自動作成(まだ表の無い種目だけ・既存の表は保護) ──
  // 「名簿取り込み → トーナメント表の自動作成」を1クリックにする。既存の POST /bracket(出場者名簿から
- // 標準シード配置で生成)を種目ごとに回すだけ=新規ロジックなし。結果入力済みの表は壊さない。
+ // 標準シード配置で生成)を種目ごとに回すだけ=新規ロジックなし。
+ // ★作成済み判定は必ずこの大会の最新 /operations(event_stats=全matches由来。抽選ドロー/取込/手動編集済みで
+ //   結果未入力の表も含む)から都度構築する。O.state 依存だと大会管理タブ経路で null/別大会stale になり、
+ //   既存の抽選済み表を標準配置で無言に上書きする事故が起きる(敵対的検証で検出)。取得失敗時は中断する。
  async autoCreateAllBrackets() {
    if (!O.tournamentId) return toast("先に大会を選んでください", "err");
-   let ents;
-   try { ents = await api.get(`/api/tournaments/${O.tournamentId}/entrants`) || []; }
-   catch (e) { return toast("通信できません(オフライン)。接続復帰後にお試しください", "err"); }
+   let ents, fresh;
+   try {
+     [ents, fresh] = await Promise.all([
+       api.get(`/api/tournaments/${O.tournamentId}/entrants`),
+       api.get(`/api/tournaments/${O.tournamentId}/operations`),
+     ]);
+   } catch (e) { return toast("状態の取得に失敗しました。通信を確認してもう一度お試しください", "err"); }
+   ents = ents || [];
    if (!ents.length) return toast("名簿がありません。先に「名簿を取り込む」で取り込んでください。", "err");
+   const existing = new Set(Object.keys((fresh && fresh.event_stats) || {}));   // この大会で既に表がある種目(最新)
    const byEv = {};
    ents.forEach(e => { const ev = String(e.event || "").trim(); if (ev) byEv[ev] = (byEv[ev] || 0) + 1; });
-   const existing = new Set(Object.keys((O.state && O.state.event_stats) || {}));   // 既に表がある種目
-   const todo = Object.keys(byEv).filter(ev => byEv[ev] >= 2 && !existing.has(ev));  // 2名以上かつ未作成
+   const eligible = Object.keys(byEv).filter(ev => byEv[ev] >= 2);
+   const todo = eligible.filter(ev => !existing.has(ev));           // 2名以上かつ未作成のみ
+   const skip = eligible.filter(ev => existing.has(ev));            // 既に表あり=触らない(保護)
    if (!todo.length) {
-     const has2 = Object.keys(byEv).some(ev => byEv[ev] >= 2);
-     return toast(has2 ? "未作成の種目はありません(全種目 作成済)。作り直しは各種目で。" : "2名以上の種目がありません。名簿を確認してください。", has2 ? "ok" : "err");
+     return toast(skip.length
+       ? `未作成の種目はありません(${skip.length}種目は作成済みのため保護)。作り直しは各種目で。`
+       : "2名以上の種目がありません。名簿を確認してください。", skip.length ? "ok" : "err");
    }
-   if (!confirm(`名簿からトーナメント表を一括作成します。\n対象 ${todo.length}種目: ${todo.join("・")}\n(標準シード配置。ランダムにしたい種目は後で「抽選ドロー」で引き直せます)\nよろしいですか？`)) return;
+   const skipMsg = skip.length ? `\n\n※作成済みの ${skip.length}種目(${skip.join("・")}) は上書きしません(保護)。作り直しは各種目で。` : "";
+   if (!confirm(`名簿からトーナメント表を一括作成します(標準シード配置)。\n対象 ${todo.length}種目: ${todo.join("・")}${skipMsg}\n\nよろしいですか？`)) return;
    let ok = 0; const fail = [];
    for (const ev of todo) {
      try {
-       const r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event: ev, regenerate: true });
+       const r = await api.post(`/api/tournaments/${O.tournamentId}/bracket`, { event: ev });   // 未作成のみ=regenerate不要
        if (r && !r.error) { ok++; if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[ev] = r.bracket_rev; } }
-       else fail.push(ev);
+       else fail.push(ev + (r && r.error ? `(${r.error})` : ""));
      } catch (e) { fail.push(ev); }
    }
-   toast(`${ok}種目のトーナメント表を作成しました${fail.length ? ` / 未作成${fail.length}種目(${fail.join("・")}) — オープン種目はスーパーシード設定後に個別作成` : ""}`, ok ? "ok" : "err");
-   if (ok) { O.selectedEvent = todo.find(ev => !fail.includes(ev)) || O.selectedEvent; }
+   toast(`${ok}種目のトーナメント表を作成しました${fail.length ? ` / 未作成${fail.length}種目: ${fail.join(" / ")}` : ""}`, ok ? "ok" : "err");
+   if (ok) { O.selectedEvent = todo.find(ev => !fail.some(f => f.startsWith(ev))) || O.selectedEvent; }
    try { if (O.reload) await O.reload(); } catch (e) { /* 大会管理タブ等 O未マウント時も落とさない(APIは成功済み) */ }
  },
 
