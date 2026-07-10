@@ -1133,6 +1133,52 @@ body{ background:#fbfaf7; }
   /* トーストが下部固定ナビに隠れないよう、モバイルはバーの上に浮かせる */
   .toast{ bottom:calc(56px + env(safe-area-inset-bottom) + 14px); }
 }
+
+/* ═══════════ V3カード刷新(2026-07-10・承認: 案2新聞スポーツ面×白磁トンマナ) ═══════════
+   構造=罫線術(太罫2.5px×細罫1px)・カードレス・級数ジャンプ。
+   色=白磁の温白を維持し、丹頂 #c01526 は機能色(LIVE/進行中/取消)限定。勝ち=緑 #1a7a45。
+   見本の正典: scratchpad/card_mocks/fold.html(コミット対象外) */
+ body{ --v3-hair:#d9d2c4; --v3-rule:#211d18; --v3-soft:rgba(72,58,46,.07); }
+
+ /* --- P1a 見出し(新聞マストヘッド): 太罫トップ+大見出し。赤縦棒・赤アウトラインpillを撤去 --- */
+ .rk-title-bar{ border-top:2.5px solid var(--v3-rule); padding-top:9px; margin:8px 0 12px; }
+ .rk-title-bar::before{ display:none; }
+ .rk-title-bar h2{ font-size:17px; font-weight:800; letter-spacing:.04em; }
+ .rk-basis{ color:var(--sub); border:none; border-radius:3px; background:var(--v3-soft); font-weight:700; }
+
+ /* --- P1b ランキング(カードレス表組) --- */
+ .rk-table{ background:transparent; border:none; border-radius:0; box-shadow:none; overflow:visible; }
+ .rk-head{ background:transparent; border-bottom:1px solid var(--v3-rule); font-size:10px;
+   letter-spacing:.09em; padding:8px 2px 6px; }
+ .rk-row{ border-bottom:1px solid var(--v3-hair); padding:10px 2px; }
+ .rk-row:hover,.rk-row:focus-visible{ background:var(--v3-soft); }
+ .rk-row.top .rk-rank{ color:var(--txt); }                      /* 上位の赤→墨(丹頂は機能色限定) */
+ .rk-table > .rk-row:first-child .rk-rank,
+ .rk-head + .rk-row .rk-rank{ background:var(--v3-rule); color:#fff; border-radius:2px;
+   padding:2px 0; font-size:14px; }                             /* 首位=墨の白抜きセル */
+
+ /* --- P1c 統計(数字の大組み・カードレス) --- */
+ .st-tiles{ gap:0; border-bottom:1px solid var(--v3-hair); margin-bottom:14px; }
+ .st-tile{ background:transparent; border:none; border-radius:0; box-shadow:none;
+   border-right:1px solid var(--v3-hair); padding:12px 10px 12px 0; }
+ .st-tile + .st-tile{ padding-left:14px; }
+ .st-tile:last-child{ border-right:none; }
+ .st-tile .v{ font-size:29px; }
+ .st-tile.accent .v{ color:var(--txt); }                        /* 統計数値の赤を撤去(機能色限定) */
+ .st-duo{ gap:0; border-bottom:1px solid var(--v3-hair); margin-bottom:16px; }
+ .st-card{ background:transparent; border:none; border-radius:0; box-shadow:none;
+   border-right:1px solid var(--v3-hair); padding:12px 14px 12px 0; }
+ .st-card:last-child{ border-right:none; padding-left:14px; }
+ .st-card .big{ color:var(--txt); font-size:26px; }
+ .st-sub-h{ border-top:1.5px solid var(--v3-rule); padding-top:8px; margin:18px 0 10px; }
+ .st-sub-h span{ font-size:15px; font-weight:800; }
+ @media(max-width:560px){
+   .st-tile:nth-child(2n+1){ padding-left:0; }
+   .st-tile:nth-child(2n){ border-right:none; padding-left:14px; }
+   .st-tile:nth-child(-n+2){ border-bottom:1px solid var(--v3-hair); }
+   .st-duo .st-card{ border-right:none; padding-left:0; }
+   .st-duo .st-card:last-child{ border-top:1px solid var(--v3-hair); padding-left:0; }
+ }
 </style>
 </head>
 <body>
