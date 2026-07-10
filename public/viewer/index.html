@@ -1288,6 +1288,10 @@ body{ background:#fbfaf7; }
  .un-ev .un-soon{ background:#f8f0da; color:#95660f; border-radius:3px; }
  .un-ev .un-wait-reason{ border-radius:3px; }
  .un-p .un-num{ border-radius:2px; }
+ /* 統計「勝利数 上位」: desktopはspan3(インラインstyle)だがモバイル3列gridでは行落ちするため打ち消す */
+ @media(max-width:560px){
+   .rk-row .rk-wins{ grid-column:auto !important; }
+ }
 </style>
 </head>
 <body>
