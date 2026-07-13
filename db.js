@@ -7779,7 +7779,7 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
           team_members: members,
           note: [`[団体] メンバー: ${members.join("、")}`, noteBase].filter(Boolean).join(" | "),
         };
-        emailItem = { type: "team", event: evName, team_name: tn, members, fee };
+        emailItem = { type: "team", event: evName, team_name: tn, members, fee, division_label: divLabel };
         // 団体名が空のときは name=members[0] になり、別チームでも先頭選手が同名だと衝突するので
         // 重複判定をしない(正当な別チームを誤って捨てない / Phase4 review #11)。
         canDedup = !!tn;
@@ -7799,7 +7799,7 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
           partner_gender: ent.partner_gender || "",
           note: noteBase,
         };
-        emailItem = { type: "doubles", event: evName, name1: n1, name2: n2, team1, team2, fee };
+        emailItem = { type: "doubles", event: evName, name1: n1, name2: n2, team1, team2, fee, division_label: divLabel };
       } else {
         // singles / custom
         const name = String(ent.name || "").trim();
@@ -7807,7 +7807,7 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
         if (!name) continue;
         // フォームが集めた選手のふりがな(field_config で furigana が可視のとき)。空なら苗字辞書補完。
         data = { ...common, name, team, furigana: ent.furigana || "", note: noteBase };
-        emailItem = { type: "singles", event: evName, name, team, fee };
+        emailItem = { type: "singles", event: evName, name, team, fee, division_label: divLabel };
       }
 
       // 重複チェック(createEntrant が実際に保存する正規化名で判定)。

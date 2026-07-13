@@ -1627,7 +1627,7 @@ const A = {
      h("div", { className: "text-sm mb-3",
        style: { padding: "10px 14px", background: "#fef3c7",
          borderLeft: "3px solid #d97706", borderRadius: "0 4px 4px 0" } },
-       "Jimdo / STUDIO への埋込が動作するには、本番ドメイン (HTTPS) が必須です。" +
+       "WordPress / Jimdo への埋込が動作するには、本番ドメイン (HTTPS) が必須です。" +
        "本サーバーをデプロイしている公開 URL を入力してください。"),
      h("div", { className: "field" },
        h("label", { className: "field-label" }, "本番公開URL"),
@@ -1657,7 +1657,7 @@ const A = {
        document.querySelector(".modal-bg")?.remove();
      } }, "クリア"),
    );
-   openModal("本番公開URL 設定 (Jimdo/STUDIO 埋込用)", body, foot);
+   openModal("本番公開URL 設定 (WordPress/Jimdo 埋込用)", body, foot);
  },
 
  async init() {
@@ -2378,7 +2378,7 @@ const A = {
  ok: isHttps,
  label: "公開URL が HTTPS",
  detail: isHttps ? pubOrig
-   : "「本番URL設定」から https:// で始まる公開ドメインを設定してください (Jimdo埋込に必須)",
+   : "「本番URL設定」から https:// で始まる公開ドメインを設定してください (WordPress/Jimdo埋込に必須)",
  });
 
  // 3. 印鑑画像 (確認は難しいので存在チェックは別途)
@@ -2859,7 +2859,7 @@ const A = {
 
  const s1 = t.entries_open ? chip("● 受付中", "ok") : chip("受付停止 / 未設定", "warn");
  mk(1, "申込フォームを作る・公開",
-   "Jimdo/STUDIOに貼る埋込コードと公開URLを発行。受付ON/OFFと締切を設定。", s1, [
+   "WordPress/Jimdoに貼る埋込コードと公開URLを発行。受付ON/OFFと締切を設定。", s1, [
    h("button", { className: "btn btn-sm", onClick: () => A.openEntryFormGenerator(t) }, "フォーム設定 / 埋込"),
    h("button", { className: "btn btn-sm btn-ghost", onClick: () => window.open(`/entry/${t.id}`, "_blank") }, "プレビュー"),
  ]);
@@ -3534,8 +3534,9 @@ const A = {
  };
  renderFieldCfg();
 
- // 埋込先プラットフォーム選択 (Studio / Jimdo)
- let platform = localStorage.getItem("tt_embed_platform_" + t.id) || "jimdo";
+ // 埋込先プラットフォーム選択 (WordPress / Jimdo)。STUDIO 埋込は廃止(旧設定は WordPress に吸収)。
+ let platform = localStorage.getItem("tt_embed_platform_" + t.id) || "wordpress";
+ if (platform === "studio") platform = "wordpress";
 
  // 埋込コードプレビューエリア
  const codeArea = h("textarea", {
@@ -3588,7 +3589,22 @@ const A = {
    `if(d.scrollIntoView){try{f.scrollIntoView({behavior:"smooth",block:"start"});}catch(_){}return;}\n` +
    `if(typeof d.height==="number"&&d.height>200){var nh=d.height+"px";if(f.style.height!==nh)f.style.height=nh;}});})();\n` +
    `<\/script>`;
- if (platform === "jimdo") {
+ if (platform === "wordpress") {
+   // WordPress「カスタムHTML」ブロック用。iframe + 高さ自動調整スクリプト(プラグイン不要・
+   // レスポンシブ)。カスタムHTMLブロックは iframe と inline script を通すのでそのまま動く。
+   code =
+     `<!-- ${t.name} 申込フォーム / WordPress「カスタムHTML」ブロックに貼付 -->\n` +
+     `<div style="width:100%;max-width:840px;margin:24px auto;padding:0">\n` +
+     `  <iframe src="${formUrl}"\n` +
+     `          data-ktta-entry="${t.id}"\n` +
+     `          width="100%" height="1600"\n` +
+     `          frameborder="0" scrolling="no"\n` +
+     `          style="border:0;display:block;width:100%;max-width:100%;background:#fff;border-radius:10px"\n` +
+     `          title="${t.name} 申込フォーム"\n` +
+     `          loading="lazy"\n` +
+     `          allow="clipboard-write"></iframe>\n` +
+     `</div>` + resizeScript;
+ } else if (platform === "jimdo") {
    // Jimdo: HTTPS iframe (Jimdo の HTML埋込ウィジェットで動作)
    code =
      `<!-- ${t.name} 申込フォーム (Jimdo HTML埋込ウィジェット用) -->\n` +
@@ -3602,19 +3618,6 @@ const A = {
      `          loading="lazy"\n` +
      `          allow="clipboard-write"></iframe>\n` +
      `</div>` + resizeScript;
- } else if (platform === "studio") {
-   // STUDIO: HTTPS iframe
-   code =
-     `<!-- ${t.name} 申込フォーム (STUDIO 埋め込みHTML用) -->\n` +
-     `<div style="width:100%;max-width:840px;margin:0 auto">\n` +
-     `  <iframe src="${formUrl}"\n` +
-     `          width="100%" height="1600"\n` +
-     `          style="border:0;display:block;width:100%;background:#fff"\n` +
-     `          title="${t.name} 申込フォーム"\n` +
-     `          loading="lazy"\n` +
-     `          referrerpolicy="no-referrer-when-downgrade"\n` +
-     `          allow="clipboard-write"></iframe>\n` +
-     `</div>`;
  }
  codeArea.value = code;
 
@@ -3702,18 +3705,18 @@ const A = {
  h("div", { className: "text-sm mb-3",
  style: { padding: "10px 14px", background: "#f0fdf4",
  borderLeft: "3px solid #059669", borderRadius: "0 4px 4px 0" } },
- h("strong", {}, "Jimdo モード: "),
- "HTTPS iframe で埋込み (Jimdo HTML 埋込ウィジェット用)。CSS/JS が安全に分離されます。",
+ h("strong", {}, "WordPress モード(推奨): "),
+ "「カスタムHTML」ブロックに貼るだけ。プラグイン不要で、iframe の高さが内容に合わせて自動調整されレスポンシブに表示されます。",
  h("br", {}),
- h("strong", {}, "STUDIO モード: "),
- "HTTPS iframe (構造はJimdo版とほぼ同じ)。"),
+ h("strong", {}, "Jimdo モード: "),
+ "Jimdo の HTML 埋込ウィジェット用(HTTPS iframe)。"),
 
  // プラットフォーム切替
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "埋込先プラットフォーム"),
  h("div", { className: "flex gap-2" },
- h("button", { className: "btn btn-sm embed-plat-btn" + (platform === "jimdo" ? "" : " btn-ghost"),
-   onClick: () => { platform = "jimdo";
+ h("button", { className: "btn btn-sm embed-plat-btn" + (platform === "wordpress" ? "" : " btn-ghost"),
+   onClick: () => { platform = "wordpress";
      localStorage.setItem("tt_embed_platform_" + t.id, platform);
      refreshCode();
      // ボタンの active 切替
@@ -3721,18 +3724,18 @@ const A = {
        b.classList.toggle("btn-ghost", b.dataset.plat !== platform);
      });
    },
-   "data-plat": "jimdo",
- }, "Jimdo (推奨)"),
- h("button", { className: "btn btn-sm embed-plat-btn" + (platform === "studio" ? "" : " btn-ghost"),
-   onClick: () => { platform = "studio";
+   "data-plat": "wordpress",
+ }, "WordPress (推奨)"),
+ h("button", { className: "btn btn-sm embed-plat-btn" + (platform === "jimdo" ? "" : " btn-ghost"),
+   onClick: () => { platform = "jimdo";
      localStorage.setItem("tt_embed_platform_" + t.id, platform);
      refreshCode();
      document.querySelectorAll(".embed-plat-btn").forEach(b => {
        b.classList.toggle("btn-ghost", b.dataset.plat !== platform);
      });
    },
-   "data-plat": "studio",
- }, "STUDIO"),
+   "data-plat": "jimdo",
+ }, "Jimdo"),
  ),
  ),
 
@@ -3934,14 +3937,13 @@ const A = {
  "1. Jimdo の編集モードで、フォームを置きたい場所に\n" +
  "   「+ コンテンツ追加」→「ウィジェット/HTML」を選択\n" +
  "2. 上記のコード (Jimdo モード) を全て貼り付け\n" +
- "3. 「保存」を押す → 即座にフォーム表示\n" +
- "   ※ iframe を使わない自己完結型なので HTTPS問題は発生しません\n",
+ "3. 「保存」を押す → 即座にフォーム表示\n",
  h("br", {}),
- h("strong", {}, "■ STUDIO に貼付ける場合"),
+ h("strong", {}, "■ WordPress に貼付ける場合(推奨)"),
  h("br", {}),
- "1. STUDIO エディタで「埋め込みHTML」ブロックを追加\n" +
- "2. 上記のコード (STUDIO モード) を貼り付け\n" +
- "3. ※ iframe 方式のため、本アプリを HTTPS でホスト必須"),
+ "1. 投稿/固定ページの編集で「+」→「カスタムHTML」ブロックを追加\n" +
+ "2. 上記のコード (WordPress モード) を貼り付けて公開/更新\n" +
+ "3. iframe の高さは内容に合わせて自動調整されます(プラグイン不要)"),
  );
 
  refreshCode();
@@ -3959,7 +3961,7 @@ const A = {
  document.querySelector(".modal-bg")?.remove();
  } }, "保存して閉じる"),
  );
- openModal("申込フォーム生成 (Jimdo / STUDIO 埋込)", body, foot, { size: "lg" });
+ openModal("申込フォーム生成 (WordPress / Jimdo 埋込)", body, foot, { size: "lg" });
  },
 
  // ── 種目カタログ ピッカー (デフォルト種目から複数選択) ──

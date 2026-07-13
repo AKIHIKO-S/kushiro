@@ -66,7 +66,10 @@ function eventFeeMap(tournament) {
     const f = parseInt(c.fee, 10);
     if (!(f >= 0)) return;
     const fs = parseInt(c.fee_student, 10);   // 中高校生料金 (未設定なら null=一般と同額)
-    map[String(c.name).trim()] = { fee: f, fee_student: (fs >= 0 ? fs : null) };
+    map[String(c.name).trim()] = {
+      fee: f, fee_student: (fs >= 0 ? fs : null),
+      categories: Array.isArray(c.entry_categories) && c.entry_categories.length ? c.entry_categories : null,
+    };
   });
   return map;
 }
@@ -82,8 +85,14 @@ function authoritativeFees(tournament, entries) {
     const cfg = map[String(e.event || "").trim()];
     let fee;
     if (cfg) {
-      const isStudent = e.division && e.division !== "general";   // 中学生/高校生(旧 student 含む)
-      fee = (isStudent && cfg.fee_student != null) ? cfg.fee_student : cfg.fee;
+      if (cfg.categories) {
+        // entry_categories がある種目は選択区分の fee_override を優先(無ければ一般料金)。
+        const cat = cfg.categories.find(x => x && String(x.value || x.label) === String(e.division));
+        fee = (cat && cat.fee_override != null && cat.fee_override !== "") ? (parseInt(cat.fee_override, 10) || 0) : cfg.fee;
+      } else {
+        const isStudent = e.division && e.division !== "general";   // 中学生/高校生(旧 student 含む)
+        fee = (isStudent && cfg.fee_student != null) ? cfg.fee_student : cfg.fee;
+      }
     } else {
       fee = parseInt(e.fee, 10) || 0;
     }
@@ -98,6 +107,8 @@ function entriesTable(entries) {
   if (!entries || !entries.length) return "";
   const rows = entries.map(e => {
     let label = e.event || "(種目不明)";
+    // 参加区分(entry_categories のラベル / 中高生区分)があれば種目名の下に添える。
+    if (e.division_label) label += `<br><span style="font-size:12px;color:#92400e;">区分: ${esc(e.division_label)}</span>`;
     // ★ 全てのユーザー入力を esc() でエスケープ (XSS / メールインジェクション対策)
     let detail = "";
     if (e.type === "team") {
@@ -147,6 +158,11 @@ async function sendConfirmationEmail(opts) {
   const contactName = formData.contact_name || "";
   const contactTel = formData.contact_tel || "";
   const teamName = formData.team_name || "";
+  const supervisor = formData.supervisor || "";
+  const advisor = formData.advisor || "";
+  const coach = formData.coach || "";
+  // 申込単位スコープの自由項目(scope=submission)の回答。生の生年月日は含まない。
+  const subAnswers = (formData.extra && typeof formData.extra === "object") ? formData.extra : null;
   // #26: 参加料・合計はサーバ側で算出 (クライアント値は信用しない)。
   // Phase4: 実際に作成された申込(created_entries, 権威料金)があればそれを使う。
   // spam/重複で落ちた行を含む生の formData.entries で再計算すると、控えメールの明細・合計が
@@ -249,6 +265,10 @@ async function sendConfirmationEmail(opts) {
     <tr><td style="color:#78716c;padding-right:12px;">担当:</td><td>${esc(contactName)}</td></tr>
     ${contactTel ? `<tr><td style="color:#78716c;padding-right:12px;">電話:</td><td>${esc(contactTel)}</td></tr>` : ""}
     <tr><td style="color:#78716c;padding-right:12px;">メール:</td><td>${esc(toEmail)}</td></tr>
+    ${supervisor ? `<tr><td style="color:#78716c;padding-right:12px;">引率顧問:</td><td>${esc(supervisor)}</td></tr>` : ""}
+    ${advisor ? `<tr><td style="color:#78716c;padding-right:12px;">顧問:</td><td>${esc(advisor)}</td></tr>` : ""}
+    ${coach ? `<tr><td style="color:#78716c;padding-right:12px;">コーチ:</td><td>${esc(coach)}</td></tr>` : ""}
+    ${subAnswers ? Object.keys(subAnswers).map(k => `<tr><td style="color:#78716c;padding-right:12px;">${esc(k)}:</td><td>${esc(subAnswers[k] === true ? "はい" : String(subAnswers[k]))}</td></tr>`).join("") : ""}
   </table>
 
   <h2 style="font-size:14px;border-left:4px solid #b91c1c;padding-left:8px;margin:24px 0 12px;">申込内容</h2>

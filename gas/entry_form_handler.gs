@@ -171,6 +171,19 @@ function doPost(e) {
       return _json({ ok: false, error: "出場選手が登録されていません" });
     }
 
+    // 冪等: 同じ op_id を二重処理しない(ブラウザの二度押しや Node からの再送で
+    // シートに重複行が出るのを防ぐ。Node 側 DB の op_id 冪等と揃える)。
+    // Script Properties に op_id を記録し、既知なら追記せず成功を返す。
+    const opId = String(data.op_id || "").trim();
+    if (opId) {
+      const _props = PropertiesService.getScriptProperties();
+      const _key = "opid_" + opId;
+      if (_props.getProperty(_key)) {
+        return _json({ ok: true, duplicate: true, message: "処理済みの申込です(再送)" });
+      }
+      _props.setProperty(_key, String(new Date().getTime()));
+    }
+
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     ensureAllSheets(ss);
 
