@@ -3844,34 +3844,26 @@ function generateBracket(tournamentId, event, options) {
   });
   txn();
 
-  // ─── 選手番号 (大会固有・左右別) を割り当て ───
-  // 左半分: 上から 1, 2, 3, ...
-  // 右半分: 上から 1, 2, 3, ... (別カウント)
+  // ─── 選手番号 (大会固有) を割り当て ───
+  // 紙のトーナメント表と同じ「BYEを除く通し番号」: 左山の上から 1,2,3,... と振り、
+  // 右山へ続けて N まで(紙の 1〜38 / 39〜72 方式)。BYE枠は欠番にせず番号を消費しない。
+  // 近接警告(computeBracketProximity)の番号定義とも一致する。
   const numberTxn = sqlite.transaction(() => {
     const halfSize = bracketSize / 2;
+    let serial = 0;   // BYEを除く通し番号(非as_drawn)
     matchesByRound[0].forEach((m, i) => {
       // round1 における順序: bracket_pos = i (= 0, 1, 2, ...)
-      // 各試合の player1/2 にそれぞれ番号
       const slot1 = i * 2;     // 0, 2, 4, ...
       const slot2 = i * 2 + 1; // 1, 3, 5, ...
-      // 左半分かどうか
       const isLeft1 = slot1 < halfSize;
       const isLeft2 = slot2 < halfSize;
-      // as_drawn: 取り込んだ通し番号(seed)をそのまま表示番号に。それ以外は位置から左右別番号。
-      const num1 = asDrawn ? (parseInt(m.player1?.seed) || (slot1 + 1))
-                           : (isLeft1 ? (slot1 + 1) : (slot1 - halfSize + 1));
-      const num2 = asDrawn ? (parseInt(m.player2?.seed) || (slot2 + 1))
-                           : (isLeft2 ? (slot2 + 1) : (slot2 - halfSize + 1));
-      // as_drawn は取込時の左右(bracket_side)を保持 (再生成2回目で潰さないため)。
-      // 無ければスロット位置から判定。
-      const side1 = asDrawn ? (m.player1?.bracket_side || (isLeft1 ? "L" : "R")) : (isLeft1 ? "L" : "R");
-      const side2 = asDrawn ? (m.player2?.bracket_side || (isLeft2 ? "L" : "R")) : (isLeft2 ? "L" : "R");
-      if (m.player1 && m.player1.id) {
-        entrantStmts.setBracketNumber.run(num1, side1, m.player1.id);
-      }
-      if (m.player2 && m.player2.id) {
-        entrantStmts.setBracketNumber.run(num2, side2, m.player2.id);
-      }
+      // as_drawn は取り込んだ通し番号(seed)と左右をそのまま維持(再生成2回目で潰さないため)。
+      [[m.player1, slot1, isLeft1], [m.player2, slot2, isLeft2]].forEach(([p, slot, isLeft]) => {
+        if (!p || !p.id) return;   // BYE=番号を振らない(欠番も作らない)
+        const num = asDrawn ? (parseInt(p.seed) || (slot + 1)) : ++serial;
+        const side = asDrawn ? (p.bracket_side || (isLeft ? "L" : "R")) : (isLeft ? "L" : "R");
+        entrantStmts.setBracketNumber.run(num, side, p.id);
+      });
     });
   });
   try { numberTxn(); } catch (e) { console.error("bracket_number assignment error:", e); }
@@ -6888,6 +6880,28 @@ function getBracket(tournamentId, event) {
 function deleteEventMatches(tournamentId, event) {
   opStmts.deleteEventMatches.run(tournamentId, event);
   return { ok: true };
+}
+
+// 作成済みトーナメント表(全種目の matches=ブラケット/リーグとも)を一括削除する。名簿(entrants)は残す。
+// 結果入力済みの実対戦(不戦勝を除く)があるときは needs_force で確認を求める(当日データの誤消去防止)。
+function deleteAllBrackets(tournamentId, opts) {
+  opts = opts || {};
+  const events = sqlite.prepare(
+    "SELECT event, COUNT(*) c FROM matches WHERE tournament_id=? GROUP BY event ORDER BY event"
+  ).all(tournamentId);
+  if (!events.length) return { ok: true, deleted: 0, events: [] };
+  const done = sqlite.prepare(`
+    SELECT COUNT(*) c FROM matches WHERE tournament_id=? AND status='completed'
+      AND winner_name != 'BYE' AND loser_name != 'BYE' AND COALESCE(is_walkover,0)=0
+  `).get(tournamentId).c;
+  if (done > 0 && !opts.force) {
+    return {
+      error: "結果入力済みの試合が" + done + "件あります。全削除すると結果も消えます。",
+      needs_force: true, completed: done, events: events.map(e => e.event),
+    };
+  }
+  const deleted = sqlite.prepare("DELETE FROM matches WHERE tournament_id=?").run(tournamentId).changes;
+  return { ok: true, deleted, events: events.map(e => e.event), completed_deleted: done };
 }
 
 // 名簿(出場者)の一括削除。event 指定=その種目, 未指定=大会全種目。entrants と該当 matches(表)を消す。
@@ -9911,7 +9925,7 @@ module.exports = {
   parseRosterRows, rosterEventName, enrichRosterRegions, importRoster, normalizeShibuName,   // 名簿(エントリー表)取込
   parseEntryListSheets,   // エントリーリスト形式(タブ=種目)取込
   proximityFromLeaves, computeBracketProximity,   // トーナメント近接警告(作成プラン)
-  getBracket, deleteEventMatches, deleteRoster, rosterStats, setCourtLayout,
+  getBracket, deleteEventMatches, deleteAllBrackets, deleteRoster, rosterStats, setCourtLayout,
   // 試合検索 / H2H / 選手統計
   searchMatches, countMatchesForSearch, getSearchFilters,
   getPlayerOpponents, getPlayerEventStats,

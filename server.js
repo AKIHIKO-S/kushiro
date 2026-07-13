@@ -3034,6 +3034,14 @@ app.delete("/api/tournaments/:id/bracket", requireAdmin, (req, res) => {
   res.json(db.deleteEventMatches(req.params.id, event));
 });
 
+// 作成済みトーナメント表の全削除(全種目一括・名簿は残す)。結果入力済みがあれば needs_force。
+app.delete("/api/tournaments/:id/brackets", requireAdmin, (req, res) => {
+  const force = !!(req.body && req.body.force) || req.query.force === "1";
+  const r = db.deleteAllBrackets(req.params.id, { force });
+  if (r.error) return res.status(r.needs_force ? 409 : 400).json(r);
+  res.json(r);
+});
+
 // ── 進行状態(getOperationState)のフィンガープリント・キャッシュ ──
 // 多数の観戦者が同時にポーリングしても、進行に変化が無ければ1回の計算結果を共有。
 // キーは軽量フィンガープリント(呼出/結果/再コールで変化)なので、
