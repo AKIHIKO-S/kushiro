@@ -173,15 +173,12 @@ function doPost(e) {
 
     // 冪等: 同じ op_id を二重処理しない(ブラウザの二度押しや Node からの再送で
     // シートに重複行が出るのを防ぐ。Node 側 DB の op_id 冪等と揃える)。
-    // Script Properties に op_id を記録し、既知なら追記せず成功を返す。
+    // CacheService を使う(TTL自動失効=無限増殖しない)。記録は「追記が全て成功した後」に行う
+    // (途中失敗で op_id だけ確定し、再送が握り潰されて行が永久欠落するのを防ぐ)。
     const opId = String(data.op_id || "").trim();
-    if (opId) {
-      const _props = PropertiesService.getScriptProperties();
-      const _key = "opid_" + opId;
-      if (_props.getProperty(_key)) {
-        return _json({ ok: true, duplicate: true, message: "処理済みの申込です(再送)" });
-      }
-      _props.setProperty(_key, String(new Date().getTime()));
+    const _cache = CacheService.getScriptCache();
+    if (opId && _cache.get("opid_" + opId)) {
+      return _json({ ok: true, duplicate: true, message: "処理済みの申込です(再送)" });
     }
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -240,6 +237,8 @@ function doPost(e) {
     try { _sendAdminNotification(data, ledgerRowNum); }
     catch (notifyErr) { console.error("主催者通知失敗:", notifyErr); }
 
+    // 追記が全て成功した後にだけ op_id を記録(6時間保持=再送はこの窓内・自動失効で増殖なし)。
+    if (opId) _cache.put("opid_" + opId, "1", 21600);
     return _json({ ok: true, ledger_row: ledgerRowNum });
   } catch (err) {
     return _json({ ok: false, error: String(err) });

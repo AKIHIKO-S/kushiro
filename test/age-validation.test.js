@@ -89,6 +89,49 @@ test("age_check 無しの大会は年齢検証をかけない(後方互換)", ()
   assert.ok(r.ok, "生年月日なしでも通る(age_check 未設定)");
 });
 
+test("不正な生年月日はエラー(暦妥当性チェック / 破壊者#5)", () => {
+  const t = db.createTournament({ name: "不正日", date: "2028-02-11", event_config: mastersCfg, entries_open: 1 });
+  for (const bd of ["2000-99-99", "1977-02-29", "2010-00-00"]) {
+    const r = db.createTeamEntry(t.id, { ...base,
+      entries: [{ event: "マスターズS", type: "singles", name: "X", division: "fifty", division_label: "フィフティ", extra_json: { birth_date: bd } }] }, "", { enforce: true });
+    assert.ok(r.error && /生年月日/.test(r.error), `不正日付 ${bd} を弾く`);
+  }
+  // 妥当な閏日は通る
+  const ok = db.createTeamEntry(t.id, { ...base,
+    entries: [{ event: "マスターズS", type: "singles", name: "Y", division: "fifty", division_label: "フィフティ", extra_json: { birth_date: "1976-02-29" } }] }, "", { enforce: true });
+  assert.ok(ok.ok, "妥当な閏日(1976-02-29)は受付");
+});
+
+test("非ISO大会日付は fail-closed(年齢制限種目を無審査で通さない / 破壊者#3)", () => {
+  const t = db.createTournament({ name: "未定日", date: "未定", event_config: mastersCfg, entries_open: 1 });
+  const r = db.createTeamEntry(t.id, { ...base,
+    entries: [{ event: "マスターズS", type: "singles", name: "10歳児", division: "fifty", division_label: "フィフティ", extra_json: { birth_date: "2017-01-01" } }] }, "", { enforce: true });
+  assert.ok(r.error && /基準日/.test(r.error), "日付未確定なら年齢制限種目の申込を弾く");
+});
+
+test("age_check.as_of 明示指定で非ISO日付でも年齢判定できる(破壊者#3救済)", () => {
+  const cfg = [{ name: "マスターズS", type: "singles", fee: 2000,
+    age_check: { mode: "birthdate", as_of: "2027-04-01" },
+    entry_categories: [{ value: "fifty", label: "フィフティ", short: "フィフティ", min_age: 50 }] }];
+  const t = db.createTournament({ name: "明示as_of", date: "未定", event_config: cfg, entries_open: 1 });
+  const ng = db.createTeamEntry(t.id, { ...base,
+    entries: [{ event: "マスターズS", type: "singles", name: "45", division: "fifty", division_label: "フィフティ", extra_json: { birth_date: "1982-01-01" } }] }, "", { enforce: true });
+  assert.ok(ng.error && /対象年齢/.test(ng.error), "明示as_of で45歳はNG");
+  const ok = db.createTeamEntry(t.id, { ...base,
+    entries: [{ event: "マスターズS", type: "singles", name: "57", division: "fifty", division_label: "フィフティ", extra_json: { birth_date: "1970-01-01" } }] }, "", { enforce: true });
+  assert.ok(ok.ok, "明示as_of で57歳はOK");
+});
+
+test("combined 区分は片名だと 2名必要 エラー(下限素通り防止 / 破壊者#4)", () => {
+  const cfg = [{ name: "混合D", type: "doubles", fee: 1200, age_check: { mode: "birthdate" },
+    entry_categories: [{ value: "o130", label: "合計130+", short: "130+", min_age: 130, combined: true }] }];
+  const t = db.createTournament({ name: "合計片名", date: "2028-02-11", event_config: cfg, entries_open: 1 });
+  const r = db.createTeamEntry(t.id, { ...base,
+    entries: [{ event: "混合D", type: "doubles", name1: "50歳", name2: "", team1: "甲", division: "o130", division_label: "130+",
+      extra_json: { players: [{ birth_date: "1977-01-01" }, {}] } }] }, "", { enforce: true });
+  assert.ok(r.error && /2名/.test(r.error), "片名の合計年齢区分は2名要求で弾く(50歳単独で130+に入れない)");
+});
+
 test("基準日算出: 4月境界で年度が切り替わる", () => {
   // 3月開催 → 前年度4/1 / 4月開催 → 当年度4/1
   const march = db.createTournament({ name: "3月", date: "2028-03-20", event_config: mastersCfg, entries_open: 1 });

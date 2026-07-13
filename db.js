@@ -8221,11 +8221,18 @@ function sanitizeFieldConfig(raw) {
 // 生年月日(YYYY-MM-DD)から基準日(asOf, YYYY-MM-DD)時点の満年齢を返す。不正・範囲外は null。
 // 純粋な文字列計算(Date を使わずタイムゾーン非依存)。
 function ageAtDate(birth, asOf) {
-  const bm = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(birth || ""));
-  const am = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(asOf || ""));
+  const bm = String(birth || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const am = String(asOf || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!bm || !am) return null;
   const by = +bm[1], bmo = +bm[2], bd = +bm[3];
   const ay = +am[1], amo = +am[2], ad = +am[3];
+  // 暦として妥当か検証(2000-99-99 や 1977-02-29 のような不正日付を弾く=null)。
+  const validDate = (y, mo, d) => {
+    if (mo < 1 || mo > 12 || d < 1) return false;
+    const dim = [31, ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    return d <= dim[mo - 1];
+  };
+  if (!validDate(by, bmo, bd) || !validDate(ay, amo, ad)) return null;
   let age = ay - by;
   if (amo < bmo || (amo === bmo && ad < bd)) age--;
   return (age >= 0 && age < 150) ? age : null;
@@ -8248,12 +8255,14 @@ function _enforceAgeEligibility(t, formData, entries) {
   catch (_) { evCfg = []; }
   const cfgByName = {};
   (Array.isArray(evCfg) ? evCfg : []).forEach(c => { if (c && c.name) cfgByName[String(c.name)] = c; });
-  const asOf = fiscalAprilFirst(t.date);
   for (const ent of entries) {
     const evName = String(ent.event || "").trim(); if (!evName) continue;
     const cfg = cfgByName[evName];
     const ac = cfg && cfg.age_check;
-    if (!ac || ac.mode !== "birthdate" || !asOf) continue;   // 年齢チェック無効/基準日不明はスキップ
+    if (!ac || ac.mode !== "birthdate") continue;   // 年齢チェック無効はスキップ
+    // 基準日 = age_check.as_of(明示指定) → 大会年度の4/1(fiscalAprilFirst)。非ISO日付("未定"等)で
+    // 解決できない場合は、記入済みの行を fail-closed で弾く(年齢制限種目に無審査で通さない)。
+    const asOf = (ac.as_of && /^\d{4}-\d{2}-\d{2}/.test(String(ac.as_of))) ? String(ac.as_of).slice(0, 10) : fiscalAprilFirst(t.date);
     const cats = Array.isArray(cfg.entry_categories) ? cfg.entry_categories : [];
     const cat = cats.find(x => x && String(x.value || x.label) === String(ent.division));
     const type = ent.type || "singles";
@@ -8264,18 +8273,18 @@ function _enforceAgeEligibility(t, formData, entries) {
     if (type === "doubles" || type === "mixed") {
       const n1 = String(ent.name1 || "").trim(), n2 = String(ent.name2 || "").trim();
       if (!n1 && !n2) continue;
+      if (!asOf) return `${evName}: 年齢判定の基準日が未確定です。大会日付を設定するか大会本部にお問い合わせください`;
       const players = Array.isArray(ex.players) ? ex.players : [];
       const a1 = n1 ? ageOf(players[0] && players[0].birth_date) : null;
       const a2 = n2 ? ageOf(players[1] && players[1].birth_date) : null;
       if (n1 && a1 == null) return `${evName}: 選手1の生年月日を正しく入力してください`;
       if (n2 && a2 == null) return `${evName}: 選手2の生年月日を正しく入力してください`;
       if (cat && cat.combined) {
-        // 合計年齢で判定(マスターズ混合等)。両者そろっている時のみ。
-        if (n1 && n2) {
-          const sum = a1 + a2;
-          if (cat.min_age != null && cat.min_age !== "" && sum < parseInt(cat.min_age)) return `${evName}: 「${cat.short || cat.label}」は合計年齢${cat.min_age}歳以上が対象です(現在${sum}歳)`;
-          if (cat.max_age != null && cat.max_age !== "" && sum > parseInt(cat.max_age)) return `${evName}: 「${cat.short || cat.label}」は合計年齢${cat.max_age}歳以下が対象です(現在${sum}歳)`;
-        }
+        // 合計年齢で判定(マスターズ混合等)。合計判定には2名の生年月日が必須(片名で下限を素通りさせない)。
+        if (!(n1 && n2)) return `${evName}: 「${cat.short || cat.label}」は合計年齢で判定するため、2名の生年月日を入力してください`;
+        const sum = a1 + a2;
+        if (cat.min_age != null && cat.min_age !== "" && sum < parseInt(cat.min_age)) return `${evName}: 「${cat.short || cat.label}」は合計年齢${cat.min_age}歳以上が対象です(現在${sum}歳)`;
+        if (cat.max_age != null && cat.max_age !== "" && sum > parseInt(cat.max_age)) return `${evName}: 「${cat.short || cat.label}」は合計年齢${cat.max_age}歳以下が対象です(現在${sum}歳)`;
       } else if (cat) {
         for (const [a, who] of [[a1, "選手1"], [a2, "選手2"]]) {
           if (a == null) continue;
@@ -8288,6 +8297,7 @@ function _enforceAgeEligibility(t, formData, entries) {
       }
     } else if (type !== "team") {
       const name = String(ent.name || "").trim(); if (!name) continue;
+      if (!asOf) return `${evName}: 年齢判定の基準日が未確定です。大会日付を設定するか大会本部にお問い合わせください`;
       const age = ageOf(ex.birth_date);
       if (age == null) return `${evName}: 生年月日を正しく入力してください`;
       if (cat) {

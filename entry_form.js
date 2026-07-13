@@ -74,11 +74,14 @@ function buildEntryFormHTML(tournament, events, opts) {
   })));
 
   // 年齢基準日 = 大会の年度の4月1日(学校年度)。生年月日から満年齢を算出する基準。
+  // 大会日付が非ISO("未定"等)でも、種目に明示 as_of があればそれを使う(サーバの解決と揃える)。
   const AGE_ASOF = (function () {
     const m = String(tournament.date || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (!m) return "";
-    const y = +m[1], mo = +m[2];
-    return (mo >= 4 ? y : y - 1) + "-04-01";
+    if (m) { const y = +m[1], mo = +m[2]; return (mo >= 4 ? y : y - 1) + "-04-01"; }
+    for (const e of events) {
+      if (e.age_check && String(e.age_check.as_of || "").match(/^\d{4}-\d{2}-\d{2}/)) return String(e.age_check.as_of).slice(0, 10);
+    }
+    return "";
   })();
   // いずれかの種目が同意書年齢を持つか(同意チェックボックスの表示要否)。最小の consent_age を採る。
   const _consentAge = (function () {

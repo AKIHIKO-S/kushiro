@@ -819,7 +819,9 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
       let gasRelay = null;
       if (tournament && tournament.entry_gas_url
           && /^https:\/\/script\.google\.com\//.test(tournament.entry_gas_url)) {
-        gasRelay = await relayEntryToGas(tournament.entry_gas_url, payload);
+        // op_id を body に載せて中継する(op_id は X-Op-Id ヘッダ由来で payload に無いため、
+        // これを渡さないと GAS 側の op_id 冪等が発火しない=再送でシート重複)。
+        gasRelay = await relayEntryToGas(tournament.entry_gas_url, opId ? { ...payload, op_id: opId } : payload);
       }
 
       // 受付成立 = 自サーバー保存 または GAS中継 の少なくとも一方が成功。
