@@ -67,9 +67,29 @@ function buildEntryFormHTML(tournament, events, opts) {
     type: e.type || "singles",
     note: e.note || "",
     per_team: e.per_team || 6,
-    // 大会が定義した参加区分(自己申告)。value/label/short/fee_override をクライアントの区分セグメントで使う。
+    // 大会が定義した参加区分(自己申告)。value/label/short/fee_override/min_age/max_age/combined を使う。
     entry_categories: Array.isArray(e.entry_categories) ? e.entry_categories : undefined,
+    // 年齢自動判定(生年月日入力→基準日時点の満年齢で資格判定)。mode:"birthdate" で有効。
+    age_check: (e.age_check && e.age_check.mode === "birthdate") ? e.age_check : undefined,
   })));
+
+  // 年齢基準日 = 大会の年度の4月1日(学校年度)。生年月日から満年齢を算出する基準。
+  const AGE_ASOF = (function () {
+    const m = String(tournament.date || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return "";
+    const y = +m[1], mo = +m[2];
+    return (mo >= 4 ? y : y - 1) + "-04-01";
+  })();
+  // いずれかの種目が同意書年齢を持つか(同意チェックボックスの表示要否)。最小の consent_age を採る。
+  const _consentAge = (function () {
+    let ca = null;
+    events.forEach(function (e) {
+      if (e.age_check && e.age_check.mode === "birthdate" && e.age_check.consent_age != null && e.age_check.consent_age !== "") {
+        const v = parseInt(e.age_check.consent_age); if (!isNaN(v) && (ca == null || v < ca)) ca = v;
+      }
+    });
+    return ca;
+  })();
 
   // ── 必須項目設定(field_config) ──────────────────────────────
   // server.js が db.resolveFieldConfig(tournament) を opts.field_config で渡す。
@@ -735,6 +755,12 @@ ${fst('note') !== 'hidden' ? `<div class="form-section">
 <div aria-hidden="true" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden">
   <label>この欄は空のままにしてください<input type="text" name="hp_url" tabindex="-1" autocomplete="off"></label>
 </div>
+${_consentAge != null ? `<div class="form-section" style="padding:16px 18px;">
+  <label style="display:flex;gap:10px;align-items:flex-start;font-size:14px;cursor:pointer;">
+    <input type="checkbox" name="consent_check" style="margin-top:3px;">
+    <span>${_consentAge}歳以上の選手が出場する場合、家族の同意書（別紙）を別途提出することを確認しました。</span>
+  </label>
+</div>` : ''}
 ${turnstileSitekey ? '<div class="cf-turnstile" data-sitekey="' + escapeHtml(turnstileSitekey) + '" style="margin:14px 0"></div>' : ''}
 <button type="submit" class="submit-btn" id="submitBtn">申込内容を送信</button>
 <div id="messageBox"></div>
@@ -752,6 +778,7 @@ const TOURNAMENT_NAME = ${escapeJs(tournament.name || "")};
 const SUBMIT_URL = ${escapeJs(gasUrl)};  // 送信先。原則 同一オリジン(自サーバー)。サーバーが必要に応じGASへ中継。
 const EVENTS = ${eventsJson};
 const FIELD_CFG = ${fieldCfgJson};
+const AGE_ASOF = ${escapeJs(AGE_ASOF)};   // 年齢基準日(大会年度の4/1)。空なら年齢判定は無効。
 
 // 種目単位の項目状態を解決(event_overrides > 大会レベル fields > hidden)。"required|optional|hidden"。
 function fstFor(evName, key) {
@@ -781,12 +808,29 @@ function renderCustomClient(c, name) {
 }
 // 選手1スロット分の可変項目(ふりがな/学年/性別/選手スコープ自由項目)のHTML。
 // prefix は input 名の接頭辞(行スコープで一意)。所属(player_team)は addEntry 側で扱う。
-function playerFieldsHtml(prefix, evName) {
+// 生年月日(YYYY-MM-DD)から基準日時点の満年齢を返す(サーバ ageAtDate と同一ロジック)。
+function ttAgeAt(birth, asOf) {
+  const bm = String(birth || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const am = String(asOf || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!bm || !am) return null;
+  let age = (+am[1]) - (+bm[1]);
+  if ((+am[2]) < (+bm[2]) || ((+am[2]) === (+bm[2]) && (+am[3]) < (+bm[3]))) age--;
+  return (age >= 0 && age < 150) ? age : null;
+}
+function playerFieldsHtml(prefix, ev) {
+  const evName = ev.name;
   let h = "";
   const furi = fstFor(evName, "furigana");
   if (furi !== "hidden") {
     h += '<input type="text" name="' + prefix + '_furi" placeholder="ふりがな' + (furi === "required" ? " (必須)" : "") +
       '" aria-label="ふりがな"' + (furi === "required" ? " required" : "") + ' oninput="recalcTotal()" />';
+  }
+  // 年齢自動判定が有効な種目は生年月日を入力(基準日=年度4/1 時点の満年齢で資格判定)。
+  if (ev.age_check && ev.age_check.mode === "birthdate" && AGE_ASOF) {
+    h += '<input type="date" name="' + prefix + '_bdate" aria-label="生年月日 (必須)" required ' +
+      'title="生年月日(' + AGE_ASOF + ' 時点の満年齢で出場資格を判定します)" ' +
+      'oninput="ttUpdateAge(this)" style="color:#555;" />' +
+      '<span class="age-hint" style="font-size:12px;color:var(--ink-2);align-self:center;"></span>';
   }
   const grade = fstFor(evName, "grade");
   if (grade !== "hidden") {
@@ -802,6 +846,13 @@ function playerFieldsHtml(prefix, evName) {
     h += renderCustomClient(c, prefix + "_cust_" + c.key);
   });
   return h;
+}
+// 生年月日入力の隣に算出年齢を表示(入力補助。最終判定はサーバが権威)。
+function ttUpdateAge(inp) {
+  const hint = inp.parentNode ? inp.parentNode.querySelector(".age-hint") : null;
+  if (!hint) return;
+  const age = ttAgeAt(inp.value, AGE_ASOF);
+  hint.textContent = age == null ? "" : ("満" + age + "歳");
 }
 
 // 各種目ブロックを動的生成 (開いた状態 + 初期1行を表示)
@@ -957,10 +1008,10 @@ function addEntry(eventIdx) {
     html += '<div class="entry-grid">' +
       '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n1" placeholder="選手1 氏名" aria-label="選手1 氏名" oninput="recalcTotal()" />' +
       teamInput(1) +
-      playerFieldsHtml('ev' + eventIdx + '_pair' + idx + '_1', ev.name) +
+      playerFieldsHtml('ev' + eventIdx + '_pair' + idx + '_1', ev) +
       '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n2" placeholder="選手2 氏名" aria-label="選手2 氏名" oninput="recalcTotal()" />' +
       teamInput(2) +
-      playerFieldsHtml('ev' + eventIdx + '_pair' + idx + '_2', ev.name) +
+      playerFieldsHtml('ev' + eventIdx + '_pair' + idx + '_2', ev) +
       '</div>';
   } else {
     const ptm = fstFor(ev.name, "player_team");
@@ -971,7 +1022,7 @@ function addEntry(eventIdx) {
     html += '<div class="entry-grid">' +
       '<input type="text" name="ev' + eventIdx + '_p' + idx + '_name" placeholder="氏名 (フルネーム)" aria-label="氏名 (フルネーム)" oninput="recalcTotal()" />' +
       teamInput +
-      playerFieldsHtml('ev' + eventIdx + '_p' + idx, ev.name) +
+      playerFieldsHtml('ev' + eventIdx + '_p' + idx, ev) +
       '</div>';
   }
   html += divSeg;
@@ -1061,6 +1112,7 @@ function gatherFormData() {
     total_amount: 0,
     cf_turnstile_token: fd.get("cf-turnstile-response") || "",   // Turnstile ウィジェットが挿入する隠しトークン
     hp_url: fd.get("hp_url") || "",                              // ハニーポット(空のはず)
+    _consent: fd.get("consent_check") ? true : false,           // 同意書提出の確認(consent_age がある大会)
   };
   // 申込単位スコープの自由項目(scope=submission)を収集。checkbox は true/false。
   const subAnswers = {};
@@ -1089,6 +1141,7 @@ function gatherFormData() {
       const gender = q("_pgender");
       const ex = {};
       const g = q("_grade"); if (g) ex.grade = g;
+      const bd = q("_bdate"); if (bd) ex.birth_date = bd;   // 年齢自動判定用(サーバが基準日で満年齢を検証)
       const answers = {};
       (FIELD_CFG.custom || []).filter((c) => c && c.scope === "player").forEach((c) => {
         const el = row.querySelector('[name$="' + token + "_cust_" + c.key + '"]');

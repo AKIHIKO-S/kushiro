@@ -7652,6 +7652,8 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
   if (opts.enforce) {
     const vmsg = _enforceRequiredFields(t, formData, entries);
     if (vmsg) return { error: vmsg, validation: true };
+    const amsg = _enforceAgeEligibility(t, formData, entries);
+    if (amsg) return { error: amsg, validation: true };
   }
 
   const submittedAt = (formData.submitted_at
@@ -8214,6 +8216,90 @@ function sanitizeFieldConfig(raw) {
     }
   }
   return { version: 1, fields: cleanStates(raw.fields), custom, event_overrides: overrides };
+}
+
+// 生年月日(YYYY-MM-DD)から基準日(asOf, YYYY-MM-DD)時点の満年齢を返す。不正・範囲外は null。
+// 純粋な文字列計算(Date を使わずタイムゾーン非依存)。
+function ageAtDate(birth, asOf) {
+  const bm = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(birth || ""));
+  const am = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(asOf || ""));
+  if (!bm || !am) return null;
+  const by = +bm[1], bmo = +bm[2], bd = +bm[3];
+  const ay = +am[1], amo = +am[2], ad = +am[3];
+  let age = ay - by;
+  if (amo < bmo || (amo === bmo && ad < bd)) age--;
+  return (age >= 0 && age < 150) ? age : null;
+}
+// 大会の「年度の4月1日」を大会日付から算出(学校年度: 4月開始)。年齢基準日として使う。
+// 例: 2028-02-11 の大会 → 年度2027 → 基準日 2027-04-01。
+function fiscalAprilFirst(dateStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dateStr || ""));
+  if (!m) return "";
+  const y = +m[1], mo = +m[2];
+  return (mo >= 4 ? y : y - 1) + "-04-01";
+}
+
+// 年齢資格をサーバ側で再検証する(entry_categories の min_age/max_age・combined、consent_age)。
+// age_check.mode==="birthdate" の種目のみ対象。満たさなければ日本語エラー、満たせば null。
+// 記入済みの行のみ検証(空行は弾かない)。asOf は大会年度の4/1。
+function _enforceAgeEligibility(t, formData, entries) {
+  let evCfg = [];
+  try { evCfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []); }
+  catch (_) { evCfg = []; }
+  const cfgByName = {};
+  (Array.isArray(evCfg) ? evCfg : []).forEach(c => { if (c && c.name) cfgByName[String(c.name)] = c; });
+  const asOf = fiscalAprilFirst(t.date);
+  for (const ent of entries) {
+    const evName = String(ent.event || "").trim(); if (!evName) continue;
+    const cfg = cfgByName[evName];
+    const ac = cfg && cfg.age_check;
+    if (!ac || ac.mode !== "birthdate" || !asOf) continue;   // 年齢チェック無効/基準日不明はスキップ
+    const cats = Array.isArray(cfg.entry_categories) ? cfg.entry_categories : [];
+    const cat = cats.find(x => x && String(x.value || x.label) === String(ent.division));
+    const type = ent.type || "singles";
+    const ex = (ent.extra_json && typeof ent.extra_json === "object") ? ent.extra_json : {};
+    const consentAge = (ac.consent_age != null && ac.consent_age !== "") ? parseInt(ac.consent_age) : null;
+
+    const ageOf = (bd) => ageAtDate(bd, asOf);
+    if (type === "doubles" || type === "mixed") {
+      const n1 = String(ent.name1 || "").trim(), n2 = String(ent.name2 || "").trim();
+      if (!n1 && !n2) continue;
+      const players = Array.isArray(ex.players) ? ex.players : [];
+      const a1 = n1 ? ageOf(players[0] && players[0].birth_date) : null;
+      const a2 = n2 ? ageOf(players[1] && players[1].birth_date) : null;
+      if (n1 && a1 == null) return `${evName}: 選手1の生年月日を正しく入力してください`;
+      if (n2 && a2 == null) return `${evName}: 選手2の生年月日を正しく入力してください`;
+      if (cat && cat.combined) {
+        // 合計年齢で判定(マスターズ混合等)。両者そろっている時のみ。
+        if (n1 && n2) {
+          const sum = a1 + a2;
+          if (cat.min_age != null && cat.min_age !== "" && sum < parseInt(cat.min_age)) return `${evName}: 「${cat.short || cat.label}」は合計年齢${cat.min_age}歳以上が対象です(現在${sum}歳)`;
+          if (cat.max_age != null && cat.max_age !== "" && sum > parseInt(cat.max_age)) return `${evName}: 「${cat.short || cat.label}」は合計年齢${cat.max_age}歳以下が対象です(現在${sum}歳)`;
+        }
+      } else if (cat) {
+        for (const [a, who] of [[a1, "選手1"], [a2, "選手2"]]) {
+          if (a == null) continue;
+          if (cat.min_age != null && cat.min_age !== "" && a < parseInt(cat.min_age)) return `${evName}: ${who}は「${cat.short || cat.label}」の対象年齢(${cat.min_age}歳以上)ではありません`;
+          if (cat.max_age != null && cat.max_age !== "" && a > parseInt(cat.max_age)) return `${evName}: ${who}は「${cat.short || cat.label}」の対象年齢(${cat.max_age}歳以下)ではありません`;
+        }
+      }
+      if (consentAge != null && ((a1 != null && a1 >= consentAge) || (a2 != null && a2 >= consentAge)) && !formData._consent) {
+        return `${evName}: ${consentAge}歳以上の選手がいます。同意書提出の確認にチェックしてください`;
+      }
+    } else if (type !== "team") {
+      const name = String(ent.name || "").trim(); if (!name) continue;
+      const age = ageOf(ex.birth_date);
+      if (age == null) return `${evName}: 生年月日を正しく入力してください`;
+      if (cat) {
+        if (cat.min_age != null && cat.min_age !== "" && age < parseInt(cat.min_age)) return `${evName}: 「${cat.short || cat.label}」の対象年齢(${cat.min_age}歳以上)ではありません(現在${age}歳)`;
+        if (cat.max_age != null && cat.max_age !== "" && age > parseInt(cat.max_age)) return `${evName}: 「${cat.short || cat.label}」の対象年齢(${cat.max_age}歳以下)ではありません(現在${age}歳)`;
+      }
+      if (consentAge != null && age >= consentAge && !formData._consent) {
+        return `${evName}: ${consentAge}歳以上です。同意書提出の確認にチェックしてください`;
+      }
+    }
+  }
+  return null;
 }
 
 function updateEntrySettings(tournamentId, settings) {

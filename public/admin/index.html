@@ -3328,7 +3328,13 @@ const A = {
  // openModal はスタック式なので、閉じるときは closest(".modal-bg") で自分だけを消す(親を消さない)。
  openEntryCategoriesEditor(ev, onDone) {
    const cats = Array.isArray(ev.entry_categories) ? ev.entry_categories.map(c => ({ ...c })) : [];
+   const isDoubles = ev.type === "doubles";
+   const age = { on: !!(ev.age_check && ev.age_check.mode === "birthdate"),
+                 consent: (ev.age_check && ev.age_check.consent_age != null) ? ev.age_check.consent_age : "" };
    const listBox = h("div", {});
+   const numInput = (get, set, ph, w) => h("input", { className: "input", type: "number", inputmode: "numeric",
+     style: { width: (w || 66) + "px", padding: "6px 8px", fontSize: "13px", textAlign: "right" },
+     value: get(), placeholder: ph, onInput: (e) => set(e.target.value === "" ? "" : (parseInt(e.target.value) || 0)) });
    const render = () => {
      clear(listBox);
      if (!cats.length) {
@@ -3336,36 +3342,58 @@ const A = {
          "区分は未設定です。中高生別料金がある種目は自動で 一般/中学生/高校生 が表示されます。年代別など独自の区分はここで定義してください。"));
      }
      cats.forEach((c, i) => {
-       listBox.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } },
-         h("input", { className: "input", style: { flex: "1 1 150px", padding: "6px 8px", fontSize: "13px" }, value: c.label || "", placeholder: "区分名 (例: ホープス)",
+       const row = [
+         h("input", { className: "input", style: { flex: "1 1 130px", padding: "6px 8px", fontSize: "13px" }, value: c.label || "", placeholder: "区分名 (例: フィフティ)",
            onInput: (e) => { c.label = e.target.value; } }),
-         h("input", { className: "input", style: { width: "108px", padding: "6px 8px", fontSize: "13px" }, value: c.short || "", placeholder: "短縮(任意)",
+         h("input", { className: "input", style: { width: "94px", padding: "6px 8px", fontSize: "13px" }, value: c.short || "", placeholder: "短縮",
            onInput: (e) => { c.short = e.target.value; } }),
-         h("input", { className: "input", type: "number", inputmode: "numeric", style: { width: "96px", padding: "6px 8px", fontSize: "13px", textAlign: "right" },
-           value: (c.fee_override != null && c.fee_override !== "") ? c.fee_override : "", placeholder: "料金",
-           title: "この区分の参加料。空欄なら種目の一般料金",
-           onInput: (e) => { c.fee_override = e.target.value === "" ? "" : (parseInt(e.target.value) || 0); } }),
-         h("button", { className: "btn btn-sm btn-danger", style: { padding: "4px 8px" },
-           onClick: () => { cats.splice(i, 1); render(); } }, "削除")));
+         numInput(() => (c.fee_override != null && c.fee_override !== "") ? c.fee_override : "", v => c.fee_override = v, "料金", 76),
+       ];
+       if (age.on) {
+         row.push(numInput(() => (c.min_age != null && c.min_age !== "") ? c.min_age : "", v => c.min_age = v, (isDoubles && c.combined) ? "計≧" : "≧歳"));
+         row.push(numInput(() => (c.max_age != null && c.max_age !== "") ? c.max_age : "", v => c.max_age = v, (isDoubles && c.combined) ? "計≦" : "≦歳"));
+         if (isDoubles) row.push(h("label", { style: { fontSize: "12px", display: "flex", alignItems: "center", gap: "3px" } },
+           h("input", { type: "checkbox", checked: c.combined ? "" : null, onChange: (e) => { c.combined = e.target.checked; render(); } }), "合計"));
+       }
+       row.push(h("button", { className: "btn btn-sm btn-danger", style: { padding: "4px 8px" }, onClick: () => { cats.splice(i, 1); render(); } }, "削除"));
+       listBox.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } }, ...row));
      });
    };
    render();
-   const addCat = (label, short) => { cats.push({ label: label || "新区分", short: short || "", fee_override: "" }); render(); };
+   const addCat = (label, short, min) => { cats.push({ label: label || "新区分", short: short || "", fee_override: "", min_age: (min != null ? min : ""), max_age: "" }); render(); };
+   const ageBox = h("div", { style: { padding: "10px 12px", background: "var(--bg)", borderRadius: "8px", marginBottom: "10px" } },
+     h("label", { style: { display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: "bold", cursor: "pointer" } },
+       h("input", { type: "checkbox", checked: age.on ? "" : null, onChange: (e) => { age.on = e.target.checked; render(); } }),
+       "生年月日で年齢を自動判定する(基準日 = 大会年度の4月1日)"),
+     h("div", { className: "text-xs text-sub", style: { marginTop: "4px" } },
+       "ONにすると申込フォームに生年月日入力が出て、各区分の対象年齢(≧歳/≦歳)で出場資格を自動チェックします。" + (isDoubles ? "「合計」で2人の合計年齢判定。" : "")),
+     h("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginTop: "6px", fontSize: "13px" } },
+       "同意書が必要な年齢:", numInput(() => age.consent, v => age.consent = v, "例90", 66), "歳以上(空欄=不要)"));
    const body = h("div", {},
      h("div", { className: "text-xs text-sub mb-2" },
        "「" + (ev.name || "種目") + "」の参加区分。申込者はこの中から1つ選びます。料金は区分ごとに変えられます(空欄=種目の一般料金)。"),
-     listBox,
+     ageBox, listBox,
      h("div", { className: "flex gap-2 mt-2", style: { flexWrap: "wrap" } },
        h("button", { className: "btn btn-sm btn-ghost", onClick: () => addCat("", "") }, "+ 区分を追加"),
        h("button", { className: "btn btn-sm btn-ghost", onClick: () => { cats.length = 0; addCat("ホープス", "ホープス"); addCat("カブ", "カブ"); addCat("バンビ", "バンビ"); } }, "小学(ホープス/カブ/バンビ)"),
-       h("button", { className: "btn btn-sm btn-ghost", onClick: () => { cats.length = 0; addCat("一般", "一般"); addCat("中学生", "中学"); addCat("高校生", "高校"); addCat("小学生", "小学"); } }, "学種(一般/中/高/小)")));
+       h("button", { className: "btn btn-sm btn-ghost", onClick: () => { cats.length = 0; addCat("一般", "一般"); addCat("中学生", "中学"); addCat("高校生", "高校"); addCat("小学生", "小学"); } }, "学種(一般/中/高/小)"),
+       h("button", { className: "btn btn-sm btn-ghost", onClick: () => { age.on = true; cats.length = 0; addCat("フィフティ", "50代", 50); addCat("シックスティ", "60代", 60); addCat("セブンティ", "70代", 70); render(); } }, "マスターズ(50/60/70)")));
    const foot = h("div", { className: "flex gap-2", style: { flexWrap: "wrap" } },
      h("button", { className: "btn", style: { background: "#15803d", color: "#fff" },
        onClick: (e) => {
-         const clean = cats.filter(c => (c.label || "").trim())
-           .map(c => ({ label: String(c.label).trim().slice(0, 60), short: String(c.short || "").trim().slice(0, 30),
-             fee_override: (c.fee_override === "" || c.fee_override == null) ? "" : (parseInt(c.fee_override) || 0) }));
+         const clean = cats.filter(c => (c.label || "").trim()).map(c => {
+           const o = { label: String(c.label).trim().slice(0, 60), short: String(c.short || "").trim().slice(0, 30),
+             fee_override: (c.fee_override === "" || c.fee_override == null) ? "" : (parseInt(c.fee_override) || 0) };
+           if (age.on) {
+             if (c.min_age !== "" && c.min_age != null) o.min_age = parseInt(c.min_age) || 0;
+             if (c.max_age !== "" && c.max_age != null) o.max_age = parseInt(c.max_age) || 0;
+             if (isDoubles && c.combined) o.combined = true;
+           }
+           return o;
+         });
          if (clean.length) ev.entry_categories = clean; else delete ev.entry_categories;
+         if (age.on) { ev.age_check = { mode: "birthdate" }; if (age.consent !== "" && age.consent != null) ev.age_check.consent_age = parseInt(age.consent) || 0; }
+         else delete ev.age_check;
          if (onDone) onDone();
          toast("参加区分を反映しました(「サーバーに保存」で確定)", "ok");
          e.target.closest(".modal-bg")?.remove();
