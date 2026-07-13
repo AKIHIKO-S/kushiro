@@ -1298,7 +1298,13 @@ app.get("/api/tournaments/:id", (req, res) => {
   res.json(isAdminAuthed(req) ? t : sanitizeTournamentPublic(t));
 });
 app.post("/api/tournaments", requireAdmin, (req, res) => {
-  res.status(201).json(db.createTournament(req.body));
+  const body = req.body || {};
+  // entry-settings と同じ防御: 作成時に event_config を渡せるので、種目 name を必ず
+  // 文字列化する (壊れた name=オブジェクトが「[object Object]」になる不具合の予防)。
+  if (Array.isArray(body.event_config)) {
+    body.event_config = body.event_config.map(e => (e && typeof e === "object") ? { ...e, name: _eventNameStr(e.name) } : e);
+  }
+  res.status(201).json(db.createTournament(body));
 });
 app.put("/api/tournaments/:id", requireAdmin, (req, res) => {
   const cur = db.getTournament(req.params.id);
@@ -2848,6 +2854,12 @@ function _resolveEvents(tournament) {
 // 既定種目カタログ取得 (admin の「追加」ボタンで使用)
 app.get("/api/events-catalog", (req, res) => {
   res.json({ events: DEFAULT_EVENTS_CATALOG });
+});
+
+// 過去大会で実際に使われた種目カタログ (使用回数順)。新規作成の「よく使う種目」で使用。
+// 運営内部情報のため requireAdmin。
+app.get("/api/used-events", requireAdmin, (req, res) => {
+  res.json({ events: db.getUsedEventsCatalog() });
 });
 
 app.get("/api/tournaments/:id/entry-form.html", (req, res) => {

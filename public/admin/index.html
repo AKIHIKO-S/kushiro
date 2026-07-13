@@ -2479,35 +2479,77 @@ const A = {
  ...templates.map(t => h("option", { value: t.id }, t.short || t.name)),
  );
 
- // メタ情報表示エリア (テンプレ選択時に events 一覧などを表示)
+ // メタ情報表示エリア (テンプレ選択時にルール・後援などを表示)
  const metaEl = h("div", { id: "tTplMeta", className: "text-sm text-sub",
  style: { padding: "8px 12px", background: "var(--bg)", borderRadius: "6px",
  marginTop: "6px", display: "none" } });
 
+ // ★ 種目リスト: 新規作成と同時に種目を確定する。以前はテンプレの種目が破棄され、
+ //   作成後に「フォーム設定」モーダルを毎回開いて種目を入れ直していた(= 毎回スクラッチ)。
+ let events = [];
+ const eventsWrap = h("div", { id: "ntEvents" });
+ const renderEvents = () => {
+ clear(eventsWrap);
+ if (!events.length) {
+ eventsWrap.appendChild(h("div", { className: "text-xs text-sub",
+ style: { padding: "10px 12px", background: "var(--bg)", borderRadius: "6px", textAlign: "center" } },
+ "種目が未選択です。テンプレートを選ぶと自動で入ります。下のボタンでも追加できます。"));
+ return;
+ }
+ events.forEach((ev, idx) => {
+ eventsWrap.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", marginBottom: "5px" } },
+ h("input", { className: "input", value: ev.name || "", placeholder: "種目名",
+ style: { flex: "1", minWidth: "0", padding: "6px 8px" },
+ onInput: (e) => { ev.name = e.target.value; } }),
+ h("select", { className: "input", style: { width: "86px", padding: "6px 4px" },
+ onChange: (e) => { ev.type = e.target.value; } },
+ h("option", { value: "singles", selected: ev.type === "singles" ? "" : null }, "個人"),
+ h("option", { value: "doubles", selected: ev.type === "doubles" ? "" : null }, "ダブルス"),
+ h("option", { value: "team", selected: ev.type === "team" ? "" : null }, "団体"),
+ ),
+ h("input", { className: "input", type: "number", inputmode: "numeric",
+ style: { width: "88px", padding: "6px 8px", textAlign: "right" },
+ value: ev.fee || 0, title: "参加料 (円)",
+ onInput: (e) => { ev.fee = parseInt(e.target.value) || 0; } }),
+ h("button", { className: "btn btn-sm btn-danger", type: "button", style: { padding: "5px 9px" },
+ onClick: () => { events.splice(idx, 1); renderEvents(); } }, "削除"),
+ ));
+ });
+ eventsWrap.appendChild(h("div", { className: "text-xs text-sub", style: { marginTop: "4px" } },
+ events.length + "種目"));
+ };
+
  const fillFromTemplate = () => {
  const id = tplSelect.value;
  metaEl.style.display = "none";
- metaEl.innerHTML = "";
+ clear(metaEl);
  if (!id || !window.TT_buildTournamentFromTemplate) return;
- const data = window.TT_buildTournamentFromTemplate(id);
+ const data = window.TT_buildTournamentFromTemplate(id, { date: document.getElementById("tDate").value });
  if (!data) return;
  document.getElementById("tName").value = data.name;
- document.getElementById("tDate").value = data.date || "";
+ if (data.date) document.getElementById("tDate").value = data.date;
  document.getElementById("tVenue").value = data.venue || "";
  document.getElementById("tDesc").value = data.description || "";
- // メタ情報表示
+ // ★ テンプレの種目を種目リストへ実体化 (以前は破棄され、毎回手入力していた)。
+ //   既に種目を組んでいたら全置換の確認を取る (手入力の消失防止)。
+ if (!events.length || confirm("テンプレートの種目で現在の種目リストを置き換えます。よろしいですか?")) {
+ events = (data._events || []).map(e => JSON.parse(JSON.stringify(e)));
+ renderEvents();
+ }
+ // メタ (ルール・後援) を表示 (安全な DOM 構築。innerHTML は使わない)
  metaEl.style.display = "block";
- const evList = (data._events || []).map(e =>
- `・${e.name}${e.fee ? ` (¥${e.fee})` : ""}${e.reps_seats ? ` 代表枠${e.reps_seats}` : ""}`
- ).join("<br>");
- metaEl.innerHTML = `
- <div class="font-bold mb-1">${data._events?.length || 0} 種目</div>
- <div style="font-size:11px; line-height:1.6; max-height:160px; overflow-y:auto">${evList}</div>
- <div class="text-xs mt-2"><b>ルール:</b> ${data._rules?.points || 11}本${data._rules?.games || 5}G、球: ${data._rules?.ball || "-"}</div>
- ${data._sponsors ? `<div class="text-xs"><b>後援:</b> ${data._sponsors.join(", ")}</div>` : ""}
- <div class="text-xs mt-2" style="color:var(--accent)">読込み後、すべて手動で修正できます。</div>`;
+ const r = data._rules || {};
+ metaEl.appendChild(h("div", { className: "text-xs" },
+ h("b", {}, "ルール: "), `${r.points || 11}本${r.games || 5}G、球: ${r.ball || "-"}`));
+ if (data._sponsors && data._sponsors.length) {
+ metaEl.appendChild(h("div", { className: "text-xs" },
+ h("b", {}, "後援: "), data._sponsors.join(", ")));
+ }
+ metaEl.appendChild(h("div", { className: "text-xs mt-1", style: { color: "var(--accent)" } },
+ "種目・料金は下で追加・修正できます。読込後もすべて手動で変更可。"));
  };
  tplSelect.addEventListener("change", fillFromTemplate);
+ renderEvents();
 
  const body = h("div", {},
  h("div", { className: "field" },
@@ -2541,6 +2583,35 @@ const A = {
  h("textarea", { id: "tDesc", rows: 3, placeholder: "大会の概要（任意）" })),
  h("div", { className: "text-xs text-sub mt-2" },
  "テンプレ選択後も、大会名・日付・会場・概要すべて手動で書き換えられます。"),
+ h("hr", { style: { margin: "12px 0", border: "none", borderTop: "1px solid var(--border)" } }),
+ // ★ 種目・参加料 (作成と同時に確定 → 作成直後に申込フォームが完成)
+ h("div", { className: "field" },
+ h("label", { className: "field-label" }, "種目・参加料"),
+ eventsWrap,
+ h("div", { className: "flex gap-2 mt-2", style: { flexWrap: "wrap" } },
+ h("button", { className: "btn btn-sm btn-ghost", type: "button",
+ onClick: () => A.openEventCatalogPicker(events, renderEvents) }, "+ カタログから選ぶ"),
+ h("button", { className: "btn btn-sm btn-ghost", type: "button",
+ onClick: () => A.openUsedEventsPicker(events, renderEvents) }, "+ よく使う種目"),
+ h("button", { className: "btn btn-sm btn-ghost", type: "button",
+ onClick: () => { events.push({ name: "新種目", type: "singles", fee: 700 }); renderEvents(); } }, "+ 空の種目"),
+ ),
+ ),
+ // ★ 申込受付 (作成と同時に公開URLを有効化できる)
+ h("div", { className: "field", style: { padding: "12px 14px", background: "#fefce8", border: "1px solid #fbbf24", borderRadius: "8px" } },
+ h("label", { className: "field-label", style: { color: "#78350f" } }, "申込受付"),
+ h("div", { style: { display: "flex", gap: "16px", alignItems: "center", flexWrap: "wrap" } },
+ h("label", { style: { display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontWeight: "bold" } },
+ h("input", { type: "checkbox", id: "ntOpen", style: { width: "17px", height: "17px" } }),
+ "作成後すぐに申込受付を開始する"),
+ h("div", { style: { display: "flex", alignItems: "center", gap: "6px" } },
+ h("label", { style: { fontSize: "13px", color: "#78350f" } }, "締切:"),
+ h("input", { type: "date", className: "input", id: "ntDeadline", style: { padding: "6px 10px" } }),
+ ),
+ ),
+ h("div", { className: "text-xs", style: { color: "#78350f", marginTop: "6px", lineHeight: "1.6" } },
+ "受付を開始すると、作成直後から公開URL (.../entry/大会ID) で申込を受け付けます。後から大会詳細の「フォーム設定」で切替も可能です。"),
+ ),
  );
  const foot = h("button", { className: "btn", onClick: async () => {
  const name = document.getElementById("tName").value.trim();
@@ -2549,7 +2620,25 @@ const A = {
  const tpl = tplId && window.TT_buildTournamentFromTemplate
  ? window.TT_buildTournamentFromTemplate(tplId, { date: document.getElementById("tDate").value })
  : null;
- // 大会本体作成
+ // 種目: 空名を除去 + 同名の重複除去して確定
+ const seen = new Set();
+ const cleanEvents = events
+ .filter(e => e && String(e.name || "").trim())
+ .map(e => ({ ...e, name: String(e.name).trim() }))
+ .filter(e => { if (seen.has(e.name)) return false; seen.add(e.name); return true; });
+ const openEl = document.getElementById("ntOpen");
+ const dlEl = document.getElementById("ntDeadline");
+ const wantOpen = !!(openEl && openEl.checked);
+ if (wantOpen && !cleanEvents.length) {
+ return toast("受付を開始するには種目を1つ以上追加してください", "err");
+ }
+ // 締切が過去日のまま受付ONは申込が即拒否される事故になるため確認する。
+ // 日本の大会なので判定は JST 基準(UTC だと JST 早朝に当日締切を誤判定する)。
+ const _today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+ if (wantOpen && dlEl && dlEl.value && dlEl.value < _today) {
+ if (!confirm("申込締切が過去の日付です。このまま受付を開始すると申込は締切超過で拒否されます。続けますか?")) return;
+ }
+ // 大会本体 + 申込設定 (種目・受付・締切) を一括作成
  const created = await api.post("/api/tournaments", {
  name,
  date: document.getElementById("tDate").value,
@@ -2563,12 +2652,18 @@ const A = {
  hq_position: tpl?.hq_position,
  numbering_origin: tpl?.numbering_origin,
  enforce_referee_rule: tpl?.enforce_referee_rule,
+ event_config: cleanEvents,
+ entry_events: cleanEvents.map(e => e.name),
+ entries_open: wantOpen,
+ entry_deadline: dlEl ? dlEl.value : "",
  });
- toast(tpl
- ? `大会を作成しました (テンプレ: ${tpl.name})`
- : "大会を追加しました", "ok");
+ if (created && created.error) return toast("作成失敗: " + created.error, "err");
  document.querySelector(".modal-bg")?.remove();
- await A.reload();
+ const evMsg = cleanEvents.length ? `${cleanEvents.length}種目` : "種目なし";
+ toast(`大会を作成しました (${evMsg}, ${wantOpen ? "受付中" : "受付前"})`, "ok");
+ // 作成後は詳細画面を開く → 「公開申込フォーム」カードで発行済みURLを確認・コピーできる
+ if (created && created.id) await A.openTournament(created.id);
+ else await A.reload();
  } }, "作成");
  openModal("新規大会 (テンプレート対応)", body, foot);
  },
@@ -3772,7 +3867,7 @@ const A = {
    list,
  );
  const foot = h("div", { className: "flex gap-2" },
-   h("button", { className: "btn", onClick: () => {
+   h("button", { className: "btn", onClick: (e) => {
      const cbs = list.querySelectorAll("input[type='checkbox']:checked:not([disabled])");
      let added = 0;
      cbs.forEach(cb => {
@@ -3785,13 +3880,78 @@ const A = {
        } catch {}
      });
      toast(added + " 種目を追加しました", "ok");
-     document.querySelector(".modal-bg")?.remove();
+     // ★自分(ピッカー)のモーダルだけ閉じる。querySelector だと DOM 先頭=親の新規大会モーダルを消してしまう
+     e.target.closest(".modal-bg")?.remove();
      if (onApply) onApply();
    } }, "選択した種目を追加"),
    h("button", { className: "btn btn-ghost",
-     onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"),
+     onClick: (e) => e.target.closest(".modal-bg")?.remove() }, "閉じる"),
  );
  openModal("種目カタログから追加", body, foot);
+ },
+
+ // ── よく使う種目 ピッカー (過去大会の実績から選択・使用回数順) ──
+ async openUsedEventsPicker(currentEvents, onApply) {
+ let catalog = [];
+ try {
+   const r = await api.get("/api/used-events");
+   // api.get は HTTP 401 でも例外を投げず {error} を返す。実績ゼロと誤報しないよう明示分岐する
+   if (r && r.error) return toast("実績取得失敗: " + r.error + " (管理キーを確認してください)", "err");
+   catalog = r.events || [];
+ } catch (e) {
+   return toast("実績取得失敗: " + e.message, "err");
+ }
+ if (!catalog.length) {
+   return toast("過去大会の種目実績がまだありません。「カタログから選ぶ」をご利用ください。", "err");
+ }
+ const existingNames = new Set(currentEvents.map(e => e.name));
+ const list = h("div", { style: { maxHeight: "60vh", overflow: "auto" } });
+ catalog.forEach(it => {
+   const exists = existingNames.has(it.name);
+   const row = h("label", {
+     style: { display: "flex", alignItems: "center", gap: "10px",
+       padding: "8px 12px", borderRadius: "5px",
+       border: "1px solid var(--border)", marginBottom: "4px",
+       background: exists ? "#f0fdf4" : "#fff",
+       cursor: exists ? "default" : "pointer",
+       opacity: exists ? 0.6 : 1 } });
+   const cb = h("input", { type: "checkbox", "data-event": JSON.stringify(it),
+     disabled: exists ? "" : null, checked: exists ? "" : null });
+   row.appendChild(cb);
+   row.appendChild(h("div", { style: { flex: 1 } },
+     h("div", { style: { fontWeight: 600 } }, it.name),
+     h("div", { className: "text-xs text-sub" },
+       it.type === "team" ? `団体戦 / ${it.per_team || 6}人` : (it.type === "doubles" ? "ダブルス" : "個人戦"),
+       "　¥", (it.fee || 0).toLocaleString("ja-JP"),
+       "　· ", (it.count || 1) + "大会で使用")));
+   if (exists) row.appendChild(h("span", { style: { color: "#15803d", fontSize: "11px" } }, "追加済"));
+   list.appendChild(row);
+ });
+ const body = h("div", {},
+   h("div", { className: "text-sm mb-3" },
+     "過去の大会で使った種目です (使用回数が多い順)。追加したい種目にチェックを入れて「選択した種目を追加」を押してください。"),
+   list,
+ );
+ const foot = h("div", { className: "flex gap-2" },
+   h("button", { className: "btn", onClick: (e) => {
+     const cbs = list.querySelectorAll("input[type='checkbox']:checked:not([disabled])");
+     let added = 0;
+     cbs.forEach(cb => {
+       try {
+         const ev = JSON.parse(cb.dataset.event);
+         delete ev.count;   // count は表示用メタ。保存データからは落とす
+         if (!existingNames.has(ev.name)) { currentEvents.push(ev); added++; }
+       } catch {}
+     });
+     toast(added + " 種目を追加しました", "ok");
+     // ★自分(ピッカー)のモーダルだけ閉じる。querySelector だと親の新規大会モーダルを消してしまう
+     e.target.closest(".modal-bg")?.remove();
+     if (onApply) onApply();
+   } }, "選択した種目を追加"),
+   h("button", { className: "btn btn-ghost",
+     onClick: (e) => e.target.closest(".modal-bg")?.remove() }, "閉じる"),
+ );
+ openModal("よく使う種目から追加", body, foot);
  },
 
  // ── ユーザー保存テンプレート 管理 ──

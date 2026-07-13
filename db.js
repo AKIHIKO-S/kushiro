@@ -2141,6 +2141,31 @@ function createTournament(data) {
     vals.push(id);
     sqlite.prepare(`UPDATE tournaments SET ${extra.join(", ")} WHERE id = ?`).run(...vals);
   }
+  // 申込フォーム設定 (種目・受付ON/OFF・締切・主催) を作成と同時に保存する。
+  // これが無いと、作成後に「フォーム設定」モーダルを毎回開いて種目を入れ直す必要があった
+  // (= 毎回スクラッチで作る状態)。新規作成モーダルで種目を選べば、作った瞬間に
+  // 種目入り・受付設定済み・公開URL発行済みの申込フォームが完成する。
+  //
+  // ★発火条件は「event_config か entry_events が配列」のときだけ。admin の新規作成モーダルは
+  //   event_config を配列で送る。一方 sync/tournament は大会 row 丸ごと(event_config は JSON文字列)を
+  //   渡すため、ここでは発火させず既存の同期挙動を一切変えない(ミラーが勝手に受付ONになる事故を防ぐ)。
+  const wantsEntrySetup = Array.isArray(data.event_config) || Array.isArray(data.entry_events);
+  if (wantsEntrySetup) {
+    const nameStr = (n) => { while (n && typeof n === "object") n = n.name; return n == null ? "" : String(n); };
+    const evCfg = (Array.isArray(data.event_config) ? data.event_config : [])
+      .filter(e => e && nameStr(e.name).trim());
+    const open = (data.entries_open === true || data.entries_open === 1);   // 文字列"false"等の truthy 事故を殺す
+    updateEntrySettings(id, {
+      entries_open: open && evCfg.length > 0,   // 種目ゼロで受付ONは作らない(DB層の不変条件)
+      entry_deadline: data.entry_deadline,
+      entry_events: (Array.isArray(data.entry_events) && data.entry_events.length)
+        ? data.entry_events.map(n => nameStr(n).trim()).filter(Boolean)
+        : evCfg.map(e => nameStr(e.name).trim()).filter(Boolean),
+      event_config: evCfg,
+      organizer: data.organizer,
+      category: data.category,
+    });
+  }
   return getTournament(id);
 }
 
@@ -7942,6 +7967,22 @@ function updateEntrySettings(tournamentId, settings) {
   const evCfg = settings.event_config !== undefined
     ? settings.event_config
     : (t.event_config || "");
+  // 受付ON でも「今回 event_config を明示的に渡していて有効種目ゼロ」なら受付ONにしない
+  // (フォーム設定モーダルで種目0のまま受付ONにする穴を、作成経路と同じく編集経路でも塞ぐ)。
+  // event_config 未指定(=受付フラグだけの切替。種目は別途管理済み)は既存挙動を維持し clamp しない。
+  let _openFlag = settings.entries_open ? 1 : 0;
+  if (_openFlag && settings.event_config !== undefined) {
+    let _n = 0;
+    try {
+      const _p = typeof settings.event_config === "string"
+        ? JSON.parse(settings.event_config || "[]") : (settings.event_config || []);
+      if (Array.isArray(_p)) _n = _p.filter(e => {
+        let x = e && e.name; while (x && typeof x === "object") x = x.name;
+        return x != null && String(x).trim();
+      }).length;
+    } catch { _n = 0; }
+    if (_n === 0) _openFlag = 0;
+  }
   sqlite.prepare(`
     UPDATE tournaments SET
       entries_open = ?,
@@ -7954,7 +7995,7 @@ function updateEntrySettings(tournamentId, settings) {
       updated_at = datetime('now','localtime')
     WHERE id = ?
   `).run(
-    settings.entries_open ? 1 : 0,
+    _openFlag,
     settings.entry_deadline || "",
     JSON.stringify(settings.entry_events || []),
     typeof evCfg === "string" ? evCfg : JSON.stringify(evCfg || []),
@@ -7964,6 +8005,47 @@ function updateEntrySettings(tournamentId, settings) {
     tournamentId
   );
   return stmts.getTournament.get(tournamentId);
+}
+
+// 過去の全大会の event_config から種目を集約する (使用回数順)。
+// 「これまで登録した大会の種目・カテゴリー」を新規作成の候補として再利用するための実績カタログ。
+// date 降順で走査するので、同名種目は最新大会の料金・設定を採用する。
+function getUsedEventsCatalog() {
+  // 中止大会は「実績」から除外。料金は「開催済み(date<=今日)を優先し、その中で最新」を採用する。
+  // これで料金打ち間違えの未来ドラフトが候補の表示料金を汚染しない(先に見た値=料金を保持するため)。
+  const rows = sqlite.prepare(
+    "SELECT event_config FROM tournaments " +
+    "WHERE event_config IS NOT NULL AND event_config != '' AND status != 'cancelled' " +
+    "ORDER BY (date != '' AND date <= date('now','localtime')) DESC, date DESC, created_at DESC"
+  ).all();
+  // 種目 name にオブジェクトが混入した壊れデータを文字列化する多重防御 (server.js _eventNameStr と同趣旨)
+  const nameStr = (n) => { while (n && typeof n === "object") n = n.name; return n == null ? "" : String(n); };
+  const map = new Map();   // 種目名(表記そのまま) → 集約データ
+  for (const r of rows) {
+    let cfg;
+    try { cfg = JSON.parse(r.event_config); } catch { continue; }
+    if (!Array.isArray(cfg)) continue;
+    for (const e of cfg) {
+      if (!e) continue;
+      const name = nameStr(e.name).trim().slice(0, 100);   // createEntry と同じ100字上限で異常名を抑止
+      if (!name) continue;
+      const prev = map.get(name);
+      if (prev) { prev.count++; continue; }   // 料金等は最新(先に見た)大会の値を保持
+      map.set(name, {
+        name,
+        type: e.type || "singles",
+        fee: parseInt(e.fee) || 0,
+        fee_student: (e.fee_student != null && e.fee_student !== "") ? (parseInt(e.fee_student) || 0) : null,
+        per_team: e.per_team || (e.type === "team" ? 6 : null),
+        tie_format: e.tie_format || "",
+        category: e.category || "",
+        gender: e.gender || "",
+        count: 1,
+      });
+    }
+  }
+  return Array.from(map.values())
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "ja"));
 }
 
 // 公開向け: 申込受付中の大会一覧
@@ -9841,7 +9923,7 @@ module.exports = {
   // Phase4: 申込者本人の閲覧トークン + データ品質
   getSubmissionByToken, deleteSubmissionPII, purgeOldSubmissionPII,
   findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,
-  updateEntrySettings, getOpenTournaments,
+  updateEntrySettings, getOpenTournaments, getUsedEventsCatalog,
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
   swapBracketMatches, setBracketSlotFromPlayer, setEntrantMemberFromPlayer,
