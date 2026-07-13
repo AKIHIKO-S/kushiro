@@ -2560,7 +2560,10 @@ function getOpsFingerprint(tournamentId) {
   const r = _opsFpStmt.get(tournamentId);
   // unconf/pend(承認待ち件数)・ssum/trlen(団体リーグのセット/得点訂正=tie_results変化)・審判(refc=件数, refid=選手ID合計,
   // refnl=DB外名の文字数合計)も含め、審判の割当/解放/差し替え(同数のA→Bも refid/refnl で検知)で viewer/他端末が即時更新されるように。
-  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.pend}.${r.ssum}.${r.trlen}.${r.refc}.${r.refid}.${r.refnl}.${r.f}`, status: t.status };
+  // tu = tournaments.updated_at(数字のみ): コートレイアウト・会場名など大会行の変更でも
+  // 公開/liveキャッシュ・ETag・SSEが更新されるように(試合が動くまで古い表示が固着するバグの修正)。
+  const tu = String(t.updated_at || "").replace(/\D/g, "");
+  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.pend}.${r.ssum}.${r.trlen}.${r.refc}.${r.refid}.${r.refnl}.${r.f}.${tu}`, status: t.status };
 }
 
 // ═══════════════════════════════════════════════════════
