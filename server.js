@@ -2810,10 +2810,17 @@ function _resolveEvents(tournament) {
         ? JSON.parse(tournament.event_config)
         : tournament.event_config;
       if (Array.isArray(cfg) && cfg.length) {
+        // 全キーを保持したうえで既知キーだけ正規化する。
+        // fee_student / gender / category / tie_format / grades / division_part /
+        // entry_categories / age_check / field_overrides など種目レベルの設定は
+        // ここを唯一のチョークポイントとして本番フォーム(/entry/:id)まで通す。
         return cfg.map(e => ({
+          ...e,
           name: _eventNameStr(e.name),
           type: e.type || "singles",
           fee: parseInt(e.fee) || 0,
+          fee_student: (e.fee_student != null && e.fee_student !== "")
+            ? (parseInt(e.fee_student) || 0) : null,
           per_team: e.per_team || (e.type === "team" ? 6 : null),
           note: e.note || "",
         }));
@@ -4417,6 +4424,11 @@ function lanIPv4s() {
   }
   return out;
 }
+// テスト時(require('../server'))はサーバを起動せず app と内部関数だけ公開する。
+// 本番(node server.js)は require.main===module が真になり従来どおり起動・常駐する。
+module.exports = { app, _resolveEvents };
+
+if (require.main === module) {
 const server = app.listen(PORT, () => {   // host未指定=0.0.0.0(全インターフェース)=LAN内の他端末から到達可能
   console.log(`\n卓球大会運営アプリ 起動中`);
   console.log(`   閲覧画面:  http://localhost:${PORT}/viewer`);
@@ -4474,3 +4486,4 @@ if (SYNC_CLOUD_URL && SYNC_KEY) {
   }, 3 * 60 * 1000).unref();
   console.log(`   クラウド同期: 有効(${SYNC_CLOUD_URL.replace(/^https?:\/\//, "")} へ進行中大会を自動push)`);
 }
+} // end if (require.main === module)
