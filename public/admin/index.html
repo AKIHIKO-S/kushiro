@@ -3329,6 +3329,11 @@ const A = {
  if (config.error) return toast(config.error, "err");
 
  let events = config.events || [];
+ // 必須項目設定(field_config)。サーバが解決済みオブジェクトを返す(空大会も既定で埋まっている)。
+ let fieldCfg = (config.field_config && config.field_config.fields)
+   ? config.field_config : { fields: {}, custom: [], event_overrides: {} };
+ if (!fieldCfg.fields) fieldCfg.fields = {};
+ if (!Array.isArray(fieldCfg.custom)) fieldCfg.custom = [];
  // GAS URL: 優先順位 = サーバーDB > localStorage
  let gasUrl = t.entry_gas_url || localStorage.getItem("tt_gas_url_" + t.id) || "";
  let adminEmail = localStorage.getItem("tt_admin_email") || "";
@@ -3392,6 +3397,61 @@ const A = {
  eventsTable.appendChild(tbody);
  };
  renderEventsTable();
+
+ // ── 必須項目・自由項目エディタ ──
+ // 各標準項目を 必須/任意/非表示 で切替。責任者名・電話・メールは常に必須で編集対象外。
+ const STD_FIELDS = [
+   ["team_name", "団体名"], ["furigana", "選手のふりがな"], ["player_team", "選手の所属"],
+   ["grade", "選手の学年"], ["player_gender", "選手の性別"], ["supervisor", "引率顧問"],
+   ["advisor", "顧問"], ["coach", "コーチ"], ["note", "通信欄"],
+ ];
+ const fieldCfgBox = h("div", {});
+ const renderFieldCfg = () => {
+   clear(fieldCfgBox);
+   const grid = h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 14px", marginBottom: "10px" } });
+   STD_FIELDS.forEach(([key, label]) => {
+     const cur = fieldCfg.fields[key] || "hidden";
+     grid.appendChild(h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" } },
+       h("span", { style: { fontSize: "12.5px" } }, label),
+       h("select", { className: "input", style: { width: "108px", padding: "5px 6px", fontSize: "12px" },
+         onChange: (e) => { fieldCfg.fields[key] = e.target.value; refreshCode(); } },
+         h("option", { value: "required", selected: cur === "required" ? "" : null }, "必須"),
+         h("option", { value: "optional", selected: cur === "optional" ? "" : null }, "任意"),
+         h("option", { value: "hidden", selected: cur === "hidden" ? "" : null }, "非表示"))));
+   });
+   fieldCfgBox.appendChild(grid);
+   fieldCfgBox.appendChild(h("div", { className: "text-sm font-bold", style: { margin: "8px 0 4px" } }, "自由項目 (主催者定義)"));
+   fieldCfg.custom.forEach((c, ci) => {
+     fieldCfgBox.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginBottom: "5px", padding: "6px", background: "var(--bg)", borderRadius: "6px" } },
+       h("input", { className: "input", style: { flex: "1 1 130px", padding: "5px 7px", fontSize: "12px" }, value: c.label || "", placeholder: "項目名",
+         onInput: (e) => { c.label = e.target.value; refreshCode(); } }),
+       h("select", { className: "input", style: { width: "94px", padding: "5px", fontSize: "12px" },
+         onChange: (e) => { c.type = e.target.value; renderFieldCfg(); refreshCode(); } },
+         h("option", { value: "text", selected: c.type === "text" ? "" : null }, "テキスト"),
+         h("option", { value: "select", selected: c.type === "select" ? "" : null }, "選択式"),
+         h("option", { value: "checkbox", selected: c.type === "checkbox" ? "" : null }, "チェック")),
+       h("select", { className: "input", style: { width: "100px", padding: "5px", fontSize: "12px" },
+         onChange: (e) => { c.scope = e.target.value; refreshCode(); } },
+         h("option", { value: "submission", selected: c.scope !== "player" ? "" : null }, "申込単位"),
+         h("option", { value: "player", selected: c.scope === "player" ? "" : null }, "選手ごと")),
+       h("label", { style: { fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" } },
+         h("input", { type: "checkbox", checked: c.required ? "" : null,
+           onChange: (e) => { c.required = e.target.checked; refreshCode(); } }), "必須"),
+       (c.type === "select"
+         ? h("input", { className: "input", style: { flex: "1 1 130px", padding: "5px 7px", fontSize: "12px" },
+             value: (c.options || []).join(", "), placeholder: "選択肢をカンマ区切り",
+             onInput: (e) => { c.options = e.target.value.split(",").map(s => s.trim()).filter(Boolean); refreshCode(); } })
+         : h("span", { style: { flex: "1 1 130px" } })),
+       h("button", { className: "btn btn-sm btn-danger", style: { padding: "4px 8px" },
+         onClick: () => { fieldCfg.custom.splice(ci, 1); renderFieldCfg(); refreshCode(); } }, "削除")));
+   });
+   fieldCfgBox.appendChild(h("button", { className: "btn btn-sm btn-ghost", style: { marginTop: "4px" },
+     onClick: () => {
+       fieldCfg.custom.push({ key: "opt" + Math.random().toString(36).slice(2, 7), label: "新しい項目", type: "text", required: false, scope: "submission" });
+       renderFieldCfg(); refreshCode();
+     } }, "+ 自由項目を追加"));
+ };
+ renderFieldCfg();
 
  // 埋込先プラットフォーム選択 (Studio / Jimdo)
  let platform = localStorage.getItem("tt_embed_platform_" + t.id) || "jimdo";
@@ -3621,7 +3681,13 @@ const A = {
  } }, "テンプレ保存"),
  ),
 
- h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "② GAS / メール設定"),
+ h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "② 必須項目・自由項目"),
+ h("div", { className: "text-xs text-sub mb-2" },
+   "各入力項目を 必須 / 任意 / 非表示 で切替。申込責任者名・電話番号・メールアドレスは常に必須です。" +
+   "「選手ごと」の自由項目は選手1名ごとに、「申込単位」は申込1件につき1つ表示されます。"),
+ fieldCfgBox,
+
+ h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "③ GAS / メール設定"),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "GAS Web App URL (受信先)"),
  h("input", { className: "input",
@@ -3647,7 +3713,7 @@ const A = {
  h("input", { className: "input", value: paymentNote,
  onInput: (e) => { paymentNote = e.target.value; refreshCode(); } })),
 
- h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "③ 埋込コード (HTML)"),
+ h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "④ 埋込コード (HTML)"),
  h("div", { className: "text-xs text-sub mb-2",
    style: { padding: "8px 10px", background: "#fffbeb",
             borderLeft: "3px solid #f59e0b", borderRadius: "0 4px 4px 0" } },
@@ -3697,6 +3763,7 @@ const A = {
        entry_deadline: dlEl ? dlEl.value : (t.entry_deadline || ""),
        entry_events: eventNames,
        event_config: events,
+       field_config: fieldCfg,       // 必須項目設定 + 自由項目(サーバ側で sanitize される)
        organizer: orgEl ? orgEl.value.trim() : (t.organizer || "釧路卓球協会"),
        entry_gas_url: gasUrl || "",  // GAS URL も DB に保存
      });

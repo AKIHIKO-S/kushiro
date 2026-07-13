@@ -2921,6 +2921,7 @@ app.get("/api/tournaments/:id/entry-form-config", (req, res) => {
     tournament: { id: tournament.id, name: tournament.name, date: tournament.date,
                   venue: tournament.venue, status: tournament.status },
     events,
+    field_config: db.resolveFieldConfig(tournament),   // 必須項目設定(空なら既定=現行フォーム相当)
     suggested_gas_url: "https://script.google.com/macros/s/AKfycb.../exec",
   });
 });
