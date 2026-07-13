@@ -808,6 +808,12 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
       // enforce:true = 公開フォーム経路は field_config の必須項目をサーバ側で強制(クライアント不信)。
       const r = db.createTeamEntry(req.params.id, payload, opId, { enforce: true });
 
+      // 必須項目エラー(validation)は GAS 中継せず即返す。中継すると不完全データがスプレッドシートに
+      // 記録され、かつ GAS 成功で握り潰されて「成功」誤表示になる(F1)。検証NGは申込者に修正させる。
+      if (r.error && r.validation) {
+        return res.status(400).json({ error: r.error });
+      }
+
       // GAS 連携が設定されていればサーバー側から中継 (スプレッドシート反映、best-effort)。
       // server→GAS は CORS 制約なし。ブラウザ直POSTの誤エラーを解消する要。
       let gasRelay = null;

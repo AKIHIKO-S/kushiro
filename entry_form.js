@@ -1060,15 +1060,17 @@ function gatherFormData() {
     //   index非依存で拾うことでデータ欠落を解消し、表示合計と送信内容を常に一致させる。
     // 選手1スロット分の可変項目(ふりがな/学年/性別/選手スコープ自由項目)を行スコープで読む。
     //   token: シングルスは ""(接頭辞なし)、ダブルスは "_1"/"_2"(選手スロット識別)。
+    // 接尾辞一致(name$=)で読む。前方/部分一致だと custom key(例 "furiX")が構造フィールド
+    //   (_furi 等)と誤マッチするため。custom key は英数字_に無害化済み(sanitizeFieldConfig)。
     const readSlot = (row, token) => {
-      const q = (suf) => { const el = row.querySelector('[name*="' + token + suf + '"]'); return el ? (el.value || "") : ""; };
+      const q = (suf) => { const el = row.querySelector('[name$="' + token + suf + '"]'); return el ? (el.value || "") : ""; };
       const furigana = q("_furi");
       const gender = q("_pgender");
       const ex = {};
       const g = q("_grade"); if (g) ex.grade = g;
       const answers = {};
       (FIELD_CFG.custom || []).filter((c) => c && c.scope === "player").forEach((c) => {
-        const el = row.querySelector('[name*="' + token + "_cust_" + c.key + '"]');
+        const el = row.querySelector('[name$="' + token + "_cust_" + c.key + '"]');
         if (!el) return;
         const v = el.type === "checkbox" ? !!el.checked : (el.value || "");
         if (v !== "" && v !== false) answers[c.key] = v;
@@ -1088,10 +1090,10 @@ function gatherFormData() {
         });
         if (!obj.team_name && obj.members.length === 0) return;
       } else if (ev.type === "doubles") {
-        obj.name1 = val('input[name*="_n1"]');
-        obj.name2 = val('input[name*="_n2"]');
-        obj.team1 = val('input[name*="_t1"]');
-        obj.team2 = val('input[name*="_t2"]');
+        obj.name1 = val('input[name$="_n1"]');
+        obj.name2 = val('input[name$="_n2"]');
+        obj.team1 = val('input[name$="_t1"]');
+        obj.team2 = val('input[name$="_t2"]');
         obj.team = obj.team1; // 後方互換
         if (!obj.name1 && !obj.name2) return;
         // ペアの可変項目: ふりがな→氏名/相方の読み、学年/性別/自由回答→extra_json.players[]。
@@ -1102,8 +1104,8 @@ function gatherFormData() {
         if (s2.gender) obj.partner_gender = s2.gender;
         if (s1.extra || s2.extra) obj.extra_json = { players: [s1.extra || {}, s2.extra || {}] };
       } else {
-        obj.name = val('input[name*="_name"]');
-        obj.team = val('input[name*="_team"]');
+        obj.name = val('input[name$="_name"]');
+        obj.team = val('input[name$="_team"]');
         if (!obj.name) return;
         // シングルスの可変項目: ふりがな→氏名の読み、学年/自由回答→extra_json、性別→gender。
         const s = readSlot(row, "");

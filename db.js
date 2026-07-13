@@ -7312,6 +7312,15 @@ function getSubmissionByToken(token) {
   const entries = rows.map(e => {
     // 選手行スコープの自由回答/学年を確認ページで表示できるよう parse(生年月日は表示しない=PII最小)。
     let ex = null; try { ex = e.extra_json ? JSON.parse(e.extra_json) : null; } catch (_) { ex = null; }
+    // ダブルスは {players:[{grade,answers},...]} 構造。学年は選手ぶんを "/" で連結して表示する。
+    let grade = (ex && ex.grade) || "";
+    let answers = (ex && ex.answers) || null;
+    if (ex && Array.isArray(ex.players)) {
+      grade = ex.players.map(p => (p && p.grade) || "").filter(Boolean).join(" / ");
+      const merged = {};
+      ex.players.forEach(p => { if (p && p.answers) Object.assign(merged, p.answers); });
+      if (Object.keys(merged).length) answers = merged;
+    }
     return {
       name: e.display_name || e.name,
       team: e.team || "",
@@ -7323,8 +7332,8 @@ function getSubmissionByToken(token) {
       team_members: entrantMembers(e),
       fee: e.fee || 0,
       status: e.status || "confirmed",
-      grade: (ex && ex.grade) || "",
-      answers: (ex && ex.answers) || null,
+      grade: grade,
+      answers: answers,
     };
   });
   const total = rows.reduce((s, e) => s + (e.fee || 0), 0);
@@ -7493,6 +7502,78 @@ function inferGenderCategory(eventName, g, c) {
   return { gender: gender || "male", category: category || "general" };
 }
 
+// 申込の必須項目をサーバ側で検証する(field_config 準拠)。満たさなければ日本語エラー文字列、
+// 満たせば null を返す。記入済みの種目行のみ検証し、空行(未申込)は弾かない。
+function _enforceRequiredFields(t, formData, entries) {
+  const fc = resolveFieldConfig(t);
+  const F = fc.fields || {};
+  const miss = (v) => !(v != null && String(v).trim());
+  const stFor = (evName, key) => {
+    const ov = fc.event_overrides && fc.event_overrides[evName];
+    if (ov && ov[key]) return ov[key];
+    return F[key] || "hidden";
+  };
+  // 連絡先は常に必須(責任者名・電話・メール)
+  if (miss(formData.contact_name)) return "申込責任者名を入力してください";
+  if (miss(formData.contact_tel)) return "連絡先(電話番号)を入力してください";
+  if (miss(formData.contact_email)) return "メールアドレスを入力してください";
+  if (F.team_name === "required" && miss(formData.team_name)) return "団体名を入力してください";
+  if (F.supervisor === "required" && miss(formData.supervisor)) return "引率顧問を入力してください";
+  if (F.advisor === "required" && miss(formData.advisor)) return "顧問を入力してください";
+  if (F.coach === "required" && miss(formData.coach)) return "コーチを入力してください";
+  if (F.note === "required" && miss(formData.note)) return "通信欄を入力してください";
+  for (const c of (fc.custom || [])) {
+    if (c && c.scope === "submission" && c.required) {
+      const a = formData.extra && formData.extra[c.key];
+      if (a == null || a === "" || a === false) return `「${c.label || c.key}」を入力してください`;
+    }
+  }
+  const playerCustoms = (fc.custom || []).filter(c => c && c.scope === "player" && c.required);
+  // 選手スロット1つ分の必須検証(ふりがな/学年/選手 custom)。extra は当該選手の申告 object。
+  const checkSlot = (evName, extra) => {
+    const ex = (extra && typeof extra === "object") ? extra : {};
+    if (stFor(evName, "furigana") === "required" && miss(ex.furigana)) return `${evName}: ふりがなを入力してください`;
+    if (stFor(evName, "grade") === "required" && miss(ex.grade)) return `${evName}: 学年を入力してください`;
+    for (const c of playerCustoms) {
+      const a = ex.answers && ex.answers[c.key];
+      if (a == null || a === "" || a === false) return `${evName}: 「${c.label || c.key}」を入力してください`;
+    }
+    return null;
+  };
+  for (const ent of entries) {
+    const evName = String(ent.event || "").trim(); if (!evName) continue;
+    const type = ent.type || "singles";
+    const ex = (ent.extra_json && typeof ent.extra_json === "object") ? ent.extra_json : {};
+    if (type === "team") {
+      const filled = String(ent.team_name || "").trim() ||
+        (Array.isArray(ent.members) && ent.members.some(m => String(m).trim()));
+      if (!filled) continue;
+      // 団体は選手個別の必須は課さない(名簿主体)。
+    } else if (type === "doubles" || type === "mixed") {
+      const n1 = String(ent.name1 || "").trim(), n2 = String(ent.name2 || "").trim();
+      if (!n1 && !n2) continue;
+      const players = Array.isArray(ex.players) ? ex.players : [];
+      // 記入済みスロットのみ所属・ふりがな等を必須にする(片名のみの未完成ペアで誤エラーを出さない / W3)。
+      if (n1) {
+        if (stFor(evName, "player_team") === "required" && miss(ent.team1)) return `${evName}: 選手1の所属を入力してください`;
+        const m = checkSlot(evName, players[0]); if (m) return m.replace(evName + ":", evName + ": 選手1");
+      }
+      if (n2) {
+        if (stFor(evName, "player_team") === "required" && miss(ent.team2)) return `${evName}: 選手2の所属を入力してください`;
+        const m = checkSlot(evName, players[1]); if (m) return m.replace(evName + ":", evName + ": 選手2");
+      }
+    } else {
+      const name = String(ent.name || "").trim();
+      if (!name) continue;
+      if (stFor(evName, "player_team") === "required" && miss(ent.team)) return `${evName}: 所属を入力してください`;
+      // singles は furigana を entrant 直列(ent.furigana)+ 学年/custom を extra_json で持つ。
+      const m = checkSlot(evName, { furigana: ent.furigana, grade: ex.grade, answers: ex.answers });
+      if (m) return m;
+    }
+  }
+  return null;
+}
+
 function createTeamEntry(tournamentId, formData, opId, opts) {
   opts = opts || {};
   const t = stmts.getTournament.get(tournamentId);
@@ -7553,63 +7634,24 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
   formData.contact_email = clip(formData.contact_email, 200);
   formData.contact_tel = clip(formData.contact_tel, 50);
   formData.note = clip(formData.note, 2000);
+  // 自由回答/申告(extra_json / extra)の文字列値も他フィールドと対称に長さ制限(巨大投入抑止 / W2)。
+  const clipExtra = (obj, depth) => {
+    if (!obj || typeof obj !== "object" || depth > 3) return;
+    for (const k of Object.keys(obj)) {
+      if (typeof obj[k] === "string") obj[k] = clip(obj[k], 300);
+      else if (obj[k] && typeof obj[k] === "object") clipExtra(obj[k], depth + 1);
+    }
+  };
+  if (formData.extra && typeof formData.extra === "object") clipExtra(formData.extra, 0);
+  for (const _e of entries) { if (_e && _e.extra_json && typeof _e.extra_json === "object") clipExtra(_e.extra_json, 0); }
 
   // ── サーバ側 必須項目検証(クライアントを信用しない / opts.enforce のときのみ) ──
   // 公開フォーム経路(server.js の submit-team-entry)だけが enforce:true を渡す。admin/GAS/import/
   // テスト等の内部・信頼済み経路は検証しない(部分データを正当に投入するため)。
-  // 不完全なら保存前に error を返し、GAS/シートへ不完全データを流さない。
+  // 不完全なら validation:true 付き error を返し、呼び出し側は GAS/シートへも中継しない(F1)。
   if (opts.enforce) {
-    const fc = resolveFieldConfig(t);
-    const F = fc.fields || {};
-    const miss = (v) => !(v != null && String(v).trim());
-    const stFor = (evName, key) => {
-      const ov = fc.event_overrides && fc.event_overrides[evName];
-      if (ov && ov[key]) return ov[key];
-      return F[key] || "hidden";
-    };
-    // 連絡先は常に必須(責任者名・電話・メール)
-    if (miss(formData.contact_name)) return { error: "申込責任者名を入力してください" };
-    if (miss(formData.contact_tel)) return { error: "連絡先(電話番号)を入力してください" };
-    if (miss(formData.contact_email)) return { error: "メールアドレスを入力してください" };
-    if (F.team_name === "required" && miss(formData.team_name)) return { error: "団体名を入力してください" };
-    if (F.supervisor === "required" && miss(formData.supervisor)) return { error: "引率顧問を入力してください" };
-    if (F.advisor === "required" && miss(formData.advisor)) return { error: "顧問を入力してください" };
-    if (F.coach === "required" && miss(formData.coach)) return { error: "コーチを入力してください" };
-    if (F.note === "required" && miss(formData.note)) return { error: "通信欄を入力してください" };
-    for (const c of (fc.custom || [])) {
-      if (c && c.scope === "submission" && c.required) {
-        const a = formData.extra && formData.extra[c.key];
-        if (a == null || a === "" || a === false) return { error: `「${c.label || c.key}」を入力してください` };
-      }
-    }
-    // 種目行スコープ: 記入済みの行のみ検証(空行=未申込は弾かない)。
-    const playerCustoms = (fc.custom || []).filter(c => c && c.scope === "player" && c.required);
-    for (const ent of entries) {
-      const evName = String(ent.event || "").trim(); if (!evName) continue;
-      const type = ent.type || "singles";
-      const ex = (ent.extra_json && typeof ent.extra_json === "object") ? ent.extra_json : {};
-      if (type === "team") {
-        const filled = String(ent.team_name || "").trim() || (Array.isArray(ent.members) && ent.members.some(m => String(m).trim()));
-        if (!filled) continue;
-        // 団体は選手個別の必須は課さない(名簿主体)。所属/自由項目は今後の拡張で対応。
-      } else if (type === "doubles" || type === "mixed") {
-        const filled = String(ent.name1 || "").trim() || String(ent.name2 || "").trim();
-        if (!filled) continue;
-        if (stFor(evName, "player_team") === "required") {
-          if (miss(ent.team1) || miss(ent.team2)) return { error: `${evName}: 選手の所属を入力してください` };
-        }
-      } else {
-        const filled = String(ent.name || "").trim();
-        if (!filled) continue;
-        if (stFor(evName, "player_team") === "required" && miss(ent.team)) return { error: `${evName}: 所属を入力してください` };
-        if (stFor(evName, "furigana") === "required" && miss(ent.furigana)) return { error: `${evName}: ふりがなを入力してください` };
-        if (stFor(evName, "grade") === "required" && miss(ex.grade)) return { error: `${evName}: 学年を入力してください` };
-        for (const c of playerCustoms) {
-          const a = ex.answers && ex.answers[c.key];
-          if (a == null || a === "" || a === false) return { error: `${evName}: 「${c.label || c.key}」を入力してください` };
-        }
-      }
-    }
+    const vmsg = _enforceRequiredFields(t, formData, entries);
+    if (vmsg) return { error: vmsg, validation: true };
   }
 
   const submittedAt = (formData.submitted_at
@@ -7663,6 +7705,16 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
   let computedTotal = 0;
   let existingSubId = "";      // 重複で見つかった既存 entrant の申込原本(併合先)
   let mergedInto = "";         // 併合した場合の既存原本 id
+
+  // 申込単位スコープの構造化データ: 引率者/顧問/コーチ + 自由項目(scope=submission)の回答。
+  // 新規・併合の両分岐で使うため persist の外で1度だけ組む(現状 supervisor/coach が未保存だった
+  // 取りこぼしを塞ぐ。生の生年月日は載せない=PII最小)。
+  const subExtra = {};
+  if (formData.supervisor) subExtra.supervisor = clip(formData.supervisor, 200);
+  if (formData.advisor) subExtra.advisor = clip(formData.advisor, 200);
+  if (formData.coach) subExtra.coach = clip(formData.coach, 200);
+  if (formData.extra && typeof formData.extra === "object") subExtra.answers = formData.extra;
+  const subExtraStr = Object.keys(subExtra).length ? JSON.stringify(subExtra) : "";
 
   // entrant 作成 + tournament_players + 申込原本 を1トランザクションで原子的に行う。
   // 途中で例外が出ても全てロールバックし「entrant だけ残って原本/トークンが無い」不整合を防ぐ
@@ -7808,20 +7860,17 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
         op_id: opId || mergeTarget.op_id || "",
       });
       submissionStmts.addToken.run(_hashToken(token), mergeTarget.id);   // 新トークン→既存原本
+      // 再送で新たに引率者/顧問/コーチ/自由回答が来ていれば既存原本の extra_json を更新(併合時の
+      // 取りこぼし防止 / M1)。空の再送では既存値を維持(上書きで消さない)。
+      if (subExtraStr) {
+        sqlite.prepare("UPDATE entry_submissions SET extra_json=? WHERE id=?").run(subExtraStr, mergeTarget.id);
+      }
       // 返す total_amount は「今回の追加分」(created_entries と整合=確認メールの明細と合計が一致)。
       // 原本の total_amount は全体(mergedTotal)。/entry/status は entrants から都度再計算するため全体が出る。
       mergedInto = mergeTarget.id;
     } else if (createdEntrants.length > 0) {
-      // 新規申込: 申込番号(トークン)発行 + 申込原本を保存。
+      // 新規申込: 申込番号(トークン)発行 + 申込原本を保存。subExtra は persist 外で組み済み。
       token = _genApplicantToken();
-      // 申込単位スコープの構造化データ: 引率者/顧問/コーチ + 自由項目(scope=submission)の回答。
-      // 現状 supervisor/coach はフォーム収集されるが未保存だった取りこぼしをここで塞ぐ。生の生年月日は載せない。
-      const subExtra = {};
-      if (formData.supervisor) subExtra.supervisor = clip(formData.supervisor, 200);
-      if (formData.advisor) subExtra.advisor = clip(formData.advisor, 200);
-      if (formData.coach) subExtra.coach = clip(formData.coach, 200);
-      if (formData.extra && typeof formData.extra === "object") subExtra.answers = formData.extra;
-      const subExtraStr = Object.keys(subExtra).length ? JSON.stringify(subExtra) : "";
       const safePayload = {
         team_name: formData.team_name || "",
         contact, note: noteBase, submitted_at: submittedAt,
@@ -8117,6 +8166,44 @@ function resolveFieldConfig(tournament) {
   };
 }
 
+// field_config を保存前に検証・無害化する(クライアント/API から任意JSONが来る前提)。
+// custom key を英数字_のみに制限し、属性インジェクション/querySelector 破綻/フォーム送信不能を防ぐ(F2/M2)。
+// 不正キー・予約キー(構造フィールドと衝突)・重複・想定外 type/scope は捨てる。
+function sanitizeFieldConfig(raw) {
+  if (typeof raw === "string") { try { raw = raw ? JSON.parse(raw) : null; } catch { raw = null; } }
+  if (!raw || typeof raw !== "object") return { version: 1, fields: {}, custom: [], event_overrides: {} };
+  const KEY_RE = /^[A-Za-z0-9_]{1,40}$/;
+  const STATE = new Set(["required", "optional", "hidden"]);
+  // 選手行/相方/団体メンバー/区分の input 名と衝突しうるキーは予約(gather の取り違え防止)。
+  const RESERVED = new Set(["name", "team", "furi", "furigana", "grade", "pgender", "gender",
+    "n1", "n2", "t1", "t2", "m", "cust", "p", "pair", "ttdiv"]);
+  const cleanStates = (obj) => {
+    const o = {};
+    if (obj && typeof obj === "object") for (const k of Object.keys(obj)) if (STATE.has(obj[k])) o[k] = obj[k];
+    return o;
+  };
+  const seen = new Set();
+  const custom = (Array.isArray(raw.custom) ? raw.custom : []).map(c => {
+    if (!c || typeof c !== "object") return null;
+    const key = String(c.key || "");
+    if (!KEY_RE.test(key) || RESERVED.has(key) || seen.has(key)) return null;
+    seen.add(key);
+    const type = ["text", "select", "checkbox"].includes(c.type) ? c.type : "text";
+    const scope = c.scope === "player" ? "player" : "submission";
+    const out = { key, label: String(c.label || key).slice(0, 60), type, required: !!c.required, scope };
+    if (type === "select") out.options = (Array.isArray(c.options) ? c.options : []).map(o => String(o).slice(0, 60)).slice(0, 30);
+    return out;
+  }).filter(Boolean);
+  const overrides = {};
+  if (raw.event_overrides && typeof raw.event_overrides === "object") {
+    for (const ev of Object.keys(raw.event_overrides)) {
+      const st = cleanStates(raw.event_overrides[ev]);
+      if (Object.keys(st).length) overrides[String(ev).slice(0, 100)] = st;
+    }
+  }
+  return { version: 1, fields: cleanStates(raw.fields), custom, event_overrides: overrides };
+}
+
 function updateEntrySettings(tournamentId, settings) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return null;
@@ -8141,9 +8228,9 @@ function updateEntrySettings(tournamentId, settings) {
     if (_n === 0) _openFlag = 0;
   }
   // field_config は event_config と同じ「明示指定時のみ更新」流儀。未指定なら既存値を維持
-  // (受付フラグだけ切替のトグルパターンを壊さない)。object で渡されたら JSON 文字列化して保存。
+  // (受付フラグだけ切替のトグルパターンを壊さない)。保存前に sanitizeFieldConfig で無害化する。
   const fldCfg = settings.field_config !== undefined
-    ? (typeof settings.field_config === "string" ? settings.field_config : JSON.stringify(settings.field_config))
+    ? JSON.stringify(sanitizeFieldConfig(settings.field_config))
     : (t.field_config || "");
   sqlite.prepare(`
     UPDATE tournaments SET
