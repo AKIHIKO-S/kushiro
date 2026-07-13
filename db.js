@@ -7682,11 +7682,19 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
       fee: parseInt(c.fee) || 0,
       fee_student: (c.fee_student != null && c.fee_student !== "" && !isNaN(parseInt(c.fee_student)))
         ? (parseInt(c.fee_student) || 0) : null,
+      // 大会が定義した参加区分(自己申告)。区分ごとに料金 fee_override を持てる。
+      categories: Array.isArray(c.entry_categories) && c.entry_categories.length ? c.entry_categories : null,
     };
   });
   const resolveFee = (evName, division, fallback) => {
     const cfg = feeMap[evName];
     if (!cfg) return parseInt(fallback) || 0;
+    // entry_categories がある種目は、選択区分(value)の fee_override を優先(無ければ一般料金)。
+    if (cfg.categories) {
+      const cat = cfg.categories.find(x => x && String(x.value || x.label) === String(division));
+      if (cat && cat.fee_override != null && cat.fee_override !== "") return parseInt(cat.fee_override) || 0;
+      return cfg.fee;
+    }
     const isStudent = division && division !== "general";
     return (isStudent && cfg.fee_student != null) ? cfg.fee_student : cfg.fee;
   };
@@ -7734,12 +7742,16 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
       const gc = inferGenderCategory(evName, ent.gender, ent.category);
       // フォームの参加区分が来ていればカテゴリ=料金区分を上書きする。
       // 一般→general / 中学生→middle / 高校生→high。旧2区分の "student" は後方互換で high。
-      let division = "";
-      if (ent.division === "general") { gc.category = "general"; division = "general"; }
-      else if (ent.division === "middle") { gc.category = "middle"; division = "middle"; }
-      else if (ent.division === "high") { gc.category = "high"; division = "high"; }
-      else if (ent.division === "student") { if (gc.category === "general") gc.category = "high"; division = "student"; }
+      // division = フォームで選ばれた区分の value。標準3区分はカテゴリ推定にも反映し、
+      // entry_categories の独自 value(例 "hopes")はそのまま保持する(料金は resolveFee が fee_override 解決)。
+      let division = ent.division || "";
+      if (division === "general") gc.category = "general";
+      else if (division === "middle") gc.category = "middle";
+      else if (division === "high") gc.category = "high";
+      else if (division === "student") { if (gc.category === "general") gc.category = "high"; }
       const fee = resolveFee(evName, division || gc.category, ent.fee);
+      // 区分の表示ラベル(entry_categories の short/label)を age_group に保存(名簿・集計の区分表示用)。
+      const divLabel = String(ent.division_label || "").slice(0, 60);
 
       // createEntrant に渡す共通属性 (Phase4: 区分/料金/連絡先/申込日時/原本参照を保存)
       // extra_json = 選手行スコープの自由回答 + 学年/生年月日/年齢の申告(フォームが構築した object)。
@@ -7747,7 +7759,7 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
       const common = {
         tournament_id: tournamentId, event: evName,
         category: gc.category, gender: gc.gender, status,
-        division, fee, submission_id: submissionId, applied_at: submittedAt,
+        division, fee, age_group: divLabel, submission_id: submissionId, applied_at: submittedAt,
         contact_name: contact.name, contact_email: contact.email, contact_tel: contact.tel,
         extra_json: (ent.extra_json && typeof ent.extra_json === "object") ? ent.extra_json : undefined,
       };

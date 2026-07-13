@@ -67,6 +67,8 @@ function buildEntryFormHTML(tournament, events, opts) {
     type: e.type || "singles",
     note: e.note || "",
     per_team: e.per_team || 6,
+    // 大会が定義した参加区分(自己申告)。value/label/short/fee_override をクライアントの区分セグメントで使う。
+    entry_categories: Array.isArray(e.entry_categories) ? e.entry_categories : undefined,
   })));
 
   // ── 必須項目設定(field_config) ──────────────────────────────
@@ -435,13 +437,14 @@ function buildEntryFormHTML(tournament, events, opts) {
   .entry-row input[type="text"]:focus { outline:none; border-color:var(--red); box-shadow:0 0 0 3px rgba(192,21,38,.13); }
   .entry-row input[type="text"]::placeholder { color:#8a7a64; }
 
-  /* ── 参加区分セグメント (一般 / 中学生 / 高校生) ── */
+  /* ── 参加区分セグメント (大会ごとの区分。既定は一般/中学生/高校生) ── */
   .div-seg {
-    display: flex; gap: 6px; margin: 4px 0 12px;
+    display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px;
     background: #f0e7d6; padding: 4px; border-radius: 11px;
     border: 1px solid var(--line);
   }
-  .div-seg .seg { flex: 1; position: relative; cursor: pointer; }
+  /* min-width:84px + flex-wrap で、区分が多い/狭い画面(375px)でも切れずに折り返す */
+  .div-seg .seg { flex: 1 1 auto; min-width: 84px; position: relative; cursor: pointer; }
   .div-seg .seg input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
   .div-seg .seg span {
     display: flex; flex-direction: column; align-items: center; gap: 1px;
@@ -905,19 +908,31 @@ function addEntry(eventIdx) {
 
   // 中高校生に別料金がある種目だけ、行ごとに参加区分セグメント(一般/中学生/高校生)を出す。
   // 選んだ区分で料金が変動 (中学生・高校生は fee_student)。グループ名はグローバル一意にする。
+  // 参加区分セグメント。大会が entry_categories を定義していればそれを、無ければ中高生別料金がある
+  // 種目に限り従来の 一般/中学生/高校生 を自動表示する(後方互換)。各区分は value/表示ラベル/料金を持ち、
+  // 料金は data-fee に載せて rowFee がそこから読む(区分ごと料金 fee_override に対応)。
   const hasStuFee = (ev.fee_student != null && ev.fee_student !== (ev.fee || 0));
   const seq = (window.__ttSeq = (window.__ttSeq || 0) + 1);
   let divSeg = "";
-  if (hasStuFee) {
-    const opts = [["general", "一般", ev.fee || 0],
-                  ["middle", "中学生", ev.fee_student || 0],
-                  ["high", "高校生", ev.fee_student || 0]];
+  let segOpts = null;
+  if (Array.isArray(ev.entry_categories) && ev.entry_categories.length) {
+    segOpts = ev.entry_categories.map(function (c) {
+      const fee = (c.fee_override != null && c.fee_override !== "") ? (parseInt(c.fee_override) || 0) : (ev.fee || 0);
+      return { value: String(c.value || c.label || ""), label: String(c.short || c.label || c.value || ""), fee: fee };
+    }).filter(function (o) { return o.value || o.label; });
+  } else if (hasStuFee) {
+    segOpts = [{ value: "general", label: "一般", fee: ev.fee || 0 },
+               { value: "middle", label: "中学生", fee: ev.fee_student || 0 },
+               { value: "high", label: "高校生", fee: ev.fee_student || 0 }];
+  }
+  if (segOpts && segOpts.length) {
     divSeg = '<div class="div-label">参加区分を選択してください</div>' +
       '<div class="div-seg" role="radiogroup" aria-label="参加区分">' +
-      opts.map(function (o, i) {
-        return '<label class="seg"><input type="radio" name="ttdiv' + seq + '" value="' + o[0] + '"' +
+      segOpts.map(function (o, i) {
+        return '<label class="seg"><input type="radio" name="ttdiv' + seq + '" value="' + escapeHtml(o.value) + '"' +
+          ' data-fee="' + o.fee + '" data-label="' + escapeHtml(o.label) + '"' +
           (i === 0 ? ' checked' : '') + ' onchange="recalcTotal()">' +
-          '<span>' + o[1] + '<small>¥' + o[2].toLocaleString("ja-JP") + '</small></span></label>';
+          '<span>' + escapeHtml(o.label) + '<small>¥' + o.fee.toLocaleString("ja-JP") + '</small></span></label>';
       }).join('') + '</div>';
   }
 
@@ -970,15 +985,21 @@ function removeEntry(btn, eventIdx) {
   recalcTotal();
 }
 
-// 行の参加区分(general/middle/high)を返す。セグメントが無い種目は general。
+// 行の参加区分の value を返す(entry_categories の value または general/middle/high)。無区分は general。
 function rowDivision(row) {
   const r = row.querySelector(".div-seg input:checked");
   return r ? r.value : "general";
 }
-// 区分に応じた料金。一般以外(中学生/高校生)は中高生料金 fee_student。
+// 選択中の区分の表示ラベル(entry_categories の short/label。無区分は "")。
+function rowDivLabel(row) {
+  const r = row.querySelector(".div-seg input:checked");
+  return r ? (r.getAttribute("data-label") || "") : "";
+}
+// 行の料金は選択区分の data-fee から読む(区分ごと料金 fee_override / 中高生別料金の両対応)。
 function rowFee(ev, row) {
-  return (rowDivision(row) !== "general" && ev.fee_student != null)
-    ? ev.fee_student : (ev.fee || 0);
+  const r = row.querySelector(".div-seg input:checked");
+  if (r) { const f = r.getAttribute("data-fee"); if (f != null && f !== "") return parseInt(f) || 0; }
+  return ev.fee || 0;
 }
 // 区分の表示ラベル (一般は空文字 = 表示しない)。
 function ttDivLabel(d) {
@@ -1081,7 +1102,8 @@ function gatherFormData() {
     Array.from(container.children).forEach((row) => {
       const val = (sel) => { const el = row.querySelector(sel); return el ? (el.value || "") : ""; };
       const obj = { event: ev.name, type: ev.type || "singles",
-        fee: rowFee(ev, row), division: rowDivision(row) };   // 区分別料金 + 区分(general/student)
+        fee: rowFee(ev, row), division: rowDivision(row),     // 区分別料金 + 区分の value
+        division_label: rowDivLabel(row) };                    // 区分の表示ラベル(entry_categories 用)
       if (ev.type === "team") {
         obj.team_name = val('input[name*="_team"][name$="_name"]');
         obj.members = [];
