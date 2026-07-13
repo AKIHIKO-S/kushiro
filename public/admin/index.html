@@ -3324,6 +3324,56 @@ const A = {
  },
 
  // ── 申込フォーム生成ダイアログ ──
+ // 種目ごとの参加区分(年代別など・区分ごと料金)を編集する子モーダル。
+ // openModal はスタック式なので、閉じるときは closest(".modal-bg") で自分だけを消す(親を消さない)。
+ openEntryCategoriesEditor(ev, onDone) {
+   const cats = Array.isArray(ev.entry_categories) ? ev.entry_categories.map(c => ({ ...c })) : [];
+   const listBox = h("div", {});
+   const render = () => {
+     clear(listBox);
+     if (!cats.length) {
+       listBox.appendChild(h("div", { className: "text-xs text-sub", style: { padding: "8px 0" } },
+         "区分は未設定です。中高生別料金がある種目は自動で 一般/中学生/高校生 が表示されます。年代別など独自の区分はここで定義してください。"));
+     }
+     cats.forEach((c, i) => {
+       listBox.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } },
+         h("input", { className: "input", style: { flex: "1 1 150px", padding: "6px 8px", fontSize: "13px" }, value: c.label || "", placeholder: "区分名 (例: ホープス)",
+           onInput: (e) => { c.label = e.target.value; } }),
+         h("input", { className: "input", style: { width: "108px", padding: "6px 8px", fontSize: "13px" }, value: c.short || "", placeholder: "短縮(任意)",
+           onInput: (e) => { c.short = e.target.value; } }),
+         h("input", { className: "input", type: "number", inputmode: "numeric", style: { width: "96px", padding: "6px 8px", fontSize: "13px", textAlign: "right" },
+           value: (c.fee_override != null && c.fee_override !== "") ? c.fee_override : "", placeholder: "料金",
+           title: "この区分の参加料。空欄なら種目の一般料金",
+           onInput: (e) => { c.fee_override = e.target.value === "" ? "" : (parseInt(e.target.value) || 0); } }),
+         h("button", { className: "btn btn-sm btn-danger", style: { padding: "4px 8px" },
+           onClick: () => { cats.splice(i, 1); render(); } }, "削除")));
+     });
+   };
+   render();
+   const addCat = (label, short) => { cats.push({ label: label || "新区分", short: short || "", fee_override: "" }); render(); };
+   const body = h("div", {},
+     h("div", { className: "text-xs text-sub mb-2" },
+       "「" + (ev.name || "種目") + "」の参加区分。申込者はこの中から1つ選びます。料金は区分ごとに変えられます(空欄=種目の一般料金)。"),
+     listBox,
+     h("div", { className: "flex gap-2 mt-2", style: { flexWrap: "wrap" } },
+       h("button", { className: "btn btn-sm btn-ghost", onClick: () => addCat("", "") }, "+ 区分を追加"),
+       h("button", { className: "btn btn-sm btn-ghost", onClick: () => { cats.length = 0; addCat("ホープス", "ホープス"); addCat("カブ", "カブ"); addCat("バンビ", "バンビ"); } }, "小学(ホープス/カブ/バンビ)"),
+       h("button", { className: "btn btn-sm btn-ghost", onClick: () => { cats.length = 0; addCat("一般", "一般"); addCat("中学生", "中学"); addCat("高校生", "高校"); addCat("小学生", "小学"); } }, "学種(一般/中/高/小)")));
+   const foot = h("div", { className: "flex gap-2", style: { flexWrap: "wrap" } },
+     h("button", { className: "btn", style: { background: "#15803d", color: "#fff" },
+       onClick: (e) => {
+         const clean = cats.filter(c => (c.label || "").trim())
+           .map(c => ({ label: String(c.label).trim().slice(0, 60), short: String(c.short || "").trim().slice(0, 30),
+             fee_override: (c.fee_override === "" || c.fee_override == null) ? "" : (parseInt(c.fee_override) || 0) }));
+         if (clean.length) ev.entry_categories = clean; else delete ev.entry_categories;
+         if (onDone) onDone();
+         toast("参加区分を反映しました(「サーバーに保存」で確定)", "ok");
+         e.target.closest(".modal-bg")?.remove();
+       } }, "この種目に適用"),
+     h("button", { className: "btn btn-ghost", onClick: (e) => e.target.closest(".modal-bg")?.remove() }, "キャンセル"));
+   openModal("参加区分の設定: " + (ev.name || ""), body, foot);
+ },
+
  async openEntryFormGenerator(t) {
  const config = await api.get(`/api/tournaments/${t.id}/entry-form-config`);
  if (config.error) return toast(config.error, "err");
@@ -3349,7 +3399,7 @@ const A = {
  h("th", { style: { width: "92px" } }, "形式"),
  h("th", { style: { width: "120px" } }, "一般(¥)"),
  h("th", { style: { width: "120px" } }, "中高生(¥)"),
- h("th", { style: { width: "150px" } }, "団体(人数/対戦形式)"),
+ h("th", { style: { width: "150px" } }, "団体設定 / 参加区分"),
  h("th", { style: { width: "52px" } }, ""),
  )));
  const tbody = h("tbody", {});
@@ -3388,7 +3438,10 @@ const A = {
  value: ev.tie_format || "", placeholder: "例 S,S,D,S,S",
  title: "団体戦の対戦形式。S=シングルス D=ダブルス をカンマ区切り(例 S,S,D,S,S=5試合)。数字だけなら試合数。空欄なら結果はチームスコア直接入力。",
  onInput: (e) => { ev.tie_format = e.target.value; refreshCode(); } }))
- : h("span", { className: "text-sub" }, "")),
+ : h("button", { className: "btn btn-sm btn-ghost", style: { fontSize: "12px", padding: "5px 8px" },
+     title: "年代別など、申込者が選ぶ参加区分を定義(区分ごとに料金も設定可)",
+     onClick: () => A.openEntryCategoriesEditor(ev, () => { renderEventsTable(); refreshCode(); }) },
+     "参加区分 " + (Array.isArray(ev.entry_categories) && ev.entry_categories.length ? "(" + ev.entry_categories.length + ")" : "設定"))),
  h("td", {}, h("button", { className: "btn btn-sm btn-danger",
  onClick: () => { events.splice(idx, 1); renderEventsTable(); refreshCode(); } },
  "削除")),
