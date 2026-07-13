@@ -5432,7 +5432,7 @@ const A = {
      previewBox.innerHTML = "";
      previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "6px" } },
        `※「標準配置で生成したら」のプレビューです（まだ生成していません）。 枠${bdata.bracket_size} / ${bdata.total_rounds}回戦 / 出場${bdata.player_count}名 / 1回戦免除${bdata.bye_count}名`));
-     previewBox.appendChild(O.renderVisualBracket(bdata));
+     previewBox.appendChild(O.renderPaperBracket(bdata, { readOnly: true }));
    } catch (e) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + (e.message || e) + '</div>'; }
  };
  const previewBtn = h("button", { className: "btn btn-sm btn-ghost",
@@ -8544,9 +8544,7 @@ const O = {
      }
      area.innerHTML = "";
      if (bdata && bdata.event) { O._bracketRev = O._bracketRev || {}; O._bracketRev[bdata.event] = bdata.bracket_rev; }   // 同時作業ガード用に組合せの版を種目別に保持
-     O._bracketEditMode = true;
-     area.appendChild(O.renderVisualBracket(bdata));
-     O._bracketEditMode = false;
+     area.appendChild(O.renderPaperBracket(bdata));   // 紙面ミラー(承認案1): タップ2回で組換
      applyZoom();
      lastSig = sigOf();
    } catch (e) {
@@ -8624,7 +8622,7 @@ const O = {
          onClick: fitWidth }, "画面に合わせる")),
    ),
    h("div", { className: "text-xs text-sub", style: { marginTop: "6px" } },
-     "1回戦: ドラッグで入替 / クリックで編集 ・ 各対戦の × で削除"),
+     "選手を2人タップすると入れ替え ・ 1人選んで「この枠を変更」で置換/BYE/シード"),
  );
 
  const inner = h("div", {});
@@ -11021,7 +11019,7 @@ const O = {
      if (bdata.error) { bracketArea.innerHTML = '<div style="color:#dc2626">' + bdata.error + '</div>'; return; }
      bracketArea.innerHTML = "";
      if (bdata && bdata.event) { O._bracketRev = O._bracketRev || {}; O._bracketRev[bdata.event] = bdata.bracket_rev; }   // 同時作業ガード用に組合せの版を種目別に保持
-     bracketArea.appendChild(O.renderVisualBracket(bdata));
+     bracketArea.appendChild(O.renderPaperBracket(bdata));   // 紙面ミラー(承認案1)
    } catch (e) {
      bracketArea.innerHTML = '<div style="color:#dc2626">読込失敗: ' + e.message + '</div>';
    }
@@ -11088,7 +11086,7 @@ const O = {
    h("button", { className: "btn btn-sm", style: { background: "#0ea5e9" }, onClick: toggleFs }, "⛶ 全画面"),
    h("button", { className: "btn btn-sm", onClick: printBracket }, "印刷 (A3横)"),
    h("span", { className: "text-xs text-sub", style: { marginLeft: "auto" } },
-     "1回戦の選手は、名前を指やマウスで動かして入れ替えできます"),
+     "選手を2人タップすると入れ替えできます(確定済みは不可)"),
  );
  renderTabs();
  if (events.length > 1) fsWrap.appendChild(tabStrip); // 複数種目/ブロック時のみタブ表示
@@ -11141,6 +11139,360 @@ const O = {
  },
 
  // ─── ビジュアルブラケットの実 DOM 構築 (両側トーナメント) ─────
+ // ═══ 紙面ミラー・トーナメント表(承認案1+案3注釈): 印刷Excelと同じ紙式で描く ═══
+ // ・実選手だけのレール(番号/氏名/所属)を左右に立て、山の罫線は SVG に一元計算(ズレ禁止)。
+ //   線の再帰は reports.js buildSideLines と同一(両子=山join / 片子=長線延長 / 子なし=描かない)。
+ // ・注釈: join線上に 未確定=「(1-3の勝者)」/ 進行中=「● 台N」/ 確定=勝者名。
+ // ・組換UI: レールをタップ→相手をタップ→下部バーで確定(swap API)。変更/シードもバーから。
+ // ・全て inline style + SVG属性(印刷ウィンドウへ innerHTML 移植してもクラスCSS欠落で崩れない)。
+ _pbSel: null,      // 選択中 {event, g, pos, slot, name}
+ _pbSel2: null,     // 入替相手
+ _pbBlock: {},      // 種目→表示中タブ("0".."n" or "F"=決勝T)
+ renderPaperBracket(bdata, opts) {
+ opts = opts || {};
+ const matches = bdata.matches || [];
+ if (!matches.length) return h("div", { className: "empty-state" }, "試合データなし");
+ const event = bdata.event;
+ const ctx = (opts && opts.ctx) || {
+   tournamentId: O.tournamentId, event,
+   getRev: () => (O._bracketRev && O._bracketRev[event]),
+   setRev: (rev) => { O._bracketRev = O._bracketRev || {}; if (rev) O._bracketRev[event] = rev; },
+   reload: () => { if (typeof O._vbReload === "function") O._vbReload(); },
+ };
+ const editable = !bdata.preview && !opts.readOnly && opts.editable !== false;
+ const byRP = {};
+ matches.forEach(m => { byRP[(m.bracket_round || 1) + "_" + (m.bracket_pos || 0)] = m; });
+ const round1 = matches.filter(m => (m.bracket_round || 1) === 1)
+   .sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0));
+ const S = round1.length * 2;
+ const totalRounds = Math.max(1, Math.round(Math.log2(S)));
+ const BL = S >= 256 ? 128 : S;                  // 1ブロックのリーフ数(Excel紙面と同式)
+ const nBlocks = S / BL;
+ const blockRounds = Math.max(1, Math.round(Math.log2(BL)));
+ const sideR = Math.max(0, blockRounds - 1);
+
+ // リーフ配列(BYE=null)と通し番号(BYEを除く連番=紙・Excelと同じ定義)
+ const leafArr = new Array(S).fill(null);
+ round1.forEach(m => {
+   const p = m.bracket_pos || 0;
+   [[1, m.player1_name, m.player1_team, m.player1_entrant_id],
+    [2, m.player2_name, m.player2_team, m.player2_entrant_id]].forEach(([sk, nm, tm, eid]) => {
+     if (nm && nm !== "BYE") leafArr[2 * p + (sk - 1)] = { name: nm, team: tm || "", eid, pos: p, slot: sk };
+   });
+ });
+ { let serial = 0; leafArr.forEach(lf => { if (lf) lf.no = ++serial; }); }
+ const lockOf = (lf) => {   // 現行と同義: 進行中 or 実選手同士の確定済みは編集不可
+   const m = byRP["1_" + lf.pos]; if (!m) return false;
+   const bothReal = m.player1_name && m.player2_name && m.player1_name !== "BYE" && m.player2_name !== "BYE";
+   return m.status === "on_table" || (m.status === "completed" && bothReal);
+ };
+
+ // 幾何(px)。罫線は全てこの座標系のSVGに描く=レール/山線/中央joinが構造的にズレない。
+ const ROW_H = 34, RAIL_W = 200, ADV_W = 34, CENTER_W = 132, PAD_T = 10, PAD_B = 10;
+ const W = RAIL_W * 2 + sideR * ADV_W * 2 + CENTER_W;
+ const NSVG = "http://www.w3.org/2000/svg";
+ const sline = (svg, x1, y1, x2, y2, wpx, color) => {
+   const l = document.createElementNS(NSVG, "line");
+   l.setAttribute("x1", x1); l.setAttribute("y1", y1);
+   l.setAttribute("x2", x2); l.setAttribute("y2", y2);
+   l.setAttribute("stroke", color || "#1f2937");
+   l.setAttribute("stroke-width", wpx || 1.5);
+   l.setAttribute("shape-rendering", "crispEdges");
+   svg.appendChild(l);
+ };
+ const stext = (svg, x, y, txt, anchor, size, color, bold) => {
+   const t = document.createElementNS(NSVG, "text");
+   t.setAttribute("x", x); t.setAttribute("y", y);
+   t.setAttribute("text-anchor", anchor || "start");
+   t.setAttribute("font-size", size || 10.5);
+   t.setAttribute("fill", color || "#6b7280");
+   if (bold) t.setAttribute("font-weight", "700");
+   t.setAttribute("font-family", "inherit");
+   t.textContent = txt;
+   svg.appendChild(t);
+ };
+ // join線の注釈: 確定=勝者名 / 進行中=● 台N / 未確定=(回戦-番号の勝者)
+ const annotate = (svg, mm, xa, xb, y, anchorSide) => {
+   if (!mm) return;
+   const x = anchorSide === "L" ? xa + 3 : anchorSide === "R" ? xb - 3 : Math.round((xa + xb) / 2);
+   const anc = anchorSide === "L" ? "start" : anchorSide === "R" ? "end" : "middle";
+   if (mm.status === "completed" && mm.winner_name && mm.winner_name !== "BYE") {
+     stext(svg, x, y - 4, mm.winner_name, anc, 11.5, "#1f2937", true);
+   } else if (mm.status === "on_table") {
+     stext(svg, x, y - 4, "● 台" + (mm.table_no || "?"), anc, 10.5, "#c01526", true);
+   } else {
+     const lbl = (mm.bracket_round || 1) + "-" + (mm.match_no || ((mm.bracket_pos || 0) + 1));
+     stext(svg, x, y - 4, "(" + lbl + "の勝者)", anc, 10.5, "#9ca3af");
+   }
+ };
+
+ // 1ブロックを描く。rails=クリック対象のDOM(選択/検索で使う)
+ const buildBlockEl = (b) => {
+   const rails = [];
+   const wrap = h("div", { style: { position: "relative", width: W + "px", flex: "0 0 auto" } });
+   const svg = document.createElementNS(NSVG, "svg");
+   const railInfo = (g, side, idx) => {
+     const y0 = PAD_T + idx * ROW_H;
+     const lineY = y0 + ROW_H - 9;
+     return { g, side, y0, lineY, lf: leafArr[g] };
+   };
+   const curL = [], curR = [];
+   let li = 0, ri = 0;
+   for (let g = b * BL; g < b * BL + BL / 2; g++) {
+     if (leafArr[g]) { const ri2 = railInfo(g, "L", li++); rails.push(ri2); curL.push(ri2.lineY); }
+     else curL.push(null);
+   }
+   for (let g = b * BL + BL / 2; g < (b + 1) * BL; g++) {
+     if (leafArr[g]) { const ri2 = railInfo(g, "R", ri++); rails.push(ri2); curR.push(ri2.lineY); }
+     else curR.push(null);
+   }
+   const H = PAD_T + Math.max(li, ri, 1) * ROW_H + PAD_B;
+   wrap.style.height = H + "px";
+   svg.setAttribute("width", W); svg.setAttribute("height", H);
+   svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+   Object.assign(svg.style, { position: "absolute", left: 0, top: 0, pointerEvents: "none" });
+   wrap.appendChild(svg);
+   // レール(番号/氏名/所属)+下罫線
+   rails.forEach(r => {
+     const isL = r.side === "L";
+     sline(svg, isL ? 8 : W - RAIL_W, r.lineY, isL ? RAIL_W : W - 8, r.lineY);
+     const lf = r.lf;
+     const locked = lockOf(lf);
+     const selA = O._pbSel && O._pbSel.event === event && O._pbSel.g === r.g;
+     const selB = O._pbSel2 && O._pbSel2.event === event && O._pbSel2.g === r.g;
+     const div = h("div", {
+       title: editable ? (locked ? "確定済み/進行中のため動かせません" : "タップで選択(2人選ぶと入れ替え)") : "",
+       style: {
+         // 高さはタップ領域確保のためレール一杯(32px)。文字はpaddingBottomで線の上に保つ。
+         position: "absolute", top: r.y0 + "px", height: (ROW_H - 2) + "px",
+         left: isL ? "8px" : (W - RAIL_W) + "px", width: (RAIL_W - 8) + "px",
+         display: "flex", alignItems: "flex-end", gap: "6px", paddingBottom: "6px",
+         flexDirection: isL ? "row" : "row-reverse", textAlign: isL ? "left" : "right",
+         cursor: editable && !locked ? "pointer" : "default",
+         opacity: locked ? 0.55 : 1,
+         background: selA || selB ? "#fff7e6" : "transparent",
+         outline: selA ? "2px solid #d97706" : selB ? "2px dashed #d97706" : "none",
+         outlineOffset: "-1px", borderRadius: "4px", overflow: "hidden", whiteSpace: "nowrap",
+       },
+       onClick: editable ? (() => O._pbTap(ctx, lf, locked)) : undefined,
+     },
+       h("span", { style: { fontSize: "11px", color: "#6b7280", minWidth: "22px",
+         textAlign: "right", fontVariantNumeric: "tabular-nums", flex: "0 0 auto" } }, String(lf.no)),
+       h("span", { style: { fontWeight: 700, fontSize: "13px", overflow: "hidden", textOverflow: "ellipsis" } }, lf.name),
+       h("span", { style: { fontSize: "10.5px", color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis" } }, lf.team),
+     );
+     div.dataset.pbG = r.g;
+     wrap.appendChild(div);
+   });
+   // 山の罫線(再帰): 両子=join / 片子=長線延長 / 子なし=無し (Excel buildSideLines と同一)
+   const runSide = (cur, side) => {
+     let arr = cur;
+     for (let r = 1; r <= sideR; r++) {
+       const colX0 = side === "L" ? RAIL_W + (r - 1) * ADV_W : W - RAIL_W - (r - 1) * ADV_W;
+       const x2 = side === "L" ? colX0 + ADV_W : colX0 - ADV_W;
+       const nxt = [];
+       for (let q = 0; q * 2 < arr.length; q++) {
+         const a = arr[2 * q], bb = arr[2 * q + 1];
+         if (a != null && bb != null) {
+           const y = Math.round((a + bb) / 2);
+           sline(svg, colX0, a, colX0, bb);                       // 縦線(子2線を結ぶ)
+           sline(svg, Math.min(colX0, x2), y, Math.max(colX0, x2), y);  // 勝者横線
+           const perBlock = BL / Math.pow(2, r);
+           const gpos = b * perBlock + (side === "L" ? q : perBlock / 2 + q);
+           annotate(svg, byRP[r + "_" + gpos], Math.min(colX0, x2), Math.max(colX0, x2), y, side);
+           nxt.push(y);
+         } else if (a != null || bb != null) {
+           const y = a != null ? a : bb;
+           sline(svg, Math.min(colX0, x2), y, Math.max(colX0, x2), y);  // 不戦勝の長線延長
+           nxt.push(y);
+         } else nxt.push(null);
+       }
+       arr = nxt;
+     }
+     return arr.length ? arr[0] : null;
+   };
+   const aL = runSide(curL, "L");
+   const aR = runSide(curR, "R");
+   // 中央join(1ブロック時=決勝線・複数ブロック時=ブロック勝者線)
+   const xL = RAIL_W + sideR * ADV_W, xR = W - RAIL_W - sideR * ADV_W;
+   if (aL != null || aR != null) {
+     const cy = (aL != null && aR != null) ? Math.round((aL + aR) / 2) : (aL != null ? aL : aR);
+     sline(svg, xL, cy, xR, cy, nBlocks === 1 ? 2.5 : 1.5);
+     if (aL != null && aL !== cy) sline(svg, xL, Math.min(aL, cy), xL, Math.max(aL, cy));
+     if (aR != null && aR !== cy) sline(svg, xR, Math.min(aR, cy), xR, Math.max(aR, cy));
+     const fm = byRP[blockRounds + "_" + b];
+     if (fm && fm.status === "completed" && fm.winner_name && fm.winner_name !== "BYE") {
+       stext(svg, Math.round((xL + xR) / 2), cy - 5,
+         (nBlocks === 1 ? "優勝 " : "") + fm.winner_name, "middle", 12, "#c01526", true);
+     } else {
+       annotate(svg, fm, xL, xR, cy, "C");
+     }
+   }
+   return { wrap, rails };
+ };
+
+ // 決勝T(複数ブロック時の下段: 準決勝・決勝)
+ const buildFinalsEl = () => {
+   const box = h("div", { style: { display: "flex", gap: "18px", alignItems: "center",
+     flexWrap: "wrap", padding: "14px 6px" } });
+   const blockName = (i) => String.fromCharCode(0xFF21 + i) + "ブロック";
+   for (let r = blockRounds + 1; r <= totalRounds; r++) {
+     const cnt = S / Math.pow(2, r);
+     const col = h("div", { style: { display: "flex", flexDirection: "column", gap: "10px", minWidth: "230px" } });
+     col.appendChild(h("div", { style: { fontSize: "12px", fontWeight: 700, color: "#6b7280",
+       borderBottom: "1px solid #d6d3ce", paddingBottom: "4px" } },
+       cnt === 1 ? "決勝" : cnt === 2 ? "準決勝" : cnt === 4 ? "準々決勝" : (r + "回戦")));
+     for (let q = 0; q < cnt; q++) {
+       const mm = byRP[r + "_" + q];
+       const feed = (k) => {   // 対戦者名: 未確定なら供給元(ブロック勝者/前戦勝者)を注釈
+         const nm = k === 1 ? (mm && mm.player1_name) : (mm && mm.player2_name);
+         if (nm && nm !== "BYE") return h("span", { style: { fontWeight: 700, fontSize: "13.5px" } }, nm);
+         const childIdx = q * 2 + (k - 1);
+         const src = r === blockRounds + 1 ? (blockName(childIdx) + "の勝者")
+           : "(" + (r - 1) + "-" + (childIdx + 1) + "の勝者)";
+         return h("span", { style: { color: "#9ca3af", fontSize: "12.5px" } }, src);
+       };
+       const done = mm && mm.status === "completed" && mm.winner_name && mm.winner_name !== "BYE";
+       col.appendChild(h("div", { style: { border: "1.5px solid " + (mm && mm.status === "on_table" ? "#c01526" : "#d6d3ce"),
+         borderRadius: "8px", padding: "8px 12px", background: "#fff" } },
+         h("div", { style: { fontSize: "10.5px", color: "#6b7280", marginBottom: "2px" } },
+           r + "-" + (q + 1) + (mm && mm.status === "on_table" ? "　● 台" + (mm.table_no || "?") : "")),
+         h("div", {}, feed(1)),
+         h("div", { style: { borderTop: "1px dashed #e2e0db", margin: "3px 0" } }),
+         h("div", {}, feed(2)),
+         done ? h("div", { style: { fontSize: "11.5px", color: "#c01526", fontWeight: 700,
+           textAlign: "right", marginTop: "2px" } },
+           "勝者 " + mm.winner_name + "　" + (mm.result ? (mm.result.winner_sets + "-" + mm.result.loser_sets) : "")) : null,
+       ));
+     }
+     box.appendChild(col);
+   }
+   return box;
+ };
+
+ // ── 組立: タブ(Ａ〜/決勝T)+検索+ブロック紙面+選択バー ──
+ const root = h("div", {});
+ const state = { tab: (O._pbBlock[event] != null ? O._pbBlock[event] : 0) };
+ if (nBlocks === 1) state.tab = 0;
+ const blockRange = (b) => {   // タブ表示用: ブロック内の通し番号範囲
+   let lo = null, hi = null;
+   for (let g = b * BL; g < (b + 1) * BL; g++) { const lf = leafArr[g]; if (lf) { if (lo == null) lo = lf.no; hi = lf.no; } }
+   return lo == null ? "" : (lo + "-" + hi);
+ };
+ const render = () => {
+   root.replaceChildren();
+   const bar = h("div", { style: { display: "flex", gap: "6px", alignItems: "center",
+     flexWrap: "wrap", margin: "2px 0 10px" } });
+   if (nBlocks > 1) {
+     for (let b = 0; b < nBlocks; b++) {
+       const on = state.tab === b;
+       bar.appendChild(h("button", { className: "btn btn-sm",
+         style: { fontWeight: 700, background: on ? "#1f2937" : "#fff",
+           color: on ? "#fff" : "#6b7280", border: "1px solid " + (on ? "#1f2937" : "#d6d3ce") },
+         onClick: () => { state.tab = b; O._pbBlock[event] = b; render(); } },
+         String.fromCharCode(0xFF21 + b) + " ",
+         h("span", { style: { fontWeight: 400, fontSize: "11px" } }, blockRange(b))));
+     }
+     const onF = state.tab === "F";
+     bar.appendChild(h("button", { className: "btn btn-sm",
+       style: { fontWeight: 700, background: onF ? "#1f2937" : "#fff",
+         color: onF ? "#fff" : "#6b7280", border: "1px solid " + (onF ? "#1f2937" : "#d6d3ce") },
+       onClick: () => { state.tab = "F"; O._pbBlock[event] = "F"; render(); } }, "決勝T"));
+   }
+   if (editable) {
+     const si = h("input", { className: "input", placeholder: "選手名・チーム・番号で探す",
+       style: { marginLeft: "auto", width: "220px", fontSize: "12.5px", padding: "6px 10px" } });
+     si.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(si.value); });
+     si.addEventListener("input", () => { clearTimeout(si._t); si._t = setTimeout(() => doSearch(si.value), 350); });
+     bar.appendChild(si);
+   }
+   root.appendChild(bar);
+   const area = h("div", { style: { overflowX: "auto", paddingBottom: "4px" } });
+   if (state.tab === "F") area.appendChild(buildFinalsEl());
+   else {
+     const bb = Math.min(parseInt(state.tab) || 0, nBlocks - 1);
+     const { wrap } = buildBlockEl(bb);
+     area.appendChild(wrap);
+   }
+   root.appendChild(area);
+   // 選択バー(組換)
+   if (editable && O._pbSel && O._pbSel.event === event) {
+     const s1 = O._pbSel, s2 = O._pbSel2;
+     const who = (s) => s.no + " " + s.name + (s.team ? "（" + s.team + "）" : "");
+     const barEl = h("div", { style: { position: "sticky", bottom: "8px", marginTop: "10px",
+       background: "#fff", border: "1.5px solid #d97706", borderRadius: "10px",
+       padding: "10px 14px", display: "flex", alignItems: "center", gap: "10px",
+       flexWrap: "wrap", boxShadow: "0 10px 26px -12px rgba(120,80,0,.3)", zIndex: 5 } },
+       h("span", { style: { fontWeight: 700, fontSize: "13px" } }, who(s1)),
+       h("span", { style: { color: "#d97706", fontWeight: 800 } }, "⇄"),
+       s2 ? h("span", { style: { fontWeight: 700, fontSize: "13px" } }, who(s2))
+          : h("span", { style: { color: "#6b7280", fontSize: "12.5px" } }, "入れ替える相手をタップ…"),
+       h("span", { style: { flex: "1 0 auto" } }),
+       s2 ? h("button", { className: "btn btn-sm", style: { background: "#c01526", color: "#fff", fontWeight: 700 },
+         onClick: () => O._pbSwap(ctx) }, "入れ替える") : null,
+       !s2 ? h("button", { className: "btn btn-sm btn-ghost",
+         onClick: () => { const s = O._pbSel; O._pbClear(); O._editSlot(ctx, s.pos, s.slot, s.name || ""); } }, "この枠を変更…") : null,
+       (!s2 && s1.eid) ? h("button", { className: "btn btn-sm btn-ghost",
+         onClick: () => { const s = O._pbSel; O._pbClear(); O._seedMenu(ctx, s.eid, s.name); } }, "シードにする") : null,
+       h("button", { className: "btn btn-sm btn-ghost", onClick: () => { O._pbClear(); render(); } }, "やめる"),
+     );
+     root.appendChild(barEl);
+   }
+ };
+ const doSearch = (q) => {
+   q = String(q || "").trim();
+   if (!q) return;
+   const hit = leafArr.find(lf => lf && (String(lf.no) === q || lf.name.includes(q) || (lf.team || "").includes(q)));
+   if (!hit) { toast("見つかりません: " + q, "err"); return; }
+   const b = Math.floor((2 * hit.pos + (hit.slot - 1)) / BL);
+   if (nBlocks > 1 && state.tab !== b) { state.tab = b; O._pbBlock[event] = b; render(); }
+   requestAnimationFrame(() => {
+     const tEl = root.querySelector('[data-pb-g="' + (2 * hit.pos + (hit.slot - 1)) + '"]');
+     if (tEl) {
+       tEl.scrollIntoView({ block: "center", behavior: "smooth" });
+       const prev = tEl.style.outline;
+       tEl.style.outline = "2px solid #c01526";
+       setTimeout(() => { tEl.style.outline = prev; }, 1600);
+     }
+   });
+ };
+ O._pbRender = render;   // タップ選択後の再描画フック(直近の描画が優先)
+ render();
+ return root;
+ },
+ // 紙面ミラーのタップ選択: 1人目=選択 / 同じ人=解除 / 2人目=入替相手
+ _pbTap(ctx, lf, locked) {
+   if (locked) { toast("この選手は進行中/確定済みの試合のため動かせません", "err"); return; }
+   const g = 2 * lf.pos + (lf.slot - 1);
+   const cur = { event: ctx.event, g, pos: lf.pos, slot: lf.slot, name: lf.name, team: lf.team, no: lf.no, eid: lf.eid };
+   if (O._pbSel && O._pbSel.event === ctx.event && O._pbSel.g === g) { O._pbClear(); }
+   else if (O._pbSel && O._pbSel.event === ctx.event) {
+     if (O._pbSel2 && O._pbSel2.g === g) O._pbSel2 = null;
+     else O._pbSel2 = cur;
+   } else { O._pbSel = cur; O._pbSel2 = null; }
+   if (typeof O._pbRender === "function") O._pbRender();
+ },
+ _pbClear() { O._pbSel = null; O._pbSel2 = null; },
+ async _pbSwap(ctx) {
+   const a = O._pbSel, b = O._pbSel2;
+   if (!a || !b) return;
+   try {
+     const r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/swap`,
+       { event: ctx.event, a: { pos: a.pos, slot: a.slot }, b: { pos: b.pos, slot: b.slot }, base_rev: ctx.getRev() });
+     if (r && r.conflict) { toast(r.error || "他の端末で更新されました", "err"); O._pbClear(); ctx.reload(); return; }
+     if (r && r.error) return toast(r.error, "err");
+     if (r && r.bracket_rev) ctx.setRev(r.bracket_rev);
+     O._pbClear();
+     toast(`「${a.name}」と「${b.name}」を入れ替えました`, "ok");
+     // 近接警告の再チェック(同チーム/同支部が10番以内)
+     try {
+       const px = await api.get(`/api/tournaments/${ctx.tournamentId}/bracket/proximity?event=${encodeURIComponent(ctx.event)}`);
+       if (px && px.count) toast(`近接警告 ${px.count}件: 同チーム/同支部が10番以内にあります(抽選ウィザードで詳細)`, "err");
+     } catch (e) {}
+     ctx.reload();
+   } catch (e) { toast("入れ替えに失敗しました: " + (e.message || e), "err"); }
+ },
+
  renderVisualBracket(bdata, opts) {
  const readOnly = !!(opts && opts.readOnly);   // 読み取り専用(トーナメント管理タブ等): 呼出/入替/編集を一切無効化
  // 編集コンテキスト: 既定は進行管理(O)。トーナメント管理など別画面は opts.ctx で大会/種目/rev/再描画を注入。
@@ -12820,7 +13172,7 @@ const TMgmt = {
         editOn ? h("span", { style: { fontSize: "12px", color: "#64748b" } },
           "クリックで枠編集 / ドラッグで選手入替 / ⇄で試合まるごと入替") : null));
       const tree = h("div", { className: "tm-tree-pane" });
-      tree.appendChild(O.renderVisualBracket(b, { editable: editOn, editOnly: true, showSlotNo: true, ctx: TMgmt._treeCtx() }));
+      tree.appendChild(O.renderPaperBracket(b, { editable: editOn, ctx: TMgmt._treeCtx() }));   // 紙面ミラー(承認案1)
       main.appendChild(tree);
     } else {
       const pane = h("div", { className: "tm-grid-pane" });
@@ -13129,7 +13481,7 @@ const TMgmt = {
         if (bdata && !bdata.error) {
           TMgmt._bracket = bdata;
           const tree = document.querySelector("#tmMain .tm-tree-pane");   // 表タブ表示中のみその場更新(編集タブ時はデータのみ反映)
-          if (tree) { tree.replaceChildren(); tree.appendChild(O.renderVisualBracket(bdata, { editable: !!TMgmt._treeEdit, editOnly: true, showSlotNo: true, ctx: TMgmt._treeCtx() })); }
+          if (tree) { tree.replaceChildren(); tree.appendChild(O.renderPaperBracket(bdata, { editable: !!TMgmt._treeEdit, ctx: TMgmt._treeCtx() })); }
         }
       } catch (e) { /* 一時障害は無視 */ }
     }, 400);

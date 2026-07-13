@@ -8474,6 +8474,10 @@ function exportBracket(tournamentId, event) {
       player1_team: m.player1_team || "",
       player2_name: m.player2_name || "",
       player2_team: m.player2_team || "",
+      // 紙面ミラービュー用: 組換UI(シード設定)のentrant参照と「台N」注釈
+      player1_entrant_id: m.player1_entrant_id || null,
+      player2_entrant_id: m.player2_entrant_id || null,
+      table_no: m.table_no || 0,
       status: m.status,
       result: m.status === "completed" && m.winner_name ? {
         winner_name: m.winner_name,
