@@ -9540,10 +9540,13 @@ function setCourtLayout(tournamentId, layout) {
   const cols = parseInt(layout.court_cols) || t.court_cols || 11;
   const hq = layout.hq_position || t.hq_position || "bottom";
   const origin = layout.numbering_origin || t.numbering_origin || "bottom-right";
+  // court_count もレイアウトに同期する。列既定値が 4×11 のため「明示的に44コートを保存」と
+  // 「未設定」を rows/cols では区別できず、getOperationState の縮小推定(court_count からの
+  // グリッド導出)が明示保存を上書きして4台になるバグの修正。レイアウト保存=正とする。
   sqlite.prepare(`
     UPDATE tournaments SET court_rows=?, court_cols=?, hq_position=?,
-      numbering_origin=?, updated_at=datetime('now','localtime') WHERE id=?
-  `).run(rows, cols, hq, origin, tournamentId);
+      numbering_origin=?, court_count=?, updated_at=datetime('now','localtime') WHERE id=?
+  `).run(rows, cols, hq, origin, rows * cols, tournamentId);
   return stmts.getTournament.get(tournamentId);
 }
 
