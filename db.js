@@ -489,6 +489,11 @@ try {
   addTCol("entry_events", "TEXT DEFAULT ''"); // JSON配列: ["男子シングルス","女子シングルス",...]
   addTCol("event_config", "TEXT DEFAULT ''"); // JSON配列: 詳細 [{name, fee, type, per_team, note}]
   addTCol("entry_gas_url", "TEXT DEFAULT ''"); // GAS Web App URL (申込先 スプレッドシート)
+  // 申込フォームの必須項目設定 + 主催者定義の自由項目 (JSON object)。
+  // {version, fields:{key:"required|optional|hidden"}, custom:[{key,label,type,options,required,scope}],
+  //  event_overrides:{種目名:{key:"required|optional|hidden"}}}。空('')なら DEFAULT_FIELD_CONFIG を適用
+  // = 現行フォームと完全一致(後方互換の要)。連絡先(責任者名/メール/電話)は常に必須固定でここに載せない。
+  addTCol("field_config", "TEXT DEFAULT ''");
   addTCol("category", "TEXT DEFAULT 'general'"); // 公式戦/オープン/練習試合 等
   addTCol("organizer", "TEXT DEFAULT ''");
   // 大会レベル: 'district'(地区) | 'hokkaido'(全道) | 'national'(全国) | 'other'
@@ -620,6 +625,10 @@ try {
   // 混合ダブルス等で相方の性別を別途保持(集計の男女別が崩れないように)。
   addECol("partner_gender", "TEXT DEFAULT ''");
   addECol("partner_region", "TEXT DEFAULT ''");   // ダブルスでパートナーの支部が異なる場合(名簿取込)
+  // 選手行スコープの自由回答 + 生年月日/年齢/学年の申告 (JSON)。
+  // {birth_date, age, grade, answers:{customKey:value}}。生年月日は選手マスタ(players)には絶対載せず
+  // 大会エントリー申告として entrants のみに保持する(PII最小化・identity.md 準拠)。
+  addECol("extra_json", "TEXT DEFAULT ''");
   // スーパーシード(登場ラウンド): 上位選手の予選免除。1=1回戦から(既定), R=R回戦から登場。
   // 標準配置の生成時に 2^(entry_round-1) ラウンドぶん BYE 上がりにする。
   addECol("entry_round", "INTEGER DEFAULT 1");
@@ -637,6 +646,13 @@ try {
     const scols = sqlite.prepare("PRAGMA table_info(entry_submissions)").all();
     if (scols.length && !scols.find(c => c.name === "op_id")) {
       sqlite.exec("ALTER TABLE entry_submissions ADD COLUMN op_id TEXT DEFAULT ''");
+    }
+    // 申込単位スコープの自由回答 + 引率者/顧問/コーチ (JSON)。
+    // {supervisor, advisor, coach, answers:{customKey:value}}。現状 supervisor/coach はフォーム収集
+    // されるが未保存だった取りこぼしをここで塞ぐ。生の生年月日は載せない(entrant側のみ)。
+    // 単文DDLは better-sqlite3 の prepare().run() で実行(静的SQL・注入なし)。
+    if (scols.length && !scols.find(c => c.name === "extra_json")) {
+      sqlite.prepare("ALTER TABLE entry_submissions ADD COLUMN extra_json TEXT DEFAULT ''").run();
     }
     if (scols.length) {
       sqlite.exec("CREATE INDEX IF NOT EXISTS idx_submissions_opid ON entry_submissions(tournament_id, op_id)");
@@ -2162,6 +2178,8 @@ function createTournament(data) {
         ? data.entry_events.map(n => nameStr(n).trim()).filter(Boolean)
         : evCfg.map(e => nameStr(e.name).trim()).filter(Boolean),
       event_config: evCfg,
+      // 必須項目設定。admin がオブジェクトで送った時だけ保存(未指定は既定=現行挙動)。
+      field_config: data.field_config,
       organizer: data.organizer,
       category: data.category,
     });
@@ -2558,7 +2576,7 @@ const entrantStmts = {
       category, gender, partner_gender, age_group, region, partner_region,
       player_id, partner_player_id,
       division, fee, team_members, contact_name, contact_email, contact_tel,
-      applied_at, submission_id,
+      applied_at, submission_id, extra_json,
       status, note
     ) VALUES (
       @id, @tournament_id, @event, @seed, @block, @is_doubles,
@@ -2568,7 +2586,7 @@ const entrantStmts = {
       @category, @gender, @partner_gender, @age_group, @region, @partner_region,
       @player_id, @partner_player_id,
       @division, @fee, @team_members, @contact_name, @contact_email, @contact_tel,
-      @applied_at, @submission_id,
+      @applied_at, @submission_id, @extra_json,
       @status, @note
     )
   `),
@@ -2585,7 +2603,7 @@ const entrantStmts = {
       player_id=@player_id, partner_player_id=@partner_player_id,
       division=@division, fee=@fee, team_members=@team_members,
       contact_name=@contact_name, contact_email=@contact_email, contact_tel=@contact_tel,
-      applied_at=@applied_at, submission_id=@submission_id,
+      applied_at=@applied_at, submission_id=@submission_id, extra_json=@extra_json,
       status=@status, note=@note,
       updated_at = datetime('now','localtime')
     WHERE id=@id
@@ -2666,6 +2684,11 @@ function createEntrant(data) {
     contact_tel: data.contact_tel || "",
     applied_at: data.applied_at || "",
     submission_id: data.submission_id || "",
+    // 選手行スコープの自由回答 + 生年月日/年齢/学年の申告 (JSON文字列で保持)。
+    // object/配列で渡されたら文字列化、string はそのまま、未指定は '' (team_members と同じ流儀)。
+    extra_json: (data.extra_json && typeof data.extra_json === "object")
+      ? JSON.stringify(data.extra_json)
+      : (typeof data.extra_json === "string" ? data.extra_json : ""),
     status: data.status || "confirmed",
     note: data.note || "",
   };
@@ -2723,6 +2746,9 @@ function updateEntrant(id, data) {
     contact_tel: data.contact_tel !== undefined ? data.contact_tel : (existing.contact_tel || ""),
     applied_at: data.applied_at !== undefined ? data.applied_at : (existing.applied_at || ""),
     submission_id: data.submission_id !== undefined ? data.submission_id : (existing.submission_id || ""),
+    extra_json: data.extra_json !== undefined
+      ? (typeof data.extra_json === "object" ? JSON.stringify(data.extra_json) : (data.extra_json || ""))
+      : (existing.extra_json || ""),
     status: data.status !== undefined ? data.status : existing.status,
     note: data.note !== undefined ? data.note : existing.note,
   });
@@ -7133,10 +7159,10 @@ const submissionStmts = {
   insert: sqlite.prepare(`
     INSERT INTO entry_submissions (
       id, tournament_id, token_hash, op_id, contact_name, contact_email, contact_tel,
-      team_name, total_amount, entrant_ids, payload_json, source, screened_count
+      team_name, total_amount, entrant_ids, payload_json, source, screened_count, extra_json
     ) VALUES (
       @id, @tournament_id, @token_hash, @op_id, @contact_name, @contact_email, @contact_tel,
-      @team_name, @total_amount, @entrant_ids, @payload_json, @source, @screened_count
+      @team_name, @total_amount, @entrant_ids, @payload_json, @source, @screened_count, @extra_json
     )
   `),
   getByTokenHash: sqlite.prepare(`SELECT * FROM entry_submissions WHERE token_hash = ?`),
@@ -7232,19 +7258,24 @@ function deleteSubmissionPII(submissionId, opts = {}) {
   const sub = sqlite.prepare("SELECT * FROM entry_submissions WHERE id=?").get(submissionId);
   if (!sub) return { error: "申込原本が見つかりません" };
   const txn = sqlite.transaction(() => {
-    sqlite.prepare("UPDATE entry_submissions SET contact_name='', contact_email='', contact_tel='' WHERE id=?").run(submissionId);
-    // 原本JSON(payload_json)から連絡先を除去
+    // 連絡先 + 申込単位の構造化データ(引率者/顧問/コーチ名・自由回答=PIIを含みうる)を匿名化。
+    sqlite.prepare("UPDATE entry_submissions SET contact_name='', contact_email='', contact_tel='', extra_json='' WHERE id=?").run(submissionId);
+    // 原本JSON(payload_json)から連絡先 + 引率者/顧問/コーチ/自由回答を除去
     let pj = null; try { pj = JSON.parse(sub.payload_json || "null"); } catch (e) {}
     if (pj && typeof pj === "object") {
-      ["contact", "contact_info", "contact_name", "contact_email", "contact_tel", "email", "tel", "phone"].forEach(k => { delete pj[k]; });
+      ["contact", "contact_info", "contact_name", "contact_email", "contact_tel", "email", "tel", "phone",
+        "supervisor", "advisor", "coach", "extra"].forEach(k => { delete pj[k]; });
+      // 各種目行の自由回答/学年/生年月日申告も落とす(entries[].extra)
+      if (Array.isArray(pj.entries)) pj.entries = pj.entries.map(e => { const c = { ...e }; delete c.extra; return c; });
       sqlite.prepare("UPDATE entry_submissions SET payload_json=? WHERE id=?").run(JSON.stringify(pj), submissionId);
     } else if (sub.payload_json) {
       sqlite.prepare("UPDATE entry_submissions SET payload_json='' WHERE id=?").run(submissionId);
     }
-    // 紐づく entrants の連絡先列を匿名化(submission_id と原本 entrant_ids の両経路で漏れなく)
-    sqlite.prepare("UPDATE entrants SET contact_name='', contact_email='', contact_tel='' WHERE submission_id=?").run(submissionId);
+    // 紐づく entrants の連絡先列 + 選手行スコープの申告(生年月日/学年/自由回答)を匿名化
+    // (submission_id と原本 entrant_ids の両経路で漏れなく)。
+    sqlite.prepare("UPDATE entrants SET contact_name='', contact_email='', contact_tel='', extra_json='' WHERE submission_id=?").run(submissionId);
     let ids = []; try { ids = JSON.parse(sub.entrant_ids || "[]"); } catch (e) {}
-    if (Array.isArray(ids)) { const u = sqlite.prepare("UPDATE entrants SET contact_name='', contact_email='', contact_tel='' WHERE id=?"); ids.forEach(id => id && u.run(id)); }
+    if (Array.isArray(ids)) { const u = sqlite.prepare("UPDATE entrants SET contact_name='', contact_email='', contact_tel='', extra_json='' WHERE id=?"); ids.forEach(id => id && u.run(id)); }
     // 閲覧トークン: 明示削除時のみ失効(purge では閲覧導線は残り、中身が匿名化されるだけ)
     if (opts.revoke_tokens) sqlite.prepare("DELETE FROM submission_tokens WHERE submission_id=?").run(submissionId);
   });
@@ -7278,20 +7309,28 @@ function getSubmissionByToken(token) {
     let ids = []; try { ids = JSON.parse(sub.entrant_ids || "[]"); } catch (_) {}
     return ids.map(id => entrantStmts.get.get(id)).filter(Boolean);
   })();
-  const entries = rows.map(e => ({
-    name: e.display_name || e.name,
-    team: e.team || "",
-    event: e.event || "",
-    division: e.division || "",
-    category: e.category || "general",
-    is_doubles: !!e.is_doubles,
-    partner_name: e.partner_name || "",
-    team_members: entrantMembers(e),
-    fee: e.fee || 0,
-    status: e.status || "confirmed",
-  }));
+  const entries = rows.map(e => {
+    // 選手行スコープの自由回答/学年を確認ページで表示できるよう parse(生年月日は表示しない=PII最小)。
+    let ex = null; try { ex = e.extra_json ? JSON.parse(e.extra_json) : null; } catch (_) { ex = null; }
+    return {
+      name: e.display_name || e.name,
+      team: e.team || "",
+      event: e.event || "",
+      division: e.division || "",
+      category: e.category || "general",
+      is_doubles: !!e.is_doubles,
+      partner_name: e.partner_name || "",
+      team_members: entrantMembers(e),
+      fee: e.fee || 0,
+      status: e.status || "confirmed",
+      grade: (ex && ex.grade) || "",
+      answers: (ex && ex.answers) || null,
+    };
+  });
   const total = rows.reduce((s, e) => s + (e.fee || 0), 0);
   const t = stmts.getTournament.get(sub.tournament_id);
+  // 申込単位スコープの構造化データ(引率者/顧問/コーチ + 自由回答)。生の生年月日は含まない。
+  let subExtra = null; try { subExtra = sub.extra_json ? JSON.parse(sub.extra_json) : null; } catch (_) { subExtra = null; }
   return {
     ok: true,
     tournament: t ? { id: t.id, name: t.name, date: t.date } : null,
@@ -7300,6 +7339,7 @@ function getSubmissionByToken(token) {
     total_amount: total || sub.total_amount || 0,
     created_at: sub.created_at,
     entries,
+    extra: subExtra || null,
   };
 }
 
@@ -7591,11 +7631,14 @@ function createTeamEntry(tournamentId, formData, opId) {
       const fee = resolveFee(evName, division || gc.category, ent.fee);
 
       // createEntrant に渡す共通属性 (Phase4: 区分/料金/連絡先/申込日時/原本参照を保存)
+      // extra_json = 選手行スコープの自由回答 + 学年/生年月日/年齢の申告(フォームが構築した object)。
+      // createEntrant 側で object→JSON文字列化される。未指定なら '' で無害。
       const common = {
         tournament_id: tournamentId, event: evName,
         category: gc.category, gender: gc.gender, status,
         division, fee, submission_id: submissionId, applied_at: submittedAt,
         contact_name: contact.name, contact_email: contact.email, contact_tel: contact.tel,
+        extra_json: (ent.extra_json && typeof ent.extra_json === "object") ? ent.extra_json : undefined,
       };
 
       let data = null, emailItem = null, canDedup = true;
@@ -7707,9 +7750,19 @@ function createTeamEntry(tournamentId, formData, opId) {
     } else if (createdEntrants.length > 0) {
       // 新規申込: 申込番号(トークン)発行 + 申込原本を保存。
       token = _genApplicantToken();
+      // 申込単位スコープの構造化データ: 引率者/顧問/コーチ + 自由項目(scope=submission)の回答。
+      // 現状 supervisor/coach はフォーム収集されるが未保存だった取りこぼしをここで塞ぐ。生の生年月日は載せない。
+      const subExtra = {};
+      if (formData.supervisor) subExtra.supervisor = clip(formData.supervisor, 200);
+      if (formData.advisor) subExtra.advisor = clip(formData.advisor, 200);
+      if (formData.coach) subExtra.coach = clip(formData.coach, 200);
+      if (formData.extra && typeof formData.extra === "object") subExtra.answers = formData.extra;
+      const subExtraStr = Object.keys(subExtra).length ? JSON.stringify(subExtra) : "";
       const safePayload = {
         team_name: formData.team_name || "",
         contact, note: noteBase, submitted_at: submittedAt,
+        supervisor: subExtra.supervisor, advisor: subExtra.advisor, coach: subExtra.coach,  // 監査用に原本にも残す
+        extra: subExtra.answers,
         spam_skipped: spamSkipped, dup_skipped: dupSkipped,   // 監査用: 落とした件数の内訳 (#12)
         entries: entries.map(e => ({
           event: e.event, type: e.type || "singles",
@@ -7717,6 +7770,7 @@ function createTeamEntry(tournamentId, formData, opId) {
           team: e.team, team1: e.team1, team2: e.team2, team_name: e.team_name,
           members: Array.isArray(e.members) ? e.members : undefined,
           division: e.division, fee: e.fee,
+          extra: (e.extra_json && typeof e.extra_json === "object") ? e.extra_json : undefined,
         })),
       };
       submissionStmts.insert.run({
@@ -7731,6 +7785,7 @@ function createTeamEntry(tournamentId, formData, opId) {
         payload_json: JSON.stringify(safePayload),
         source: formData.source === "gas" ? "gas" : (formData.source === "admin" ? "admin" : "form"),
         screened_count: spamSkipped,
+        extra_json: subExtraStr,
       });
       submissionStmts.addToken.run(_hashToken(token), submissionId);     // トークン→原本
     }
@@ -7960,6 +8015,44 @@ function bulkFixEntrantInference(tournamentId, opts) {
   return { ok: true, fixed };
 }
 
+// 申込フォームの必須項目設定の既定値。field_config 列が空('')の既存大会にこれを適用すると
+// 現行フォームと完全一致する(後方互換の要)。連絡先(責任者名/メール/電話)は常に必須固定で載せない。
+// 値は "required"|"optional"|"hidden" の3値。
+const DEFAULT_FIELD_CONFIG = {
+  version: 1,
+  fields: {
+    team_name: "required",     // 団体名(責任者セクション)= 現行は必須
+    furigana: "hidden",        // ふりがな(選手行)= 現行は未収集
+    player_team: "optional",   // 選手ごとの所属 = 現行は任意入力
+    grade: "hidden",           // 学年 = 現行は未収集
+    player_gender: "hidden",   // 性別(選手申告)= 現行は未収集
+    supervisor: "optional",    // 引率者 = 現行は任意
+    advisor: "optional",       // 顧問 = 新設・任意
+    coach: "optional",         // コーチ = 現行は任意
+    note: "optional",          // 通信欄 = 現行は任意
+  },
+  custom: [],                  // 主催者定義の自由項目
+  event_overrides: {},         // 種目名 → {key:"required|optional|hidden"} の上書き
+};
+
+// 大会の field_config(JSON文字列 or object)を解決し DEFAULT_FIELD_CONFIG と浅くマージして返す。
+// 空/壊れ/未指定は DEFAULT のディープコピーを返す(既存大会=現行挙動)。fields は既定に未指定キーを
+// 補完しつつ大会側指定を優先する(未知キーも保持=将来の項目追加に耐える)。
+function resolveFieldConfig(tournament) {
+  const raw = tournament && tournament.field_config;
+  let cfg = null;
+  try { cfg = typeof raw === "string" ? (raw ? JSON.parse(raw) : null) : (raw || null); } catch { cfg = null; }
+  if (!cfg || typeof cfg !== "object") {
+    return { version: 1, fields: { ...DEFAULT_FIELD_CONFIG.fields }, custom: [], event_overrides: {} };
+  }
+  return {
+    version: cfg.version || 1,
+    fields: { ...DEFAULT_FIELD_CONFIG.fields, ...(cfg.fields || {}) },
+    custom: Array.isArray(cfg.custom) ? cfg.custom : [],
+    event_overrides: (cfg.event_overrides && typeof cfg.event_overrides === "object") ? cfg.event_overrides : {},
+  };
+}
+
 function updateEntrySettings(tournamentId, settings) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return null;
@@ -7983,12 +8076,18 @@ function updateEntrySettings(tournamentId, settings) {
     } catch { _n = 0; }
     if (_n === 0) _openFlag = 0;
   }
+  // field_config は event_config と同じ「明示指定時のみ更新」流儀。未指定なら既存値を維持
+  // (受付フラグだけ切替のトグルパターンを壊さない)。object で渡されたら JSON 文字列化して保存。
+  const fldCfg = settings.field_config !== undefined
+    ? (typeof settings.field_config === "string" ? settings.field_config : JSON.stringify(settings.field_config))
+    : (t.field_config || "");
   sqlite.prepare(`
     UPDATE tournaments SET
       entries_open = ?,
       entry_deadline = ?,
       entry_events = ?,
       event_config = ?,
+      field_config = ?,
       category = ?,
       organizer = ?,
       entry_gas_url = ?,
@@ -7999,6 +8098,7 @@ function updateEntrySettings(tournamentId, settings) {
     settings.entry_deadline || "",
     JSON.stringify(settings.entry_events || []),
     typeof evCfg === "string" ? evCfg : JSON.stringify(evCfg || []),
+    fldCfg,
     settings.category || t.category || "general",
     settings.organizer || t.organizer || "",
     settings.entry_gas_url !== undefined ? settings.entry_gas_url : (t.entry_gas_url || ""),
@@ -9922,6 +10022,7 @@ module.exports = {
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
   getSubmissionByToken, deleteSubmissionPII, purgeOldSubmissionPII,
+  resolveFieldConfig, DEFAULT_FIELD_CONFIG,
   findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,
   updateEntrySettings, getOpenTournaments, getUsedEventsCatalog,
   // ブラケット JSON I/O
