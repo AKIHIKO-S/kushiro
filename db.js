@@ -7493,7 +7493,8 @@ function inferGenderCategory(eventName, g, c) {
   return { gender: gender || "male", category: category || "general" };
 }
 
-function createTeamEntry(tournamentId, formData, opId) {
+function createTeamEntry(tournamentId, formData, opId, opts) {
+  opts = opts || {};
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
 
@@ -7552,6 +7553,64 @@ function createTeamEntry(tournamentId, formData, opId) {
   formData.contact_email = clip(formData.contact_email, 200);
   formData.contact_tel = clip(formData.contact_tel, 50);
   formData.note = clip(formData.note, 2000);
+
+  // ── サーバ側 必須項目検証(クライアントを信用しない / opts.enforce のときのみ) ──
+  // 公開フォーム経路(server.js の submit-team-entry)だけが enforce:true を渡す。admin/GAS/import/
+  // テスト等の内部・信頼済み経路は検証しない(部分データを正当に投入するため)。
+  // 不完全なら保存前に error を返し、GAS/シートへ不完全データを流さない。
+  if (opts.enforce) {
+    const fc = resolveFieldConfig(t);
+    const F = fc.fields || {};
+    const miss = (v) => !(v != null && String(v).trim());
+    const stFor = (evName, key) => {
+      const ov = fc.event_overrides && fc.event_overrides[evName];
+      if (ov && ov[key]) return ov[key];
+      return F[key] || "hidden";
+    };
+    // 連絡先は常に必須(責任者名・電話・メール)
+    if (miss(formData.contact_name)) return { error: "申込責任者名を入力してください" };
+    if (miss(formData.contact_tel)) return { error: "連絡先(電話番号)を入力してください" };
+    if (miss(formData.contact_email)) return { error: "メールアドレスを入力してください" };
+    if (F.team_name === "required" && miss(formData.team_name)) return { error: "団体名を入力してください" };
+    if (F.supervisor === "required" && miss(formData.supervisor)) return { error: "引率顧問を入力してください" };
+    if (F.advisor === "required" && miss(formData.advisor)) return { error: "顧問を入力してください" };
+    if (F.coach === "required" && miss(formData.coach)) return { error: "コーチを入力してください" };
+    if (F.note === "required" && miss(formData.note)) return { error: "通信欄を入力してください" };
+    for (const c of (fc.custom || [])) {
+      if (c && c.scope === "submission" && c.required) {
+        const a = formData.extra && formData.extra[c.key];
+        if (a == null || a === "" || a === false) return { error: `「${c.label || c.key}」を入力してください` };
+      }
+    }
+    // 種目行スコープ: 記入済みの行のみ検証(空行=未申込は弾かない)。
+    const playerCustoms = (fc.custom || []).filter(c => c && c.scope === "player" && c.required);
+    for (const ent of entries) {
+      const evName = String(ent.event || "").trim(); if (!evName) continue;
+      const type = ent.type || "singles";
+      const ex = (ent.extra_json && typeof ent.extra_json === "object") ? ent.extra_json : {};
+      if (type === "team") {
+        const filled = String(ent.team_name || "").trim() || (Array.isArray(ent.members) && ent.members.some(m => String(m).trim()));
+        if (!filled) continue;
+        // 団体は選手個別の必須は課さない(名簿主体)。所属/自由項目は今後の拡張で対応。
+      } else if (type === "doubles" || type === "mixed") {
+        const filled = String(ent.name1 || "").trim() || String(ent.name2 || "").trim();
+        if (!filled) continue;
+        if (stFor(evName, "player_team") === "required") {
+          if (miss(ent.team1) || miss(ent.team2)) return { error: `${evName}: 選手の所属を入力してください` };
+        }
+      } else {
+        const filled = String(ent.name || "").trim();
+        if (!filled) continue;
+        if (stFor(evName, "player_team") === "required" && miss(ent.team)) return { error: `${evName}: 所属を入力してください` };
+        if (stFor(evName, "furigana") === "required" && miss(ent.furigana)) return { error: `${evName}: ふりがなを入力してください` };
+        if (stFor(evName, "grade") === "required" && miss(ex.grade)) return { error: `${evName}: 学年を入力してください` };
+        for (const c of playerCustoms) {
+          const a = ex.answers && ex.answers[c.key];
+          if (a == null || a === "" || a === false) return { error: `${evName}: 「${c.label || c.key}」を入力してください` };
+        }
+      }
+    }
+  }
 
   const submittedAt = (formData.submitted_at
     ? new Date(formData.submitted_at)
@@ -7668,6 +7727,10 @@ function createTeamEntry(tournamentId, formData, opId) {
         data = {
           ...common,
           name: n1, team: team1, partner_name: n2, partner_team: team2, is_doubles: true,
+          // フォームが集めた選手ごとのふりがな/性別(field_config で furigana/player_gender が可視のとき)。
+          // 空なら createEntrant 側で苗字辞書補完にフォールバック(既存挙動)。
+          furigana: ent.furigana1 || "", partner_furigana: ent.furigana2 || "",
+          partner_gender: ent.partner_gender || "",
           note: noteBase,
         };
         emailItem = { type: "doubles", event: evName, name1: n1, name2: n2, team1, team2, fee };
@@ -7676,7 +7739,8 @@ function createTeamEntry(tournamentId, formData, opId) {
         const name = String(ent.name || "").trim();
         const team = String(ent.team || "").trim();
         if (!name) continue;
-        data = { ...common, name, team, note: noteBase };
+        // フォームが集めた選手のふりがな(field_config で furigana が可視のとき)。空なら苗字辞書補完。
+        data = { ...common, name, team, furigana: ent.furigana || "", note: noteBase };
         emailItem = { type: "singles", event: evName, name, team, fee };
       }
 
@@ -8026,8 +8090,8 @@ const DEFAULT_FIELD_CONFIG = {
     player_team: "optional",   // 選手ごとの所属 = 現行は任意入力
     grade: "hidden",           // 学年 = 現行は未収集
     player_gender: "hidden",   // 性別(選手申告)= 現行は未収集
-    supervisor: "optional",    // 引率者 = 現行は任意
-    advisor: "optional",       // 顧問 = 新設・任意
+    supervisor: "optional",    // 引率顧問 = 現行は任意(現行ラベル「引率顧問」を踏襲)
+    advisor: "hidden",         // 顧問 = 新設。既定は非表示(現行フォームに無いため=後方互換)
     coach: "optional",         // コーチ = 現行は任意
     note: "optional",          // 通信欄 = 現行は任意
   },

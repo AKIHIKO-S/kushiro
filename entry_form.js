@@ -69,6 +69,55 @@ function buildEntryFormHTML(tournament, events, opts) {
     per_team: e.per_team || 6,
   })));
 
+  // ── 必須項目設定(field_config) ──────────────────────────────
+  // server.js が db.resolveFieldConfig(tournament) を opts.field_config で渡す。
+  // 未指定(直接呼び出し等)は現行フォーム相当の既定にフォールバックし、既存挙動を完全維持する。
+  const FALLBACK_FC = {
+    fields: { team_name: "required", furigana: "hidden", player_team: "optional", grade: "hidden",
+      player_gender: "hidden", supervisor: "optional", advisor: "hidden", coach: "optional", note: "optional" },
+    custom: [], event_overrides: {},
+  };
+  const fc = (opts.field_config && typeof opts.field_config === "object" && opts.field_config.fields)
+    ? opts.field_config : FALLBACK_FC;
+  const fcFields = fc.fields || {};
+  const fcCustom = Array.isArray(fc.custom) ? fc.custom : [];
+  const fcOverrides = (fc.event_overrides && typeof fc.event_overrides === "object") ? fc.event_overrides : {};
+  const fst = (k) => fcFields[k] || "hidden";   // 大会レベルの項目状態 "required|optional|hidden"
+  const reqSpan = '<span class="required">必須</span>';
+  // 連絡先セクションの標準テキスト項目を状態に応じて出す。hidden=DOMごと省略 / optional=required属性なし。
+  const stdTextField = (key, label, name, type, placeholder) => {
+    const st = fst(key);
+    if (st === "hidden") return "";
+    const req = st === "required";
+    return '<div><label>' + label + (req ? " " + reqSpan : "") + "</label>" +
+      '<input type="' + (type || "text") + '" name="' + name + '"' + (req ? " required" : "") +
+      (placeholder ? ' placeholder="' + escapeHtml(placeholder) + '"' : "") + "></div>";
+  };
+  // 自由項目1つ分のHTMLを生成(text/select/checkbox)。name はフォーム送信キー。
+  const renderCustomFieldHtml = (c, name) => {
+    if (!c || !c.key) return "";
+    const req = !!c.required;
+    const label = escapeHtml(c.label || c.key) + (req ? " " + reqSpan : "");
+    if (c.type === "checkbox") {
+      return '<div class="cust-field"><label class="cust-check"><input type="checkbox" name="' + name + '" value="1"' +
+        (req ? " required" : "") + "> " + label + "</label></div>";
+    }
+    if (c.type === "select") {
+      const optsHtml = (Array.isArray(c.options) ? c.options : []).map(o =>
+        '<option value="' + escapeHtml(String(o)) + '">' + escapeHtml(String(o)) + "</option>").join("");
+      return '<div class="cust-field"><label>' + label + "</label>" +
+        '<select name="' + name + '"' + (req ? " required" : "") +
+        '><option value="">選択してください</option>' + optsHtml + "</select></div>";
+    }
+    return '<div class="cust-field"><label>' + label + "</label>" +
+      '<input type="text" name="' + name + '"' + (req ? " required" : "") + "></div>";
+  };
+  // 申込単位スコープの自由項目(scope=submission)を連絡先セクション末尾に出す。
+  const submissionCustomHtml = fcCustom.filter(c => c && c.scope === "submission")
+    .map(c => renderCustomFieldHtml(c, "cust_" + c.key)).join("");
+  // FIELD_CFG をクライアントへ埋込(選手行の可変項目 addEntry / gatherFormData が参照)。
+  const fieldCfgJson = jsonForScript({ fields: fcFields, custom: fcCustom, event_overrides: fcOverrides });
+
   // タンチョウ+卓球 イラスト (インラインSVG・HTTPS依存なし)
   const TANCHO_SVG = `<svg viewBox="0 0 200 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <defs>
@@ -633,18 +682,15 @@ ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v
 <div class="form-section">
   <h2>申込責任者・連絡先</h2>
   <div class="form-row">
+    ${stdTextField('team_name', '団体名', 'team_name', 'text', '例: ○○高校 / □□クラブ')}
     <div>
-      <label>団体名 <span class="required">必須</span></label>
-      <input type="text" name="team_name" required placeholder="例: ○○高校 / □□クラブ">
-    </div>
-    <div>
-      <label>申込責任者 (氏名) <span class="required">必須</span></label>
+      <label>申込責任者 (氏名) ${reqSpan}</label>
       <input type="text" name="contact_name" required>
     </div>
   </div>
   <div class="form-row">
     <div>
-      <label>連絡先 (電話番号) <span class="required">必須</span></label>
+      <label>連絡先 (電話番号) ${reqSpan}</label>
       <input type="tel" name="contact_tel" required placeholder="例: 0154-XX-XXXX">
     </div>
     <div>
@@ -652,16 +698,12 @@ ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v
       <input type="email" name="contact_email" required placeholder="example@example.com">
     </div>
   </div>
-  <div class="form-row">
-    <div>
-      <label>引率顧問</label>
-      <input type="text" name="supervisor">
-    </div>
-    <div>
-      <label>コーチ</label>
-      <input type="text" name="coach">
-    </div>
-  </div>
+  ${(fst('supervisor') !== 'hidden' || fst('advisor') !== 'hidden' || fst('coach') !== 'hidden')
+    ? '<div class="form-row">' + stdTextField('supervisor', '引率顧問', 'supervisor')
+        + stdTextField('advisor', '顧問', 'advisor')
+        + stdTextField('coach', 'コーチ', 'coach') + '</div>'
+    : ''}
+  ${submissionCustomHtml ? '<div class="form-row full">' + submissionCustomHtml + '</div>' : ''}
 </div>
 
 <div class="form-section">
@@ -679,12 +721,12 @@ ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v
   ${notes ? '<div class="notice">' + escapeHtml(notes) + '</div>' : ''}
 </div>
 
-<div class="form-section">
-  <h2>備考</h2>
+${fst('note') !== 'hidden' ? `<div class="form-section">
+  <h2>通信欄${fst('note') === 'required' ? ' ' + reqSpan : ''}</h2>
   <div class="form-row full">
-    <textarea name="note" rows="3" placeholder="連絡事項があればこちらに記入してください"></textarea>
+    <textarea name="note" rows="3"${fst('note') === 'required' ? ' required' : ''} placeholder="連絡事項があればこちらに記入してください"></textarea>
   </div>
-</div>
+</div>` : ''}
 
 <!-- ハニーポット: 人間には不可視。ボットが埋めるとサーバーで弾く (スパム対策) -->
 <div aria-hidden="true" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden">
@@ -706,6 +748,58 @@ const TOURNAMENT_ID = ${escapeJs(tournament.id)};
 const TOURNAMENT_NAME = ${escapeJs(tournament.name || "")};
 const SUBMIT_URL = ${escapeJs(gasUrl)};  // 送信先。原則 同一オリジン(自サーバー)。サーバーが必要に応じGASへ中継。
 const EVENTS = ${eventsJson};
+const FIELD_CFG = ${fieldCfgJson};
+
+// 種目単位の項目状態を解決(event_overrides > 大会レベル fields > hidden)。"required|optional|hidden"。
+function fstFor(evName, key) {
+  const ov = FIELD_CFG.event_overrides && FIELD_CFG.event_overrides[evName];
+  if (ov && ov[key]) return ov[key];
+  return (FIELD_CFG.fields && FIELD_CFG.fields[key]) || "hidden";
+}
+// クライアント側の自由項目レンダラ(text/select/checkbox)。name はフォーム送信キー。
+function renderCustomClient(c, name) {
+  if (!c || !c.key) return "";
+  const req = !!c.required;
+  const label = c.label || c.key;
+  if (c.type === "checkbox") {
+    return '<label class="cust-check" style="grid-column:1/-1;display:flex;align-items:center;gap:6px;font-size:13px;">' +
+      '<input type="checkbox" name="' + name + '" value="1"' + (req ? " required" : "") + '> ' +
+      escapeHtml(label) + (req ? " (必須)" : "") + '</label>';
+  }
+  if (c.type === "select") {
+    const opts = (c.options || []).map(function (o) {
+      return '<option value="' + escapeHtml(String(o)) + '">' + escapeHtml(String(o)) + '</option>';
+    }).join("");
+    return '<select name="' + name + '"' + (req ? " required" : "") + '>' +
+      '<option value="">' + escapeHtml(label) + (req ? " (必須)" : "") + '</option>' + opts + '</select>';
+  }
+  return '<input type="text" name="' + name + '" placeholder="' + escapeHtml(label) + (req ? " (必須)" : "") + '"' +
+    (req ? " required" : "") + ' />';
+}
+// 選手1スロット分の可変項目(ふりがな/学年/性別/選手スコープ自由項目)のHTML。
+// prefix は input 名の接頭辞(行スコープで一意)。所属(player_team)は addEntry 側で扱う。
+function playerFieldsHtml(prefix, evName) {
+  let h = "";
+  const furi = fstFor(evName, "furigana");
+  if (furi !== "hidden") {
+    h += '<input type="text" name="' + prefix + '_furi" placeholder="ふりがな' + (furi === "required" ? " (必須)" : "") +
+      '" aria-label="ふりがな"' + (furi === "required" ? " required" : "") + ' oninput="recalcTotal()" />';
+  }
+  const grade = fstFor(evName, "grade");
+  if (grade !== "hidden") {
+    h += '<input type="text" name="' + prefix + '_grade" placeholder="学年' + (grade === "required" ? " (必須)" : "") +
+      '" aria-label="学年"' + (grade === "required" ? " required" : "") + ' />';
+  }
+  const pg = fstFor(evName, "player_gender");
+  if (pg !== "hidden") {
+    h += '<select name="' + prefix + '_pgender" aria-label="性別"' + (pg === "required" ? " required" : "") +
+      '><option value="">性別</option><option value="male">男</option><option value="female">女</option></select>';
+  }
+  (FIELD_CFG.custom || []).filter(function (c) { return c && c.scope === "player"; }).forEach(function (c) {
+    h += renderCustomClient(c, prefix + "_cust_" + c.key);
+  });
+  return h;
+}
 
 // 各種目ブロックを動的生成 (開いた状態 + 初期1行を表示)
 function renderEvents() {
@@ -839,16 +933,30 @@ function addEntry(eventIdx) {
     }
     html += '</div>';
   } else if (isDoubles) {
+    // 所属(player_team)の状態で 所属入力の要否を切替(hidden=省略 / required=必須)。
+    const ptm = fstFor(ev.name, "player_team");
+    const teamInput = (n) => ptm === "hidden" ? "" :
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t' + n + '" placeholder="選手' + n + ' 所属' +
+      (ptm === "required" ? " (必須)" : "") + '" aria-label="選手' + n + ' 所属"' +
+      (ptm === "required" ? " required" : "") + ' oninput="recalcTotal()" />';
     html += '<div class="entry-grid">' +
       '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n1" placeholder="選手1 氏名" aria-label="選手1 氏名" oninput="recalcTotal()" />' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t1" placeholder="選手1 所属" aria-label="選手1 所属" oninput="recalcTotal()" />' +
+      teamInput(1) +
+      playerFieldsHtml('ev' + eventIdx + '_pair' + idx + '_1', ev.name) +
       '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n2" placeholder="選手2 氏名" aria-label="選手2 氏名" oninput="recalcTotal()" />' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t2" placeholder="選手2 所属" aria-label="選手2 所属" oninput="recalcTotal()" />' +
+      teamInput(2) +
+      playerFieldsHtml('ev' + eventIdx + '_pair' + idx + '_2', ev.name) +
       '</div>';
   } else {
+    const ptm = fstFor(ev.name, "player_team");
+    const teamInput = ptm === "hidden" ? "" :
+      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_team" placeholder="所属' +
+      (ptm === "required" ? " (必須)" : "") + '" aria-label="所属"' +
+      (ptm === "required" ? " required" : "") + ' oninput="recalcTotal()" />';
     html += '<div class="entry-grid">' +
       '<input type="text" name="ev' + eventIdx + '_p' + idx + '_name" placeholder="氏名 (フルネーム)" aria-label="氏名 (フルネーム)" oninput="recalcTotal()" />' +
-      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_team" placeholder="所属" aria-label="所属" oninput="recalcTotal()" />' +
+      teamInput +
+      playerFieldsHtml('ev' + eventIdx + '_p' + idx, ev.name) +
       '</div>';
   }
   html += divSeg;
@@ -924,6 +1032,7 @@ function gatherFormData() {
     contact_tel: fd.get("contact_tel"),
     contact_email: fd.get("contact_email"),
     supervisor: fd.get("supervisor") || "",
+    advisor: fd.get("advisor") || "",
     coach: fd.get("coach") || "",
     note: fd.get("note") || "",
     submitted_at: new Date().toISOString(),
@@ -932,6 +1041,15 @@ function gatherFormData() {
     cf_turnstile_token: fd.get("cf-turnstile-response") || "",   // Turnstile ウィジェットが挿入する隠しトークン
     hp_url: fd.get("hp_url") || "",                              // ハニーポット(空のはず)
   };
+  // 申込単位スコープの自由項目(scope=submission)を収集。checkbox は true/false。
+  const subAnswers = {};
+  (FIELD_CFG.custom || []).filter(function (c) { return c && c.scope === "submission"; }).forEach(function (c) {
+    const el = form.querySelector('[name="cust_' + c.key + '"]');
+    if (!el) return;
+    const v = el.type === "checkbox" ? !!el.checked : (el.value || "");
+    if (v !== "" && v !== false) subAnswers[c.key] = v;
+  });
+  if (Object.keys(subAnswers).length) data.extra = subAnswers;
 
   EVENTS.forEach((ev, idx) => {
     const container = document.getElementById("members_" + idx);
@@ -940,6 +1058,24 @@ function gatherFormData() {
     //   旧実装は現在のDOM位置(ri)で input 名を組み立てていたため、途中行を削除すると
     //   名前(=追加時のindex)とズレて以降の選手が送信から欠落していた。行内の input を
     //   index非依存で拾うことでデータ欠落を解消し、表示合計と送信内容を常に一致させる。
+    // 選手1スロット分の可変項目(ふりがな/学年/性別/選手スコープ自由項目)を行スコープで読む。
+    //   token: シングルスは ""(接頭辞なし)、ダブルスは "_1"/"_2"(選手スロット識別)。
+    const readSlot = (row, token) => {
+      const q = (suf) => { const el = row.querySelector('[name*="' + token + suf + '"]'); return el ? (el.value || "") : ""; };
+      const furigana = q("_furi");
+      const gender = q("_pgender");
+      const ex = {};
+      const g = q("_grade"); if (g) ex.grade = g;
+      const answers = {};
+      (FIELD_CFG.custom || []).filter((c) => c && c.scope === "player").forEach((c) => {
+        const el = row.querySelector('[name*="' + token + "_cust_" + c.key + '"]');
+        if (!el) return;
+        const v = el.type === "checkbox" ? !!el.checked : (el.value || "");
+        if (v !== "" && v !== false) answers[c.key] = v;
+      });
+      if (Object.keys(answers).length) ex.answers = answers;
+      return { furigana, gender, extra: Object.keys(ex).length ? ex : null };
+    };
     Array.from(container.children).forEach((row) => {
       const val = (sel) => { const el = row.querySelector(sel); return el ? (el.value || "") : ""; };
       const obj = { event: ev.name, type: ev.type || "singles",
@@ -958,10 +1094,22 @@ function gatherFormData() {
         obj.team2 = val('input[name*="_t2"]');
         obj.team = obj.team1; // 後方互換
         if (!obj.name1 && !obj.name2) return;
+        // ペアの可変項目: ふりがな→氏名/相方の読み、学年/性別/自由回答→extra_json.players[]。
+        const s1 = readSlot(row, "_1"), s2 = readSlot(row, "_2");
+        if (s1.furigana) obj.furigana1 = s1.furigana;
+        if (s2.furigana) obj.furigana2 = s2.furigana;
+        if (s1.gender) obj.gender = s1.gender;
+        if (s2.gender) obj.partner_gender = s2.gender;
+        if (s1.extra || s2.extra) obj.extra_json = { players: [s1.extra || {}, s2.extra || {}] };
       } else {
         obj.name = val('input[name*="_name"]');
         obj.team = val('input[name*="_team"]');
         if (!obj.name) return;
+        // シングルスの可変項目: ふりがな→氏名の読み、学年/自由回答→extra_json、性別→gender。
+        const s = readSlot(row, "");
+        if (s.furigana) obj.furigana = s.furigana;
+        if (s.gender) obj.gender = s.gender;
+        if (s.extra) obj.extra_json = s.extra;
       }
       data.entries.push(obj);
       data.total_amount += obj.fee;

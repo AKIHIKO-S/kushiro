@@ -805,7 +805,8 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
       // op_id(X-Op-Id ヘッダ / body)を渡し、メモリキャッシュ非ヒット(再起動後など)でも
       // DBレベルで replay 判定する (Phase4残: 真のDB冪等)。
       const opId = req.get("X-Op-Id") || (payload && payload.op_id) || "";
-      const r = db.createTeamEntry(req.params.id, payload, opId);
+      // enforce:true = 公開フォーム経路は field_config の必須項目をサーバ側で強制(クライアント不信)。
+      const r = db.createTeamEntry(req.params.id, payload, opId, { enforce: true });
 
       // GAS 連携が設定されていればサーバー側から中継 (スプレッドシート反映、best-effort)。
       // server→GAS は CORS 制約なし。ブラウザ直POSTの誤エラーを解消する要。
@@ -2888,6 +2889,7 @@ app.get("/api/tournaments/:id/entry-form.html", (req, res) => {
       payment_note: req.query.payment_note || "",
       notes: req.query.notes || "",
       turnstile_sitekey: process.env.TURNSTILE_SITEKEY || "",
+      field_config: db.resolveFieldConfig(tournament),   // 必須項目設定(空なら既定=現行フォーム相当)
     });
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
@@ -4370,6 +4372,7 @@ app.get("/entry/:id", (req, res) => {
       payment_note: req.query.payment_note || "",
       notes: req.query.notes || "",
       turnstile_sitekey: process.env.TURNSTILE_SITEKEY || "",
+      field_config: db.resolveFieldConfig(tournament),   // 必須項目設定(空なら既定=現行フォーム相当)
     });
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");

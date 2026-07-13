@@ -87,6 +87,53 @@ test("createTeamEntry: entrant.extra_json(学年/自由回答) と submission.ex
   assert.strictEqual(view.entries[0].answers.tshirt, "M");
 });
 
+test("enforce: 公開フォーム経路(enforce:true)は連絡先・必須項目をサーバ側で強制", () => {
+  const custom = [{ key: "bus", label: "送迎バス", type: "checkbox", required: true, scope: "submission" }];
+  const t = db.createTournament({
+    name: "強制", date: "2027-10-01", event_config: singlesCfg, entries_open: 1,
+    field_config: { version: 1, fields: { team_name: "required", furigana: "required" }, custom },
+  });
+  const base = { team_name: "甲", contact_name: "監督", contact_tel: "090", contact_email: "a@b.jp", extra: { bus: true },
+    entries: [{ event: "中学男子シングルス", type: "singles", name: "山田 太郎", team: "甲", furigana: "やまだ たろう" }] };
+  // 電話欠落 → error
+  const r1 = db.createTeamEntry(t.id, { ...base, contact_tel: "" }, "", { enforce: true });
+  assert.ok(r1.error && /電話/.test(r1.error), "電話番号欠落を弾く");
+  // 必須の自由項目(送迎バス)欠落 → error
+  const r2 = db.createTeamEntry(t.id, { ...base, extra: {} }, "", { enforce: true });
+  assert.ok(r2.error && /送迎バス/.test(r2.error), "必須の自由項目欠落を弾く");
+  // 選手のふりがな(必須)欠落 → error
+  const r3 = db.createTeamEntry(t.id, { ...base,
+    entries: [{ event: "中学男子シングルス", type: "singles", name: "山田 太郎", team: "甲" }] }, "", { enforce: true });
+  assert.ok(r3.error && /ふりがな/.test(r3.error), "選手のふりがな欠落を弾く");
+  // 全部揃えば成功
+  const r4 = db.createTeamEntry(t.id, base, "", { enforce: true });
+  assert.ok(r4.ok && r4.entry_count === 1, "必須が揃えば受付");
+});
+
+test("enforce なし(内部経路)は連絡先欠落でも従来どおり受付(既存15テストを壊さない)", () => {
+  const t = db.createTournament({
+    name: "内部", date: "2027-10-02", event_config: singlesCfg, entries_open: 1,
+    field_config: { version: 1, fields: { team_name: "required" } },
+  });
+  // contact_tel も team_name も無いが enforce 未指定 → 従来どおり通る
+  const r = db.createTeamEntry(t.id, {
+    contact_name: "監督", contact_email: "a@b.jp",
+    entries: [{ event: "中学男子シングルス", type: "singles", name: "田中 一", team: "乙", fee: 500 }],
+  });
+  assert.ok(r.ok, "内部経路は必須検証をかけない");
+});
+
+test("ふりがな配線: フォームの furigana が entrant.furigana に入る(シングルス)", () => {
+  const t = db.createTournament({ name: "読み", date: "2027-10-03", event_config: singlesCfg, entries_open: 1 });
+  const r = db.createTeamEntry(t.id, {
+    team_name: "甲", contact_name: "監督", contact_email: "a@b.jp",
+    entries: [{ event: "中学男子シングルス", type: "singles", name: "難読 太郎", team: "甲", furigana: "なんどく たろう" }],
+  });
+  assert.ok(r.ok);
+  const ent = db.getEntrants(t.id).find(e => /難読/.test(e.name));
+  assert.ok(/なんどく/.test(ent.furigana), "申告ふりがなが保存される(苗字辞書補完に上書きされない)");
+});
+
 test("deleteSubmissionPII: extra_json(引率者名等のPII)を匿名化する", () => {
   const t = db.createTournament({ name: "PII", date: "2027-09-06", event_config: singlesCfg, entries_open: 1 });
   const r = db.createTeamEntry(t.id, {
