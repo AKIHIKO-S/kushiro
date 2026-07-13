@@ -4538,10 +4538,36 @@ function computeDrawLeaves(entrants, size, rng, opts) {
     // BYE枠の確定: スーパーシード区画で使った残りの予算を、標準どおり「上位シードの1回戦相手」
     // (最高位ファントムランク)から降順に割り当てる。区画なしのときは従来の positions[i] > N と完全一致。
     let marked = forced;
-    for (let rank = size; rank >= 1 && marked < totalBye; rank--) {
-      const i = posOfRank[rank];
-      if (i == null || byeSlot[i] || leaves[i]) continue;
-      byeSlot[i] = true; marked++;
+    if (opts.blockSizes && opts.blockSizes.length >= 2 && size % opts.blockSizes.length === 0) {
+      // ブロック別人数指定: 各ブロック(128リーフ)のBYE数 = ブロック枠 - 指定人数 になるよう、
+      // ブロック内の最高位ファントムランクから降順に割り当てる(ブロック内の配置規則は従来と同じ)。
+      const BLK = size / opts.blockSizes.length;
+      const byeBudget = opts.blockSizes.map(n => BLK - n);
+      // SS区画などで既に確定済みのBYEをブロック別に差し引く
+      for (let i = 0; i < size; i++) if (byeSlot[i]) byeBudget[Math.floor(i / BLK)]--;
+      byeBudget.forEach((bud, bi) => {
+        if (bud < 0) warnings.push("ブロック" + String.fromCharCode(0xFF21 + bi) +
+          "の人数指定がシード/スーパーシード区画と両立しないため、超過分は他ブロックのBYEになります");
+      });
+      for (let rank = size; rank >= 1; rank--) {
+        const i = posOfRank[rank];
+        if (i == null || byeSlot[i] || leaves[i]) continue;
+        const bi = Math.floor(i / BLK);
+        if (byeBudget[bi] <= 0) continue;
+        byeSlot[i] = true; byeBudget[bi]--; marked++;
+      }
+      // 予算超過(負)ブロックがあった場合の帳尻: 残り必要BYEを従来どおり全体から降順で埋める
+      for (let rank = size; rank >= 1 && marked < totalBye; rank--) {
+        const i = posOfRank[rank];
+        if (i == null || byeSlot[i] || leaves[i]) continue;
+        byeSlot[i] = true; marked++;
+      }
+    } else {
+      for (let rank = size; rank >= 1 && marked < totalBye; rank--) {
+        const i = posOfRank[rank];
+        if (i == null || byeSlot[i] || leaves[i]) continue;
+        byeSlot[i] = true; marked++;
+      }
     }
   }
 
@@ -4746,6 +4772,37 @@ function drawSingleBracket(tournamentId, event, opts) {
     return { error: "選手数が多すぎます(最大約1024名)。", count: entrants.length };
   }
 
+  // ── ブロック別人数の手動設定(必須・256枠以上) ──
+  // 紙の組合せ表と同じく、128リーフ=1ブロック(Ａ/Ｂ/Ｃ/Ｄ…)ごとの選手数を運営が指定してから
+  // 抽選する。指定が無い/合計不一致は確定もプレビューもしない(needs_block_sizes)。
+  const nBlocksDraw = size >= 256 ? size / 128 : 1;
+  let blockSizes = null;
+  if (nBlocksDraw > 1) {
+    const N = entrants.length;
+    const even = (() => {
+      const base = Math.floor(N / nBlocksDraw), r = N % nBlocksDraw;
+      return [...Array(nBlocksDraw)].map((_, i) => base + (i < r ? 1 : 0));
+    })();
+    const raw = Array.isArray(opts.block_sizes) ? opts.block_sizes.map(x => parseInt(x)) : null;
+    if (!raw || raw.length !== nBlocksDraw || raw.some(x => !Number.isFinite(x) || x < 1)) {
+      return {
+        error: "ブロックごとの人数指定が必要です(" + nBlocksDraw + "ブロック・合計" + N + "名)。",
+        needs_block_sizes: true, blocks: nBlocksDraw, total: N, suggested: even,
+      };
+    }
+    const sum = raw.reduce((a, b) => a + b, 0);
+    if (sum !== N) {
+      return {
+        error: "ブロック人数の合計(" + sum + ")が出場者数(" + N + ")と一致しません。",
+        needs_block_sizes: true, blocks: nBlocksDraw, total: N, suggested: even,
+      };
+    }
+    if (raw.some(x => x > 128)) {
+      return { error: "1ブロックの人数は最大128名です。", needs_block_sizes: true, blocks: nBlocksDraw, total: N, suggested: even };
+    }
+    blockSizes = raw;
+  }
+
   // オープン種目(名簿取込 mode=open)はスーパーシード必須: 両端の特別シード(登場回戦)を指定してから
   // 抽選する運用。プレビューは通し(プランの確認はできる)、確定のみ needs_force でブロック(強制可)。
   if (!opts.preview && !opts.force) {
@@ -4763,7 +4820,7 @@ function drawSingleBracket(tournamentId, event, opts) {
     ? ((+opts.draw_seed) >>> 0) : randomSeed();
   const rng = mulberry32(drawSeed);
   const sep = opts.separate_by === "region" ? "region" : opts.separate_by === "none" ? "none" : "team";
-  const { leaves, warnings, r1_same_club: r1SameClub } = computeDrawLeaves(entrants, size, rng, { separateBy: sep });
+  const { leaves, warnings, r1_same_club: r1SameClub } = computeDrawLeaves(entrants, size, rng, { separateBy: sep, blockSizes });
   const seededCount = entrants.filter(e => (parseInt(e.seed) || 0) >= 1).length;
   const byeCount = size - entrants.length;
   const cell = (e) => e ? { name: e.display_name || e.name, team: e.team || "", seed: (parseInt(e.seed) || 0) || null }
@@ -4774,6 +4831,7 @@ function drawSingleBracket(tournamentId, event, opts) {
   const meta = {
     draw_seed: drawSeed, separate_by: sep, warnings, seeded_count: seededCount,
     bracket_size: size, bye_count: byeCount, r1_same_club: r1SameClub, algo_version: DRAW_ALGO_VERSION,
+    ...(blockSizes ? { block_sizes: blockSizes } : {}),
     ...(ssCount ? { super_seed_count: ssCount } : {}),
     proximity_count: prox.length, proximity_warnings: prox.map(w => w.msg).slice(0, 40),
   };

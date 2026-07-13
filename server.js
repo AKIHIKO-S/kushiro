@@ -1806,6 +1806,7 @@ app.post("/api/tournaments/:id/bracket/draw", requireAdmin, (req, res) => {
   const r = db.drawSingleBracket(req.params.id, event, {
     draw_seed: req.body?.draw_seed,
     separate_by: req.body?.separate_by,
+    block_sizes: req.body?.block_sizes,
     force: !!req.body?.force,
     preview,
     drawn_by: req.body?.drawn_by,

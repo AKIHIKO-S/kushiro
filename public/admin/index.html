@@ -9925,6 +9925,46 @@ const O = {
  const drawnBy = h("input", { className: "input", placeholder: "実施者名(記録用・必須)", style: { maxWidth: "200px" } });
  const previewBox = h("div", { style: { marginTop: "10px" } });
 
+ // ブロック別人数(必須・256枠以上): 紙の組合せ表と同じく、128リーフ=1ブロック(Ａ/Ｂ/Ｃ/Ｄ…)に
+ // 何人入れるかを運営が決めてから抽選する。合計=出場者数でないとプレビュー/確定できない。
+ const blockBox = h("div", { style: { margin: "8px 0" } });
+ const blockInputs = [];
+ const blockTotal = (rdy && rdy.confirmed) || 0;
+ {
+   const size = (rdy && rdy.bracket_size) || 0;
+   const nb = size >= 256 ? size / 128 : 0;
+   if (nb > 1) {
+     const base = Math.floor(blockTotal / nb), rem = blockTotal % nb;
+     const sumLbl = h("span", { style: { fontSize: "12px", fontWeight: 700 } });
+     const refreshSum = () => {
+       const s = blockInputs.reduce((a, i) => a + (parseInt(i.value) || 0), 0);
+       sumLbl.textContent = "合計 " + s + " / " + blockTotal + (s === blockTotal ? " ✓" : "（一致させてください）");
+       sumLbl.style.color = s === blockTotal ? "#15803d" : "#c01526";
+     };
+     const row = h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
+       h("span", { style: { fontSize: "12.5px", fontWeight: 700 } }, "① ブロック別人数(必須):"));
+     for (let i = 0; i < nb; i++) {
+       const inp = h("input", { className: "input", type: "number", min: 1, max: 128,
+         value: base + (i < rem ? 1 : 0), style: { width: "78px" } });
+       inp.addEventListener("input", refreshSum);
+       blockInputs.push(inp);
+       row.appendChild(h("label", { style: { display: "flex", alignItems: "center", gap: "4px", fontSize: "12.5px", fontWeight: 700 } },
+         String.fromCharCode(0xFF21 + i), inp));
+     }
+     row.appendChild(sumLbl);
+     refreshSum();
+     blockBox.appendChild(row);
+   }
+ }
+ // 検証つきで送信値を作る。不一致なら null(呼び出し側でトースト)
+ const blockSizesValue = () => {
+   if (!blockInputs.length) return { ok: true, value: null };
+   const arr = blockInputs.map(i => parseInt(i.value) || 0);
+   const s = arr.reduce((a, b) => a + b, 0);
+   if (s !== blockTotal) return { ok: false, sum: s };
+   return { ok: true, value: arr };
+ };
+
  const issuesBox = h("div", { style: { margin: "6px 0" } });
  if (diff && diff.has_draw) {
    issuesBox.appendChild(h("div", {
@@ -9982,7 +10022,10 @@ const O = {
 
  const doPreview = async (fresh) => {
    if (fresh) seedInput.value = "";
+   const bs = blockSizesValue();
+   if (!bs.ok) return toast(`ブロック人数の合計(${bs.sum})を出場者数(${blockTotal})に一致させてください`, "err");
    const body = { event, separate_by: sep, preview: true };
+   if (bs.value) body.block_sizes = bs.value;
    const sd = parseInt(seedInput.value); if (Number.isFinite(sd)) body.draw_seed = sd;
    const r = await api.post(`/api/tournaments/${tid}/bracket/draw`, body);
    if (!r || r.error) return toast((r && r.error) || "プレビュー失敗", "err");
@@ -9992,7 +10035,10 @@ const O = {
    if (!lastPreview) return toast("先に『抽選してみる』を押してプレビューしてください", "err");
    const by = drawnBy.value.trim();
    if (!by) { drawnBy.focus(); return toast("実施者名を入力してください(抽選の記録用)", "err"); }
+   const bs = blockSizesValue();
+   if (!bs.ok) return toast(`ブロック人数の合計(${bs.sum})を出場者数(${blockTotal})に一致させてください`, "err");
    const body = { event, separate_by: sep, draw_seed: lastSeed, drawn_by: by, base_rev: rdy && rdy.bracket_rev };
+   if (bs.value) body.block_sizes = bs.value;
    let r = await api.post(`/api/tournaments/${tid}/bracket/draw`, body);
    if (r && r.needs_force) {
      if (!confirm(r.error + "\n\n結果入力済みの試合も消して確定しますか？")) return;
@@ -10018,6 +10064,7 @@ const O = {
    issuesBox,
    h("div", { className: "text-xs", style: { fontWeight: 700, margin: "8px 0 2px" } }, "① 非シードの分散方法"),
    sepBtns,
+   blockBox,
    h("div", { className: "flex gap-2", style: { alignItems: "center", marginTop: "8px", flexWrap: "wrap" } },
      h("button", { className: "btn btn-sm btn-ok", onClick: () => doPreview(false) }, "② 抽選してみる(確定しない)"),
      h("button", { className: "btn btn-sm btn-ghost", onClick: () => doPreview(true) }, "引き直す"),
