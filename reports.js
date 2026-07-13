@@ -1055,22 +1055,35 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
     if (!round1.length) return;
     const S = round1.length * 2;
     const totalRounds = Math.max(1, Math.round(Math.log2(S)));
-    const sideRounds = totalRounds - 1;            // 各山(片側)のラウンド数(決勝を除く)
     const byRP = {};
     list.forEach(m => { byRP[m.bracket_round + "_" + m.bracket_pos] = m; });
 
     const TOP = 4;                                  // ヘッダ行ぶんのオフセット(0始まり行)
 
-    // 列レイアウト
-    //  左: 0=組番号 1=選手名 2=所属 3=シード  4..=左ラウンド横線(R1→中央)
-    //  中央: CENTER=決勝/優勝
-    //  右: ..=右ラウンド横線(中央→R1)  右シード/所属/選手名/組番号
-    const L_NUM = 0, L_NAME = 1, L_TEAM = 2, L_SEED = 3;
-    const LADV = (r) => 4 + (r - 1);                       // 左 round r の横線列
-    const CENTER = 4 + sideRounds;
-    const RADV = (r) => CENTER + (sideRounds - r + 1);     // 右 round r の横線列(中央寄りが大きいr)
-    const R_SEED = CENTER + sideRounds + 1, R_TEAM = R_SEED + 1, R_NAME = R_TEAM + 1, R_NUM = R_NAME + 1;
-    const lastCol = R_NUM;
+    // ── ブロック分割(紙面方式: 2026なごやか亭杯の組合せ表を踏襲) ──
+    // 大規模ドロー(S≥256)は 128リーフ=1ブロック(Ａ/Ｂ/Ｃ/Ｄ…)を横に並べ、各ブロックを
+    // 小さな両山(左レール/右レールの余白に 番号・選手名・所属)として描く。ブロック勝者
+    // どうしの準決勝・決勝は下段に別描きする。S<256 は従来どおり1ブロック(全体で両山)。
+    const BL = S >= 256 ? 128 : S;                 // 1ブロックのリーフ数
+    const nBlocks = S / BL;
+    const blockRounds = Math.max(1, Math.round(Math.log2(BL)));   // ブロック内最終ラウンド(=ブロック勝者決定)
+    const sideR = blockRounds - 1;                 // ブロック片山のラウンド数
+    // 列レイアウト(ブロックごとに反復・間に1列スペーサ)
+    //  左: 組番号/選手名/所属/シード → 左ラウンド横線(R1→中央) → CENTER → 右(鏡像)
+    const BLOCK_COLS = 4 + sideR + 1 + sideR + 4;
+    const colsOf = (b) => {
+      const base = b * (BLOCK_COLS + 1);
+      const CENTER = base + 4 + sideR;
+      return {
+        base, CENTER,
+        L_NUM: base, L_NAME: base + 1, L_TEAM: base + 2, L_SEED: base + 3,
+        R_SEED: CENTER + sideR + 1, R_TEAM: CENTER + sideR + 2,
+        R_NAME: CENTER + sideR + 3, R_NUM: CENTER + sideR + 4,
+        LADV: (r) => base + 4 + (r - 1),                 // 左 round r の横線列
+        RADV: (r) => CENTER + (sideR - r + 1),           // 右 round r の横線列(中央寄りが大きいr)
+      };
+    };
+    const lastCol = nBlocks * (BLOCK_COLS + 1) - 2;
     // 最終リーフの下端。S=2 等の退化(halfR1非整数で片側に2枚載る)でも切れないよう実配置から算出。
     let maxLeafBottom = TOP + 1;
 
@@ -1097,10 +1110,14 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
     const nameStyle = { alignment: { horizontal: "left", vertical: "center", wrapText: true, shrinkToFit: true }, font: { sz: nfsz, name: FONT } };
 
     // ── ヘッダ ──
-    put(0, L_NAME, tournament.name || "", { font: { bold: true, sz: 14 } });
-    put(1, L_NAME, eventName + "  トーナメント表", { font: { bold: true, sz: 12 } });
-    put(0, CENTER, _jaShortDate(tournament.date), centerStyle);
-    put(1, CENTER, tournament.venue || "", centerStyle);
+    put(0, colsOf(0).L_NAME, tournament.name || "", { font: { bold: true, sz: 14 } });
+    put(1, colsOf(0).L_NAME, eventName + "  トーナメント表", { font: { bold: true, sz: 12 } });
+    put(0, colsOf(0).CENTER, _jaShortDate(tournament.date), centerStyle);
+    put(1, colsOf(0).CENTER, tournament.venue || "", centerStyle);
+    // ブロック見出し(Ａブロック/Ｂブロック…)。1ブロック構成では出さない(従来表示)。
+    if (nBlocks > 1) for (let b = 0; b < nBlocks; b++) {
+      put(2, colsOf(b).L_NAME, String.fromCharCode(0xFF21 + b) + "ブロック", { font: { bold: true, sz: 11 } });
+    }
 
     // ── 紙式コンパクト配置: 実選手だけに行を割る(1選手=縦2行)。BYE は行を作らない ──
     // 紙のトーナメント表の作法: 1回戦がある選手は隣と「小さい山」で結び、不戦勝(BYE)の選手は
@@ -1115,7 +1132,6 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
         if (nm && nm !== "BYE") leafArr[2 * p + (sk - 1)] = { name: nm, team: tm || "", eid };
       });
     });
-    const half = S / 2;
     // 各サイドのレール行割当(実選手のみ連番・2行ずつ)。railLine[g] = 選手レール(下罫線)の行。
     const railLine = new Array(S).fill(null);
     const assignRails = (from, to) => {
@@ -1127,16 +1143,19 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
         row += 2;
       }
     };
-    if (S === 2) assignRails(0, S); else { assignRails(0, half); assignRails(half, S); }
+    if (S === 2) assignRails(0, S);
+    else for (let b = 0; b < nBlocks; b++) { assignRails(b * BL, b * BL + BL / 2); assignRails(b * BL + BL / 2, (b + 1) * BL); }
 
-    // 選手リーフ描画(実選手のみ)
-    function placeLeaf(lf, g, side) {
+    // 選手リーフ描画(実選手のみ)。所属ブロックの左右レール余白に 番号/選手名/所属/シード を記載。
+    function placeLeaf(lf, g) {
       const top = railLine[g] - 1;
+      const C = colsOf(Math.floor(g / BL));
+      const side = (S === 2 || (g % BL) < BL / 2) ? "L" : "R";
       const seed = lf.eid != null ? seedByEntrant.get(lf.eid) : null;
       const num = lf.eid != null ? numByEntrant.get(lf.eid) : null;
       const ent = lf.eid != null ? entById.get(lf.eid) : null;
       const isDbl = ent && (parseInt(ent.is_doubles) || 0) && (ent.partner_name || "");
-      const NUM = side === "L" ? L_NUM : R_NUM, NAME = side === "L" ? L_NAME : R_NAME, TEAM = side === "L" ? L_TEAM : R_TEAM, SEED = side === "L" ? L_SEED : R_SEED;
+      const NUM = side === "L" ? C.L_NUM : C.R_NUM, NAME = side === "L" ? C.L_NAME : C.R_NAME, TEAM = side === "L" ? C.L_TEAM : C.R_TEAM, SEED = side === "L" ? C.L_SEED : C.R_SEED;
       // 番号・シードは2行結合(縦中央)
       put(top, NUM, num || "", centerStyle);
       put(top, SEED, seed ? "[" + seed + "]" : "", centerStyle);
@@ -1155,12 +1174,12 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
         merges.push({ s: { r: top, c: TEAM }, e: { r: top + 1, c: TEAM } });
       }
       // 下罫線(選手レール): 名前〜シード列(山により左右)
-      const ra = side === "L" ? L_NAME : R_SEED, rb = side === "L" ? L_SEED : R_NAME;
+      const ra = side === "L" ? C.L_NAME : C.R_SEED, rb = side === "L" ? C.L_SEED : C.R_NAME;
       for (let c = Math.min(ra, rb); c <= Math.max(ra, rb); c++) border(top + 1, c, { bottom: thin });
     }
     for (let g = 0; g < S; g++) {
       if (!leafArr[g]) continue;
-      placeLeaf(leafArr[g], g, (S === 2 || g < half) ? "L" : "R");
+      placeLeaf(leafArr[g], g);
     }
     // _import 用(取込)は正準位置(bye込み)のまま出力=ラウンドトリップ取込互換。
     round1.forEach(m => {
@@ -1174,36 +1193,35 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
         importRows.push([eventName, p, sk, eid || "", seed, bye ? "" : nm, bye ? "" : tm, bye]);
       });
     });
-    const lastRow = maxLeafBottom;   // 実際に置いたリーフの最下行(退化ケースでも切れない)
-
-    // ── 山の罫線(勝者横線・縦線・勝者名)を再帰で構築 ──
+    // ── 山の罫線(勝者横線・縦線・勝者名)をブロックごとに再帰で構築 ──
     // 両子が実在: 通常の山(縦線+勝者横線)。片子のみ: 線をそのまま次列へ延長(=不戦勝の長い罫線)。
-    // 子なし(BYE同士): 何も描かない。行位置はコンパクトなレール行から下から積み上げて決まるので、
-    // 均等グリッドの閉形式(旧anchor)ではなく実配置の中点を使う。
-    function buildSideLines(side) {
-      const from = side === "L" ? 0 : half;
+    // 子なし(BYE同士): 何も描かない。行位置はコンパクトなレール行の実配置の中点を使う。
+    function buildSideLines(b, side) {
+      const C = colsOf(b);
+      const from = b * BL + (side === "L" ? 0 : BL / 2);
       let cur = [];                    // 直前ラウンドの線行(null=その枝に実選手なし)
-      for (let g = from; g < from + half; g++) cur.push(railLine[g]);
-      for (let r = 1; r <= sideRounds; r++) {
-        const col = side === "L" ? LADV(r) : RADV(r);
+      for (let g = from; g < from + BL / 2; g++) cur.push(railLine[g]);
+      for (let r = 1; r <= sideR; r++) {
+        const col = side === "L" ? C.LADV(r) : C.RADV(r);
         const nxt = [];
         for (let q = 0; q * 2 < cur.length; q++) {
-          const a = cur[2 * q], b = cur[2 * q + 1];
-          if (a != null && b != null) {
-            const row = Math.round((a + b) / 2);
+          const a = cur[2 * q], bb = cur[2 * q + 1];
+          if (a != null && bb != null) {
+            const row = Math.round((a + bb) / 2);
             border(row, col, { bottom: thin });
             const vEdge = side === "L" ? { left: thin } : { right: thin };
-            for (let rw = a + 1; rw <= b; rw++) border(rw, col, vEdge);
+            for (let rw = a + 1; rw <= bb; rw++) border(rw, col, vEdge);
             // 勝者名(結果が入っていれば)。不戦勝の素通し(片子)には書かない。
-            const matchPos = side === "L" ? q : (S / Math.pow(2, r) / 2 + q);
+            const perBlock = BL / Math.pow(2, r);   // このラウンドのブロック内マッチ数
+            const matchPos = b * perBlock + (side === "L" ? q : perBlock / 2 + q);
             const mm = byRP[r + "_" + matchPos];
             if (mm && mm.status === "completed" && mm.winner_name && mm.winner_name !== "BYE") {
               put(row, col, mm.winner_name, nameStyle);
               border(row, col, { bottom: thin });
             }
             nxt.push(row);
-          } else if (a != null || b != null) {
-            const row = a != null ? a : b;
+          } else if (a != null || bb != null) {
+            const row = a != null ? a : bb;
             border(row, col, { bottom: thin });   // 線の延長(紙の「大きい罫線」)
             nxt.push(row);
           } else {
@@ -1214,51 +1232,97 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
       }
       return cur.length ? cur[0] : null;
     }
-    const aL = S === 2 ? null : buildSideLines("L");
-    const aR = S === 2 ? null : buildSideLines("R");
 
-    // ── 決勝(中央)+ 優勝 ──
+    // ── ブロック中央線(1ブロック時=決勝線 / 複数ブロック時=ブロック勝者線) ──
+    const centerNodes = [];
+    if (S > 2) for (let b = 0; b < nBlocks; b++) {
+      const C = colsOf(b);
+      const aL = buildSideLines(b, "L");
+      const aR = buildSideLines(b, "R");
+      let row = null;
+      if (aL != null && aR != null) row = Math.round((aL + aR) / 2);
+      else if (aL != null || aR != null) row = (aL != null ? aL : aR);
+      if (row != null) {
+        border(row, C.CENTER, { bottom: nBlocks === 1 ? thick : thin });
+        // コンパクト詰めで左右の山の高さが違うときは、中央線へ縦線で接続する(紙の中央join)
+        if (aL != null && aL !== row) for (let rw = Math.min(aL, row) + 1; rw <= Math.max(aL, row); rw++) border(rw, C.CENTER, { left: thin });
+        if (aR != null && aR !== row) for (let rw = Math.min(aR, row) + 1; rw <= Math.max(aR, row); rw++) border(rw, C.CENTER, { right: thin });
+        // ブロック勝者名(複数ブロック時のみ。1ブロック時の優勝は下で別記)
+        const bm = byRP[blockRounds + "_" + b];
+        if (nBlocks > 1 && bm && bm.status === "completed" && bm.winner_name && bm.winner_name !== "BYE") {
+          put(row, C.CENTER, bm.winner_name, nameStyle);
+          border(row, C.CENTER, { bottom: thin });
+        }
+      }
+      centerNodes.push({ col: C.CENTER, row });
+    }
+
+    // ── 決勝まわり ──
     const finalMatch = byRP[totalRounds + "_0"];
-    let finalAnchor;
-    if (aL != null && aR != null) finalAnchor = Math.round((aL + aR) / 2);
-    else if (aL != null || aR != null) finalAnchor = (aL != null ? aL : aR);
-    else {
-      // S=2 等の退化: レール行から直接決勝線の高さを決める
-      const rl = railLine.filter(v => v != null);
-      finalAnchor = rl.length >= 2 ? Math.round((rl[0] + rl[rl.length - 1]) / 2) : TOP + 1;
-    }
-    put(0, CENTER, _jaShortDate(tournament.date), centerStyle);
-    put(2, CENTER, "決勝", Object.assign({ font: { bold: true, sz: 11 } }, centerStyle));
-    border(finalAnchor, CENTER, { bottom: thick });
-    // コンパクト詰めで左右の山の高さが違うときは、決勝線へ縦線で接続する(紙の中央join)
-    if (aL != null && aL !== finalAnchor) {
-      for (let rw = Math.min(aL, finalAnchor) + 1; rw <= Math.max(aL, finalAnchor); rw++) border(rw, CENTER, { left: thin });
-    }
-    if (aR != null && aR !== finalAnchor) {
-      for (let rw = Math.min(aR, finalAnchor) + 1; rw <= Math.max(aR, finalAnchor); rw++) border(rw, CENTER, { right: thin });
-    }
-    if (finalMatch && finalMatch.status === "completed" && finalMatch.winner_name && finalMatch.winner_name !== "BYE") {
-      put(finalAnchor, CENTER, "優勝: " + finalMatch.winner_name, Object.assign({ font: { bold: true, sz: 11 } }, centerStyle));
-      border(finalAnchor, CENTER, { bottom: thick });
+    let lastRow = maxLeafBottom;   // 表の最下行(下段トーナメントで伸びる)
+    if (nBlocks === 1) {
+      let finalAnchor = (centerNodes.length && centerNodes[0].row != null) ? centerNodes[0].row : null;
+      if (finalAnchor == null) {
+        // S=2 等の退化: レール行から直接決勝線の高さを決める
+        const rl = railLine.filter(v => v != null);
+        finalAnchor = rl.length >= 2 ? Math.round((rl[0] + rl[rl.length - 1]) / 2) : TOP + 1;
+        border(finalAnchor, colsOf(0).CENTER, { bottom: thick });
+      }
+      put(2, colsOf(0).CENTER, "決勝", Object.assign({ font: { bold: true, sz: 11 } }, centerStyle));
+      if (finalMatch && finalMatch.status === "completed" && finalMatch.winner_name && finalMatch.winner_name !== "BYE") {
+        put(finalAnchor, colsOf(0).CENTER, "優勝: " + finalMatch.winner_name, Object.assign({ font: { bold: true, sz: 11 } }, centerStyle));
+        border(finalAnchor, colsOf(0).CENTER, { bottom: thick });
+      }
+    } else {
+      // ── 下段: ブロック勝者どうしのトーナメント(準決勝・決勝。紙面の下側に別描き=紙の方式) ──
+      let nodes = centerNodes.map(n => ({ col: n.col, row: n.row != null ? n.row : maxLeafBottom }));
+      let r = blockRounds + 1;
+      let joinRow = maxLeafBottom + 3;
+      while (nodes.length > 1) {
+        const label = nodes.length === 2 ? "決勝" : nodes.length === 4 ? "準決勝" : nodes.length === 8 ? "準々決勝" : (r + "回戦");
+        const nxt = [];
+        for (let q = 0; q * 2 < nodes.length; q++) {
+          const a = nodes[2 * q], c = nodes[2 * q + 1];
+          // 各ブロック勝者線から下へ縦線 → joinRow の横線で結ぶ
+          for (let rw = a.row + 1; rw <= joinRow; rw++) border(rw, a.col, { left: thin });
+          for (let rw = c.row + 1; rw <= joinRow; rw++) border(rw, c.col, { left: thin });
+          for (let col = a.col; col < c.col; col++) border(joinRow, col, { bottom: thin });
+          const mid = Math.round((a.col + c.col) / 2);
+          const mm = byRP[r + "_" + q];
+          if (mm && mm.status === "completed" && mm.winner_name && mm.winner_name !== "BYE") {
+            put(joinRow, mid, (nodes.length === 2 ? "優勝: " : "") + mm.winner_name,
+              Object.assign({}, nameStyle, nodes.length === 2 ? { font: { bold: true, sz: 11, name: FONT } } : null));
+          }
+          nxt.push({ col: mid, row: joinRow });
+        }
+        put(joinRow - 1, Math.max(0, nxt[0].col - 2), "（" + label + "）", { font: { sz: 9, name: FONT } });
+        lastRow = Math.max(lastRow, joinRow + 1);
+        nodes = nxt;
+        r++;
+        joinRow += 3;
+      }
     }
 
     // ── 抽選メタの刻印(トレーサビリティ: 記録ID・実施者・日時) ──
     if (opts.draw_meta && opts.draw_meta.draw_seed != null) {
       const dm = opts.draw_meta;
-      put(lastRow + 1, L_NAME, `抽選 記録ID:${dm.draw_seed}` + (dm.drawn_by ? ` ・実施:${dm.drawn_by}` : "") + (dm.drawn_at ? ` ・${dm.drawn_at}` : ""),
+      put(lastRow + 1, colsOf(0).L_NAME, `抽選 記録ID:${dm.draw_seed}` + (dm.drawn_by ? ` ・実施:${dm.drawn_by}` : "") + (dm.drawn_at ? ` ・${dm.drawn_at}` : ""),
         { font: { sz: 8, name: "Meiryo", color: { rgb: "64748B" } }, alignment: { horizontal: "left" } });
     }
 
-    // ── 列幅(規模連動で圧縮: 大きいドローほど狭く) ──
+    // ── 列幅(規模連動で圧縮: 大きいドローほど狭く。複数ブロック時は横線列をさらに絞る) ──
     const wName = S <= 32 ? 14 : S <= 64 ? 11 : 9;
     const wTeam = S <= 32 ? 11 : S <= 64 ? 9 : 7;
-    const wAdv = S <= 32 ? 11 : S <= 64 ? 9 : 7;
+    const wAdv = nBlocks > 1 ? 5 : (S <= 32 ? 11 : S <= 64 ? 9 : 7);
     const cols = [];
-    cols[L_NUM] = { wch: 4 }; cols[L_NAME] = { wch: wName }; cols[L_TEAM] = { wch: wTeam }; cols[L_SEED] = { wch: 4 };
-    for (let r = 1; r <= sideRounds; r++) cols[LADV(r)] = { wch: wAdv };
-    cols[CENTER] = { wch: wName };
-    for (let r = 1; r <= sideRounds; r++) cols[RADV(r)] = { wch: wAdv };
-    cols[R_SEED] = { wch: 4 }; cols[R_TEAM] = { wch: wTeam }; cols[R_NAME] = { wch: wName }; cols[R_NUM] = { wch: 4 };
+    for (let b = 0; b < nBlocks; b++) {
+      const C = colsOf(b);
+      cols[C.L_NUM] = { wch: 4 }; cols[C.L_NAME] = { wch: wName }; cols[C.L_TEAM] = { wch: wTeam }; cols[C.L_SEED] = { wch: 4 };
+      for (let r = 1; r <= sideR; r++) { cols[C.LADV(r)] = { wch: wAdv }; cols[C.RADV(r)] = { wch: wAdv }; }
+      cols[C.CENTER] = { wch: wName };
+      cols[C.R_SEED] = { wch: 4 }; cols[C.R_TEAM] = { wch: wTeam }; cols[C.R_NAME] = { wch: wName }; cols[C.R_NUM] = { wch: 4 };
+      if (b < nBlocks - 1) cols[C.R_NUM + 1] = { wch: 2 };   // ブロック間スペーサ
+    }
     for (let c = 0; c <= lastCol; c++) if (!cols[c]) cols[c] = { wch: 7 };
 
     ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRow + 1, c: lastCol } });
@@ -1266,9 +1330,10 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
     ws["!merges"] = merges;
     // 印刷の規模連動: 小はA4横、64名級以上はA3横+縮小で掲示物として読めるようにする。
     //  ※ fitToWidth と scale を併用すると scale が無効化される(SheetJS仕様)ため scale 固定のみ。
-    //    巨大ドロー(S>64)の山別ページ分割は将来拡張。確実な固定レイアウトはPDF/HTML経路で別途。
+    //    ブロック横並び(複数ブロック)は紙面が広いのでさらに縮小(掲示はA2以上への拡大印刷も想定)。
     const paperSize = S <= 16 ? 9 : 8;                 // 9=A4, 8=A3
-    const scale = S <= 16 ? 92 : S <= 32 ? 78 : S <= 64 ? 62 : S <= 128 ? 46 : 36;
+    const scale = nBlocks >= 4 ? 22 : nBlocks === 2 ? 30
+      : (S <= 16 ? 92 : S <= 32 ? 78 : S <= 64 ? 62 : S <= 128 ? 46 : 36);
     ws["!pageSetup"] = { orientation: "landscape", paperSize, scale, fitToHeight: 0 };
     ws["!margins"] = { left: 0.3, right: 0.3, top: 0.45, bottom: 0.4, header: 0.2, footer: 0.2 };
     XLSX.utils.book_append_sheet(wb, ws, (eventName || "表").slice(0, 30));
