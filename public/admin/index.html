@@ -5431,7 +5431,7 @@ const A = {
      if (!bdata || bdata.error) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + ((bdata && bdata.error) || "プレビューできません") + '</div>'; return; }
      previewBox.innerHTML = "";
      previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "6px" } },
-       `※「標準配置で生成したら」のプレビューです（まだ生成していません）。 枠${bdata.bracket_size} / ${bdata.total_rounds}回戦 / 出場${bdata.player_count}名 / BYE${bdata.bye_count}`));
+       `※「標準配置で生成したら」のプレビューです（まだ生成していません）。 枠${bdata.bracket_size} / ${bdata.total_rounds}回戦 / 出場${bdata.player_count}名 / 1回戦免除${bdata.bye_count}名`));
      previewBox.appendChild(O.renderVisualBracket(bdata));
    } catch (e) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + (e.message || e) + '</div>'; }
  };
@@ -8594,6 +8594,7 @@ const O = {
            ddItem("釧路リーグ振り分け", "前回大会の各部順位から今回の部を昇降格ルールで提案→手動調整して生成。", () => O.openKushiroLeagueAssign(sel)),
            ddItem("＋ 対戦を追加", "空きスロットに手動で対戦を追加。", () => O.openAddMatch(sel)),
            ddItem("表を削除(名簿は残す)", "この種目のトーナメント表(対戦)だけを一括削除。名簿は残るのですぐ作り直せます。", () => O.clearBracket(sel)),
+           ddItem("全種目の表を削除(名簿は残す)", "この大会で作成した全種目のトーナメント表・リーグを一括削除。名簿は残るので最初から作り直せます。", () => O.clearAllBrackets()),
            ddItem("組合せ表をそのまま取込(稀)", "既に組合せが決まっている表を、抽選せずその並びのまま取り込みます。ふだんは『名簿を取り込む』を使います。", () => A.openExcelUpload(O.tournamentId)),
          ]),
        )),
@@ -9939,7 +9940,7 @@ const O = {
      style: { color: i.level === "block" ? "#c01526" : "#b45309", fontSize: "12px", fontWeight: i.level === "block" ? 700 : 500 } },
      (i.level === "block" ? "" : "") + i.msg)));
    if (!(rdy.issues || []).length) issuesBox.appendChild(h("div", { style: { color: "#1a7a45", fontSize: "12px" } },
-     `抽選OK: 承認${rdy.confirmed}名 / 枠${rdy.bracket_size} / BYE${rdy.bye_count} / シード${rdy.seeded}`));
+     `抽選OK: 承認${rdy.confirmed}名 / 枠${rdy.bracket_size} / 1回戦免除${rdy.bye_count}名 / シード${rdy.seeded}`));
  }
  // 既存配置の近接警告(手修正後の再チェック): 抽選済みの現在の並びに対して表示
  if (diff && diff.has_draw) {
@@ -9958,7 +9959,7 @@ const O = {
  const renderPreview = (r) => {
    clear(previewBox);
    previewBox.appendChild(h("div", { style: { fontWeight: 700, marginBottom: "4px" } },
-     `プレビュー: ${r.bracket_size}枠 / シード${r.seeded_count} / BYE${r.bye_count}` + (r.r1_same_club ? ` / 1回戦同所属${r.r1_same_club}` : "")));
+     `プレビュー: ${r.bracket_size}枠 / シード${r.seeded_count} / 1回戦免除${r.bye_count}名` + (r.r1_same_club ? ` / 1回戦同所属${r.r1_same_club}` : "")));
    (r.warnings || []).forEach(w => previewBox.appendChild(h("div", { style: { color: "#c01526", fontSize: "12px" } }, "" + w)));
    // 近接警告(プラン確認): 同チーム/同支部が番号10以内(釧路支部同士は除外)。引き直しや確定後の入替で調整する。
    if (r.proximity_count) {
@@ -11186,6 +11187,19 @@ const O = {
    });
  }
 
+ // 不戦勝(BYE)選手の可視性: 進行開始(繰り上げ)後は次の回戦の枠に本人が現れるのでカードは消す。
+ // 繰り上げ前(抽選直後)は消すとどこにも表示されなくなるため、小さなチップで残す。
+ const namesInRound = {};
+ matches.forEach(m => {
+   const r = m.bracket_round || 1;
+   const s = (namesInRound[r] = namesInRound[r] || new Set());
+   if (m.player1_name && m.player1_name !== "BYE") s.add(m.player1_name);
+   if (m.player2_name && m.player2_name !== "BYE") s.add(m.player2_name);
+ });
+ const appearsLater = (name, r) => {
+   for (const rr of Object.keys(namesInRound)) if (Number(rr) > r && namesInRound[rr].has(name)) return true;
+   return false;
+ };
  const stateBg = (m) => {
    if (editOnly) return isLocked(m) ? "#f1f5f9" : "#fff";   // 編集ビュー: 進行色を使わない(ロックのみ淡灰)
    if (m.status === "completed") return "#eef2f7";
@@ -11214,9 +11228,19 @@ const O = {
 
  // 1試合カード (side: left/right/center)
  const makeCard = (m, side) => {
-   // 編集ビュー: BYEを含む試合(シードの不戦勝上がり)はカードを出さず空き高さだけ確保。
-   // → シードは1回戦に出ず、登場回戦(2回戦/3回戦…)の枠に直接表示される(紙どおり)。
-   if (editOnly && (m.player1_name === "BYE" || m.player2_name === "BYE")) return h("div", { style: { minHeight: "1px" } });
+   // BYEを含む試合(不戦勝)は全ビューでカードを出さず、空き高さだけ確保する(紙どおり)。
+   // → 1回戦は実対戦のみが並び、不戦勝の選手は登場回戦(2回戦/3回戦…)の枠に直接表示される。
+   // ただし繰り上げ前(抽選直後・進行開始前)は次の枠が未定のままで選手が表から消えるため、
+   // 本人が後段にまだ現れていない間だけ小さなチップで示す。
+   if (m.player1_name === "BYE" || m.player2_name === "BYE") {
+     const real = m.player1_name !== "BYE" ? m.player1_name : (m.player2_name !== "BYE" ? m.player2_name : "");
+     const team = m.player1_name !== "BYE" ? m.player1_team : m.player2_team;
+     if (!real || appearsLater(real, m.bracket_round || 1)) return h("div", { style: { minHeight: "1px" } });
+     return h("div", { style: { border: "1px dashed #cbd5e1", borderRadius: "6px", padding: "4px 8px",
+       margin: "3px 0", fontSize: "12px", color: "#64748b", background: "#f8fafc" } },
+       real + (team ? "（" + team + "）" : ""),
+       h("span", { style: { marginLeft: "6px", fontSize: "11px" } }, "次の回戦から登場"));
+   }
    const isPreview = !!bdata.preview || readOnly;   // プレビュー/読み取り専用は呼出・入替・スロット編集を一切無効化
    const callable = m.status === "pending" && !isPreview && !editOnly;   // 編集ビューは呼出フローを出さない
    const card = h("div", { className: "vb-match" + (callable ? " vb-callable" : ""),
@@ -11321,14 +11345,15 @@ const O = {
    return card;
  };
 
- // 1ラウンド列。side=center は縦中央寄せ
+ // 1ラウンド列。side=center は縦中央寄せ。件数は実対戦のみ(不戦勝は数えない=紙どおり)
  const makeCol = (r, list, side) => {
+   const realCount = list.filter(m => m.player1_name !== "BYE" && m.player2_name !== "BYE").length;
    const col = h("div", { style: { minWidth: "200px", display: "flex", flexDirection: "column" } });
    col.appendChild(h("div", {
      style: { padding: "6px 10px", background: "#1e293b", color: "#fff",
        fontSize: "12px", fontWeight: 700, textAlign: "center",
        borderRadius: "4px", marginBottom: "6px" } },
-     roundName(r) + " (" + list.length + ")"));
+     roundName(r) + " (" + realCount + ")"));
    const factor = Math.pow(2, r - 1);
    const cbody = h("div", { style: { flex: "1", display: "flex", flexDirection: "column",
      justifyContent: side === "center" ? "center" : "flex-start" } });
@@ -11372,13 +11397,14 @@ const O = {
  if (centerCol) cols.appendChild(centerCol);
  rightCols.reverse().forEach(c => { cols.appendChild(makeCx()); cols.appendChild(c); });
 
- // 凡例 + 件数
+ // 凡例 + 件数(実対戦のみ。不戦勝は「試合」として数えない=紙どおり)
+ const realMatches = matches.filter(m => m.player1_name !== "BYE" && m.player2_name !== "BYE");
  const stats = {
-   total: matches.length,
-   completed: matches.filter(m => m.status === "completed").length,
-   on_table: matches.filter(m => m.status === "on_table").length,
-   pending: matches.filter(m => m.status === "pending").length,
-   waiting: matches.filter(m => m.status === "waiting").length,
+   total: realMatches.length,
+   completed: realMatches.filter(m => m.status === "completed").length,
+   on_table: realMatches.filter(m => m.status === "on_table").length,
+   pending: realMatches.filter(m => m.status === "pending").length,
+   waiting: realMatches.filter(m => m.status === "waiting").length,
  };
  const header = h("div", {
    style: { display: "flex", gap: "12px", flexWrap: "wrap",
@@ -11709,6 +11735,24 @@ const O = {
    O.reload();
  } }, "生成");
  openModal("トーナメント表を作る（出場選手名簿から）", body, foot);
+ },
+
+ // ── 全種目のトーナメント表を一括削除(名簿は残す) ──
+ // 結果入力済みの実対戦があるときはサーバが needs_force を返すので、2段階で確認する。
+ async clearAllBrackets() {
+   if (!O.tournamentId) return toast("先に大会を選んでください", "err");
+   if (!confirm("この大会で作成した全種目のトーナメント表・リーグを削除します。\n出場選手名簿は残るので、最初から作り直せます。\nよろしいですか？")) return;
+   let r = await api.del(`/api/tournaments/${O.tournamentId}/brackets`);
+   if (r && r.needs_force) {
+     if (!confirm(r.error + "\n\n結果も消して全削除しますか？")) return;
+     r = await api.del(`/api/tournaments/${O.tournamentId}/brackets?force=1`);
+   }
+   if (r && r.error) return toast(r.error, "err");
+   const evs = (r && r.events) || [];
+   toast(`トーナメント表を全削除しました(${evs.length}種目 / ${(r && r.deleted) || 0}試合・名簿は保持)`, "ok");
+   O._bracketRev = {};
+   if (O._vbReload) O._vbReload();
+   if (O.reload) O.reload();
  },
 
  // ── トーナメント表(対戦)だけを一括削除(名簿は残す・すぐ作り直せる) ──
