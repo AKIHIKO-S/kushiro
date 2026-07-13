@@ -11188,7 +11188,9 @@ const O = {
  };
 
  // 幾何(px)。罫線は全てこの座標系のSVGに描く=レール/山線/中央joinが構造的にズレない。
- const ROW_H = 34, RAIL_W = 200, ADV_W = 34, CENTER_W = 132, PAD_T = 10, PAD_B = 10;
+ // PC運用前提で横幅を使う: ダブルス/団体はペア名+所属が長いためレールを広く取り2行表示にする。
+ const isDbl = /ダブルス|団体/.test(event || "");
+ const ROW_H = isDbl ? 42 : 34, RAIL_W = isDbl ? 330 : 230, ADV_W = 44, CENTER_W = 150, PAD_T = 10, PAD_B = 10;
  const W = RAIL_W * 2 + sideR * ADV_W * 2 + CENTER_W;
  const NSVG = "http://www.w3.org/2000/svg";
  const sline = (svg, x1, y1, x2, y2, wpx, color) => {
@@ -11212,7 +11214,8 @@ const O = {
    svg.appendChild(t);
  };
  // join線の注釈: 確定=勝者名 / 進行中=● 台N / 未確定=(回戦-番号の勝者)
- const annotate = (svg, mm, xa, xb, y, anchorSide) => {
+ // ssMatch=true はスーパーシード戦(深い長線の選手が最初に戦う特殊な試合)として明示する。
+ const annotate = (svg, mm, xa, xb, y, anchorSide, ssMatch) => {
    if (!mm) return;
    const x = anchorSide === "L" ? xa + 3 : anchorSide === "R" ? xb - 3 : Math.round((xa + xb) / 2);
    const anc = anchorSide === "L" ? "start" : anchorSide === "R" ? "end" : "middle";
@@ -11220,6 +11223,8 @@ const O = {
      stext(svg, x, y - 4, mm.winner_name, anc, 11.5, "#1f2937", true);
    } else if (mm.status === "on_table") {
      stext(svg, x, y - 4, "● 台" + (mm.table_no || "?"), anc, 10.5, "#c01526", true);
+   } else if (ssMatch) {
+     stext(svg, x, y - 4, "スーパーシード戦", anc, 10.5, "#92400e", true);
    } else {
      const lbl = (mm.bracket_round || 1) + "-" + (mm.match_no || ((mm.bracket_pos || 0) + 1));
      stext(svg, x, y - 4, "(" + lbl + "の勝者)", anc, 10.5, "#9ca3af");
@@ -11236,14 +11241,16 @@ const O = {
      const lineY = y0 + ROW_H - 9;
      return { g, side, y0, lineY, lf: leafArr[g] };
    };
+   // 線は {y, deep} で運ぶ。deep=リーフからの連続延長数(join無しの長線)。
+   // deep>=2 の線が最初にjoinする試合=スーパーシード戦(登場3回戦以上のSSが初めて戦う)。
    const curL = [], curR = [];
    let li = 0, ri = 0;
    for (let g = b * BL; g < b * BL + BL / 2; g++) {
-     if (leafArr[g]) { const ri2 = railInfo(g, "L", li++); rails.push(ri2); curL.push(ri2.lineY); }
+     if (leafArr[g]) { const ri2 = railInfo(g, "L", li++); rails.push(ri2); curL.push({ y: ri2.lineY, deep: 0 }); }
      else curL.push(null);
    }
    for (let g = b * BL + BL / 2; g < (b + 1) * BL; g++) {
-     if (leafArr[g]) { const ri2 = railInfo(g, "R", ri++); rails.push(ri2); curR.push(ri2.lineY); }
+     if (leafArr[g]) { const ri2 = railInfo(g, "R", ri++); rails.push(ri2); curR.push({ y: ri2.lineY, deep: 0 }); }
      else curR.push(null);
    }
    const H = PAD_T + Math.max(li, ri, 1) * ROW_H + PAD_B;
@@ -11252,35 +11259,45 @@ const O = {
    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
    Object.assign(svg.style, { position: "absolute", left: 0, top: 0, pointerEvents: "none" });
    wrap.appendChild(svg);
-   // レール(番号/氏名/所属)+下罫線
+   // レール(番号/氏名/所属)+下罫線。ダブルス/団体は2行(上=番号+ペア名/下=所属)で見切れを防ぐ。
+   // 選択ハイライトはここでは塗らず refreshSel()(全再描画なし・スクロール保持)が担当する。
    rails.forEach(r => {
      const isL = r.side === "L";
      sline(svg, isL ? 8 : W - RAIL_W, r.lineY, isL ? RAIL_W : W - 8, r.lineY);
      const lf = r.lf;
      const locked = lockOf(lf);
-     const selA = O._pbSel && O._pbSel.event === event && O._pbSel.g === r.g;
-     const selB = O._pbSel2 && O._pbSel2.event === event && O._pbSel2.g === r.g;
+     const noEl = h("span", { style: { fontSize: "11px", color: "#6b7280", minWidth: "22px",
+       textAlign: "right", fontVariantNumeric: "tabular-nums", flex: "0 0 auto" } }, String(lf.no));
+     const nameEl = h("span", { style: { fontWeight: 700, fontSize: isDbl ? "12.5px" : "13px",
+       overflow: "hidden", textOverflow: "ellipsis" } }, lf.name);
+     const teamEl = h("span", { style: { fontSize: "10.5px", color: "#6b7280",
+       overflow: "hidden", textOverflow: "ellipsis" } }, lf.team);
+     const content = isDbl
+       ? [h("div", { style: { display: "flex", gap: "6px", alignItems: "baseline", overflow: "hidden",
+             flexDirection: isL ? "row" : "row-reverse" } }, noEl, nameEl),
+          h("div", { style: { paddingLeft: isL ? "28px" : "0", paddingRight: isL ? "0" : "28px", overflow: "hidden" } }, teamEl)]
+       : [noEl, nameEl, teamEl];
      const div = h("div", {
-       title: editable ? (locked ? "確定済み/進行中のため動かせません" : "タップで選択(2人選ぶと入れ替え)") : "",
+       title: editable ? (locked ? "確定済み/進行中のため動かせません" : "クリックで選択(2人選ぶと入れ替え)") : "",
        style: {
-         // 高さはタップ領域確保のためレール一杯(32px)。文字はpaddingBottomで線の上に保つ。
+         // 高さはクリック領域確保のためレール一杯。border-box+paddingBottomで
+         // 文字下端を罫線(y0+ROW_H-9)の1px上に固定する(ダブルス2行でも線の下に落ちない)。
          position: "absolute", top: r.y0 + "px", height: (ROW_H - 2) + "px",
+         boxSizing: "border-box",
          left: isL ? "8px" : (W - RAIL_W) + "px", width: (RAIL_W - 8) + "px",
-         display: "flex", alignItems: "flex-end", gap: "6px", paddingBottom: "6px",
-         flexDirection: isL ? "row" : "row-reverse", textAlign: isL ? "left" : "right",
+         display: "flex", gap: isDbl ? "1px" : "6px", paddingBottom: "10px",
+         flexDirection: isDbl ? "column" : (isL ? "row" : "row-reverse"),
+         alignItems: isDbl ? "stretch" : "flex-end",
+         justifyContent: "flex-end",
+         textAlign: isL ? "left" : "right",
          cursor: editable && !locked ? "pointer" : "default",
          opacity: locked ? 0.55 : 1,
-         background: selA || selB ? "#fff7e6" : "transparent",
-         outline: selA ? "2px solid #d97706" : selB ? "2px dashed #d97706" : "none",
          outlineOffset: "-1px", borderRadius: "4px", overflow: "hidden", whiteSpace: "nowrap",
        },
        onClick: editable ? (() => O._pbTap(ctx, lf, locked)) : undefined,
-     },
-       h("span", { style: { fontSize: "11px", color: "#6b7280", minWidth: "22px",
-         textAlign: "right", fontVariantNumeric: "tabular-nums", flex: "0 0 auto" } }, String(lf.no)),
-       h("span", { style: { fontWeight: 700, fontSize: "13px", overflow: "hidden", textOverflow: "ellipsis" } }, lf.name),
-       h("span", { style: { fontSize: "10.5px", color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis" } }, lf.team),
-     );
+       onMouseenter: (editable && !locked) ? ((e) => { if (e.currentTarget.dataset.pbSel !== "1") e.currentTarget.style.background = "#f3f4f6"; }) : undefined,
+       onMouseleave: (editable && !locked) ? ((e) => { if (e.currentTarget.dataset.pbSel !== "1") e.currentTarget.style.background = "transparent"; }) : undefined,
+     }, ...content);
      div.dataset.pbG = r.g;
      wrap.appendChild(div);
    });
@@ -11294,17 +11311,19 @@ const O = {
        for (let q = 0; q * 2 < arr.length; q++) {
          const a = arr[2 * q], bb = arr[2 * q + 1];
          if (a != null && bb != null) {
-           const y = Math.round((a + bb) / 2);
-           sline(svg, colX0, a, colX0, bb);                       // 縦線(子2線を結ぶ)
+           const y = Math.round((a.y + bb.y) / 2);
+           sline(svg, colX0, a.y, colX0, bb.y);                   // 縦線(子2線を結ぶ)
            sline(svg, Math.min(colX0, x2), y, Math.max(colX0, x2), y);  // 勝者横線
            const perBlock = BL / Math.pow(2, r);
            const gpos = b * perBlock + (side === "L" ? q : perBlock / 2 + q);
-           annotate(svg, byRP[r + "_" + gpos], Math.min(colX0, x2), Math.max(colX0, x2), y, side);
-           nxt.push(y);
+           // 深い長線(登場3回戦以上のSS)が最初に戦うjoin=スーパーシード戦として明示
+           const ssMatch = (a.deep >= 2 || bb.deep >= 2);
+           annotate(svg, byRP[r + "_" + gpos], Math.min(colX0, x2), Math.max(colX0, x2), y, side, ssMatch);
+           nxt.push({ y, deep: 0 });
          } else if (a != null || bb != null) {
-           const y = a != null ? a : bb;
-           sline(svg, Math.min(colX0, x2), y, Math.max(colX0, x2), y);  // 不戦勝の長線延長
-           nxt.push(y);
+           const v = a != null ? a : bb;
+           sline(svg, Math.min(colX0, x2), v.y, Math.max(colX0, x2), v.y);  // 不戦勝の長線延長
+           nxt.push({ y: v.y, deep: v.deep + 1 });
          } else nxt.push(null);
        }
        arr = nxt;
@@ -11316,16 +11335,17 @@ const O = {
    // 中央join(1ブロック時=決勝線・複数ブロック時=ブロック勝者線)
    const xL = RAIL_W + sideR * ADV_W, xR = W - RAIL_W - sideR * ADV_W;
    if (aL != null || aR != null) {
-     const cy = (aL != null && aR != null) ? Math.round((aL + aR) / 2) : (aL != null ? aL : aR);
+     const cy = (aL != null && aR != null) ? Math.round((aL.y + aR.y) / 2) : (aL != null ? aL.y : aR.y);
      sline(svg, xL, cy, xR, cy, nBlocks === 1 ? 2.5 : 1.5);
-     if (aL != null && aL !== cy) sline(svg, xL, Math.min(aL, cy), xL, Math.max(aL, cy));
-     if (aR != null && aR !== cy) sline(svg, xR, Math.min(aR, cy), xR, Math.max(aR, cy));
+     if (aL != null && aL.y !== cy) sline(svg, xL, Math.min(aL.y, cy), xL, Math.max(aL.y, cy));
+     if (aR != null && aR.y !== cy) sline(svg, xR, Math.min(aR.y, cy), xR, Math.max(aR.y, cy));
      const fm = byRP[blockRounds + "_" + b];
      if (fm && fm.status === "completed" && fm.winner_name && fm.winner_name !== "BYE") {
        stext(svg, Math.round((xL + xR) / 2), cy - 5,
          (nBlocks === 1 ? "優勝 " : "") + fm.winner_name, "middle", 12, "#c01526", true);
      } else {
-       annotate(svg, fm, xL, xR, cy, "C");
+       const ssC = (aL != null && aL.deep >= 2) || (aR != null && aR.deep >= 2);
+       annotate(svg, fm, xL, xR, cy, "C", ssC);
      }
    }
    return { wrap, rails };
@@ -11415,30 +11435,48 @@ const O = {
      area.appendChild(wrap);
    }
    root.appendChild(area);
-   // 選択バー(組換)
-   if (editable && O._pbSel && O._pbSel.event === event) {
-     const s1 = O._pbSel, s2 = O._pbSel2;
-     const who = (s) => s.no + " " + s.name + (s.team ? "（" + s.team + "）" : "");
-     const barEl = h("div", { style: { position: "sticky", bottom: "8px", marginTop: "10px",
-       background: "#fff", border: "1.5px solid #d97706", borderRadius: "10px",
-       padding: "10px 14px", display: "flex", alignItems: "center", gap: "10px",
-       flexWrap: "wrap", boxShadow: "0 10px 26px -12px rgba(120,80,0,.3)", zIndex: 5 } },
-       h("span", { style: { fontWeight: 700, fontSize: "13px" } }, who(s1)),
-       h("span", { style: { color: "#d97706", fontWeight: 800 } }, "⇄"),
-       s2 ? h("span", { style: { fontWeight: 700, fontSize: "13px" } }, who(s2))
-          : h("span", { style: { color: "#6b7280", fontSize: "12.5px" } }, "入れ替える相手をタップ…"),
-       h("span", { style: { flex: "1 0 auto" } }),
-       s2 ? h("button", { className: "btn btn-sm", style: { background: "#c01526", color: "#fff", fontWeight: 700 },
-         onClick: () => O._pbSwap(ctx) }, "入れ替える") : null,
-       !s2 ? h("button", { className: "btn btn-sm btn-ghost",
-         onClick: () => { const s = O._pbSel; O._pbClear(); O._editSlot(ctx, s.pos, s.slot, s.name || ""); } }, "この枠を変更…") : null,
-       (!s2 && s1.eid) ? h("button", { className: "btn btn-sm btn-ghost",
-         onClick: () => { const s = O._pbSel; O._pbClear(); O._seedMenu(ctx, s.eid, s.name); } }, "シードにする") : null,
-       h("button", { className: "btn btn-sm btn-ghost", onClick: () => { O._pbClear(); render(); } }, "やめる"),
-     );
-     root.appendChild(barEl);
-   }
+   // 選択バーの器(中身は renderBar が担当。タップ時は全再描画せずスクロール位置を保つ)
+   root.appendChild(selBox);
+   renderBar();
+   refreshSel();
  };
+ // 選択ハイライトをその場で塗り直す(再描画なし=横スクロール位置が飛ばない)
+ const refreshSel = () => {
+   root.querySelectorAll("[data-pb-g]").forEach(d => {
+     const g = parseInt(d.dataset.pbG);
+     const selA = O._pbSel && O._pbSel.event === event && O._pbSel.g === g;
+     const selB = O._pbSel2 && O._pbSel2.event === event && O._pbSel2.g === g;
+     d.dataset.pbSel = (selA || selB) ? "1" : "0";
+     d.style.background = (selA || selB) ? "#fff7e6" : "transparent";
+     d.style.outline = selA ? "2px solid #d97706" : (selB ? "2px dashed #d97706" : "none");
+   });
+ };
+ const selBox = h("div", {});
+ const renderBar = () => {
+   selBox.replaceChildren();
+   if (!(editable && O._pbSel && O._pbSel.event === event)) return;
+   const s1 = O._pbSel, s2 = O._pbSel2;
+   const who = (s) => s.no + " " + s.name + (s.team ? "（" + s.team + "）" : "");
+   selBox.appendChild(h("div", { style: { position: "sticky", bottom: "8px", marginTop: "10px",
+     background: "#fff", border: "1.5px solid #d97706", borderRadius: "10px",
+     padding: "10px 14px", display: "flex", alignItems: "center", gap: "10px",
+     flexWrap: "wrap", boxShadow: "0 10px 26px -12px rgba(120,80,0,.3)", zIndex: 5 } },
+     h("span", { style: { fontWeight: 700, fontSize: "13px" } }, who(s1)),
+     h("span", { style: { color: "#d97706", fontWeight: 800 } }, "⇄"),
+     s2 ? h("span", { style: { fontWeight: 700, fontSize: "13px" } }, who(s2))
+        : h("span", { style: { color: "#6b7280", fontSize: "12.5px" } }, "入れ替える相手をクリック…（別ブロックでも可）"),
+     h("span", { style: { flex: "1 0 auto" } }),
+     s2 ? h("button", { className: "btn btn-sm", style: { background: "#c01526", color: "#fff", fontWeight: 700 },
+       onClick: () => O._pbSwap(ctx) }, "入れ替える") : null,
+     !s2 ? h("button", { className: "btn btn-sm btn-ghost",
+       onClick: () => { const s = O._pbSel; O._pbClear(); renderBar(); refreshSel(); O._editSlot(ctx, s.pos, s.slot, s.name || ""); } }, "この枠を変更…") : null,
+     (!s2 && s1.eid) ? h("button", { className: "btn btn-sm btn-ghost",
+       onClick: () => { const s = O._pbSel; O._pbClear(); renderBar(); refreshSel(); O._seedMenu(ctx, s.eid, s.name); } }, "シードにする") : null,
+     h("button", { className: "btn btn-sm btn-ghost", onClick: () => { O._pbClear(); renderBar(); refreshSel(); } }, "やめる"),
+   ));
+ };
+ // タップ選択の反映もその場更新(全再描画しない)
+ O._pbSelUpdate = () => { refreshSel(); renderBar(); };
  const doSearch = (q) => {
    q = String(q || "").trim();
    if (!q) return;
@@ -11470,7 +11508,9 @@ const O = {
      if (O._pbSel2 && O._pbSel2.g === g) O._pbSel2 = null;
      else O._pbSel2 = cur;
    } else { O._pbSel = cur; O._pbSel2 = null; }
-   if (typeof O._pbRender === "function") O._pbRender();
+   // その場更新(スクロール位置を保つ)。無ければ従来の全再描画にフォールバック。
+   if (typeof O._pbSelUpdate === "function") O._pbSelUpdate();
+   else if (typeof O._pbRender === "function") O._pbRender();
  },
  _pbClear() { O._pbSel = null; O._pbSel2 = null; },
  async _pbSwap(ctx) {
