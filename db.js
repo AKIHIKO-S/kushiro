@@ -3305,31 +3305,42 @@ function kushiroSeedSlots(size, K) {
   return slots.slice(0, K);
 }
 
-function buildSeededLeaves(entries, size) {
+function buildSeededLeaves(entries, size, opts2) {
+  const kushiro = !!(opts2 && opts2.kushiroOrder);
   const leaves = new Array(size).fill(null);
   function place(ents, lo, span) {
     if (span === 1) { if (ents[0]) leaves[lo] = ents[0].p; return; }
     if (!ents.length) return;
     if (ents.length === 1 && ents[0].w >= span) { leaves[lo] = ents[0].p; return; } // 単独=区画専有(残りBYE)
     const half = span / 2;
-    // 釧路式(物理順・自己相似): このスパンのシード人数Kに対する釧路席(kushiroSeedSlots)を求め、
-    // 席が上半分にある数だけ先頭シードを上の山へ(K=2なら両端・K=4なら上{1,2}/下{3,4}…)。
-    // 非シードは上から順に詰める(容量超過のみ下へ)。
-    const seededEnts = ents.filter(x => (parseInt(x.p && x.p.seed) || 0) >= 1);
-    let topK = seededEnts.length;
-    if (seededEnts.length >= 2) {
-      const seats = kushiroSeedSlots(span, seededEnts.length);
-      topK = seats.filter(s => s < half).length;
+    const top = [], bot = []; let wt = 0, wb = 0;
+    if (kushiro) {
+      // 釧路式(物理順・自己相似・SS大会用): 釧路席の上半分の数だけ先頭シードを上の山へ。
+      const seededEnts = ents.filter(x => (parseInt(x.p && x.p.seed) || 0) >= 1);
+      let topK = seededEnts.length;
+      if (seededEnts.length >= 2) {
+        const seats = kushiroSeedSlots(span, seededEnts.length);
+        topK = seats.filter(s => s < half).length;
+      }
+      let si = 0;
+      ents.forEach((e) => {
+        let side;
+        if ((parseInt(e.p && e.p.seed) || 0) >= 1) { side = (si < topK) ? 0 : 1; si++; }
+        else side = (wt + e.w <= half) ? 0 : 1;
+        if (side === 0 && wt + e.w > half) side = 1;          // 容量ガード
+        if (side === 1 && wb + e.w > half) side = (wt <= wb) ? 0 : 1;
+        if (side === 0) { top.push(e); wt += e.w; } else { bot.push(e); wb += e.w; }
+      });
+    } else {
+      // 通常大会: for_mac.xls 準拠の標準スネーク(top,bot,bot,top,…=標準位置番号式と同型)
+      ents.forEach((e, i) => {
+        let side = ((i % 4) === 0 || (i % 4) === 3) ? 0 : 1;
+        const fits = (s) => (s === 0 ? wt + e.w <= half : wb + e.w <= half);
+        if (!fits(side)) side = 1 - side;
+        if (!fits(side)) side = (wt <= wb) ? 0 : 1;
+        if (side === 0) { top.push(e); wt += e.w; } else { bot.push(e); wb += e.w; }
+      });
     }
-    const top = [], bot = []; let wt = 0, wb = 0; let si = 0;
-    ents.forEach((e) => {
-      let side;
-      if ((parseInt(e.p && e.p.seed) || 0) >= 1) { side = (si < topK) ? 0 : 1; si++; }
-      else side = (wt + e.w <= half) ? 0 : 1;
-      if (side === 0 && wt + e.w > half) side = 1;          // 容量ガード
-      if (side === 1 && wb + e.w > half) side = (wt <= wb) ? 0 : 1;
-      if (side === 0) { top.push(e); wt += e.w; } else { bot.push(e); wb += e.w; }
-    });
     place(top, lo, half);
     place(bot, lo + half, half);
   }
@@ -3727,6 +3738,13 @@ function generateBracket(tournamentId, event, options) {
   // 標準配置(非as_drawn)のときのみ有効。各シードの重み = 2^(entry_round-1) を消費リーフ数として
   // 重み付きシード配置を行い、上位シードを予選免除でR回戦から登場させる。
   const entryRoundOf = (p) => Math.max(1, parseInt(p.entry_round) || 1);
+  // シード順の分岐(v6): SS大会(open種目)=釧路物理順 / 通常=for_mac標準(スネーク)
+  let genOpen = false;
+  try {
+    const _tg = getTournament(tournamentId);
+    const _cfgG = typeof _tg.event_config === "string" ? JSON.parse(_tg.event_config || "[]") : (_tg.event_config || []);
+    genOpen = !!_cfgG.find(c => c && c.name === event && c.open);
+  } catch (e) { genOpen = false; }
   let superLeaves = null;
   if (!asDrawn && !fixed && sorted.some(p => entryRoundOf(p) > 1)) {
     const weighted = sorted.map(p => ({ p, w: Math.pow(2, entryRoundOf(p) - 1) }));
@@ -3739,7 +3757,7 @@ function generateBracket(tournamentId, event, options) {
         max_entry_round: maxR, bracket_size: bracketSize,
       };
     }
-    superLeaves = buildSeededLeaves(weighted, bracketSize);
+    superLeaves = buildSeededLeaves(weighted, bracketSize, { kushiroOrder: genOpen });
   }
 
   // DoS/運用事故ガード: 巨大 seed(組番号)や登場ラウンドで bracketSize が爆発すると、
@@ -4527,16 +4545,25 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   // 同格シードの山割り抽選: 完全に埋まったシード階層({3,4}/{5-8}/{9-16}…)内で、どのランクが
   // どの標準スロット(山頭)に入るかを RNG で抽選する。外シード(1,2)は固定。部分的にしか埋まらない
   // 階層・BYE階層は触らない(BYEを上位シードの相手に付ける不変条件を保つ)。rng無し(標準生成)は固定配置。
-  // 釧路式(物理順・v5): シード番号=紙の上から順。構造アンカーを上から rank 1..K に割当。
-  // 番号が位置そのものを表すため、旧v2-4の「同格シード階層の山割り抽選」は廃止
-  // (どの選手をどの位置番号にするかは運営がシード番号で明示指定する)。
+  // シード順(v6・種目により分岐):
+  //  - SS大会(open種目・opts.kushiroOrder=true): 釧路物理順=紙の上から1→2→…(2026-07-14承認)
+  //  - 通常大会: for_mac.xls マクロ準拠=標準位置番号式(シードランク=標準ドロー位置番号。
+  //    1=上端・2=下端・4が3の上…。KUJI5は選手名簿のランクをからくり位置番号へ直入れする)。
+  //    どちらも決定的(同格の山割り抽選は行わない=マクロと同じ)。
   const maxRank = seeded.reduce((mx, e) => Math.max(mx, seedOf(e)), 0);
-  const kSlots = maxRank >= 1 ? kushiroSeedSlots(size, Math.min(maxRank, size)) : [];
   const seedSlotOf = {};
-  seeded.forEach(e => {
-    const r = seedOf(e);
-    if (r >= 1 && r <= kSlots.length) seedSlotOf[r] = kSlots[r - 1];
-  });
+  if (opts.kushiroOrder) {
+    const kSlots = maxRank >= 1 ? kushiroSeedSlots(size, Math.min(maxRank, size)) : [];
+    seeded.forEach(e => {
+      const r = seedOf(e);
+      if (r >= 1 && r <= kSlots.length) seedSlotOf[r] = kSlots[r - 1];
+    });
+  } else {
+    seeded.forEach(e => {
+      const r = seedOf(e);
+      if (r >= 1 && posOfRank[r] != null) seedSlotOf[r] = posOfRank[r];
+    });
+  }
   const demoted = [];
   for (const e of seeded) {
     const rank = seedOf(e);
@@ -4730,8 +4757,9 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   return { leaves, warnings, r1_same_club: r1SameClub };
 }
 
-const DRAW_ALGO_VERSION = "5";   // computeDrawLeaves のアルゴリズム版数(再現/検証の固定キー)
-// v5: 釧路式シード順(物理順)。シード席への割当を「紙の上から1→2→…」に変更し、同格山割り抽選を廃止。
+const DRAW_ALGO_VERSION = "6";   // computeDrawLeaves のアルゴリズム版数(再現/検証の固定キー)
+// v5: 釧路式シード順(物理順)を導入し同格山割り抽選を廃止。
+// v6: シード順を種目で分岐。SS大会(open)=釧路物理順 / 通常大会=for_mac.xlsマクロ準拠の標準位置番号式。
 // v4: 中シードSSの区画衝突を1回戦降格でなく「同じ山内の空き整列区画へ移設」に変更(外/中SSの2種対応)。
 // v2: 標準ドローシート配置(外/中シード)+ 同格シード階層の山割り抽選を導入(v1は旧再帰配置・同格固定)
 // v3: 抽選でもスーパーシード(entry_round>1)を保存(重み区画のBYE固定+枠数の重み込み確保)
@@ -4938,7 +4966,7 @@ function drawSingleBracket(tournamentId, event, opts) {
     ? ((+opts.draw_seed) >>> 0) : randomSeed();
   const rng = mulberry32(drawSeed);
   const sep = opts.separate_by === "region" ? "region" : opts.separate_by === "none" ? "none" : "team";
-  const { leaves, warnings, r1_same_club: r1SameClub } = computeDrawLeaves(drawEntrants, size, rng, { separateBy: sep, blockSizes });
+  const { leaves, warnings, r1_same_club: r1SameClub } = computeDrawLeaves(drawEntrants, size, rng, { separateBy: sep, blockSizes, kushiroOrder: isOpenEventEarly });
   if (autoSeedNotes.length) warnings.unshift("シード番号を自動補完(登場回戦の指定を保つため): " + autoSeedNotes.join("・"));
   const seededCount = drawEntrants.filter(e => (parseInt(e.seed) || 0) >= 1).length;
   const byeCount = size - entrants.length;
