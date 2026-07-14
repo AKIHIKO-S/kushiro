@@ -3284,6 +3284,27 @@ function bracketPositions(size) {
 // ※上下の「区画分割」(どのシードが上半分/下半分か)は bracketPositions と同一だが、区画内の細かな
 //   物理順は蛇行が浅く、外/中シード標準式(S2最下端等)とは鏡像方向が一部異なる。スーパーシードは
 //   登場回戦の枠が主眼で競技構造は正しいため許容。superseedの物理順の完全な標準式一致は段階1後半で対応(TODO)。
+// ── 釧路式シード順(物理順): シード番号は紙の上から順に振る(2026-07-14ユーザー承認) ──
+// 構造アンカー(標準ドローのシード席: rank1,2,{3,4},{5-8},…の席)をK人を覆う最小ティアまで取り、
+// その席を「上から順(スロット昇順)」に rank 1..K へ割り当てる。
+// 例 size32: K=4 → [0,15,16,31](第1=上端外・第2=上の山の中央・第3=下の山の中央・第4=最下端)、
+//            K=8 → [0,7,8,15,16,23,24,31]。第1と第2が同じ山=準決勝で当たり得るのが釧路の正。
+function kushiroSeedSlots(size, K) {
+  const positions = bracketPositions(size);
+  const posOfRank = {};
+  positions.forEach((rank, i) => { posOfRank[rank] = i; });
+  const slots = [];
+  let tierEnd = 1;   // ティア境界: 1,2,4,8,16,...
+  for (let rank = 1; rank <= size && slots.length < K; rank++) {
+    slots.push(posOfRank[rank]);
+    if (rank === tierEnd && slots.length < K) tierEnd = tierEnd === 1 ? 2 : tierEnd * 2;
+  }
+  // ティアを完結させる(途中で切ると物理順が不安定になるため、最後のティアは丸ごと含めて先頭K席を使う)
+  while (slots.length < Math.min(size, tierEnd)) slots.push(posOfRank[slots.length + 1]);
+  slots.sort((a, b) => a - b);
+  return slots.slice(0, K);
+}
+
 function buildSeededLeaves(entries, size) {
   const leaves = new Array(size).fill(null);
   function place(ents, lo, span) {
@@ -3291,12 +3312,22 @@ function buildSeededLeaves(entries, size) {
     if (!ents.length) return;
     if (ents.length === 1 && ents[0].w >= span) { leaves[lo] = ents[0].p; return; } // 単独=区画専有(残りBYE)
     const half = span / 2;
-    const top = [], bot = []; let wt = 0, wb = 0;
-    ents.forEach((e, i) => {
-      let side = ((i % 4) === 0 || (i % 4) === 3) ? 0 : 1; // 標準スネーク: top,bot,bot,top,...
-      const fits = (s) => (s === 0 ? wt + e.w <= half : wb + e.w <= half);
-      if (!fits(side)) side = 1 - side;                    // 容量超過なら逆へ
-      if (!fits(side)) side = (wt <= wb) ? 0 : 1;          // 保険(通常起きない)
+    // 釧路式(物理順・自己相似): このスパンのシード人数Kに対する釧路席(kushiroSeedSlots)を求め、
+    // 席が上半分にある数だけ先頭シードを上の山へ(K=2なら両端・K=4なら上{1,2}/下{3,4}…)。
+    // 非シードは上から順に詰める(容量超過のみ下へ)。
+    const seededEnts = ents.filter(x => (parseInt(x.p && x.p.seed) || 0) >= 1);
+    let topK = seededEnts.length;
+    if (seededEnts.length >= 2) {
+      const seats = kushiroSeedSlots(span, seededEnts.length);
+      topK = seats.filter(s => s < half).length;
+    }
+    const top = [], bot = []; let wt = 0, wb = 0; let si = 0;
+    ents.forEach((e) => {
+      let side;
+      if ((parseInt(e.p && e.p.seed) || 0) >= 1) { side = (si < topK) ? 0 : 1; si++; }
+      else side = (wt + e.w <= half) ? 0 : 1;
+      if (side === 0 && wt + e.w > half) side = 1;          // 容量ガード
+      if (side === 1 && wb + e.w > half) side = (wt <= wb) ? 0 : 1;
       if (side === 0) { top.push(e); wt += e.w; } else { bot.push(e); wb += e.w; }
     });
     place(top, lo, half);
@@ -4496,26 +4527,20 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   // 同格シードの山割り抽選: 完全に埋まったシード階層({3,4}/{5-8}/{9-16}…)内で、どのランクが
   // どの標準スロット(山頭)に入るかを RNG で抽選する。外シード(1,2)は固定。部分的にしか埋まらない
   // 階層・BYE階層は触らない(BYEを上位シードの相手に付ける不変条件を保つ)。rng無し(標準生成)は固定配置。
-  const seededRanks = new Set(seeded.map(e => seedOf(e)).filter(r => posOfRank[r] != null));
+  // 釧路式(物理順・v5): シード番号=紙の上から順。構造アンカーを上から rank 1..K に割当。
+  // 番号が位置そのものを表すため、旧v2-4の「同格シード階層の山割り抽選」は廃止
+  // (どの選手をどの位置番号にするかは運営がシード番号で明示指定する)。
+  const maxRank = seeded.reduce((mx, e) => Math.max(mx, seedOf(e)), 0);
+  const kSlots = maxRank >= 1 ? kushiroSeedSlots(size, Math.min(maxRank, size)) : [];
   const seedSlotOf = {};
-  for (const r of seededRanks) seedSlotOf[r] = posOfRank[r];
-  if (rng) {
-    let lo = 3;
-    while (lo <= size) {
-      const hi = Math.min(size, lo * 2 - 2);
-      let full = true;
-      for (let r = lo; r <= hi; r++) if (!seededRanks.has(r)) { full = false; break; }
-      if (full) {
-        const perm = shuffle([...Array(hi - lo + 1)].map((_, k) => posOfRank[lo + k]), rng);
-        for (let r = lo; r <= hi; r++) seedSlotOf[r] = perm[r - lo];
-      }
-      lo = hi + 1;
-    }
-  }
+  seeded.forEach(e => {
+    const r = seedOf(e);
+    if (r >= 1 && r <= kSlots.length) seedSlotOf[r] = kSlots[r - 1];
+  });
   const demoted = [];
   for (const e of seeded) {
     const rank = seedOf(e);
-    const idx = (rank in seedSlotOf) ? seedSlotOf[rank] : posOfRank[rank];
+    const idx = (rank in seedSlotOf) ? seedSlotOf[rank] : null;
     if (idx == null) {
       warnings.push("シード番号" + rank + "(" + nameOf(e) + ")は枠数" + size + "を超えるため抽選に回しました");
       demoted.push(e); continue;
@@ -4705,7 +4730,8 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   return { leaves, warnings, r1_same_club: r1SameClub };
 }
 
-const DRAW_ALGO_VERSION = "4";   // computeDrawLeaves のアルゴリズム版数(再現/検証の固定キー)
+const DRAW_ALGO_VERSION = "5";   // computeDrawLeaves のアルゴリズム版数(再現/検証の固定キー)
+// v5: 釧路式シード順(物理順)。シード席への割当を「紙の上から1→2→…」に変更し、同格山割り抽選を廃止。
 // v4: 中シードSSの区画衝突を1回戦降格でなく「同じ山内の空き整列区画へ移設」に変更(外/中SSの2種対応)。
 // v2: 標準ドローシート配置(外/中シード)+ 同格シード階層の山割り抽選を導入(v1は旧再帰配置・同格固定)
 // v3: 抽選でもスーパーシード(entry_round>1)を保存(重み区画のBYE固定+枠数の重み込み確保)

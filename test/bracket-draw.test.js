@@ -38,37 +38,35 @@ function ents(n, seedFn, teamFn) {
 // computeDrawLeaves: 純ロジック
 // ─────────────────────────────────────────────────────────────
 
-test("シードが標準シード階層に配置される(外1,2固定+同格は山割り)", () => {
+test("釧路式(v5): シード番号=紙の上から物理順(第1=上端・第2=上の山の中央側…最終=最下端)", () => {
   const size = 16;
-  const positions = db.bracketPositions(size); // positions[slot]=その枠の標準ランク
-  const posOfRank = {}; positions.forEach((r, i) => { posOfRank[r] = i; });
-  const tierSlots = (lo, hi) => { const s = new Set(); for (let r = lo; r <= hi; r++) s.add(posOfRank[r]); return s; };
   const list = ents(16, (i) => (i <= 8 ? i : 0), (i) => "T" + i); // seed1..8
   const { leaves } = db.computeDrawLeaves(list, size, mulberry32(1), { separateBy: "none" });
   const slotOfSeed = {}; leaves.forEach((e, i) => { if (e && e.seed) slotOfSeed[e.seed] = i; });
-  // 外シード: 第1=最上端、第2=最下端(紙どおり)
+  // 物理順: シード席(構造アンカー)を上から 1→2→…→8。size16/K8 の席=全偶数…ではなく
+  // 標準アンカーの昇順。並びが単調増加であることと両端を断定する。
+  const slotsInOrder = [1, 2, 3, 4, 5, 6, 7, 8].map(r => slotOfSeed[r]);
+  for (let k = 1; k < slotsInOrder.length; k++) {
+    assert.ok(slotsInOrder[k] > slotsInOrder[k - 1],
+      "物理順(第" + k + "=" + slotsInOrder[k - 1] + " < 第" + (k + 1) + "=" + slotsInOrder[k] + ")");
+  }
   assert.strictEqual(slotOfSeed[1], 0, "第1シードは最上端 slot0");
-  assert.strictEqual(slotOfSeed[2], size - 1, "第2シードは最下端 slot" + (size - 1));
-  // 中シード/下位シードは各階層の標準スロット(山頭)のいずれか
-  const t34 = tierSlots(3, 4);
-  assert.ok(t34.has(slotOfSeed[3]) && t34.has(slotOfSeed[4]), "第3/4は中央側の山頭");
-  const t58 = tierSlots(5, 8);
-  for (let r = 5; r <= 8; r++) assert.ok(t58.has(slotOfSeed[r]), "第" + r + "は1/4の山頭");
+  assert.strictEqual(slotOfSeed[8], size - 1, "最終(第8)シードは最下端 slot" + (size - 1));
+  // 第2シードは上の山(前半)に居る=第1と準決勝で当たり得る(釧路の紙どおり)
+  assert.ok(slotOfSeed[2] < size / 2, "第2シードは上の山: slot" + slotOfSeed[2]);
   assert.strictEqual(new Set(Object.values(slotOfSeed)).size, 8, "シードのスロット重複なし");
 });
 
-test("同格シードの山割りが draw_seed で変わる(第1,2は不変)", () => {
+test("釧路式(v5): シード配置は draw_seed に依らず固定(番号=位置。山割り抽選は廃止)", () => {
   const size = 16;
   const list = ents(16, (i) => (i <= 8 ? i : 0), (i) => "T" + i);
-  const s3slots = new Set();
-  for (let seed = 1; seed <= 30; seed++) {
+  const seen = new Set();
+  for (let seed = 1; seed <= 12; seed++) {
     const { leaves } = db.computeDrawLeaves(list, size, mulberry32(seed), { separateBy: "none" });
     const slotOfSeed = {}; leaves.forEach((e, i) => { if (e && e.seed) slotOfSeed[e.seed] = i; });
-    assert.strictEqual(slotOfSeed[1], 0, "第1は常に最上端");
-    assert.strictEqual(slotOfSeed[2], size - 1, "第2は常に最下端");
-    s3slots.add(slotOfSeed[3]);
+    seen.add(JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8].map(r => slotOfSeed[r])));
   }
-  assert.ok(s3slots.size >= 2, "第3シードの配置が seed により複数(同格の山割り抽選が効く)");
+  assert.strictEqual(seen.size, 1, "シード席の割当はdraw_seedに依らず1通り: " + [...seen][0]);
 });
 
 test("BYE(不戦勝)が上位シードに割り当たる(満たない枠)", () => {
@@ -439,14 +437,14 @@ test("スーパーシード: 抽選でも重み区画がBYE固定され登場回
   }
 });
 
-test("スーパーシード: 第2シードのSS区画は最下端側に確保される", () => {
+test("スーパーシード: 最終シード(釧路式=最下端)のSS区画は最下端側に確保される", () => {
   const list = ents(8, (i) => (i <= 4 ? i : 0), (i) => "T" + i);
-  list[1].entry_round = 3;   // seed2(選手002) w=4
+  list[3].entry_round = 3;   // 釧路式: 第4(=最終)シードが最下端。そこにR3(w=4)
   const size = 16;
   const { leaves } = db.computeDrawLeaves(list, size, mulberry32(5), { separateBy: "none" });
-  const s2 = leaves.findIndex(x => x && x.seed === 2);
-  assert.strictEqual(s2, size - 1, "seed2は最下端");
-  const w = 4, start = Math.floor(s2 / w) * w;   // [12..15]
+  const s4 = leaves.findIndex(x => x && x.seed === 4);
+  assert.strictEqual(s4, size - 1, "第4(最終)シードは最下端");
+  const w = 4, start = Math.floor(s4 / w) * w;   // [12..15]
   let byeInRegion = 0;
   for (let i = start; i < start + w; i++) if (!leaves[i]) byeInRegion++;
   assert.strictEqual(byeInRegion, w - 1, "区画内BYEがw-1=3");
