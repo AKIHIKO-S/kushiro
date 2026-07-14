@@ -1064,7 +1064,13 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
     // 大規模ドロー(S≥256)は 128リーフ=1ブロック(Ａ/Ｂ/Ｃ/Ｄ…)を横に並べ、各ブロックを
     // 小さな両山(左レール/右レールの余白に 番号・選手名・所属)として描く。ブロック勝者
     // どうしの準決勝・決勝は下段に別描きする。S<256 は従来どおり1ブロック(全体で両山)。
-    const BL = S >= 256 ? 128 : S;                 // 1ブロックのリーフ数
+    // SS大会(open種目)はＡ〜Ｄ4ブロック固定(抽選・画面と同じ)。それ以外は128リーフ=1ブロック。
+    let evOpen = false;
+    try {
+      const cfg = typeof tournament.event_config === "string" ? JSON.parse(tournament.event_config || "[]") : (tournament.event_config || []);
+      evOpen = !!(cfg.find(c => c && c.name === eventName) || {}).open;
+    } catch (e) { evOpen = false; }
+    const BL = (evOpen && S >= 16) ? S / 4 : (S >= 256 ? 128 : S);   // 1ブロックのリーフ数
     const nBlocks = S / BL;
     const blockRounds = Math.max(1, Math.round(Math.log2(BL)));   // ブロック内最終ラウンド(=ブロック勝者決定)
     const sideR = blockRounds - 1;                 // ブロック片山のラウンド数

@@ -57,3 +57,16 @@ test("128枠以下(1ブロック)は指定不要で従来どおり", () => {
   assert.strictEqual(r.success, true);
   assert.strictEqual(r.block_sizes, undefined);
 });
+
+test("SS大会(open種目): ブロック人数は指定不要で4ブロック均等自動", () => {
+  const t = db.createTournament({ name: "SS大会均等", date: "2027-03-01" });
+  db.updateEntrySettings(t.id, { entries_open: 1, event_config: [{ name: EV, type: "singles", fee: 0, open: true }] });
+  for (let i = 1; i <= 306; i++) db.createEntrant({ tournament_id: t.id, event: EV,
+    name: "選手" + String(i).padStart(3, "0"), team: "ク" + (i % 19), furigana: "せ" + String(i).padStart(3, "0") });
+  const es = db.getEntrants(t.id, EV);
+  db.setEntrantSeed(es[0].id, 1); db.setEntrantEntryRound(es[0].id, 4);   // SS必須要件
+  const r = db.drawSingleBracket(t.id, EV, { drawn_by: "検証" });   // block_sizes指定なし
+  assert.strictEqual(r.success, true, JSON.stringify(r).slice(0, 160));
+  assert.deepStrictEqual(r.block_sizes, [77, 77, 76, 76], "均等自動割り: " + JSON.stringify(r.block_sizes));
+  assert.deepStrictEqual(countPerBlock(t.id, r.bracket_size), [77, 77, 76, 76], "実リーフも均等");
+});

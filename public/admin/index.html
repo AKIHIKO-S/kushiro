@@ -10119,6 +10119,34 @@ const O = {
        (ss.length ? "：" + ss.slice(0, 5).map(e => (e.display_name || e.name) + "=" + (parseInt(e.entry_round) || 1) + "回戦から").join("・") + (ss.length > 5 ? " ほか" : "") : "");
    };
    const search = h("input", { className: "input", placeholder: "選手名・チームで絞り込み", style: { width: "240px" } });
+   // SS大会の定型: Ａ〜Ｄ各ブロックのシード席8(外2+中6)=シード番号1〜32へ登場回戦を一括適用。
+   // 外シード=各ブロックの1・8番目(ブロック上端/下端)、中シード=2〜7番目。回戦は大会ごとに手動指定。
+   const outerSel = h("select", { className: "input", style: { padding: "3px 4px", fontSize: "12px" } },
+     ...[2, 3, 4, 5, 6].map(r => h("option", { value: r, selected: r === 5 ? "" : null }, r + "回戦")));
+   const midSel = h("select", { className: "input", style: { padding: "3px 4px", fontSize: "12px" } },
+     ...[2, 3, 4, 5, 6].map(r => h("option", { value: r, selected: r === 3 ? "" : null }, r + "回戦")));
+   const bulkRow = h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap",
+     margin: "6px 0", padding: "7px 10px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: "7px" } },
+     h("span", { style: { fontSize: "12px", fontWeight: 700 } }, "SS大会の定型(各ブロック8名):"),
+     h("span", { className: "text-xs" }, "外シード"), outerSel,
+     h("span", { className: "text-xs" }, "中シード"), midSel,
+     h("button", { className: "btn btn-sm", onClick: () => {
+       let applied = 0;
+       confirmedList.forEach(e => {
+         const cur = Object.assign({}, e, changed.get(e.id) || {});
+         const r = parseInt(cur.seed) || 0;
+         if (r >= 1 && r <= 32) {
+           const local = ((r - 1) % 8) + 1;
+           const er = (local === 1 || local === 8) ? parseInt(outerSel.value) : parseInt(midSel.value);
+           changed.set(e.id, Object.assign(changed.get(e.id) || {}, { entry_round: er }));
+           applied++;
+         }
+       });
+       if (!applied) return toast("シード番号1〜32の選手がいません。先にシード番号を付けてください", "err");
+       renderRows(); refreshSummary();
+       toast(`${applied}名に登場回戦を設定しました(保存を押すと確定)`, "ok");
+     } }, "シード1〜32に一括適用"),
+     h("span", { className: "text-xs text-sub" }, "外=各ブロックの1・8番目 / 中=2〜7番目"));
    const tb = h("tbody", {});
    const renderRows = () => {
      clear(tb);
@@ -10171,6 +10199,7 @@ const O = {
      h("div", { className: "text-xs text-sub", style: { marginBottom: "6px", lineHeight: 1.7 } },
        "スーパーシード=2回戦以降から登場する特別シード(なごやか亭杯/VICTAS杯)。例:「4回戦から」=下の山を勝ち上がった選手とスーパーシード戦で対戦。シード番号が未入力でも、登場回戦を指定すれば抽選時に番号を自動補完します。"),
      summary,
+     bulkRow,
      h("div", { style: { margin: "6px 0" } }, search),
      h("div", { style: { maxHeight: "46vh", overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: "6px" } }, tbl));
    const foot = h("div", { className: "flex gap-2" },
@@ -10208,7 +10237,16 @@ const O = {
  const blockTotal = (rdy && rdy.confirmed) || 0;
  {
    const size = (rdy && rdy.bracket_size) || 0;
-   const nb = size >= 256 ? size / 128 : 0;
+   const isOpenEv = (() => { try {
+     return !!(((typeof O._eventConfig === "function" && O._eventConfig()) || []).find(c => c && c.name === event) || {}).open;
+   } catch (e) { return false; } })();
+   if (isOpenEv && size >= 16) {
+     blockBox.appendChild(h("div", { className: "text-xs", style: { padding: "7px 10px",
+       background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "7px", color: "#166534" } },
+       "SS大会: Ａ〜Ｄの4ブロック固定・選手数は均等に自動割り(" + blockTotal + "名 → " +
+       [...Array(4)].map((_, i) => Math.floor(blockTotal / 4) + (i < blockTotal % 4 ? 1 : 0)).join("・") + ")"));
+   }
+   const nb = (!isOpenEv && size >= 256) ? size / 128 : 0;
    if (nb > 1) {
      const base = Math.floor(blockTotal / nb), rem = blockTotal % nb;
      const sumLbl = h("span", { style: { fontSize: "12px", fontWeight: 700 } });
@@ -11501,7 +11539,11 @@ const O = {
    .sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0));
  const S = round1.length * 2;
  const totalRounds = Math.max(1, Math.round(Math.log2(S)));
- const BL = S >= 256 ? 128 : S;                  // 1ブロックのリーフ数(Excel紙面と同式)
+ // SS大会(open種目)はＡ〜Ｄ4ブロック固定(抽選と同じ)。それ以外は128リーフ=1ブロック。
+ const _pbOpen = (() => { try {
+   return !!(((typeof O._eventConfig === "function" && O._eventConfig()) || []).find(c => c && c.name === event) || {}).open;
+ } catch (e) { return false; } })();
+ const BL = (_pbOpen && S >= 16) ? S / 4 : (S >= 256 ? 128 : S);   // 1ブロックのリーフ数(Excel紙面と同式)
  const nBlocks = S / BL;
  const blockRounds = Math.max(1, Math.round(Math.log2(BL)));
  const sideR = Math.max(0, blockRounds - 1);

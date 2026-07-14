@@ -4878,10 +4878,16 @@ function drawSingleBracket(tournamentId, event, opts) {
     return { error: "選手数が多すぎます(最大約1024名)。", count: entrants.length };
   }
 
-  // ── ブロック別人数の手動設定(必須・256枠以上) ──
-  // 紙の組合せ表と同じく、128リーフ=1ブロック(Ａ/Ｂ/Ｃ/Ｄ…)ごとの選手数を運営が指定してから
-  // 抽選する。指定が無い/合計不一致は確定もプレビューもしない(needs_block_sizes)。
-  const nBlocksDraw = size >= 256 ? size / 128 : 1;
+  // ── ブロック構成 ──
+  // SS大会(open種目)=Ａ〜Ｄの4ブロック固定+選手数は均等自動割り(2026-07-14ユーザー指定)。
+  // それ以外の大規模(256枠以上)は従来どおり128リーフ=1ブロックで人数は手動指定必須。
+  let isOpenEventEarly = false;
+  try {
+    const _t0 = getTournament(tournamentId);
+    const _cfg0 = typeof _t0.event_config === "string" ? JSON.parse(_t0.event_config || "[]") : (_t0.event_config || []);
+    isOpenEventEarly = !!_cfg0.find(c => c && c.name === event && c.open);
+  } catch (e) { isOpenEventEarly = false; }
+  const nBlocksDraw = isOpenEventEarly && size >= 16 ? 4 : (size >= 256 ? size / 128 : 1);
   let blockSizes = null;
   if (nBlocksDraw > 1) {
     const N = entrants.length;
@@ -4889,12 +4895,16 @@ function drawSingleBracket(tournamentId, event, opts) {
       const base = Math.floor(N / nBlocksDraw), r = N % nBlocksDraw;
       return [...Array(nBlocksDraw)].map((_, i) => base + (i < r ? 1 : 0));
     })();
-    const raw = Array.isArray(opts.block_sizes) ? opts.block_sizes.map(x => parseInt(x)) : null;
+    let raw = Array.isArray(opts.block_sizes) ? opts.block_sizes.map(x => parseInt(x)) : null;
     if (!raw || raw.length !== nBlocksDraw || raw.some(x => !Number.isFinite(x) || x < 1)) {
-      return {
-        error: "ブロックごとの人数指定が必要です(" + nBlocksDraw + "ブロック・合計" + N + "名)。",
-        needs_block_sizes: true, blocks: nBlocksDraw, total: N, suggested: even,
-      };
+      if (isOpenEventEarly) {
+        raw = even;   // SS大会は均等自動(手入力不要)
+      } else {
+        return {
+          error: "ブロックごとの人数指定が必要です(" + nBlocksDraw + "ブロック・合計" + N + "名)。",
+          needs_block_sizes: true, blocks: nBlocksDraw, total: N, suggested: even,
+        };
+      }
     }
     const sum = raw.reduce((a, b) => a + b, 0);
     if (sum !== N) {
@@ -4903,8 +4913,9 @@ function drawSingleBracket(tournamentId, event, opts) {
         needs_block_sizes: true, blocks: nBlocksDraw, total: N, suggested: even,
       };
     }
-    if (raw.some(x => x > 128)) {
-      return { error: "1ブロックの人数は最大128名です。", needs_block_sizes: true, blocks: nBlocksDraw, total: N, suggested: even };
+    const blkCap = size / nBlocksDraw;
+    if (raw.some(x => x > blkCap)) {
+      return { error: "1ブロックの人数は最大" + blkCap + "名です。", needs_block_sizes: true, blocks: nBlocksDraw, total: N, suggested: even };
     }
     blockSizes = raw;
   }
