@@ -10244,11 +10244,11 @@ const O = {
      blockBox.appendChild(h("div", { className: "text-xs", style: { padding: "7px 10px",
        background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "7px", color: "#166534" } },
        "SS大会: Ａ〜Ｄの4ブロック固定・選手数は均等に自動割り(" + blockTotal + "名 → " +
-       [...Array(4)].map((_, i) => Math.floor(blockTotal / 4) + (i < blockTotal % 4 ? 1 : 0)).join("・") + ")"));
+       [...Array(4)].map((_, i) => Math.floor(blockTotal / 4) + (i >= 4 - (blockTotal % 4) ? 1 : 0)).join("・") + ")"));
    }
    const nb = (!isOpenEv && size >= 256) ? size / 128 : 0;
    if (nb > 1) {
-     const base = Math.floor(blockTotal / nb), rem = blockTotal % nb;
+     const base = Math.floor(blockTotal / nb), rem = blockTotal % nb;   // 端数は末尾ブロックへ(紙の実例準拠)
      const sumLbl = h("span", { style: { fontSize: "12px", fontWeight: 700 } });
      const refreshSum = () => {
        const s = blockInputs.reduce((a, i) => a + (parseInt(i.value) || 0), 0);
@@ -10259,7 +10259,7 @@ const O = {
        h("span", { style: { fontSize: "12.5px", fontWeight: 700 } }, "① ブロック別人数(必須):"));
      for (let i = 0; i < nb; i++) {
        const inp = h("input", { className: "input", type: "number", min: 1, max: 128,
-         value: base + (i < rem ? 1 : 0), style: { width: "78px" } });
+         value: base + (i >= nb - rem ? 1 : 0), style: { width: "78px" } });
        inp.addEventListener("input", refreshSum);
        blockInputs.push(inp);
        row.appendChild(h("label", { style: { display: "flex", alignItems: "center", gap: "4px", fontSize: "12.5px", fontWeight: 700 } },

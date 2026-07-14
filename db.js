@@ -4891,9 +4891,10 @@ function drawSingleBracket(tournamentId, event, opts) {
   let blockSizes = null;
   if (nBlocksDraw > 1) {
     const N = entrants.length;
+    // 端数は末尾ブロックへ(なごやか亭2026の実紙: 309名=Ａ77/Ｂ77/Ｃ77/Ｄ78)
     const even = (() => {
       const base = Math.floor(N / nBlocksDraw), r = N % nBlocksDraw;
-      return [...Array(nBlocksDraw)].map((_, i) => base + (i < r ? 1 : 0));
+      return [...Array(nBlocksDraw)].map((_, i) => base + (i >= nBlocksDraw - r ? 1 : 0));
     })();
     let raw = Array.isArray(opts.block_sizes) ? opts.block_sizes.map(x => parseInt(x)) : null;
     if (!raw || raw.length !== nBlocksDraw || raw.some(x => !Number.isFinite(x) || x < 1)) {

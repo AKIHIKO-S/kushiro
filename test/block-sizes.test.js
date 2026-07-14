@@ -67,6 +67,6 @@ test("SS大会(open種目): ブロック人数は指定不要で4ブロック均
   db.setEntrantSeed(es[0].id, 1); db.setEntrantEntryRound(es[0].id, 4);   // SS必須要件
   const r = db.drawSingleBracket(t.id, EV, { drawn_by: "検証" });   // block_sizes指定なし
   assert.strictEqual(r.success, true, JSON.stringify(r).slice(0, 160));
-  assert.deepStrictEqual(r.block_sizes, [77, 77, 76, 76], "均等自動割り: " + JSON.stringify(r.block_sizes));
-  assert.deepStrictEqual(countPerBlock(t.id, r.bracket_size), [77, 77, 76, 76], "実リーフも均等");
+  assert.deepStrictEqual(r.block_sizes, [76, 76, 77, 77], "均等自動割り(端数は末尾=紙準拠): " + JSON.stringify(r.block_sizes));
+  assert.deepStrictEqual(countPerBlock(t.id, r.bracket_size), [76, 76, 77, 77], "実リーフも均等(端数は末尾)");
 });
