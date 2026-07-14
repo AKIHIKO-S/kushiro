@@ -4559,10 +4559,37 @@ function computeDrawLeaves(entrants, size, rng, opts) {
         else if (i !== slot && inRegion(i)) conflict = "他のスーパーシード区画と重なるため";
       }
       if (!conflict && forced + (w - 1) > totalBye) conflict = "不戦勝(BYE)枠が足りないため";
+      // 中シードSS対応: 区画衝突(他シード/区画重複)は1回戦降格ではなく、まず同じ山(half)内の
+      // 空き整列区画へ移設を試みる。外シード(1・2位=両端)は衝突しないためこの分岐に入らず従来同一。
+      // (中シード=3位以下は中央寄りの標準位置の周囲に他シードが居て衝突しやすい=紙の「中のSS」)
+      let placedStart = start, placedSlot = slot;
+      if (conflict && conflict !== "不戦勝(BYE)枠が足りないため") {
+        const half = size / 2;
+        const sameHalf = (s0) => (slot < half) === (s0 < half);
+        let found = -1;
+        // 元区画に近い順に、同じ山内の幅wの整列区画で「全リーフ空+既存SS区画と非重複」を探す
+        const cand = [];
+        for (let s0 = 0; s0 + w <= size; s0 += w) if (sameHalf(s0) && s0 !== start) cand.push(s0);
+        cand.sort((a2, b2) => Math.abs(a2 - start) - Math.abs(b2 - start));
+        for (const s0 of cand) {
+          let ok = true;
+          for (let i = s0; i < s0 + w && ok; i++) if (leaves[i] || inRegion(i) || byeSlot[i]) ok = false;
+          if (ok) { found = s0; break; }
+        }
+        if (found >= 0 && forced + (w - 1) <= totalBye) {
+          leaves[slot] = null;
+          leaves[found] = e;
+          const rank = seedOf(e);
+          if (rank >= 1) seedSlotOf[rank] = found;   // 再現ログ/後段整合のため記録も移設先へ
+          placedStart = found; placedSlot = found;
+          warnings.push(label + "の区画を確保するため、同じ山内で位置を移動しました(中シードSS)");
+          conflict = "";
+        }
+      }
       if (conflict) { warnings.push(label + "は" + conflict + "1回戦扱いにしました"); continue; }
-      for (let i = start; i < start + w; i++) if (i !== slot) byeSlot[i] = true;
+      for (let i = placedStart; i < placedStart + w; i++) if (i !== placedSlot) byeSlot[i] = true;
       forced += w - 1;
-      ssRegions.push({ start, w, slot });
+      ssRegions.push({ start: placedStart, w, slot: placedSlot });
     }
     // BYE枠の確定: スーパーシード区画で使った残りの予算を、標準どおり「上位シードの1回戦相手」
     // (最高位ファントムランク)から降順に割り当てる。区画なしのときは従来の positions[i] > N と完全一致。
@@ -4678,7 +4705,8 @@ function computeDrawLeaves(entrants, size, rng, opts) {
   return { leaves, warnings, r1_same_club: r1SameClub };
 }
 
-const DRAW_ALGO_VERSION = "3";   // computeDrawLeaves のアルゴリズム版数(再現/検証の固定キー)
+const DRAW_ALGO_VERSION = "4";   // computeDrawLeaves のアルゴリズム版数(再現/検証の固定キー)
+// v4: 中シードSSの区画衝突を1回戦降格でなく「同じ山内の空き整列区画へ移設」に変更(外/中SSの2種対応)。
 // v2: 標準ドローシート配置(外/中シード)+ 同格シード階層の山割り抽選を導入(v1は旧再帰配置・同格固定)
 // v3: 抽選でもスーパーシード(entry_round>1)を保存(重み区画のBYE固定+枠数の重み込み確保)
 function _sha256(s) { return crypto.createHash("sha256").update(String(s)).digest("hex"); }
