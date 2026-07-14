@@ -5566,6 +5566,7 @@ const A = {
      if (r && r.error) return toast(r.error, "err");
      if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[activeTab] = r.bracket_rev; }
      toast(`生成しました: ${r.total_matches || 0}試合 / ${r.total_rounds || 0}ラウンド`, "ok");
+     O._structCheck(activeTab, t.id);
      updatePreview();
    } }, "▶ この種目で生成/再生成");
  // ② 名簿(出場者)とトーナメント表の一括削除(取込やり直し用)。種目タブ=その種目 / 「すべて」=大会まるごと。
@@ -8733,9 +8734,14 @@ const O = {
            ddItem("シード / スーパーシード設定", "シード番号と登場回戦(4回戦から等)を一覧で一括設定。抽選・表作成の前に。", () => O.openSeedSetup(sel)),
            ddItem("シード提案", "選手DB(Elo+過去成績)から客観スコア順にシード候補を提案。人手で採否・順位を決めて一括設定。", () => O.openSeedSuggest(sel)),
            ddItem("リーグ生成", "種目を総当たり(リーグ)で生成。勝敗→セット得失差→総得点で順位。", () => O.openLeagueGen(sel)),
+           // リーグ後段の3機能は、リーグ運用の種目(団体 or 種目名にリーグ)のときだけ表示。
+           // ノックアウト個人戦では出さない(ＡＢＣＤブロックの決勝は木構造で固定=これらの機能は不要)。
+           ...(((() => { const c = (O._eventConfig() || []).find(x => x && x.name === sel) || {};
+             return c.type === "team" || /リーグ/.test(sel || ""); })()) ? [
            ddItem("決勝T生成", "予選リーグの順位から決勝トーナメントを生成(上位N名 or 順位別T)。", () => O.openLeaguePlayoff(sel)),
            ddItem("同率抽選の入力", "リーグで同率になった順位を現地の抽選結果で確定。", () => O.openLeagueTiebreak(sel)),
            ddItem("釧路リーグ振り分け", "前回大会の各部順位から今回の部を昇降格ルールで提案→手動調整して生成。", () => O.openKushiroLeagueAssign(sel)),
+           ] : []),
            ddItem("＋ 対戦を追加", "空きスロットに手動で対戦を追加。", () => O.openAddMatch(sel)),
            ddItem("表を削除(名簿は残す)", "この種目のトーナメント表(対戦)だけを一括削除。名簿は残るのですぐ作り直せます。", () => O.clearBracket(sel)),
            ddItem("全種目の表を削除(名簿は残す)", "この大会で作成した全種目のトーナメント表・リーグを一括削除。名簿は残るので最初から作り直せます。", () => O.clearAllBrackets()),
@@ -10361,6 +10367,7 @@ const O = {
    if (!r || r.error) return toast((r && r.error) || "確定に失敗", "err");
    toast(`抽選確定: ${r.bracket_size}枠。1回戦を配置しました(自動進行なし)。編集後『▶進行開始』で進めます`, "ok");
    document.querySelector(".modal-bg")?.remove();
+   O._structCheck(event, tid);   // 生成直後の構造保証(全員配置/SS区画/進出リンク/決勝固定ペア)
    if (O._vbReload) O._vbReload(); if (O.reload) O.reload();
  };
  const doUndo = async () => {
@@ -11682,8 +11689,21 @@ const O = {
          outlineOffset: "-1px", borderRadius: "4px", overflow: "hidden", whiteSpace: "nowrap",
        },
        onClick: editable ? (() => O._pbTap(ctx, lf, false)) : undefined,
-       onMouseenter: editable ? ((e) => { if (e.currentTarget.dataset.pbSel !== "1") e.currentTarget.style.background = "#f3f4f6"; }) : undefined,
-       onMouseleave: editable ? ((e) => { if (e.currentTarget.dataset.pbSel !== "1") e.currentTarget.style.background = "transparent"; }) : undefined,
+       onMouseenter: editable ? ((e) => {
+         const d = e.currentTarget;
+         if (d.dataset.pbSel !== "1") d.style.background = "#f3f4f6";
+         if (O._pbSel && O._pbSel.event === event && String(O._pbSel.g) !== d.dataset.pbG && !d.querySelector(".pb-swaphint")) {
+           const s2 = document.createElement("span");
+           s2.className = "pb-swaphint"; s2.textContent = "\u21c4";
+           Object.assign(s2.style, { marginLeft: "4px", color: "#d97706", fontWeight: "800", flex: "0 0 auto" });
+           d.appendChild(s2);
+         }
+       }) : undefined,
+       onMouseleave: editable ? ((e) => {
+         const d = e.currentTarget;
+         if (d.dataset.pbSel !== "1") d.style.background = "transparent";
+         const hint = d.querySelector(".pb-swaphint"); if (hint) hint.remove();
+       }) : undefined,
      }, ...content);
      div.dataset.pbG = r.g;
      wrap.appendChild(div);
@@ -11742,6 +11762,10 @@ const O = {
  const buildFinalsEl = () => {
    const box = h("div", { style: { display: "flex", gap: "18px", alignItems: "center",
      flexWrap: "wrap", padding: "14px 6px" } });
+   // 決勝の形式は固定: 準決勝=Ａ優勝×Ｂ優勝 / Ｃ優勝×Ｄ優勝 → その勝者同士が決勝(抽選なし)
+   box.appendChild(h("div", { style: { flexBasis: "100%", fontSize: "12.5px", color: "#374151",
+     padding: "7px 10px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "7px" } },
+     h("b", {}, "決勝トーナメントは固定: "), "準決勝=Ａブロック優勝×Ｂブロック優勝 / Ｃブロック優勝×Ｄブロック優勝 → 勝者同士が決勝(抽選・入替はありません)"));
    const blockName = (i) => String.fromCharCode(0xFF21 + i) + "ブロック";
    for (let r = blockRounds + 1; r <= totalRounds; r++) {
      const cnt = S / Math.pow(2, r);
@@ -11755,7 +11779,7 @@ const O = {
          const nm = k === 1 ? (mm && mm.player1_name) : (mm && mm.player2_name);
          if (nm && nm !== "BYE") return h("span", { style: { fontWeight: 700, fontSize: "13.5px" } }, nm);
          const childIdx = q * 2 + (k - 1);
-         const src = r === blockRounds + 1 ? (blockName(childIdx) + "の勝者")
+         const src = r === blockRounds + 1 ? (blockName(childIdx) + "優勝")
            : "(" + (r - 1) + "-" + (childIdx + 1) + "の勝者)";
          return h("span", { style: { color: "#9ca3af", fontSize: "12.5px" } }, src);
        };
@@ -11807,6 +11831,16 @@ const O = {
        onClick: () => { state.tab = "F"; O._pbBlock[event] = "F"; render(); } }, "決勝T"));
    }
    if (canLockToggle) {
+     bar.appendChild(h("button", { className: "btn btn-sm btn-ghost", title: "構造チェック: 全員1回配置・登場回戦の区画・進出リンク・決勝固定ペアを機械検証",
+       onClick: () => O._structCheck(event, ctx.tournamentId) }, "✓構造"));
+     bar.appendChild(h("button", { className: "btn btn-sm btn-ghost", title: "直前の編集(入替/変更)や結果を1つ取り消す(統合Undo)",
+       onClick: async () => {
+         if (!confirm("直前の操作(入替/枠変更/結果)を1つ取り消します。よろしいですか？")) return;
+         const r = await api.post(`/api/tournaments/${ctx.tournamentId}/undo`, { event });
+         if (r && r.error) return toast(r.error, "err");
+         toast("直前の操作を取り消しました", "ok");
+         O._pbClear(); ctx.reload();
+       } }, "↶ 取消"));
      bar.appendChild(h("button", {
        className: "btn btn-sm" + (cfgLocked ? "" : " btn-ghost"),
        style: cfgLocked ? { background: "#b45309", color: "#fff", fontWeight: 700 } : {},
@@ -11855,6 +11889,15 @@ const O = {
  const selBox = h("div", {});
  const renderBar = () => {
    selBox.replaceChildren();
+   // キーボード: Enter=入れ替える / Esc=やめる(選択中のみ張る・毎回張り替え)
+   if (O._pbKeyH) { document.removeEventListener("keydown", O._pbKeyH); O._pbKeyH = null; }
+   if (editable && O._pbSel && O._pbSel.event === event) {
+     O._pbKeyH = (ev) => {
+       if (ev.key === "Escape") { O._pbClear(); renderBar(); refreshSel(); }
+       else if (ev.key === "Enter" && O._pbSel2) { ev.preventDefault(); O._pbSwap(ctx); }
+     };
+     document.addEventListener("keydown", O._pbKeyH);
+   }
    if (!(editable && O._pbSel && O._pbSel.event === event)) return;
    const s1 = O._pbSel, s2 = O._pbSel2;
    const who = (s) => s.no + " " + s.name + (s.team ? "（" + s.team + "）" : "");
@@ -11865,7 +11908,8 @@ const O = {
      h("span", { style: { fontWeight: 700, fontSize: "13px" } }, who(s1)),
      h("span", { style: { color: "#d97706", fontWeight: 800 } }, "⇄"),
      s2 ? h("span", { style: { fontWeight: 700, fontSize: "13px" } }, who(s2))
-        : h("span", { style: { color: "#6b7280", fontSize: "12.5px" } }, "入れ替える相手をクリック…（別ブロックでも可）"),
+        : h("span", { style: { color: "#6b7280", fontSize: "12.5px" } }, "入れ替える相手をクリック…（別ブロックでも可・Escで解除）"),
+     s2 ? h("span", { className: "text-xs text-sub" }, "Enterで確定 / Escで解除") : null,
      h("span", { style: { flex: "1 0 auto" } }),
      s2 ? h("button", { className: "btn btn-sm", style: { background: "#c01526", color: "#fff", fontWeight: 700 },
        onClick: () => O._pbSwap(ctx) }, "入れ替える") : null,
@@ -11899,6 +11943,25 @@ const O = {
  render();
  return root;
  },
+ // 生成/抽選後の構造チェック(バリデータ)。OK=要約トースト / 問題=block一覧をアラート。
+ async _structCheck(event, tid) {
+   try {
+     const v = await api.get(`/api/tournaments/${tid || O.tournamentId}/bracket/validate?event=${encodeURIComponent(event)}`);
+     if (!v || v.error) return;
+     if (v.ok) {
+       const s = v.summary || {};
+       toast("構造チェックOK: 選手" + s.players + "名/" + s.size + "枠" +
+         (s.ss_ok ? " ・登場回戦" + s.ss_ok + "名成立" : "") +
+         (s.finals_fixed ? " ・決勝=Ａ×Ｂ/Ｃ×Ｄ固定" : "") +
+         (s.unplaced ? " ・未配置" + s.unplaced + "名(申込一覧で確認)" : ""), "ok");
+     } else {
+       alert("トーナメント表の構造チェックで問題が見つかりました:" + String.fromCharCode(10, 10) +
+         (v.issues || []).filter(i => i.level === "block").slice(0, 12).map(i => "・" + i.msg).join(String.fromCharCode(10)));
+     }
+     return v;
+   } catch (e) {}
+ },
+
  // 紙面ミラーのタップ選択: 1人目=選択 / 同じ人=解除 / 2人目=入替相手
  _pbTap(ctx, lf, locked) {
    if (locked) { toast("この選手は進行中/確定済みの試合のため動かせません", "err"); return; }
@@ -11913,7 +11976,10 @@ const O = {
    if (typeof O._pbSelUpdate === "function") O._pbSelUpdate();
    else if (typeof O._pbRender === "function") O._pbRender();
  },
- _pbClear() { O._pbSel = null; O._pbSel2 = null; },
+ _pbClear() {
+   O._pbSel = null; O._pbSel2 = null;
+   if (O._pbKeyH) { document.removeEventListener("keydown", O._pbKeyH); O._pbKeyH = null; }
+ },
  async _pbSwap(ctx) {
    const a = O._pbSel, b = O._pbSel2;
    if (!a || !b) return;
@@ -11928,7 +11994,7 @@ const O = {
      if (r && r.error) return toast(r.error, "err");
      if (r && r.bracket_rev) ctx.setRev(r.bracket_rev);
      O._pbClear();
-     toast(`「${a.name}」と「${b.name}」を入れ替えました`, "ok");
+     toast(`No.${a.no}「${a.name}」⇄ No.${b.no}「${b.name}」を入れ替えました`, "ok");
      // 近接警告の再チェック(同チーム/同支部が10番以内)
      try {
        const px = await api.get(`/api/tournaments/${ctx.tournamentId}/bracket/proximity?event=${encodeURIComponent(ctx.event)}`);
@@ -12535,6 +12601,7 @@ const O = {
    document.querySelector(".modal-bg")?.remove();
    if (r.bracket_rev) { O._bracketRev = O._bracketRev || {}; O._bracketRev[event] = r.bracket_rev; }
    O.selectedEvent = event;
+   O._structCheck(event);
    O.reload();
  } }, "生成");
  openModal("トーナメント表を作る（出場選手名簿から）", body, foot);

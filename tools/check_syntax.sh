@@ -27,6 +27,9 @@ trap "rm -rf $TMP" EXIT
 
 for HTML in public/admin/index.html public/viewer/index.html public/viewer/live/index.html; do
   if [ ! -f "$HTML" ]; then continue; fi
+  # 注意: 「python | while read」はサブシェル化して ERR=1 が親に伝わらない(NGでもSUCCESSになる事故が実在)。
+  # 一覧を一時ファイル経由にしてリダイレクトで回す(同一シェル=ERRが生きる)。
+  LIST="$TMP/list.txt"
   python3 -c "
 import re, sys
 src = open('$HTML').read()
@@ -35,7 +38,8 @@ for i, m in enumerate(re.finditer(r'<script>\n(.*?)\n</script>', src, re.DOTALL)
     fname = '$TMP/$(basename $HTML .html).' + str(i) + '.js'
     open(fname, 'w').write(m.group(1))
     print(fname)
-" | while read f; do
+" > "$LIST"
+  while read f; do
     if node --check "$f" 2>/dev/null; then
       echo "  [OK] $HTML (embed #$(basename $f | sed 's/.*\.\([0-9]*\)\.js/\1/'))"
     else
@@ -43,7 +47,7 @@ for i, m in enumerate(re.finditer(r'<script>\n(.*?)\n</script>', src, re.DOTALL)
       node --check "$f" 2>&1 | head -5 | sed 's/^/      /'
       ERR=1
     fi
-  done
+  done < "$LIST"
 done
 
 echo ""

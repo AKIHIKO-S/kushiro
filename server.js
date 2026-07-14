@@ -3054,6 +3054,13 @@ app.delete("/api/tournaments/:id/bracket", requireAdmin, (req, res) => {
   res.json(db.deleteEventMatches(req.params.id, event));
 });
 
+// トーナメント表の構造チェック(生成/抽選/手修正後の整合を機械検証)
+app.get("/api/tournaments/:id/bracket/validate", requireAdmin, (req, res) => {
+  const event = req.query.event || "";
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  res.json(db.validateBracketStructure(req.params.id, event));
+});
+
 // 作成済みトーナメント表の全削除(全種目一括・名簿は残す)。結果入力済みがあれば needs_force。
 app.delete("/api/tournaments/:id/brackets", requireAdmin, (req, res) => {
   const force = !!(req.body && req.body.force) || req.query.force === "1";

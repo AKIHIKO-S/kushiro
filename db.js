@@ -5061,8 +5061,22 @@ function undoDraw(tournamentId, event) {
 // あればそれを先に戻し、無ければ選択種目の抽選(draw_log)を取り消す。編集は抽選の後に行われるため、
 // この順で「直前の操作」を安全に1段ずつ巻き戻せる(抽選専用Undoと編集用Undoの二本立てを1本に集約)。
 function undoLast(tournamentId, event) {
-  const op = sqlite.prepare("SELECT id, summary FROM op_log WHERE tournament_id=? AND undone=0 ORDER BY id DESC LIMIT 1").get(tournamentId);
-  if (op) { const r = undoLastOp(tournamentId); return Object.assign({ kind: "op", label: op.summary || "直前の操作" }, r); }
+  const op = sqlite.prepare("SELECT id, summary, match_ids FROM op_log WHERE tournament_id=? AND undone=0 ORDER BY id DESC LIMIT 1").get(tournamentId);
+  if (op) {
+    // 種目指定つきUndo(紙面ビューの↶等)は、直前の操作が別種目なら黙って巻き込まず明示エラーにする
+    // (op_logにevent列が無いため、対象試合の種目で判定。試合に紐づかない操作は従来どおり対象)。
+    if (event) {
+      let mid = null;
+      try { mid = ((JSON.parse(op.match_ids || "[]") || [])[0]) || null; } catch (e) { mid = null; }
+      const ev = mid ? ((sqlite.prepare("SELECT event FROM matches WHERE id=?").get(mid) || {}).event || "") : "";
+      if (ev && ev !== event) {
+        return { error: "直前の操作は別種目(" + ev + ")のものです: " + (op.summary || "") +
+          "。その種目の表の↶から取り消してください。", other_event: ev };
+      }
+    }
+    const r = undoLastOp(tournamentId);
+    return Object.assign({ kind: "op", label: op.summary || "直前の操作" }, r);
+  }
   if (event) {
     const dr = sqlite.prepare("SELECT id FROM draw_log WHERE tournament_id=? AND event=? AND status=\'committed\' ORDER BY id DESC LIMIT 1").get(tournamentId, event);
     if (dr) { const r = undoDraw(tournamentId, event); return Object.assign({ kind: "draw", label: event + " の抽選" }, r); }
@@ -7136,6 +7150,110 @@ function setBracketLock(tournamentId, event, locked) {
   sqlite.prepare("UPDATE tournaments SET event_config=?, updated_at=datetime('now','localtime') WHERE id=?")
     .run(JSON.stringify(cfg), tournamentId);
   return { ok: true, event, locked: !!locked };
+}
+
+// ── トーナメント表の構造バリデータ ──────────────────────────
+// 生成/抽選/手修正後の表が「細かな対戦設定どおり確実に通る」ことを機械検証する。
+// 検査: 全員1回配置 / 枠・試合数の会計 / 登場回戦(entry_round)の区画成立 /
+//       next_match連結(進出経路=罫線の整合) / ブロック配分 / 決勝の固定ペア(Ａ×Ｂ・Ｃ×Ｄ)。
+// missing(名簿に居るが未配置)は warn(後から申込が増えた等の正常運用があり得るため)。
+// 二重配置・リンク不整合・登場回戦の不成立・決勝ペア崩れは block(ok=false)。
+function validateBracketStructure(tournamentId, event) {
+  if (!event) return { ok: false, issues: [{ level: "block", msg: "event が必要です" }], summary: {} };
+  const ms = opStmts.getBracketMatches.all(tournamentId, event);
+  const issues = [];
+  const push = (level, msg) => issues.push({ level, msg });
+  if (!ms.length) return { ok: false, issues: [{ level: "block", msg: "トーナメント表がありません" }], summary: {} };
+  const byId = new Map(ms.map(m => [m.id, m]));
+  const rounds = {};
+  ms.forEach(m => { (rounds[m.bracket_round] = rounds[m.bracket_round] || []).push(m); });
+  const totalRounds = Math.max(...Object.keys(rounds).map(Number));
+  const round1 = (rounds[1] || []).sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0));
+  const size = round1.length * 2;
+  if (!Number.isInteger(Math.log2(size))) push("block", "1回戦の枠数(" + size + ")が2の累乗ではありません");
+  for (let r = 1; r <= totalRounds; r++) {
+    const want = size / Math.pow(2, r);
+    const got = (rounds[r] || []).length;
+    if (got !== want) push("block", r + "回戦の試合数が不正: " + got + "件(期待" + want + "件)");
+  }
+  // リーフ構成(1回戦の物理並び)
+  const leaf = new Array(size).fill(null);
+  round1.forEach(m => {
+    [[1, m.player1_name, m.player1_entrant_id], [2, m.player2_name, m.player2_entrant_id]].forEach(([sk, nm, eid]) => {
+      leaf[2 * (m.bracket_pos || 0) + (sk - 1)] = (nm && nm !== "BYE") ? { name: nm, eid } : null;
+    });
+  });
+  const placedIds = new Map();
+  leaf.forEach(lf => { if (lf && lf.eid) placedIds.set(lf.eid, (placedIds.get(lf.eid) || 0) + 1); });
+  const entrants = entrantStmts.listByEvent.all(tournamentId, event)
+    .filter(e => (e.status || "confirmed") === "confirmed");
+  const missing = entrants.filter(e => !placedIds.has(e.id));
+  missing.slice(0, 10).forEach(e => push("warn", "名簿の選手が表に居ません(未配置): " + (e.display_name || e.name)));
+  if (missing.length > 10) push("warn", "…ほか未配置 " + (missing.length - 10) + " 名");
+  [...placedIds.entries()].filter(([, c]) => c > 1).slice(0, 10).forEach(([id, c]) => {
+    const e = entrants.find(x => x.id === id);
+    push("block", "二重配置: " + ((e && (e.display_name || e.name)) || id) + " が" + c + "箇所に居ます");
+  });
+  const placedCount = leaf.filter(Boolean).length;
+  // 登場回戦(entry_round>1)の区画成立(SS・2回戦シードの双方)
+  let ssOk = 0;
+  entrants.filter(e => (parseInt(e.entry_round) || 1) > 1).forEach(e => {
+    const R = Math.max(1, Math.min(10, parseInt(e.entry_round) || 1));
+    const w = Math.pow(2, R - 1);
+    const g = leaf.findIndex(lf => lf && lf.eid === e.id);
+    if (g < 0 || w > size) return;
+    const start = Math.floor(g / w) * w;
+    let clean = true;
+    for (let i = start; clean && i < start + w; i++) if (i !== g && leaf[i]) clean = false;
+    if (clean) ssOk++;
+    else push("block", (e.display_name || e.name) + " の「" + R + "回戦から登場」が成立していません(区画に他の選手が居ます)");
+  });
+  // next_match 連結(進出経路=罫線の整合)
+  for (let r = 1; r < totalRounds; r++) {
+    for (const m of (rounds[r] || [])) {
+      const nx = m.next_match_id ? byId.get(m.next_match_id) : null;
+      const pos = m.bracket_pos || 0;
+      if (!nx) { push("block", r + "回戦 " + (pos + 1) + "試合目の進出先リンクがありません"); continue; }
+      const wantPos = Math.floor(pos / 2), wantSlot = (pos % 2) + 1;
+      if (nx.bracket_round !== r + 1 || (nx.bracket_pos || 0) !== wantPos || (m.next_slot || 0) !== wantSlot) {
+        push("block", r + "回戦 " + (pos + 1) + "試合目の進出先が不正(" +
+          nx.bracket_round + "回戦" + ((nx.bracket_pos || 0) + 1) + "・slot" + m.next_slot + ")");
+      }
+    }
+  }
+  // ブロック配分 + 決勝の固定ペア(4ブロック時: 準決勝=Ａ×Ｂ/Ｃ×Ｄ → 決勝)
+  const t = stmts.getTournament.get(tournamentId);
+  let isOpen = false;
+  try {
+    const cfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []);
+    isOpen = !!((cfg.find(c => c && c.name === event) || {}).open);
+  } catch (e) { isOpen = false; }
+  const nB = (isOpen && size >= 16) ? 4 : (size >= 256 ? size / 128 : 1);
+  let blocks = null, finalsFixed = null;
+  if (nB >= 2) {
+    const BLK = size / nB;
+    blocks = new Array(nB).fill(0);
+    leaf.forEach((lf, g) => { if (lf) blocks[Math.floor(g / BLK)]++; });
+    if (isOpen && Math.max(...blocks) - Math.min(...blocks) > 1) {
+      push("warn", "ブロック人数が不均等です: " + blocks.join("・"));
+    }
+    if (nB === 4 && totalRounds >= 3) {
+      const bf = (rounds[totalRounds - 2] || []).sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0));
+      const semi = rounds[totalRounds - 1] || [];
+      finalsFixed = bf.length === 4 &&
+        bf[0].next_match_id === bf[1].next_match_id &&
+        bf[2].next_match_id === bf[3].next_match_id &&
+        bf[0].next_match_id !== bf[2].next_match_id &&
+        semi.every(s2 => s2.next_match_id && byId.get(s2.next_match_id) && byId.get(s2.next_match_id).bracket_round === totalRounds);
+      if (!finalsFixed) push("block", "決勝トーナメントの固定ペア(Ａ優勝×Ｂ優勝/Ｃ優勝×Ｄ優勝→決勝)が崩れています");
+    }
+  }
+  const ok = !issues.some(i => i.level === "block");
+  return { ok, issues, summary: {
+    size, total_rounds: totalRounds, players: placedCount, byes: size - placedCount,
+    entrants: entrants.length, unplaced: missing.length, ss_ok: ssOk,
+    ...(blocks ? { blocks } : {}), ...(finalsFixed != null ? { finals_fixed: finalsFixed } : {}),
+  } };
 }
 
 // 作成済みトーナメント表(全種目の matches=ブラケット/リーグとも)を一括削除する。名簿(entrants)は残す。
@@ -10532,7 +10650,7 @@ module.exports = {
   parseRosterRows, rosterEventName, enrichRosterRegions, importRoster, normalizeShibuName,   // 名簿(エントリー表)取込
   parseEntryListSheets,   // エントリーリスト形式(タブ=種目)取込
   proximityFromLeaves, computeBracketProximity,   // トーナメント近接警告(作成プラン)
-  getBracket, deleteEventMatches, deleteAllBrackets, deleteRoster, rosterStats, setCourtLayout, setBracketLock,
+  getBracket, deleteEventMatches, deleteAllBrackets, deleteRoster, rosterStats, setCourtLayout, setBracketLock, validateBracketStructure,
   // 試合検索 / H2H / 選手統計
   searchMatches, countMatchesForSearch, getSearchFilters,
   getPlayerOpponents, getPlayerEventStats,
