@@ -7022,6 +7022,28 @@ function deleteEventMatches(tournamentId, event) {
   return { ok: true };
 }
 
+// ── トーナメント表の手動ロック(event_config[].bracket_locked) ──
+// 進行状態による自動ロックは廃止(force+確認で入替可)。守りたいときは運営が手動でロックする。
+function _bracketLocked(tournamentId, event) {
+  try {
+    const t = stmts.getTournament.get(tournamentId);
+    const cfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []);
+    return !!((cfg.find(c => c && c.name === event) || {}).bracket_locked);
+  } catch (e) { return false; }
+}
+function setBracketLock(tournamentId, event, locked) {
+  const t = stmts.getTournament.get(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  let cfg = [];
+  try { cfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []); } catch (e) { cfg = []; }
+  let c = cfg.find(x => x && x.name === event);
+  if (!c) { c = { name: event, type: /ダブルス|団体/.test(event) ? "doubles" : "singles", fee: 0, note: "ロック設定" }; cfg.push(c); }
+  c.bracket_locked = !!locked;
+  sqlite.prepare("UPDATE tournaments SET event_config=?, updated_at=datetime('now','localtime') WHERE id=?")
+    .run(JSON.stringify(cfg), tournamentId);
+  return { ok: true, event, locked: !!locked };
+}
+
 // 作成済みトーナメント表(全種目の matches=ブラケット/リーグとも)を一括削除する。名簿(entrants)は残す。
 // 結果入力済みの実対戦(不戦勝を除く)があるときは needs_force で確認を求める(当日データの誤消去防止)。
 function deleteAllBrackets(tournamentId, opts) {
@@ -8853,7 +8875,11 @@ function exportAllBrackets(tournamentId) {
 
 // ドラッグ&ドロップ: 1回戦の2スロット(選手位置)を入れ替え
 // a/b = { pos: bracket_pos(整数), slot: 1|2 }。進行中/終了済を含む場合は拒否。
-function swapBracketSlots(tournamentId, event, a, b) {
+function swapBracketSlots(tournamentId, event, a, b, opts) {
+  const force = !!(opts && opts.force);
+  if (_bracketLocked(tournamentId, event)) {
+    return { error: "この種目の表は手動ロック中です。「ロック解除」してから編集してください。", locked: true };
+  }
   if (!event) return { error: "event が必要です" };
   const posA = parseInt(a && a.pos), posB = parseInt(b && b.pos);
   const slotA = (parseInt(a && a.slot) === 2) ? 2 : 1;
@@ -8869,8 +8895,8 @@ function swapBracketSlots(tournamentId, event, a, b) {
   if (!mA || !mB) return { error: "対象の試合が見つかりません" };
 
   for (const m of (mA.id === mB.id ? [mA] : [mA, mB])) {
-    if (m.status === "completed" || m.status === "on_table" || m.winner_name) {
-      return { error: "進行中または終了した試合は入れ替えできません" };
+    if (!force && (m.status === "completed" || m.status === "on_table" || m.winner_name)) {
+      return { error: "進行中または終了した試合の入れ替えです。続行すると選手名のみ入れ替わり、記録済みの結果はそのまま残ります。", needs_force: true };
     }
   }
 
@@ -8907,7 +8933,11 @@ function swapBracketSlots(tournamentId, event, a, b) {
 
 // 試合まるごと入替: 2つの1回戦試合(posA/posB)の両スロットを丸ごと入れ替える。
 // 選手単位の swapBracketSlots を両スロットに適用したのと同じ結果。完了/試合中はガード。op_log記録。
-function swapBracketMatches(tournamentId, event, posA, posB) {
+function swapBracketMatches(tournamentId, event, posA, posB, opts) {
+  const force = !!(opts && opts.force);
+  if (_bracketLocked(tournamentId, event)) {
+    return { error: "この種目の表は手動ロック中です。「ロック解除」してから編集してください。", locked: true };
+  }
   if (!event) return { error: "event が必要です" };
   const pA = parseInt(posA), pB = parseInt(posB);
   if (!Number.isInteger(pA) || !Number.isInteger(pB)) return { error: "位置が不正です" };
@@ -8919,8 +8949,8 @@ function swapBracketMatches(tournamentId, event, posA, posB) {
   const mB = round1.find(m => (m.bracket_pos || 0) === pB);
   if (!mA || !mB) return { error: "対象の試合が見つかりません" };
   for (const m of [mA, mB]) {
-    if (m.status === "completed" || m.status === "on_table" || m.winner_name) {
-      return { error: "進行中または終了した試合は入れ替えできません" };
+    if (!force && (m.status === "completed" || m.status === "on_table" || m.winner_name)) {
+      return { error: "進行中または終了した試合の入れ替えです。続行すると選手名のみ入れ替わり、記録済みの結果はそのまま残ります。", needs_force: true };
     }
   }
   // undo 用: 両試合と前方チェーン(autoAdvanceByes が次戦へ波及しうる)を変更前にスナップショット。
@@ -8945,6 +8975,9 @@ function swapBracketMatches(tournamentId, event, posA, posB) {
 // 1回戦の1スロットを設定 (BYE化/空き/別選手に置換)。取込ズレ・シードの手動修正用。
 // data = { mode: "bye"|"clear"|"player", name, team, player_id, entrant_id }
 function setBracketSlot(tournamentId, event, pos, slot, data) {
+  if (_bracketLocked(tournamentId, event)) {
+    return { error: "この種目の表は手動ロック中です。「ロック解除」してから編集してください。", locked: true };
+  }
   if (!event) return { error: "event が必要です" };
   const p = parseInt(pos);
   const s = (parseInt(slot) === 2) ? 2 : 1;
@@ -10405,7 +10438,7 @@ module.exports = {
   parseRosterRows, rosterEventName, enrichRosterRegions, importRoster, normalizeShibuName,   // 名簿(エントリー表)取込
   parseEntryListSheets,   // エントリーリスト形式(タブ=種目)取込
   proximityFromLeaves, computeBracketProximity,   // トーナメント近接警告(作成プラン)
-  getBracket, deleteEventMatches, deleteAllBrackets, deleteRoster, rosterStats, setCourtLayout,
+  getBracket, deleteEventMatches, deleteAllBrackets, deleteRoster, rosterStats, setCourtLayout, setBracketLock,
   // 試合検索 / H2H / 選手統計
   searchMatches, countMatchesForSearch, getSearchFilters,
   getPlayerOpponents, getPlayerEventStats,

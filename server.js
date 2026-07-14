@@ -530,6 +530,13 @@ setInterval(() => { const now = Date.now(); for (const [ip, e] of _ownerFail) if
 function ownerBlocked(ip) { const e = _ownerFail.get(ip); return !!(e && Date.now() <= e.resetAt && e.count >= OWNER_FAIL_MAX); }
 function ownerFailMark(ip) { const now = Date.now(), e = _ownerFail.get(ip); if (!e || now > e.resetAt) _ownerFail.set(ip, { count: 1, resetAt: now + OWNER_FAIL_WINDOW }); else e.count++; }
 function ownerOk(ip) { _ownerFail.delete(ip); }
+// 全選手削除など「全消し」系はオーナーキーの実設定を必須にする(未設定でも管理キーに落ちない)。
+function requireOwnerStrict(req, res, next) {
+  if (!OWNER_KEY) {
+    return res.status(403).json({ error: "この操作にはオーナーキー(OWNER_KEY)の設定が必要です。サーバ環境変数 OWNER_KEY を設定し、「システム管理（オーナー）」ページから実行してください。" });
+  }
+  return requireOwner(req, res, next);
+}
 function requireOwner(req, res, next) {
   const ip = clientIp(req);
   if (ownerBlocked(ip)) return res.status(429).json({ error: "試行回数が多すぎます。しばらく待ってから再試行してください。" });
@@ -997,7 +1004,7 @@ app.delete("/api/players/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 // 全選手削除の素の経路もオーナーへ隔離(UIは確認付きの /api/owner/players/delete-all を使う)。
-app.delete("/api/players", requireOwner, (req, res) => {
+app.delete("/api/players", requireOwnerStrict, (req, res) => {
   auditOwner(req, "players_delete_all_raw", "");
   db.deleteAllPlayers(); res.json({ ok: true });
 });
@@ -3225,7 +3232,7 @@ app.get("/api/owner/db-download", requireOwner, async (req, res) => {
   } catch (e) { res.status(500).json({ error: "DB保存に失敗しました: " + e.message }); }
 });
 // 全選手の削除 (取り返しのつかない操作)。実行前に自動バックアップ + 件数の打鍵確認 + 実施者名を要求。
-app.post("/api/owner/players/delete-all", requireOwner, async (req, res) => {
+app.post("/api/owner/players/delete-all", requireOwnerStrict, async (req, res) => {
   const b = req.body || {};
   const operator = ownerOperator(req);
   if (!operator) return res.status(400).json({ error: "実施者名を入力してください（監査ログに記録します）。" });
@@ -3848,11 +3855,19 @@ app.post("/api/tournaments/:id/bracket/import", requireAdmin, (req, res) => {
 });
 
 // ドラッグ&ドロップ: 1回戦の選手位置を入れ替え
+// トーナメント表の手動ロック(種目単位)。ロック中は入替・スロット編集を拒否。
+app.post("/api/tournaments/:id/bracket/lock", requireAdmin, (req, res) => {
+  const { event, locked } = req.body || {};
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.setBracketLock(req.params.id, event, locked === true);
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
 app.post("/api/tournaments/:id/bracket/swap", requireAdmin, (req, res) => {
   const { event, a, b } = req.body || {};
   if (!event || !a || !b) return res.status(400).json({ error: "event, a, b が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
-  const r = db.swapBracketSlots(req.params.id, event, a, b);
+  const r = db.swapBracketSlots(req.params.id, event, a, b, { force: !!req.body?.force });
   if (r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
@@ -3939,7 +3954,7 @@ app.post("/api/tournaments/:id/bracket/swap-match", requireAdmin, (req, res) => 
   const event = req.body && req.body.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
-  const r = db.swapBracketMatches(req.params.id, event, req.body.posA, req.body.posB);
+  const r = db.swapBracketMatches(req.params.id, event, req.body.posA, req.body.posB, { force: !!req.body?.force });
   if (r && r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });

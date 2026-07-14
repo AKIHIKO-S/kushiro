@@ -11324,7 +11324,12 @@ const O = {
    setRev: (rev) => { O._bracketRev = O._bracketRev || {}; if (rev) O._bracketRev[event] = rev; },
    reload: () => { if (typeof O._vbReload === "function") O._vbReload(); },
  };
- const editable = !bdata.preview && !opts.readOnly && opts.editable !== false;
+ // 手動ロック(event_config[].bracket_locked): ロック中は閲覧のみ(解除ボタンはタブ行に出す)
+ const cfgLocked = (() => { try {
+   return !!(((typeof O._eventConfig === "function" && O._eventConfig()) || []).find(c => c && c.name === event) || {}).bracket_locked;
+ } catch (e) { return false; } })();
+ const editable = !bdata.preview && !opts.readOnly && opts.editable !== false && !cfgLocked;
+ const canLockToggle = !bdata.preview && !opts.readOnly && opts.editable !== false;
  const byRP = {};
  matches.forEach(m => { byRP[(m.bracket_round || 1) + "_" + (m.bracket_pos || 0)] = m; });
  const round1 = matches.filter(m => (m.bracket_round || 1) === 1)
@@ -11354,8 +11359,18 @@ const O = {
 
  // 幾何(px)。罫線は全てこの座標系のSVGに描く=レール/山線/中央joinが構造的にズレない。
  // PC運用前提で横幅を使う: ダブルス/団体はペア名+所属が長いためレールを広く取り2行表示にする。
+ // レール幅は最長の氏名/所属から自動算出(全角=フォントpx・半角=0.55px換算)=見切れゼロ。
  const isDbl = /ダブルス|団体/.test(event || "");
- const ROW_H = isDbl ? 42 : 34, RAIL_W = isDbl ? 330 : 230, ADV_W = 44, CENTER_W = 150, PAD_T = 10, PAD_B = 10;
+ const estW = (s, px) => { let w = 0; for (const ch of String(s || "")) w += ch.charCodeAt(0) > 0xFF ? px : px * 0.55; return w; };
+ let railNeed = 0;
+ leafArr.forEach(lf => {
+   if (!lf) return;
+   const w = isDbl ? Math.max(estW(lf.name, 12.5) + 40, estW(lf.team, 10.5) + 46)
+                   : estW(lf.name, 13) + estW(lf.team, 10.5) + 56;
+   if (w > railNeed) railNeed = w;
+ });
+ const ROW_H = isDbl ? 42 : 34, ADV_W = 44, CENTER_W = 150, PAD_T = 10, PAD_B = 10;
+ const RAIL_W = Math.min(480, Math.max(isDbl ? 330 : 230, Math.ceil(railNeed)));
  const W = RAIL_W * 2 + sideR * ADV_W * 2 + CENTER_W;
  const NSVG = "http://www.w3.org/2000/svg";
  const sline = (svg, x1, y1, x2, y2, wpx, color) => {
@@ -11399,7 +11414,7 @@ const O = {
  // 1ブロックを描く。rails=クリック対象のDOM(選択/検索で使う)
  const buildBlockEl = (b) => {
    const rails = [];
-   const wrap = h("div", { style: { position: "relative", width: W + "px", flex: "0 0 auto" } });
+   const wrap = h("div", { style: { position: "relative", width: W + "px", flex: "0 0 auto", margin: "0 auto" } });
    const svg = document.createElementNS(NSVG, "svg");
    const railInfo = (g, side, idx) => {
      const y0 = PAD_T + idx * ROW_H;
@@ -11430,7 +11445,7 @@ const O = {
      const isL = r.side === "L";
      sline(svg, isL ? 8 : W - RAIL_W, r.lineY, isL ? RAIL_W : W - 8, r.lineY);
      const lf = r.lf;
-     const locked = lockOf(lf);
+     const played = lockOf(lf);   // 進行済み(確定/試合中)の目印。ブロックはしない(確定時にforce確認)
      const noEl = h("span", { style: { fontSize: "11px", color: "#6b7280", minWidth: "22px",
        textAlign: "right", fontVariantNumeric: "tabular-nums", flex: "0 0 auto" } }, String(lf.no));
      const nameEl = h("span", { style: { fontWeight: 700, fontSize: isDbl ? "12.5px" : "13px",
@@ -11443,7 +11458,7 @@ const O = {
           h("div", { style: { paddingLeft: isL ? "28px" : "0", paddingRight: isL ? "0" : "28px", overflow: "hidden" } }, teamEl)]
        : [noEl, nameEl, teamEl];
      const div = h("div", {
-       title: editable ? (locked ? "確定済み/進行中のため動かせません" : "クリックで選択(2人選ぶと入れ替え)") : "",
+       title: editable ? (played ? "進行済みの試合の選手(入替は確認つきで可能)" : "クリックで選択(2人選ぶと入れ替え)") : (cfgLocked ? "手動ロック中(タブ行のロックボタンで解除)" : ""),
        style: {
          // 高さはクリック領域確保のためレール一杯。border-box+paddingBottomで
          // 文字下端を罫線(y0+ROW_H-9)の1px上に固定する(ダブルス2行でも線の下に落ちない)。
@@ -11455,13 +11470,13 @@ const O = {
          alignItems: isDbl ? "stretch" : "flex-end",
          justifyContent: "flex-end",
          textAlign: isL ? "left" : "right",
-         cursor: editable && !locked ? "pointer" : "default",
-         opacity: locked ? 0.55 : 1,
+         cursor: editable ? "pointer" : "default",
+         opacity: 1,
          outlineOffset: "-1px", borderRadius: "4px", overflow: "hidden", whiteSpace: "nowrap",
        },
-       onClick: editable ? (() => O._pbTap(ctx, lf, locked)) : undefined,
-       onMouseenter: (editable && !locked) ? ((e) => { if (e.currentTarget.dataset.pbSel !== "1") e.currentTarget.style.background = "#f3f4f6"; }) : undefined,
-       onMouseleave: (editable && !locked) ? ((e) => { if (e.currentTarget.dataset.pbSel !== "1") e.currentTarget.style.background = "transparent"; }) : undefined,
+       onClick: editable ? (() => O._pbTap(ctx, lf, false)) : undefined,
+       onMouseenter: editable ? ((e) => { if (e.currentTarget.dataset.pbSel !== "1") e.currentTarget.style.background = "#f3f4f6"; }) : undefined,
+       onMouseleave: editable ? ((e) => { if (e.currentTarget.dataset.pbSel !== "1") e.currentTarget.style.background = "transparent"; }) : undefined,
      }, ...content);
      div.dataset.pbG = r.g;
      wrap.appendChild(div);
@@ -11584,6 +11599,20 @@ const O = {
          color: onF ? "#fff" : "#6b7280", border: "1px solid " + (onF ? "#1f2937" : "#d6d3ce") },
        onClick: () => { state.tab = "F"; O._pbBlock[event] = "F"; render(); } }, "決勝T"));
    }
+   if (canLockToggle) {
+     bar.appendChild(h("button", {
+       className: "btn btn-sm" + (cfgLocked ? "" : " btn-ghost"),
+       style: cfgLocked ? { background: "#b45309", color: "#fff", fontWeight: 700 } : {},
+       title: cfgLocked ? "この種目は編集ロック中(クリックで解除)" : "この種目の表を編集ロックする(入替・編集を禁止)",
+       onClick: async () => {
+         if (!cfgLocked && !confirm("この種目の表をロックします。解除するまで入替・編集はできません。よろしいですか？")) return;
+         const r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/lock`, { event, locked: !cfgLocked });
+         if (r && r.error) return toast(r.error, "err");
+         toast(!cfgLocked ? "表をロックしました(編集不可)" : "ロックを解除しました(編集可)", "ok");
+         O._pbClear();
+         ctx.reload();
+       } }, cfgLocked ? "ロック中(解除)" : "ロック"));
+   }
    if (editable) {
      const si = h("input", { className: "input", placeholder: "選手名・チーム・番号で探す",
        style: { marginLeft: "auto", width: "220px", fontSize: "12.5px", padding: "6px 10px" } });
@@ -11682,8 +11711,12 @@ const O = {
    const a = O._pbSel, b = O._pbSel2;
    if (!a || !b) return;
    try {
-     const r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/swap`,
-       { event: ctx.event, a: { pos: a.pos, slot: a.slot }, b: { pos: b.pos, slot: b.slot }, base_rev: ctx.getRev() });
+     const payload = { event: ctx.event, a: { pos: a.pos, slot: a.slot }, b: { pos: b.pos, slot: b.slot }, base_rev: ctx.getRev() };
+     let r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/swap`, payload);
+     if (r && r.needs_force) {
+       if (!confirm(r.error + "\n\n続行しますか？")) return;
+       r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/swap`, Object.assign({ force: true }, payload));
+     }
      if (r && r.conflict) { toast(r.error || "他の端末で更新されました", "err"); O._pbClear(); ctx.reload(); return; }
      if (r && r.error) return toast(r.error, "err");
      if (r && r.bracket_rev) ctx.setRev(r.bracket_rev);
