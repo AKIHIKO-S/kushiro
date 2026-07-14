@@ -1263,6 +1263,7 @@
 <div class="tabs">
  <div class="tabs-in">
  <button class="tab active" data-tab="tournaments">大会</button>
+ <button class="tab" data-tab="entries">申込一覧</button>
  <button class="tab" data-tab="operations">進行 LIVE</button>
  <button class="tab" data-tab="players">選手</button>
  <details class="op-tools nav-more" id="navMore">
@@ -1360,7 +1361,18 @@
  <div class="tab-panel hidden" id="tab-tournament-detail"></div>
 
  <!-- 出場選手 (Entrants) - 詳細編集タブ -->
- <div class="tab-panel hidden" id="tab-entrants">
+ <div class="tab-panel hidden" id="tab-entries">
+ <div class="card">
+ <div class="flex gap-2" style="align-items:center;flex-wrap:wrap;margin-bottom:10px">
+ <h2 style="margin:0;font-size:16px">申込一覧</h2>
+ <label class="text-sm" style="margin-left:8px">大会:</label>
+ <select class="input input-sm" id="entTournamentSel" style="width:280px"></select>
+ <button class="btn btn-sm btn-ghost" onclick="A.initEntriesPage()">更新</button>
+ </div>
+ <div id="entriesMain"></div>
+ </div>
+</div>
+<div class="tab-panel hidden" id="tab-entrants">
  <div class="card">
  <div class="card-head">
  <div class="card-title">出場選手 管理</div>
@@ -1696,7 +1708,7 @@ const A = {
      A.showTab("tournaments", true);
    }
  } else {
-   A.showTab(["tournaments","players","operations","entrants","bracket-mgmt","import","external-forms","api","coaches"].includes(type) ? type : "tournaments", true);
+   A.showTab(["tournaments","entries","players","operations","entrants","bracket-mgmt","import","external-forms","api","coaches"].includes(type) ? type : "tournaments", true);
  }
  },
 
@@ -1722,6 +1734,7 @@ const A = {
  // タブ切替もブラウザ履歴に積む
  if (!skipHash && location.hash.slice(1) !== name) location.hash = name;
  if (name === "tournaments") A.renderTournaments();
+ else if (name === "entries") A.initEntriesPage();
  else if (name === "players") A.renderPlayers();
  else if (name === "operations") O.init();
  else if (name === "entrants") EnT.init();
@@ -2867,7 +2880,7 @@ const A = {
  const s2 = chip("確認中…", "");
  mk(2, "申込を確認する",
    "届いた申込を一覧で確認・承認。Googleフォームの集計とも連携できます。", s2, [
-   h("button", { className: "btn btn-sm", onClick: () => A.openEntriesFullView(t) }, "申込一覧を見る"),
+   h("button", { className: "btn btn-sm", onClick: () => { A._entriesTid = t.id; A.showTab("entries"); } }, "申込一覧を見る"),
    h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.fetchGasStats(t) }, "Googleフォーム集計を取得"),
  ]);
 
@@ -5268,7 +5281,8 @@ const A = {
 
 
  // ── 申込一覧 (大きいモーダル + 種目タブ + データ品質パネル / Phase4) ──
- async openEntriesFullView(t) {
+ // 申込一覧: 専用タブ(#tab-entries)にも同じ画面を描く(opts.panel指定時はモーダルを開かない)。
+ async openEntriesFullView(t, opts) {
  const catLabel = { general: "一般", high: "高校", middle: "中学", elementary: "小学",
    university: "大学", senior: "シニア", junior: "ジュニア", youth: "ユース", large: "ラージ" };
  const divLabel = (e) => {
@@ -5285,12 +5299,40 @@ const A = {
  let issueMap = {};   // entrant id -> 不整合item
  let issueTotal = 0;
  let activeTab = "all";
+ // ソート/フィルタ状態と、生成済みトーナメント表との突合(種目→配置済みentrant idの集合)
+ let sortKey = null, sortDir = 1;
+ let fltText = "", fltStatus = "all", fltGender = "all", fltShibu = "all", fltUnplaced = false;
+ let placedByEvent = {};   // event → Set(entrant_id) (bracket_round=1のリーフ)
+ const compareBar = h("div", { style: { marginBottom: "10px" } });
  const qualityBar = h("div", { style: { marginBottom: "12px" } });
  const tabStrip = h("div", { className: "flex", style: { gap: "6px", flexWrap: "wrap", marginBottom: "12px" } });
  const tableWrap = h("div", { style: { overflow: "auto", maxHeight: "calc(86vh - 210px)" } });
  const summary = h("div", { className: "text-sub", style: { fontSize: "13px", marginBottom: "10px" } });
  const eventsList = () => [...new Set(entries.map(e => e.entry_event).filter(Boolean))].sort();
- const filtered = () => activeTab === "all" ? entries : entries.filter(e => e.entry_event === activeTab);
+ const filtered = () => {
+   let rows = activeTab === "all" ? entries.slice() : entries.filter(e => e.entry_event === activeTab);
+   const q = fltText.trim();
+   if (q) rows = rows.filter(e => [e.name, e.furigana, e.team, e.partner_name].some(v => String(v || "").includes(q)));
+   if (fltStatus !== "all") rows = rows.filter(e => (e.entry_status || "confirmed") === fltStatus);
+   if (fltGender !== "all") rows = rows.filter(e => (e.gender || "male") === fltGender);
+   if (fltShibu !== "all") rows = rows.filter(e => (e.region || "") === fltShibu);
+   if (fltUnplaced) rows = rows.filter(e => placedByEvent[e.entry_event] && !placedByEvent[e.entry_event].has(e.id));
+   if (sortKey) {
+     const val = (e) => sortKey === "name" ? (e.furigana || e.name || "")
+       : sortKey === "team" ? (e.team || "")
+       : sortKey === "region" ? (e.region || "")
+       : sortKey === "event" ? (e.entry_event || "")
+       : sortKey === "seed" ? ((parseInt(e.seed) || 0) >= 1 ? parseInt(e.seed) : 9999)
+       : sortKey === "er" ? (parseInt(e.entry_round) || 1)
+       : sortKey === "applied" ? String(e.applied_at || "")
+       : sortKey === "status" ? (e.entry_status || "confirmed")
+       : sortKey === "placed" ? (placedByEvent[e.entry_event] ? (placedByEvent[e.entry_event].has(e.id) ? 0 : 1) : 2)
+       : "";
+     rows.sort((a, b) => { const x = val(a), y = val(b);
+       return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "ja")) * sortDir; });
+   }
+   return rows;
+ };
  const cntOf = (ev) => entries.filter(e => e.entry_event === ev).length;
  const renderTabs = () => {
    clear(tabStrip);
@@ -5344,11 +5386,19 @@ const A = {
    if (!rows.length) { tableWrap.appendChild(h("div", { className: "text-sub", style: { padding: "18px" } },
      "この種目の申込はまだありません。")); return; }
    const tbl = h("table", { className: "tbl" });
+   // 列見出しクリックで並び替え(再クリックで昇降反転)
+   const sth = (key, label, titleTxt) => h("th", {
+     style: { cursor: "pointer", whiteSpace: "nowrap", userSelect: "none" },
+     title: titleTxt || "クリックで並び替え",
+     onClick: () => { if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = 1; } renderTable(); } },
+     label + (sortKey === key ? (sortDir === 1 ? " ▲" : " ▼") : ""));
    tbl.appendChild(h("thead", {}, h("tr", {},
-     h("th", {}, "状態"), h("th", {}, "氏名"), h("th", {}, "所属"), h("th", {}, "連絡先"),
-     h("th", {}, "区分"), h("th", {}, "種目"), h("th", {}, "シード"),
-     h("th", { title: "登場ラウンド(スーパーシード): 1=1回戦から / R=R回戦から登場(予選免除)" }, "登場R"),
-     h("th", {}, "申込日"), h("th", {}, "操作"))));
+     sth("status", "状態"), sth("name", "氏名", "ふりがな順で並び替え"), sth("team", "所属"), sth("region", "支部"),
+     h("th", {}, "連絡先"),
+     h("th", {}, "区分"), sth("event", "種目"), sth("seed", "シード"),
+     sth("er", "登場R", "登場ラウンド(スーパーシード): 1=1回戦から / R=R回戦から登場(予選免除)"),
+     sth("applied", "申込日"), sth("placed", "表", "生成済みトーナメント表に配置されているか"),
+     h("th", {}, "操作"))));
    const tbody = h("tbody", {});
    rows.forEach(e => {
      const status = e.entry_status || "confirmed";
@@ -5362,6 +5412,7 @@ const A = {
          e.is_doubles && e.partner_name ? h("span", { className: "text-xs text-sub", style: { display: "block", fontWeight: 400 } }, `/ ${e.partner_name}`) : null,
          members),
        h("td", {}, e.team || "未登録"),
+       h("td", { className: "text-xs" }, e.region || h("span", { className: "text-sub" }, "-")),
        h("td", { className: "text-xs text-sub", title: [e.contact_email, e.contact_tel].filter(Boolean).join(" / ") },
          e.contact_name || "未登録"),
        h("td", {}, h("span", { className: "badge badge-ghost" }, divLabel(e)),
@@ -5384,6 +5435,13 @@ const A = {
            { value: String(r), selected: (parseInt(e.entry_round) || 1) === r ? "" : null },
            r === 1 ? "1回戦から(通常)" : r + "回戦から" + (r >= 3 ? "（SS）" : ""))))),
        h("td", { className: "text-xs text-sub" }, e.applied_at ? String(e.applied_at).split(" ")[0] : "未登録"),
+       h("td", {}, (() => {   // 生成済みトーナメント表との対比
+         const set = placedByEvent[e.entry_event];
+         if (!set) return h("span", { className: "text-xs text-sub" }, "表なし");
+         return set.has(e.id)
+           ? h("span", { className: "badge badge-ok", title: "トーナメント表に配置済み" }, "配置済")
+           : h("span", { className: "badge badge-warn", title: "表は生成済みですがこの選手は入っていません(後から追加された申込等)。再生成か手動追加を検討" }, "未配置");
+       })()),
        h("td", { className: "flex gap-1" },
          h("button", { className: "btn btn-sm btn-ghost", title: "氏名・所属・ダブルスのペア(相方)などを編集",
            onClick: async () => {
@@ -5398,8 +5456,45 @@ const A = {
    tbl.appendChild(tbody);
    tableWrap.appendChild(tbl);
  };
+ const renderCompare = () => {
+   clear(compareBar);
+   const evs = Object.keys(placedByEvent);
+   if (!evs.length) return;
+   const chips = [];
+   evs.sort().forEach(ev => {
+     const set = placedByEvent[ev];
+     const roster = entries.filter(e => e.entry_event === ev && (e.entry_status || "confirmed") === "confirmed");
+     const placed = roster.filter(e => set.has(e.id)).length;
+     const unplaced = roster.length - placed;
+     const rosterIds = new Set(entries.filter(e => e.entry_event === ev).map(e => e.id));
+     const extraCnt = [...set].filter(id => !rosterIds.has(id)).length;   // 表のみ(名簿に無い)
+     chips.push(h("span", { className: "badge " + (unplaced || extraCnt ? "badge-warn" : "badge-ok"),
+       style: { fontWeight: 700 },
+       title: ev + ": 承認済み名簿" + roster.length + "名 / 表に配置" + placed + " / 未配置" + unplaced + (extraCnt ? " / 表のみ(名簿外)" + extraCnt : "") },
+       ev + " " + placed + "/" + roster.length + (unplaced ? "（未配置" + unplaced + "）" : "") + (extraCnt ? "（表のみ" + extraCnt + "）" : "")));
+   });
+   compareBar.appendChild(h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center",
+     padding: "8px 12px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px" } },
+     h("span", { className: "text-xs", style: { fontWeight: 700 } }, "表との対比:"), ...chips,
+     h("label", { className: "text-xs", style: { marginLeft: "auto", display: "inline-flex", gap: "4px", alignItems: "center", cursor: "pointer" } },
+       (() => { const c = h("input", { type: "checkbox" }); c.checked = fltUnplaced;
+         c.addEventListener("change", () => { fltUnplaced = c.checked; renderTable(); }); return c; })(),
+       "未配置のみ表示")));
+ };
  const load = async () => {
    try { entries = await api.get(`/api/tournaments/${t.id}/entries`) || []; } catch (e) { entries = []; }
+   // 生成済みトーナメント表との突合: 1回戦リーフの entrant_id を種目別に集合化
+   placedByEvent = {};
+   try {
+     // fingerprint ETagはスロット編集では変わらないため、常に最新を引くようキャッシュバスターを付ける
+     const ms = await api.get(`/api/public/tournaments/${t.id}/matches?ts=` + Date.now()) || [];
+     (Array.isArray(ms) ? ms : []).forEach(m => {
+       if ((m.bracket_round || 0) !== 1) return;
+       const s = placedByEvent[m.event] = placedByEvent[m.event] || new Set();
+       if (m.player1_entrant_id) s.add(m.player1_entrant_id);
+       if (m.player2_entrant_id) s.add(m.player2_entrant_id);
+     });
+   } catch (e) { placedByEvent = {}; }
    issueMap = {}; issueTotal = 0;
    try {
      const iss = await api.get(`/api/tournaments/${t.id}/entry-issues`);
@@ -5412,9 +5507,28 @@ const A = {
    const pend = entries.filter(e => (e.entry_status || "confirmed") === "pending").length;
    summary.textContent = `申込 ${entries.length}件 ・ 種目 ${eventsList().length} ・ 承認待ち ${pend}`
      + (issueTotal ? ` ・ 要確認 ${issueTotal}` : "");
+   refreshShibu();
    if (activeTab !== "all" && !eventsList().includes(activeTab)) activeTab = "all";
-   renderQuality(); renderTabs(); renderTable();
+   renderQuality(); renderTabs(); renderCompare(); renderTable();
  };
+ // ── フィルタバー(検索/状態/性別/支部) ──
+ const mkSel = (defs, onCh) => { const s = h("select", { className: "input input-sm", style: { width: "auto" } },
+   ...defs.map(([v, l]) => h("option", { value: v }, l)));
+   s.addEventListener("change", () => onCh(s.value)); return s; };
+ const searchIn = h("input", { className: "input input-sm", placeholder: "氏名・ふりがな・所属で検索", style: { width: "220px" } });
+ searchIn.addEventListener("input", () => { clearTimeout(searchIn._t); searchIn._t = setTimeout(() => { fltText = searchIn.value; renderTable(); }, 250); });
+ const shibuSel = mkSel([["all", "支部: 全て"]], (v) => { fltShibu = v; renderTable(); });
+ const refreshShibu = () => {
+   const cur = shibuSel.value;
+   shibuSel.replaceChildren(h("option", { value: "all" }, "支部: 全て"),
+     ...[...new Set(entries.map(e => e.region).filter(Boolean))].sort().map(r => h("option", { value: r, selected: r === cur ? "" : null }, r)));
+ };
+ const filterBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } },
+   searchIn,
+   mkSel([["all", "状態: 全て"], ["confirmed", "承認済み"], ["pending", "申込中"], ["rejected", "却下"]], (v) => { fltStatus = v; renderTable(); }),
+   mkSel([["all", "性別: 全て"], ["male", "男子"], ["female", "女子"], ["mixed", "混合"]], (v) => { fltGender = v; renderTable(); }),
+   shibuSel,
+   h("span", { className: "text-xs text-sub" }, "列見出しクリックで並び替え"));
  const ssNote = h("div", { className: "text-xs text-sub", style: { margin: "0 0 8px", padding: "7px 10px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: "7px", lineHeight: "1.6" } },
    h("b", {}, "登場回戦（スーパーシード）"), "：紙の組合せ表で「罫線が大きい＝後の回戦から登場」。",
    "取込後はこの表の「登場R」で各選手を ", h("b", {}, "1回戦から（通常）/ 2回戦から / 3回戦から（SS）…"),
@@ -5471,12 +5585,43 @@ const A = {
      await load();
    } }, "出場者を一括削除");
  const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", marginTop: "10px" } }, genBtn, previewBtn, bulkDelBtn);
- const body = h("div", {}, summary, qualityBar, tabStrip, ssNote, tableWrap, btnBar, previewBox);
- const modalBg = openModal(`申込一覧：${t.name}`, body,
-   h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
- const box = modalBg && modalBg.querySelector ? modalBg.querySelector(".modal-box") : null;
- if (box) { box.style.width = "94vw"; box.style.maxWidth = "1120px"; box.style.height = "86vh"; }
+ const body = h("div", {}, summary, compareBar, qualityBar, tabStrip, filterBar, ssNote, tableWrap, btnBar, previewBox);
+ if (opts && opts.panel) {
+   // 専用ページ(タブ)描画: モーダルを開かず、高さ制限も外して画面全体で見せる
+   tableWrap.style.maxHeight = "";
+   opts.panel.replaceChildren(body);
+ } else {
+   const modalBg = openModal(`申込一覧：${t.name}`, body,
+     h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
+   const box = modalBg && modalBg.querySelector ? modalBg.querySelector(".modal-box") : null;
+   if (box) { box.style.width = "94vw"; box.style.maxWidth = "1120px"; box.style.height = "86vh"; }
+ }
  await load();
+ },
+
+ // ── 申込一覧タブ(#tab-entries): 大会セレクタ+openEntriesFullView(panel描画) ──
+ _entriesTid: null,
+ async initEntriesPage() {
+   const sel = document.getElementById("entTournamentSel");
+   const main = document.getElementById("entriesMain");
+   if (!sel || !main) return;
+   if (!A.state.tournaments || !A.state.tournaments.length) { try { await A.reload(); } catch (e) {} }
+   const ts = A.state.tournaments || [];
+   sel.replaceChildren(h("option", { value: "" }, "— 大会を選択 —"),
+     ...ts.map(x => h("option", { value: x.id, selected: A._entriesTid === x.id ? "" : null },
+       x.name + (x.date ? "（" + x.date + "）" : ""))));
+   sel.onchange = () => { A._entriesTid = sel.value || null; A.renderEntriesInto(); };
+   if (!A._entriesTid && ts.length) { A._entriesTid = ts[0].id; }
+   sel.value = A._entriesTid || "";
+   A.renderEntriesInto();
+ },
+ renderEntriesInto() {
+   const main = document.getElementById("entriesMain");
+   if (!main) return;
+   const t = (A.state.tournaments || []).find(x => x.id === A._entriesTid);
+   if (!t) { main.replaceChildren(h("div", { className: "text-sub", style: { padding: "16px" } }, "大会を選択してください")); return; }
+   main.replaceChildren(h("div", { className: "text-sub", style: { padding: "16px" } }, "読込中…"));
+   A.openEntriesFullView(t, { panel: main });
  },
 
   editEntrySettings(t) {
