@@ -9561,13 +9561,33 @@ const O = {
  const cols = O.state.tournament.court_cols || 11;
  const allPlayers = await api.get("/api/players?sort=furigana");
 
- // ===== ① 対戦ピッカー (種目別グループ・クリックで選択) =====
+ // ===== ① 対戦ピッカー (種目チップで切替+クリックで選択) =====
+ let evFilter = (opts.match && opts.match.event) || "all";   // コート選択起点は「すべて」から種目で絞れる
+ const evChipsWrap = h("div", { style: { display: "flex", gap: "5px", flexWrap: "wrap", margin: "0 0 6px" } });
  const matchListWrap = h("div", { style: { maxHeight: "240px", overflowY: "auto",
    border: "1px solid var(--border)", borderRadius: "8px", padding: "6px", background: "#f8fafc" } });
+ const renderEvChips = () => {
+   evChipsWrap.replaceChildren();
+   const cnt = {};
+   callable.forEach(m => { const ev = m.event || "その他"; cnt[ev] = (cnt[ev] || 0) + 1; });
+   const evs = Object.keys(cnt);
+   if (evs.length <= 1) return;   // 1種目なら切替不要
+   const chip = (key, label, n) => h("button", {
+     className: "btn btn-sm" + (evFilter === key ? "" : " btn-ghost"),
+     style: { fontSize: "12px", padding: "3px 10px" },
+     onClick: () => { evFilter = key; renderEvChips(); renderMatchList(); } },
+     label + (n != null ? " (" + n + ")" : ""));
+   evChipsWrap.appendChild(chip("all", "すべて", callable.length));
+   evs.forEach(ev => evChipsWrap.appendChild(chip(ev, ev, cnt[ev])));
+ };
  const renderMatchList = () => {
    matchListWrap.innerHTML = "";
    const byEv = {};
-   callable.forEach(m => { (byEv[m.event || "その他"] = byEv[m.event || "その他"] || []).push(m); });
+   callable.filter(m => evFilter === "all" || (m.event || "その他") === evFilter)
+     .forEach(m => { (byEv[m.event || "その他"] = byEv[m.event || "その他"] || []).push(m); });
+   if (!Object.keys(byEv).length) {
+     matchListWrap.appendChild(h("div", { className: "text-sub", style: { padding: "10px" } }, "この種目に呼べる対戦はありません"));
+   }
    Object.entries(byEv).forEach(([ev, ms]) => {
      matchListWrap.appendChild(h("div", { style: { display: "flex", alignItems: "center", gap: "6px",
        margin: "4px 2px 3px", fontSize: "11px", fontWeight: 700, color: "var(--ink-700)" } },
@@ -9708,13 +9728,13 @@ const O = {
    updateFoot();
  };
 
- renderMatchList(); refreshChips(); refreshRefUI(); onMatchChange();
+ renderEvChips(); renderMatchList(); refreshChips(); refreshRefUI(); onMatchChange();
 
  const body = h("div", {},
    warnEl,
    h("div", { className: "field" },
      h("label", { className: "field-label" }, "① 対戦を選ぶ"),
-     matchListWrap),
+     evChipsWrap, matchListWrap),
    h("div", { className: "field" },
      h("label", { className: "field-label" }, "② コートを選ぶ"),
      tableChips, teamHint),
