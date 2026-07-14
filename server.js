@@ -1960,6 +1960,7 @@ app.post("/api/tournaments/:id/roster/preview", requireAdmin, upload.single("fil
 app.post("/api/tournaments/:id/roster/commit", requireAdmin, (req, res) => {
   const r = db.importRoster(req.params.id, {
     mode: req.body?.mode, open: req.body?.open === true,
+    split_gender: req.body?.split_gender === true,   // direct: 種目名を男子/女子(/混合)に分割
     register_players: req.body?.register_players !== false,   // 既定=初参加を選手DBに登録
     entries: req.body?.entries,
   });

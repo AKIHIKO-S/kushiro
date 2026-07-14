@@ -4180,6 +4180,11 @@ function parseEntryListSheets(sheets) {
     const kubunLabel = name.replace(/(シングルス|ダブルス)\s*$/, "").trim() || name;
     const kb = _parseKubun(kubunLabel);
     const cellAt = (r, i) => (i >= 0 ? String((r && r[i]) == null ? "" : r[i]).trim() : "");
+    // 行ごとの区分/性別列(「一般女子」「高校男子」等)。あれば行の値がシート名由来より優先。
+    // シート名だけで性別が確定するのは「男子/女子/混合」を含み「男女」を含まないとき。
+    const iKubun = col(["区分", "種別", "部門", "カテゴリ", "カテゴリー", "性別"]);
+    const sheetGenderKnown = /男子|女子|混合|ミックス/.test(name) && !/男女/.test(name);
+    const rowKb = (r) => { const v = cellAt(r, iKubun); return v ? _parseKubun(v) : null; };
 
     if (iName1 >= 0) {
       // ダブルス種目シート
@@ -4210,7 +4215,10 @@ function parseEntryListSheets(sheets) {
         else if (sp.multi === 2) issues.push({ sheet: name, row: idx, level: "info", msg: n1 + "組: 支部連記「" + raw + "」→ " + n1 + "=「" + sp.r1 + "」/ " + n2 + "=「" + sp.r2 + "」" });
         else if (raw && sp.r1 !== raw) issues.push({ sheet: name, row: idx, level: "info", msg: n1 + "組: 支部「" + raw + "」→「" + sp.r1 + "」に正規化" });
         if (iShibu >= 0 && !raw) issues.push({ sheet: name, row: idx, level: "warn", msg: n1 + "/" + n2 + "組: 支部が空欄(DB照合で補完・無ければ保留)" });
-        entries.push({ type: "doubles", event: name, kubun: kb.label, gender: kb.gender, division: kb.division, age_label: kb.age_label,
+        const kbr = rowKb(r);
+        entries.push({ type: "doubles", event: name,
+          kubun: (kbr || kb).label, gender: (kbr || kb).gender, division: (kbr || kb).division, age_label: (kbr || kb).age_label,
+          gender_known: !!kbr || sheetGenderKnown,
           name: n1, team: t1, region: sp.r1, partner_name: n2, partner_team: t2, partner_region: sp.r2,
           srcRow: idx, sheet: name });
       });
@@ -4240,7 +4248,10 @@ function parseEntryListSheets(sheets) {
         const region = normalizeShibuName(raw);
         if (raw && region !== raw) issues.push({ sheet: name, row: idx, level: "info", msg: nm + ": 支部「" + raw + "」→「" + region + "」に正規化" });
         if (iShibu >= 0 && !raw) issues.push({ sheet: name, row: idx, level: "warn", msg: nm + "(" + tm + "): 支部が空欄(DB照合で補完・無ければ保留)" });
-        entries.push({ type: "singles", event: name, kubun: kb.label, gender: kb.gender, division: kb.division, age_label: kb.age_label,
+        const kbr = rowKb(r);
+        entries.push({ type: "singles", event: name,
+          kubun: (kbr || kb).label, gender: (kbr || kb).gender, division: (kbr || kb).division, age_label: (kbr || kb).age_label,
+          gender_known: !!kbr || sheetGenderKnown,
           name: nm, team: tm, region, srcRow: idx, sheet: name });
       });
     } else if (isEventLike) {
@@ -4305,16 +4316,33 @@ function importRoster(tournamentId, payload) {
   const registerPlayers = payload.register_players !== false;
   const dup = sqlite.prepare(`SELECT id FROM entrants WHERE tournament_id=? AND event=? AND name=? AND team=? AND partner_name=? LIMIT 1`);
   let created = 0, skippedDup = 0, playerNew = 0, playerLinked = 0, playerSkipped = 0;
+  const genderWarns = [];
+  // direct + split_gender: 種目名を性別で男子/女子(/混合)に分ける。
+  //  「男女シングルス」→「男子シングルス/女子シングルス」 / 既に男子・女子入り→そのまま /
+  //  それ以外(「シングルス」等)→ 性別を前置。性別が判定できない行は元の種目名に残して警告。
+  const splitGender = mode === "direct" && payload.split_gender === true;
+  const genderPrefix = (g) => g === "female" ? "女子" : g === "mixed" ? "混合" : "男子";
+  const splitEventName = (ev, e) => {
+    if (/男子|女子|混合|ミックス/.test(ev) && !/男女/.test(ev)) return ev;   // 既に性別入り
+    const known = e.gender_known !== false && !!e.gender;
+    if (!known) {
+      if (genderWarns.length < 40) genderWarns.push((e.name || "?") + ": 性別を判定できないため「" + ev + "」のまま取り込みました(区分列に「一般女子」等を入れるかプレビューで性別を指定してください)");
+      return ev;
+    }
+    const g = genderPrefix(e.gender);
+    return /男女/.test(ev) ? ev.replace(/男女/g, g) : (g + ev);
+  };
   // 選手スナップショット(1回だけ全件取得)。連携中に作った選手は push して次の照合に反映=全件DB走査の反復を避ける。
   const playerPool = registerPlayers ? stmts.getPlayers.all() : null;
   const eventsUsed = new Map();   // name → type
   const txn = sqlite.transaction(() => {
     for (const e of entries) {
       if (!e || !String(e.name || "").trim()) continue;
-      const ev = mode === "direct"
+      let ev = mode === "direct"
         ? String(e.event || "").replace(/[ -]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60)   // 制御文字除去+空白圧縮+60字上限
         : rosterEventName(e, mode);
       if (!ev) continue;
+      if (splitGender) ev = splitEventName(ev, e);
       eventsUsed.set(ev, e.type === "doubles" ? "doubles" : "singles");
       // 重複チェックは「格納と同じ正規化後の氏名」で照合する(buildEntrantNames が空白を整えるため、
       // 生の氏名で照合すると全角空白などの表記で二重登録がすり抜ける)。
@@ -4355,7 +4383,8 @@ function importRoster(tournamentId, payload) {
   });
   txn();
   return { ok: true, created, skipped_duplicate: skippedDup, events: [...eventsUsed.keys()], mode,
-    players_new: playerNew, players_linked: playerLinked, players_skipped: playerSkipped, register_players: registerPlayers };
+    players_new: playerNew, players_linked: playerLinked, players_skipped: playerSkipped, register_players: registerPlayers,
+    ...(genderWarns.length ? { gender_warnings: genderWarns } : {}) };
 }
 
 // ── トーナメント近接警告(作成プランのポカヨケ) ──
@@ -4687,9 +4716,10 @@ function checkDrawReadiness(tournamentId, event) {
   if (pending.length) issues.push({ level: "warn", code: "pending", msg: `承認待ちが${pending.length}件あります(このままだと抽選対象外)。先に承認するか確認してください` });
   // 枠数は drawSingleBracket と同じ会計(シード付きのみスーパーシード重み 2^(min(R,8)-1)、
   // シード無しの entry_round 指定は抽選で1回戦扱いのため重みに数えない) → 表示と実抽選を一致させる。
+  // 会計は抽選本体と同式: シード番号なしの登場回戦指定も自動補完されるため重みに数える。
   const totalW = confirmed.reduce((s, e) => {
     const R = Math.max(1, Math.min(8, parseInt(e.entry_round) || 1));
-    return s + (((parseInt(e.seed) || 0) >= 1) ? Math.pow(2, R - 1) : 1);
+    return s + ((((parseInt(e.seed) || 0) >= 1) || R > 1) ? Math.pow(2, R - 1) : 1);
   }, 0);
   const size = Math.pow(2, Math.ceil(Math.log2(Math.max(2, totalW))));
   const seedMap = {};
@@ -4706,7 +4736,7 @@ function checkDrawReadiness(tournamentId, event) {
       .map(e => Math.max(1, Math.min(8, parseInt(e.entry_round) || 1))));
     if (Math.pow(2, maxR - 1) > size / 2) issues.push({ level: "block", code: "entry_round_overflow", msg: "登場ラウンド(スーパーシード)が選手数に対し大きすぎます。登場ラウンドを下げてください" });
     const ssNoSeed = confirmed.filter(e => (parseInt(e.seed) || 0) < 1 && (parseInt(e.entry_round) || 1) > 1);
-    if (ssNoSeed.length) issues.push({ level: "warn", code: "entry_round_no_seed", msg: `登場回戦の指定があるのにシード番号が無い選手が${ssNoSeed.length}名います(抽選では1回戦扱い)` });
+    if (ssNoSeed.length) issues.push({ level: "warn", code: "entry_round_no_seed", msg: `登場回戦の指定があるのにシード番号が無い選手が${ssNoSeed.length}名います(抽選時にシード番号を自動補完します)` });
   }
   // オープン種目(名簿取込 mode=open)はスーパーシード必須
   {
@@ -4716,7 +4746,7 @@ function checkDrawReadiness(tournamentId, event) {
       const _cfg = typeof _t.event_config === "string" ? JSON.parse(_t.event_config || "[]") : (_t.event_config || []);
       isOpenEvent = !!_cfg.find(c => c && c.name === event && c.open);
     } catch (e) { isOpenEvent = false; }
-    if (isOpenEvent && !confirmed.some(e => (parseInt(e.seed) || 0) >= 1 && (parseInt(e.entry_round) || 1) > 1)) {
+    if (isOpenEvent && !confirmed.some(e => (parseInt(e.entry_round) || 1) > 1)) {
       issues.push({ level: "block", code: "open_needs_super_seed", msg: "オープン大会の種目はスーパーシード(登場回戦)が必須です。シード選手に登場回戦を指定してください(確定時に強制も可)" });
     }
     // SS区画とシード標準位置の空間衝突を事前検知: 区画(重み2^(R-1)の整列区画)に他シードの標準
@@ -4761,9 +4791,31 @@ function drawSingleBracket(tournamentId, event, opts) {
   if (entrants.length < 2) {
     return { error: "承認済みの出場選手が2人未満です。申込管理で承認してから抽選してください。", count: entrants.length };
   }
+
+  // ── シード番号なしのスーパーシード(登場回戦だけ指定)を自動補完 ──
+  // 従来は「シード番号が無いため1回戦扱い」に無言降格し、登場回戦の指定が消えていた。
+  // 未使用の最小シード番号をふりがな順に自動で振り(抽選入力のコピー上のみ・entrant行は不変)、
+  // 区画を確保する。恒久的な番号はシード設定パネルで指定するのが正だが、忘れても消えない。
+  const usedSeeds = new Set(entrants.map(e => parseInt(e.seed) || 0).filter(x => x >= 1));
+  const seedlessSS = entrants
+    .filter(e => (parseInt(e.seed) || 0) < 1 && (parseInt(e.entry_round) || 1) > 1)
+    .sort((a, b) => String(a.furigana || a.name).localeCompare(String(b.furigana || b.name), "ja"));
+  const autoSeedMap = new Map();
+  const autoSeedNotes = [];
+  {
+    let nx = 1;
+    for (const e of seedlessSS) {
+      while (usedSeeds.has(nx)) nx++;
+      autoSeedMap.set(e.id, nx); usedSeeds.add(nx);
+      autoSeedNotes.push((e.display_name || e.name) + "→第" + nx + "シード");
+    }
+  }
+  const drawEntrants = autoSeedMap.size
+    ? entrants.map(e => autoSeedMap.has(e.id) ? Object.assign({}, e, { seed: autoSeedMap.get(e.id) }) : e)
+    : entrants;
+
   // 枠数はスーパーシードの消費リーフ(重み 2^(entry_round-1))込みで確保する(checkDrawReadiness と同式)。
-  // シード無しの entry_round 指定は抽選では1回戦扱い(computeDrawLeaves が警告)のため重みに数えない。
-  const totalW = entrants.reduce((s, e) => {
+  const totalW = drawEntrants.reduce((s, e) => {
     const R = Math.max(1, Math.min(8, parseInt(e.entry_round) || 1));
     return s + (((parseInt(e.seed) || 0) >= 1) ? Math.pow(2, R - 1) : 1);
   }, 0);
@@ -4812,7 +4864,7 @@ function drawSingleBracket(tournamentId, event, opts) {
       const _cfg = typeof _t.event_config === "string" ? JSON.parse(_t.event_config || "[]") : (_t.event_config || []);
       isOpenEvent = !!_cfg.find(c => c && c.name === event && c.open);
     } catch (e) { isOpenEvent = false; }
-    if (isOpenEvent && !entrants.some(e => (parseInt(e.seed) || 0) >= 1 && (parseInt(e.entry_round) || 1) > 1)) {
+    if (isOpenEvent && !drawEntrants.some(e => (parseInt(e.entry_round) || 1) > 1)) {
       return { error: "オープン大会の種目はスーパーシード(登場回戦)が必須です。申込管理でシード選手に登場回戦を指定してから抽選を確定してください。", needs_force: true };
     }
   }
@@ -4820,12 +4872,13 @@ function drawSingleBracket(tournamentId, event, opts) {
     ? ((+opts.draw_seed) >>> 0) : randomSeed();
   const rng = mulberry32(drawSeed);
   const sep = opts.separate_by === "region" ? "region" : opts.separate_by === "none" ? "none" : "team";
-  const { leaves, warnings, r1_same_club: r1SameClub } = computeDrawLeaves(entrants, size, rng, { separateBy: sep, blockSizes });
-  const seededCount = entrants.filter(e => (parseInt(e.seed) || 0) >= 1).length;
+  const { leaves, warnings, r1_same_club: r1SameClub } = computeDrawLeaves(drawEntrants, size, rng, { separateBy: sep, blockSizes });
+  if (autoSeedNotes.length) warnings.unshift("シード番号を自動補完(登場回戦の指定を保つため): " + autoSeedNotes.join("・"));
+  const seededCount = drawEntrants.filter(e => (parseInt(e.seed) || 0) >= 1).length;
   const byeCount = size - entrants.length;
   const cell = (e) => e ? { name: e.display_name || e.name, team: e.team || "", seed: (parseInt(e.seed) || 0) || null }
     : { bye: true };
-  const ssCount = entrants.filter(e => (parseInt(e.seed) || 0) >= 1 && (parseInt(e.entry_round) || 1) > 1).length;
+  const ssCount = drawEntrants.filter(e => (parseInt(e.seed) || 0) >= 1 && (parseInt(e.entry_round) || 1) > 1).length;
   // 近接警告(プラン段階のポカヨケ): 同チーム/同支部が番号10以内(釧路支部同士は除外)
   const prox = proximityFromLeaves(leaves);
   const meta = {
