@@ -3965,6 +3965,15 @@ app.post("/api/tournaments/:id/bracket/swap-match", requireAdmin, (req, res) => 
   if (r && r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
+// 罫線の自由配線編集: 試合の進出先を組み替える。body: { event, match_id, target_match_id, target_slot, base_rev, force }
+app.post("/api/tournaments/:id/bracket/relink", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (!b.event) return res.status(400).json({ error: "event が必要です" });
+  if (bracketRevStale(req.params.id, b.event, b)) return sendBracketConflict(res, req.params.id, b.event);
+  const r = db.relinkBracketMatch(req.params.id, b.event, b.match_id, b.target_match_id, b.target_slot, { force: !!b.force });
+  if (r && r.error) return res.status(400).json(r);
+  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, b.event) });
+});
 // 選手マスタDBから枠へ(未エントリーは自動で出場追加)。body: { event, pos, slot, player_id, base_rev }
 app.post("/api/tournaments/:id/bracket/set-slot-from-player", requireAdmin, (req, res) => {
   const event = req.body && req.body.event;

@@ -4777,13 +4777,16 @@ function _drawEntrantSnapshot(ents) {
 // 組合せ編集が偽の競合(409)になるため。結果の同時編集は別系統(finish の競合ガード)で保護する。
 function bracketRev(tournamentId, event) {
   try {
+    // next_match_id/next_slot も材料に含める(罫線の自由配線=relinkBracketMatchは氏名を
+    // 変えず配線だけを書き換えるため、これが無いと配線編集を検知できず楽観ロックに穴が空く)。
     const rows = sqlite.prepare(
       `SELECT id, COALESCE(player1_entrant_id,'') p1, COALESCE(player2_entrant_id,'') p2,
-              COALESCE(player1_name,'') n1, COALESCE(player2_name,'') n2
+              COALESCE(player1_name,'') n1, COALESCE(player2_name,'') n2,
+              COALESCE(next_match_id,'') nm, COALESCE(next_slot,1) ns
          FROM matches WHERE tournament_id=? AND event=? ORDER BY id`
     ).all(tournamentId, event || "");
     if (!rows.length) return "0:";
-    const sig = rows.map(r => `${r.id}:${r.p1}:${r.p2}:${r.n1}:${r.n2}`).join("|");
+    const sig = rows.map(r => `${r.id}:${r.p1}:${r.p2}:${r.n1}:${r.n2}:${r.nm}:${r.ns}`).join("|");
     return rows.length + ":" + crypto.createHash("sha1").update(sig).digest("hex").slice(0, 16);
   } catch (e) { return ""; }
 }
@@ -9184,6 +9187,100 @@ function swapBracketMatches(tournamentId, event, posA, posB, opts) {
   return { success: true };
 }
 
+// 罫線の自由配線編集: 試合(matchId)の進出先を、別の試合(targetMatchId)のtargetSlotへ組み替える。
+// 「送り先の回戦は必ず送り元+1」のみ許可(回戦飛び越え・循環はスコープ外)。実行前後で必ず
+// 有効な木(各スロットの送り元がちょうど1つ)を保つため、現在targetSlotを指している試合Bを
+// 見つけてA⇄Bの送り先をswapする(片方だけの書き換えは不可=スロット競合をAPI層で構造的に防ぐ)。
+// opts.force で確定済み/進行中の試合を巻き込む変更も許可(影響スロットの結果を連鎖リセット)。
+function relinkBracketMatch(tournamentId, event, matchId, targetMatchId, targetSlot, opts) {
+  const force = !!(opts && opts.force);
+  if (_bracketLocked(tournamentId, event)) {
+    return { error: "この種目の表は手動ロック中です。「ロック解除」してから編集してください。", locked: true };
+  }
+  if (!event) return { error: "event が必要です" };
+  const slot = (parseInt(targetSlot) === 2) ? 2 : 1;
+  const A = matchId ? stmts.getMatch.get(matchId) : null;
+  const TB = targetMatchId ? stmts.getMatch.get(targetMatchId) : null;
+  if (!A || !TB || A.tournament_id !== tournamentId || TB.tournament_id !== tournamentId ||
+      A.event !== event || TB.event !== event) {
+    return { error: "対象の試合が見つかりません" };
+  }
+  if ((TB.bracket_round || 1) !== (A.bracket_round || 1) + 1) {
+    return { error: "進出先は直後の回戦の試合のみ指定できます", code: "round_skip" };
+  }
+  // B = 現在 (TB.id, slot) を送り先としている試合(標準の完全2^N木構造なら必ず1件存在するはず)
+  const B = sqlite.prepare(
+    `SELECT * FROM matches WHERE tournament_id=? AND event=? AND next_match_id=? AND next_slot=?`
+  ).get(tournamentId, event, TB.id, slot);
+  if (!B) {
+    return { error: "表の構造が壊れています。先に「✓構造チェック」で修復してください" };
+  }
+  if (A.id === B.id) return { success: true, unchanged: true };   // 既にこの接続(ドロップ先=現在地)
+
+  const taId = A.next_match_id, taSlot = A.next_slot || 1;   // Aの元の送り先
+
+  // ロックガード: A・B・(Aの元の送り先)・TB のうち進行中/確定済みを含む変更は force 必須
+  const guardTargets = [A, B, TB];
+  if (taId) { const ta = stmts.getMatch.get(taId); if (ta) guardTargets.push(ta); }
+  const affected = [];
+  const seenGuard = new Set();
+  for (const m of guardTargets) {
+    if (seenGuard.has(m.id)) continue;
+    seenGuard.add(m.id);
+    if (m.status === "on_table" || m.status === "completed" || m.winner_name) affected.push(m.match_label || m.match_no || m.id);
+  }
+  if (!force && affected.length) {
+    return {
+      error: "進行中または確定済みの試合を巻き込む組み替えです。続行すると影響する試合の結果は取り消されます。",
+      needs_force: true, affected,
+    };
+  }
+
+  const chainIds = [...new Set([...collectForwardChain(A.id), ...collectForwardChain(B.id)])];
+  const beforeRows = chainIds.map(id => stmts.getMatch.get(id)).filter(Boolean).map(r => ({ ...r }));
+
+  const resetSql = `winner_id=NULL,loser_id=NULL,winner_name='',loser_name='',winner_team='',loser_team='',
+    winner_entrant_id='',sets_json='[]',winner_sets=0,loser_sets=0,is_walkover=0,finished_at=''`;
+
+  // 影響を受けるスロット(destMatchId の destSlot)を、送り元 sourceMatch の現状に合わせて再計算する。
+  // sourceMatch が完了済みならその勝者を書き込み、未完了ならスロットを空にする。
+  const relinkSlot = (destMatchId, destSlot, sourceMatch) => {
+    if (!destMatchId) return;
+    sqlite.prepare(
+      `UPDATE matches SET player${destSlot}_id=NULL, player${destSlot}_name='', player${destSlot}_team='', player${destSlot}_entrant_id=NULL WHERE id=?`
+    ).run(destMatchId);
+    const dmBefore = stmts.getMatch.get(destMatchId);
+    if (dmBefore.status === "completed" || dmBefore.status === "on_table") {
+      sqlite.prepare(`UPDATE matches SET ${resetSql}, status='waiting' WHERE id=?`).run(destMatchId);
+    }
+    if (sourceMatch.status === "completed" && sourceMatch.winner_name && sourceMatch.winner_name !== "BYE") {
+      advanceWinnerInline(destMatchId, destSlot, {
+        id: sourceMatch.winner_id, name: sourceMatch.winner_name, team: sourceMatch.winner_team,
+        entrant_id: sourceMatch.winner_entrant_id || null,
+      });
+    } else {
+      const dm2 = stmts.getMatch.get(destMatchId);
+      const ready = dm2.player1_name && dm2.player2_name && dm2.player1_name !== "BYE" && dm2.player2_name !== "BYE";
+      sqlite.prepare(`UPDATE matches SET status=? WHERE id=?`).run(ready ? "pending" : "waiting", destMatchId);
+    }
+  };
+
+  const tx = sqlite.transaction(() => {
+    // 1) A/Bの送り先をswap(常に有効な木を保つ)
+    sqlite.prepare(`UPDATE matches SET next_match_id=?, next_slot=? WHERE id=?`).run(TB.id, slot, A.id);
+    sqlite.prepare(`UPDATE matches SET next_match_id=?, next_slot=? WHERE id=?`).run(taId, taSlot, B.id);
+    // 2) 影響を受けた2つの送り先スロットを、新しい送り元の現状で再計算
+    relinkSlot(taId, taSlot, B);
+    relinkSlot(TB.id, slot, A);
+  });
+  tx();
+  if (eventResultCount(tournamentId, event) > 0) autoAdvanceByes(tournamentId, event);
+  recordOp(tournamentId, "relink_match",
+    `進出先を組み替え(${event}): ${A.match_label || A.id} → ${TB.match_label || TB.id}のslot${slot}`,
+    beforeRows.map(r => r.id), beforeRows);
+  return { success: true };
+}
+
 // 1回戦の1スロットを設定 (BYE化/空き/別選手に置換)。取込ズレ・シードの手動修正用。
 // data = { mode: "bye"|"clear"|"player", name, team, player_id, entrant_id }
 function setBracketSlot(tournamentId, event, pos, slot, data) {
@@ -10666,7 +10763,7 @@ module.exports = {
   updateEntrySettings, getOpenTournaments, getUsedEventsCatalog,
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
-  swapBracketMatches, setBracketSlotFromPlayer, setEntrantMemberFromPlayer,
+  swapBracketMatches, relinkBracketMatch, setBracketSlotFromPlayer, setEntrantMemberFromPlayer,
   setEntrantSeedRound, rebuildSeededBracket,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,
