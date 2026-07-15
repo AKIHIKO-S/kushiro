@@ -1199,44 +1199,90 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
         importRows.push([eventName, p, sk, eid || "", seed, bye ? "" : nm, bye ? "" : tm, bye]);
       });
     });
-    // ── 山の罫線(勝者横線・縦線・勝者名)をブロックごとに再帰で構築 ──
-    // 両子が実在: 通常の山(縦線+勝者横線)。片子のみ: 線をそのまま次列へ延長(=不戦勝の長い罫線)。
-    // 子なし(BYE同士): 何も描かない。行位置はコンパクトなレール行の実配置の中点を使う。
-    function buildSideLines(b, side) {
-      const C = colsOf(b);
-      const from = b * BL + (side === "L" ? 0 : BL / 2);
-      let cur = [];                    // 直前ラウンドの線行(null=その枝に実選手なし)
-      for (let g = from; g < from + BL / 2; g++) cur.push(railLine[g]);
-      for (let r = 1; r <= sideR; r++) {
-        const col = side === "L" ? C.LADV(r) : C.RADV(r);
-        const nxt = [];
-        for (let q = 0; q * 2 < cur.length; q++) {
-          const a = cur[2 * q], bb = cur[2 * q + 1];
-          if (a != null && bb != null) {
-            const row = Math.round((a + bb) / 2);
-            border(row, col, { bottom: thin });
-            const vEdge = side === "L" ? { left: thin } : { right: thin };
-            for (let rw = a + 1; rw <= bb; rw++) border(rw, col, vEdge);
-            // 勝者名(結果が入っていれば)。不戦勝の素通し(片子)には書かない。
-            const perBlock = BL / Math.pow(2, r);   // このラウンドのブロック内マッチ数
-            const matchPos = b * perBlock + (side === "L" ? q : perBlock / 2 + q);
-            const mm = byRP[r + "_" + matchPos];
-            if (mm && mm.status === "completed" && mm.winner_name && mm.winner_name !== "BYE") {
-              put(row, col, mm.winner_name, nameStyle);
-              border(row, col, { bottom: thin });
-            }
-            nxt.push(row);
-          } else if (a != null || bb != null) {
-            const row = a != null ? a : bb;
-            border(row, col, { bottom: thin });   // 線の延長(紙の「大きい罫線」)
-            nxt.push(row);
-          } else {
-            nxt.push(null);
-          }
+    // ── 山の罫線(勝者横線・縦線・勝者名)をグラフベースで構築 ──
+    // next_match_id/next_slot という実配線を辿って描く(位置演算ではない)。両子が実在: 通常の
+    // 山(縦線+勝者横線)。片子のみ: 線をそのまま次列へ延長(=不戦勝の長い罫線)。子なし(BYE同士):
+    // 何も描かない。自由配線編集(relinkBracketMatch)後もこのまま正しく描ける(admin SVG描画
+    // renderPaperBracketのbuildBlockElと同一アルゴリズム)。
+    const incomingOf = new Map();   // "matchId:slot" -> 試合(この種目全体・全ブロック共通)
+    list.forEach(m => { if (m.next_match_id) incomingOf.set(m.next_match_id + ":" + (m.next_slot || 1), m); });
+    const matchState = new Map();   // matchId -> row(数値) | null
+    // 1回戦の中間点を計算し、blockRounds>=2ならLADV(1)/RADV(1)列にも罫線・勝者名を描画する
+    // (blockRounds===1は1回戦=ブロック決勝そのものなのでbuildSideLinesのsideR===0特殊ケースに譲る)。
+    const r1PerBlock = BL / 2, r1Half = r1PerBlock / 2;
+    round1.forEach(m => {
+      const p = m.bracket_pos || 0;
+      const y1 = railLine[2 * p], y2 = railLine[2 * p + 1];
+      let row = null;
+      if (y1 != null && y2 != null) row = Math.round((y1 + y2) / 2);
+      else if (y1 != null || y2 != null) row = (y1 != null ? y1 : y2);
+      matchState.set(m.id, row);
+      if (row == null || blockRounds < 2) return;
+      const bBlk = Math.floor(p / r1PerBlock);
+      const base = bBlk * r1PerBlock;
+      const side = (p - base) < r1Half ? "L" : "R";
+      const col = side === "L" ? colsOf(bBlk).LADV(1) : colsOf(bBlk).RADV(1);
+      if (y1 != null && y2 != null) {
+        const vEdge = side === "L" ? { left: thin } : { right: thin };
+        for (let rw = Math.min(y1, y2) + 1; rw <= Math.max(y1, y2); rw++) border(rw, col, vEdge);
+        border(row, col, { bottom: thin });
+        // 勝者名(結果が入っていれば)。不戦勝(片方のみ存在)の素通しは、リーフに既に本人の
+        // 名前があるので二重記載を避け、線の延長のみ(下のelseと同じ=名前は書かない)。
+        if (m.status === "completed" && m.winner_name && m.winner_name !== "BYE") {
+          put(row, col, m.winner_name, nameStyle);
+          border(row, col, { bottom: thin });
         }
-        cur = nxt;
+      } else {
+        border(row, col, { bottom: thin });   // 線の延長のみ(紙の「大きい罫線」)
       }
-      return cur.length ? cur[0] : null;
+    });
+    // 2回戦〜ブロック準決勝(bracket_round=2..blockRounds-1)を回戦昇順・全ブロック一括で処理。
+    // 「回戦前進」の不変条件(next_match_idは常に直後の回戦を指す)により、昇順処理だけで
+    // 入力が必ず揃う(トポロジカルソート不要)。
+    for (let r = 2; r < blockRounds; r++) {
+      const perBlock = BL / Math.pow(2, r), half = perBlock / 2;
+      list.filter(m => m.bracket_round === r).forEach(m => {
+        const pos = m.bracket_pos || 0;
+        const bBlk = Math.floor(pos / perBlock);
+        const base = bBlk * perBlock;
+        const side = (pos - base) < half ? "L" : "R";
+        const col = side === "L" ? colsOf(bBlk).LADV(r) : colsOf(bBlk).RADV(r);
+        const src1 = incomingOf.get(m.id + ":1"), src2 = incomingOf.get(m.id + ":2");
+        const a = src1 ? matchState.get(src1.id) : null, bb = src2 ? matchState.get(src2.id) : null;
+        if (a != null && bb != null) {
+          const row = Math.round((a + bb) / 2);
+          border(row, col, { bottom: thin });
+          const vEdge = side === "L" ? { left: thin } : { right: thin };
+          for (let rw = Math.min(a, bb) + 1; rw <= Math.max(a, bb); rw++) border(rw, col, vEdge);
+          // 勝者名(結果が入っていれば)。不戦勝の素通し(片子)には書かない。
+          if (m.status === "completed" && m.winner_name && m.winner_name !== "BYE") {
+            put(row, col, m.winner_name, nameStyle);
+            border(row, col, { bottom: thin });
+          }
+          matchState.set(m.id, row);
+        } else if (a != null || bb != null) {
+          const row = a != null ? a : bb;
+          border(row, col, { bottom: thin });   // 線の延長(紙の「大きい罫線」)
+          matchState.set(m.id, row);
+        } else {
+          matchState.set(m.id, null);
+        }
+      });
+    }
+    function buildSideLines(b, side) {
+      if (sideR === 0) {
+        // blockRounds===1: 1回戦の唯一の試合=ブロック決勝そのもの。このサイドのリーフの行を
+        // 直接返す(2つのリーフが中央joinでV字合流する。admin SVG描画と同じ特別扱い)。
+        const from = b * BL + (side === "L" ? 0 : BL / 2);
+        for (let g = from; g < from + BL / 2; g++) if (railLine[g] != null) return railLine[g];
+        return null;
+      }
+      // このブロック・このサイドの最終回戦(blockRounds-1回戦)の該当試合の状態を返す
+      const finalR = blockRounds - 1;
+      const perBlock = BL / Math.pow(2, finalR), half = perBlock / 2;
+      const base = b * perBlock + (side === "L" ? 0 : half);
+      const m = list.find(x => x.bracket_round === finalR && (x.bracket_pos || 0) >= base && (x.bracket_pos || 0) < base + half);
+      return m ? matchState.get(m.id) : null;
     }
 
     // ── ブロック中央線(1ブロック時=決勝線 / 複数ブロック時=ブロック勝者線) ──

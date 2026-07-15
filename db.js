@@ -3444,6 +3444,12 @@ function _previewBracketStructure(matchesByRound, totalRounds, bracketSize, N, e
         player1_name: aReal ? m._n1 : "", player1_team: aReal ? m._t1 : "",
         player2_name: bReal ? m._n2 : "", player2_team: bReal ? m._t2 : "",
         result: null,
+        // グラフベース描画(renderPaperBracket/buildSideLines)が罫線を辿るのに必要。
+        // このプレビューは確定前の仮IDだが、matchesByRound内で既にnext_match_id/next_slotが
+        // セットされている(上のBYE自動進行シミュレーションが読んでいるのと同じ値)。
+        next_match_id: m.next_match_id != null ? m.next_match_id : null,
+        next_slot: m.next_slot || 1,
+        match_label: m.match_label || "",
       });
     });
   });
@@ -8918,6 +8924,11 @@ function exportBracket(tournamentId, event) {
       player2_entrant_id: m.player2_entrant_id || null,
       table_no: m.table_no || 0,
       status: m.status,
+      // 罫線の自由配線編集(relinkBracketMatch)用: 進出先(次の試合・スロット)。
+      // 描画側(renderPaperBracket)がこれを辿って罫線を組み立てる(位置演算ではなく実配線を描く)。
+      next_match_id: m.next_match_id || null,
+      next_slot: m.next_slot || 1,
+      match_label: m.match_label || "",
       result: m.status === "completed" && m.winner_name ? {
         winner_name: m.winner_name,
         loser_name: m.loser_name,
