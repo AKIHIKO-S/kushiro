@@ -98,6 +98,46 @@ test("二重配置の検知(block)", () => {
   assert.ok(v.issues.some(i => /二重配置/.test(i.msg)), JSON.stringify(v.issues));
 });
 
+test("スロット競合の検知(block): 直接SQL改変で2試合が同じ進出先を指す状態を作る", () => {
+  const t = db.createTournament({ name: "構造競合", date: "2027-07-01" });
+  mkEntrants(t, 16);
+  db.generateBracket(t.id, EV, {});
+  const sq = new Database(process.env.DB_PATH);
+  const r1 = sq.prepare("SELECT id, next_match_id, next_slot FROM matches WHERE tournament_id=? AND event=? AND bracket_round=1 ORDER BY bracket_pos").all(t.id, EV);
+  // r1[2](本来別の進出先)を、r1[0]と全く同じ(next_match_id, next_slot)へ書き換えて競合を作る
+  sq.prepare("UPDATE matches SET next_match_id=?, next_slot=? WHERE id=?").run(r1[0].next_match_id, r1[0].next_slot, r1[2].id);
+  sq.close();
+  const v = db.validateBracketStructure(t.id, EV);
+  assert.strictEqual(v.ok, false, "競合はok=false");
+  assert.ok(v.issues.some(i => i.level === "block" && /進出先が重複/.test(i.msg)), JSON.stringify(v.issues));
+});
+
+test("自由配線(relinkBracketMatch)後は決勝固定ペアの崩れがwarnに格下げされる(標準配置のままはblockのまま)", () => {
+  const t = db.createTournament({ name: "構造自由配線", date: "2027-07-01" });
+  db.updateEntrySettings(t.id, { entries_open: 1, event_config: [{ name: EV, type: "singles", fee: 0, open: true }] });
+  mkEntrants(t, 16);
+  const dr = db.drawSingleBracket(t.id, EV, { drawn_by: "検証", force: true });
+  assert.strictEqual(dr.success, true, JSON.stringify(dr).slice(0, 160));
+  const before = db.validateBracketStructure(t.id, EV);
+  assert.strictEqual(before.summary.finals_fixed, true, "標準配置は決勝固定ペア成立");
+
+  // 準々決勝(4試合=Ａ〜Ｄブロック優勝決定戦)のうち、Ａブロック側の送り先を
+  // Ｃブロック側の送り先へrelinkし、決勝固定ペア(Ａ×Ｂ/Ｃ×Ｄ)を意図的に崩す
+  const ms = db.getMatchesByTournament(t.id).filter(m => m.event === EV);
+  const totalRounds = Math.max(...ms.map(m => m.bracket_round || 1));
+  const bf = ms.filter(m => m.bracket_round === totalRounds - 2).sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0));
+  assert.strictEqual(bf.length, 4, "準々決勝4試合(Ａ〜Ｄ)");
+  assert.strictEqual(bf[0].next_match_id, bf[1].next_match_id, "前提: Ａ×Ｂが同じ準決勝を指す");
+  const r = db.relinkBracketMatch(t.id, EV, bf[0].id, bf[2].next_match_id, bf[2].next_slot, { force: true });
+  assert.ok(r.success, "relink成功: " + JSON.stringify(r));
+
+  const after_ = db.validateBracketStructure(t.id, EV);
+  assert.strictEqual(after_.summary.finals_fixed, false, "決勝固定ペアは崩れている");
+  assert.ok(after_.ok, "意図的な変更はwarnのみでok=trueのまま: " + JSON.stringify(after_.issues));
+  assert.ok(after_.issues.some(i => i.level === "warn" && /標準.*から手動変更/.test(i.msg)), JSON.stringify(after_.issues));
+  assert.ok(!after_.issues.some(i => i.level === "block" && /決勝トーナメント/.test(i.msg)), "blockには格上げされない: " + JSON.stringify(after_.issues));
+});
+
 test("種目指定Undo: 直前の操作が別種目なら巻き込まず明示エラー", () => {
   const t = db.createTournament({ name: "Undo種目絞り", date: "2027-07-01" });
   const EV2 = "女子シングルス";

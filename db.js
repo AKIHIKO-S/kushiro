@@ -7155,12 +7155,33 @@ function setBracketLock(tournamentId, event, locked) {
   return { ok: true, event, locked: !!locked };
 }
 
+// 現在の全試合(matches)のnext_match_id/next_slotが、generateBracketが機械生成する
+// 標準の位置演算配線(wantPos=floor(pos/2), wantSlot=(pos%2)+1)と完全一致しているかを判定する
+// 純粋関数。罫線の自由配線編集(relinkBracketMatch)を一度も行っていない表は常にtrueになる
+// (=既存の全回帰テストの挙動は一切変わらない)。運営が意図的に配線を組み替えた表はfalseになり、
+// バリデータの決勝固定ペア検査がその場合だけ warn に格下げする根拠として使う。
+function _isCanonicalTopology(matches, totalRounds) {
+  const byId = new Map(matches.map(m => [m.id, m]));
+  for (const m of matches) {
+    if ((m.bracket_round || 1) >= totalRounds) continue;
+    const pos = m.bracket_pos || 0;
+    const wantPos = Math.floor(pos / 2), wantSlot = (pos % 2) + 1;
+    const nx = m.next_match_id ? byId.get(m.next_match_id) : null;
+    if (!nx || nx.bracket_round !== (m.bracket_round || 1) + 1 ||
+        (nx.bracket_pos || 0) !== wantPos || (m.next_slot || 0) !== wantSlot) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // ── トーナメント表の構造バリデータ ──────────────────────────
 // 生成/抽選/手修正後の表が「細かな対戦設定どおり確実に通る」ことを機械検証する。
 // 検査: 全員1回配置 / 枠・試合数の会計 / 登場回戦(entry_round)の区画成立 /
-//       next_match連結(進出経路=罫線の整合) / ブロック配分 / 決勝の固定ペア(Ａ×Ｂ・Ｃ×Ｄ)。
+//       next_match連結(進出経路=罫線の整合。in-tree構造としての一般的な整合性) /
+//       ブロック配分 / 決勝の固定ペア(Ａ×Ｂ・Ｃ×Ｄ、標準配置からの変更はwarnに格下げ)。
 // missing(名簿に居るが未配置)は warn(後から申込が増えた等の正常運用があり得るため)。
-// 二重配置・リンク不整合・登場回戦の不成立・決勝ペア崩れは block(ok=false)。
+// 二重配置・リンク不整合・登場回戦の不成立・標準配置での決勝ペア崩れは block(ok=false)。
 function validateBracketStructure(tournamentId, event) {
   if (!event) return { ok: false, issues: [{ level: "block", msg: "event が必要です" }], summary: {} };
   const ms = opStmts.getBracketMatches.all(tournamentId, event);
@@ -7211,16 +7232,76 @@ function validateBracketStructure(tournamentId, event) {
     if (clean) ssOk++;
     else push("block", (e.display_name || e.name) + " の「" + R + "回戦から登場」が成立していません(区画に他の選手が居ます)");
   });
-  // next_match 連結(進出経路=罫線の整合)
+  // next_match 連結(進出経路=罫線の整合)。罫線の自由配線編集(relinkBracketMatch)後も
+  // 成立する、6つの不変条件による検証(in-tree構造としての一般的な整合性チェック):
+  //   ①存在 ②回戦前進(飛び越え禁止) ③スロット範囲 ④スロット競合なし ⑤入力の完全被覆
+  //   ⑥到達可能性(防御的二重チェック)。
+  // 「次は必ずfloor(pos/2)・slot=(pos%2)+1でなければならない」という“標準配置そのものか”の
+  // 判定はここでは行わない(自由配線で意図的に変わり得るため)。標準からの逸脱有無は決勝固定
+  // ペア検査の isCanonical 判定でのみ扱う(下記)。
+  const slotOwners = new Map();   // "matchId:slot" -> [送り元試合,...](競合検出用)
   for (let r = 1; r < totalRounds; r++) {
     for (const m of (rounds[r] || [])) {
-      const nx = m.next_match_id ? byId.get(m.next_match_id) : null;
       const pos = m.bracket_pos || 0;
+      const nx = m.next_match_id ? byId.get(m.next_match_id) : null;
       if (!nx) { push("block", r + "回戦 " + (pos + 1) + "試合目の進出先リンクがありません"); continue; }
-      const wantPos = Math.floor(pos / 2), wantSlot = (pos % 2) + 1;
-      if (nx.bracket_round !== r + 1 || (nx.bracket_pos || 0) !== wantPos || (m.next_slot || 0) !== wantSlot) {
-        push("block", r + "回戦 " + (pos + 1) + "試合目の進出先が不正(" +
-          nx.bracket_round + "回戦" + ((nx.bracket_pos || 0) + 1) + "・slot" + m.next_slot + ")");
+      if (nx.bracket_round !== r + 1) {
+        push("block", r + "回戦 " + (pos + 1) + "試合目の進出先が前後の回戦を飛び越えています(" +
+          nx.bracket_round + "回戦を指しています)");
+        continue;
+      }
+      const ns = m.next_slot || 0;
+      if (ns !== 1 && ns !== 2) {
+        push("block", r + "回戦 " + (pos + 1) + "試合目の進出先スロットが不正です(" + ns + ")");
+        continue;
+      }
+      const key = nx.id + ":" + ns;
+      if (!slotOwners.has(key)) slotOwners.set(key, []);
+      slotOwners.get(key).push(m);
+    }
+  }
+  // ④スロット競合なし: 同じ(次の試合・スロット)を2つ以上の試合が指していないか
+  for (const [key, owners] of slotOwners.entries()) {
+    if (owners.length > 1) {
+      const nx = byId.get(key.split(":")[0]);
+      const nxLabel = nx ? (nx.bracket_round + "回戦" + ((nx.bracket_pos || 0) + 1)) : key.split(":")[0];
+      push("block", "進出先が重複しています: " +
+        owners.map(o => o.bracket_round + "回戦" + ((o.bracket_pos || 0) + 1)).join(" と ") +
+        " が同じ枠(" + nxLabel + "・slot" + key.split(":")[1] + ")を指しています");
+    }
+  }
+  // ⑤入力の完全被覆: 2回戦以降の各試合の2スロットは、必ず前回戦のいずれかの試合から
+  // 1本ずつ埋まっていること(直接DB改変等で欠落した進出経路を検出)
+  for (let r = 2; r <= totalRounds; r++) {
+    for (const m of (rounds[r] || [])) {
+      for (const s of [1, 2]) {
+        if (!slotOwners.has(m.id + ":" + s)) {
+          push("block", r + "回戦 " + ((m.bracket_pos || 0) + 1) + "試合目のslot" + s + "へ進出してくる試合がありません");
+        }
+      }
+    }
+  }
+  // ⑥到達可能性(防御的二重チェック): 決勝がちょうど1つで、そこから逆向きに全試合が辿れること
+  {
+    const finalMatches = rounds[totalRounds] || [];
+    if (finalMatches.length === 1) {
+      const incomingOf = new Map();   // matchId -> [送り元試合,...]
+      for (const owners of slotOwners.values()) owners.forEach(() => {});
+      for (const m of ms) {
+        if (!m.next_match_id) continue;
+        if (!incomingOf.has(m.next_match_id)) incomingOf.set(m.next_match_id, []);
+        incomingOf.get(m.next_match_id).push(m.id);
+      }
+      const reach = new Set([finalMatches[0].id]);
+      const queue = [finalMatches[0].id];
+      while (queue.length) {
+        const cur = queue.shift();
+        for (const srcId of (incomingOf.get(cur) || [])) {
+          if (!reach.has(srcId)) { reach.add(srcId); queue.push(srcId); }
+        }
+      }
+      if (reach.size !== ms.length) {
+        push("block", "到達できない試合があります(" + (ms.length - reach.size) + "件)。表の構造が壊れています");
       }
     }
   }
@@ -7248,7 +7329,17 @@ function validateBracketStructure(tournamentId, event) {
         bf[2].next_match_id === bf[3].next_match_id &&
         bf[0].next_match_id !== bf[2].next_match_id &&
         semi.every(s2 => s2.next_match_id && byId.get(s2.next_match_id) && byId.get(s2.next_match_id).bracket_round === totalRounds);
-      if (!finalsFixed) push("block", "決勝トーナメントの固定ペア(Ａ優勝×Ｂ優勝/Ｃ優勝×Ｄ優勝→決勝)が崩れています");
+      if (!finalsFixed) {
+        // 罫線の自由配線編集(relinkBracketMatch)により、運営が標準配置から意図的に組み替えた
+        // 形跡がある(isCanonical=false)場合は、この崩れを「異常」ではなく「意図的な変更」として
+        // warnに格下げする。何も自由配線していない(常にgenerateBracketの機械生成配線のまま)
+        // 場合は、従来どおり厳格にblockのまま(既存の全回帰テストの挙動を一切変えない)。
+        const canonical = _isCanonicalTopology(ms, totalRounds);
+        push(canonical ? "block" : "warn",
+          canonical
+            ? "決勝トーナメントの固定ペア(Ａ優勝×Ｂ優勝/Ｃ優勝×Ｄ優勝→決勝)が崩れています"
+            : "決勝トーナメントの組み合わせが標準(Ａ×Ｂ/Ｃ×Ｄ)から手動変更されています(意図的な変更であれば問題ありません)");
+      }
     }
   }
   const ok = !issues.some(i => i.level === "block");
