@@ -57,6 +57,25 @@ test("(a) 公開レスポンスに秘密フィールド(referee_token/passcode/e
   assert.strictEqual(adminView.entry_gas_url, SECRET_GAS, "管理GETには秘密(entry_gas_url)が含まれる=公開側だけ除去");
 });
 
+test("(a2) 公開 /matches の射影契約: next_match_id/next_slot は公開・内部列は落ちる", async () => {
+  // #10 観戦のSVG罫線化: 観戦側が実配線どおりの山を描くため next_match_id/next_slot を公開する。
+  // 一方で内部列(承認待ち・Elo差分・速報生JSON・呼出回数)は引き続き落ちることを同時に固定する。
+  const t = await adminPost("/api/tournaments", { name: "smokeProj", date: "2027-01-01" });
+  await adminPut(`/api/tournaments/${t.id}/entry-settings`, { entries_open: 1,
+    event_config: [{ name: "男子シングルス", type: "singles", fee: 0 }] });
+  for (let i = 1; i <= 4; i++) await adminPost(`/api/tournaments/${t.id}/entrants`,
+    { event: "男子シングルス", name: "射影" + i, team: "T" + i });
+  await adminPost(`/api/tournaments/${t.id}/bracket`, { event: "男子シングルス" });
+  const ms = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
+  assert.ok(Array.isArray(ms) && ms.length >= 3, "公開matchesが返る");
+  const r1 = ms.find(m => (m.bracket_round || 1) === 1);
+  assert.ok(r1.next_match_id, "next_match_id が公開に含まれる(SVG罫線ボードの前提)");
+  assert.ok(r1.next_slot === 1 || r1.next_slot === 2, "next_slot が公開に含まれる");
+  ["pending_result", "winner_rating_delta", "live_sets_json", "live_score_rev",
+   "call_count", "sets_json", "referee_id"].forEach(k =>
+    assert.ok(!(k in r1), `内部列 ${k} は公開に含まれない`));
+});
+
 test("(b) admin限定ルートは X-Admin-Key 無しで拒否(401/503)", async () => {
   const t = await adminPost("/api/tournaments", { name: "smoke2", date: "2027-01-01" });
   const cases = [
@@ -200,12 +219,13 @@ test("(f) 公開 /matches: 内部列を射影で除去・表示列は維持・ET
   await adminPost(`/api/matches/${m.id}/finish`, { winner_slot: 1, sets: [[11, 5], [11, 7], [11, 9]], referee_name: "審判花子" });
   const list = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
   const row = list.find(x => x.id === m.id);
-  // 内部列は消えている
-  ["referee_id", "pending_result", "winner_rating_delta", "loser_rating_delta", "next_match_id", "sets_json", "tournament_id", "created_at", "call_count"]
+  // 内部列は消えている(next_match_id/next_slot は #10 で公開に変更=下の維持リストへ移動)
+  ["referee_id", "pending_result", "winner_rating_delta", "loser_rating_delta", "sets_json", "tournament_id", "created_at", "call_count"]
     .forEach(k => assert.ok(!(k in row), `内部列 ${k} が公開 /matches から除去`));
   // 表示に要る列は残っている(referee_name は viewer が「審判: X」で表示=公開意図)
   // referee_name は viewer が「審判: X」で表示する公開意図の列なので射影で残す(値は審判割当で入る)。
-  ["referee_name", "sets", "winner_name", "player1_name", "status", "bracket_round"]
+  // next_match_id/next_slot は観戦のSVG罫線ボードが実配線どおりの山を描くための公開列(#10)。
+  ["referee_name", "sets", "winner_name", "player1_name", "status", "bracket_round", "next_match_id", "next_slot"]
     .forEach(k => assert.ok(k in row, `表示列 ${k} は維持`));
   // ETag/304: 未変化の再取得は本体0
   const r1 = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`);

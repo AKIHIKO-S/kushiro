@@ -89,7 +89,8 @@
                       : estW(lf.name, 13) + estW(lf.team, 10.5) + 56;
       if (w > railNeed) railNeed = w;
     });
-    const ROW_H = isDbl ? 42 : 34, ADV_W = 44, CENTER_W = 150, PAD_T = 10, PAD_B = 10;
+    // rowH は呼び出し側で上書き可(観戦面の広め/速報面の詰めなど密度違い用)。既定=admin紙面と同一。
+    const ROW_H = (opts.rowH > 0 ? opts.rowH : (isDbl ? 42 : 34)), ADV_W = 44, CENTER_W = 150, PAD_T = 10, PAD_B = 10;
     const RAIL_W = Math.min(480, Math.max(isDbl ? 330 : 230, Math.ceil(railNeed)));
     const W = RAIL_W * 2 + sideR * ADV_W * 2 + CENTER_W;
 

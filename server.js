@@ -667,7 +667,9 @@ app.get("/api/public/tournaments/:id", (req, res) => {
 const PUBLIC_MATCH_OMIT = new Set([
   "referee_id", "pending_result",
   "winner_rating_delta", "loser_rating_delta",
-  "next_match_id", "next_slot",
+  // next_match_id/next_slot は公開する(#10 観戦のSVG罫線化)。マッチUUID間の参照のみで
+  // PIIなし。観戦画面が運営・印刷と同じ共有レイアウト(bracket-layout)で実配線
+  // (自由配線の組み替え後を含む)どおりの山を描くために必要。
   "call_count", "call_count_p1", "call_count_p2", "recall_count", "called_at",
   "sets_json", "tournament_id", "created_at", "updated_at",
   "live_sets_json", "live_score_rev",   // 速報は /live 専用(下のLIVE射影でsets側を残す)。revは常に内部

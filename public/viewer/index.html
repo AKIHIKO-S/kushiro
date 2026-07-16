@@ -1304,6 +1304,25 @@ body{ background:#fbfaf7; }
  /* コート盤面セルのセット速報(vs の代替表示) */
  .live-court-score{ font-size:15px; font-weight:800; color:var(--accent);
    font-variant-numeric:tabular-nums; line-height:1.2; }
+ /* トーナメント表(wide面)の表示切替+SVG罫線ボード (#10 観戦ボード) */
+ .vbt-mode{ display:flex; gap:6px; margin:0 0 10px; }
+ .vbt-mode button{ font-size:12px; padding:5px 14px; border:1px solid var(--border-strong);
+   background:#fff; border-radius:999px; color:var(--sub); font-weight:700; cursor:pointer; }
+ .vbt-mode button.on{ background:#1c1917; border-color:#1c1917; color:#fff; }
+ .vbt-board{ overflow-x:auto; padding:4px 2px 6px; }
+ .vbt-board-blk{ font-size:12.5px; font-weight:700; color:var(--sub);
+   margin:12px 0 5px; border-bottom:1px solid var(--border); padding-bottom:3px; }
+ .vbt-board-finals{ display:flex; gap:16px; flex-wrap:wrap; margin-top:10px; align-items:flex-start; }
+ .vbt-fin-col{ display:flex; flex-direction:column; gap:10px; min-width:230px; }
+ .vbt-fin-h{ font-size:12px; font-weight:700; color:var(--sub);
+   border-bottom:1px solid var(--border-strong); padding-bottom:4px; }
+ .vbt-fin-m{ border:1.5px solid var(--border-strong); border-radius:8px;
+   padding:8px 12px; background:#fff; font-size:13.5px; }
+ .vbt-fin-m.live{ border-color:var(--accent); }
+ .vbt-fin-no{ font-size:10.5px; color:var(--sub); margin-bottom:2px; }
+ .vbt-fin-m .feed{ color:#9ca3af; font-size:12.5px; }
+ .vbt-fin-sep{ border-top:1px dashed var(--border); margin:3px 0; }
+ .vbt-fin-w{ font-size:11.5px; color:var(--accent); font-weight:700; text-align:right; margin-top:2px; }
 </style>
 </head>
 <body>
@@ -1444,6 +1463,7 @@ body{ background:#fbfaf7; }
 </nav>
 
 <script src="/shared/common.js"></script>
+<script src="/shared/bracket-layout.js"></script>
 <script>
 const { h, esc, api, toast, ratingBadge, fmtDate, fmtDateShort, createPoller, clear } = TT;
 
@@ -1704,7 +1724,11 @@ const V = {
  renderTournamentDetail(t, matches) {
  const el = document.getElementById("tournamentDetail");
  clear(el);
- // BYE は実試合ではない (シードの繰り上がり) → 結果表示から除外
+ // BYE は実試合ではない (シードの繰り上がり) → 結果表示から除外。
+ // ただしSVG罫線ボード(V._bracketBoard)はBYE込みの全試合が必要(リーフ配列・不戦勝の長線を
+ // 共有レイアウトが組むため)なので、除外前の全量を種目別に取り分けておく。
+ const byEventAll = {};
+ (matches || []).forEach(m => { const e = m.event || "その他"; (byEventAll[e] = byEventAll[e] || []).push(m); });
  matches = (matches || []).filter(m =>
    m.winner_name !== "BYE" && m.loser_name !== "BYE" && !m.is_walkover);
 
@@ -1771,7 +1795,8 @@ const V = {
    V._loadStandings(t.id, event, stWrap);
  } else {
    // ノックアウト種目: 両山トーナメント表(勝ち上がりを山で見せる)を先頭に。詳細な結果は下のラウンド一覧。
-   const tree = V.renderBracketTree(event, ms);
+   // 第3引数=BYE込み全試合(SVG罫線ボード用)・第4引数=大会(open種目判定用)
+   const tree = V.renderBracketTree(event, ms, byEventAll[event] || ms, t);
    if (tree) bodyEl.appendChild(tree);
  }
 
@@ -1860,9 +1885,11 @@ const V = {
 
  // トーナメント表の対戦をタップ → 詳細 + 選手個人DBリンク (シングルス/ダブルス両対応 #255)
  // 両山トーナメント表(公開・白磁・ハイブリッド)。ノックアウト種目の勝ち上がりを「山」で見せる。
- // モバイル(≤640px)=縦型(上の山/下の山/決勝タブ・横スクロール不要)、タブレット以上=両山全体(横スクロール)。
- // 分割は admin と同じ: 各ラウンドを bracket_pos 順に並べ前半=左山/後半=右山、決勝を中央に。BYEは呼出元で除外済み。
- renderBracketTree(event, ms) {
+ // モバイル(≤640px)=縦型(上の山/下の山/決勝タブ・横スクロール不要)、タブレット以上=SVG罫線ボード
+ // (2026-07 #10 承認: 観戦ボード)とカード式を切替可(既定=罫線ボード・選択は端末に記憶)。
+ // 分割は admin と同じ: 各ラウンドを bracket_pos 順に並べ前半=左山/後半=右山、決勝を中央に。
+ // ms=BYE除外済(カード面・タブ面用) / msAll=BYE込み全量(罫線ボード用) / t=大会(open種目判定)。
+ renderBracketTree(event, ms, msAll, t) {
    const byRound = {};
    ms.forEach(m => { const r = m.bracket_round || 1; (byRound[r] = byRound[r] || []).push(m); });
    const rounds = Object.keys(byRound).map(Number).sort((a, b) => a - b);
@@ -1873,7 +1900,7 @@ const V = {
      : r === finalRound - 2 ? "準々決勝" : r + "回戦";
    const wrap = h("div", { className: "vbt" });
 
-   // ── wide: 両山全体(横スクロール) ──
+   // ── wide: 罫線ボード(既定) ⇔ カード式(従来) ──
    const wide = h("div", { className: "vbt-wide" });
    const matchHeight = 74;
    const makeCol = (r, list, side) => {
@@ -1886,29 +1913,52 @@ const V = {
      col.appendChild(cbody);
      return col;
    };
-   const cx = () => h("div", { className: "vbt-cx" });
-   const cols = h("div", { className: "vbt-cols" });
    // 山の判定は「存在する試合数の半分」ではなく bracket_pos(物理枠位置)で行う。
    // viewer は BYE/不戦勝を上流で除外するため、シード付きブラケット(BYE持ち)では試合数が
    // 上下の山で不揃いになる=件数割りだと上の山の試合が下の山に混ざる。枠位置なら常に正しい。
+   // (カード式wideとnarrowタブの両方が使う)
    const posCnt = (r) => Math.pow(2, finalRound - r);   // このラウンドの全枠数(BYE込み)
    const inTop = (m, r) => (m.bracket_pos || 0) < posCnt(r) / 2;
-   const leftCols = [], rightCols = [];
-   rounds.forEach(r => {
-     if (r === finalRound) return;
-     const arr = byRound[r];
-     leftCols.push(makeCol(r, arr.filter(m => inTop(m, r)), "left"));
-     rightCols.push(makeCol(r, arr.filter(m => !inTop(m, r)), "right"));
-   });
-   leftCols.forEach(c => { cols.appendChild(c); cols.appendChild(cx()); });
-   if (byRound[finalRound]) cols.appendChild(makeCol(finalRound, byRound[finalRound], "center"));
-   else cols.appendChild(h("div", { className: "vbt-col center" },
-     h("div", { className: "vbt-rlab" }, "決勝"),
-     h("div", { className: "vbt-cbody center" }, h("div", { className: "vbt-champ" },
-       h("div", { className: "vt" }, "決勝"), h("div", { className: "vwho" }, "勝者を待機")))));
-   rightCols.reverse().forEach(c => { cols.appendChild(cx()); cols.appendChild(c); });
-   wide.appendChild(h("div", { className: "vbt-hint" }, "← 横にスクロールで全体 →"));
-   wide.appendChild(h("div", { className: "vbt-scroll" }, cols));
+   const buildCards = () => {
+     const cx = () => h("div", { className: "vbt-cx" });
+     const cols = h("div", { className: "vbt-cols" });
+     const leftCols = [], rightCols = [];
+     rounds.forEach(r => {
+       if (r === finalRound) return;
+       const arr = byRound[r];
+       leftCols.push(makeCol(r, arr.filter(m => inTop(m, r)), "left"));
+       rightCols.push(makeCol(r, arr.filter(m => !inTop(m, r)), "right"));
+     });
+     leftCols.forEach(c => { cols.appendChild(c); cols.appendChild(cx()); });
+     if (byRound[finalRound]) cols.appendChild(makeCol(finalRound, byRound[finalRound], "center"));
+     else cols.appendChild(h("div", { className: "vbt-col center" },
+       h("div", { className: "vbt-rlab" }, "決勝"),
+       h("div", { className: "vbt-cbody center" }, h("div", { className: "vbt-champ" },
+         h("div", { className: "vt" }, "決勝"), h("div", { className: "vwho" }, "勝者を待機")))));
+     rightCols.reverse().forEach(c => { cols.appendChild(cx()); cols.appendChild(c); });
+     const box = h("div", {});
+     box.appendChild(h("div", { className: "vbt-hint" }, "← 横にスクロールで全体 →"));
+     box.appendChild(h("div", { className: "vbt-scroll" }, cols));
+     return box;
+   };
+   // 表示モードトグル。罫線ボードが組めないデータ(1回戦欠落など)は自動でカード式に落とす。
+   let wmode = (localStorage.getItem("ktta_vbt_wide") === "cards") ? "cards" : "board";
+   const modeBar = h("div", { className: "vbt-mode" });
+   const wideBody = h("div", {});
+   const renderWide = () => {
+     modeBar.replaceChildren(
+       h("button", { className: wmode === "board" ? "on" : "",
+         onClick: () => { wmode = "board"; localStorage.setItem("ktta_vbt_wide", "board"); renderWide(); } }, "罫線の表"),
+       h("button", { className: wmode === "cards" ? "on" : "",
+         onClick: () => { wmode = "cards"; localStorage.setItem("ktta_vbt_wide", "cards"); renderWide(); } }, "台ごとのカード"));
+     wideBody.replaceChildren();
+     let el = null;
+     if (wmode === "board") el = V._bracketBoard(event, msAll || ms, t);
+     wideBody.appendChild(el || buildCards());
+   };
+   renderWide();
+   wide.appendChild(modeBar);
+   wide.appendChild(wideBody);
 
    // ── narrow: 山タブ + ラウンド積み ──
    const narrow = h("div", { className: "vbt-narrow" });
@@ -1957,6 +2007,167 @@ const V = {
  },
 
  // 両山の1試合カード(白磁)。勝者=太字+赤スコア+淡い暖色行、敗者=淡色。進行中=赤枠。タップで詳細。
+ // SVG罫線ボード(2026-07 #10 承認: 観戦ボード)。運営画面・印刷と同じ共有レイアウト
+ // (TTBracketLayout)で座標を計算するため、自由配線の組み替え・スーパーシード・BYEの長線が
+ // 紙の表とまったく同じ山で出る。表現は観戦向け: 行間広め(44px)・進行中は丹頂バッジ・
+ // 勝者が確定した罫線は太い墨線・優勝は丹頂。確定済みの試合はタップで試合詳細。
+ // 返り値: DOM要素 / 組めないデータ(1回戦欠落・共有モジュール未読込等)は null(カード式へ縮退)。
+ _bracketBoard(event, msAll, t) {
+ try {
+   if (typeof TTBracketLayout === "undefined") return null;
+   const matches = msAll || [];
+   // 公開ミラー等で next_match_id が届かない場合は標準配線を合成して描く(縮退経路)
+   const wired = matches.some(m => m.next_match_id);
+   const wiring = wired ? null : TTBracketLayout.synthesizeStandardWiring(matches);
+   let open = false;
+   try {
+     const cfg = typeof (t && t.event_config) === "string" ? JSON.parse(t.event_config || "[]") : ((t && t.event_config) || []);
+     open = !!((cfg.find(c => c && c.name === event) || {}).open);
+   } catch (e) {}
+   const L = TTBracketLayout.computeBracketLayout(matches, { event, open, rowH: 44, wiring });
+   if (!L) return null;
+   const NS = "http://www.w3.org/2000/svg";
+   const box = h("div", { className: "vbt-board" });
+   const mkLine = (svg, x1, y1, x2, y2, w, color) => {
+     const l = document.createElementNS(NS, "line");
+     l.setAttribute("x1", x1); l.setAttribute("y1", y1);
+     l.setAttribute("x2", x2); l.setAttribute("y2", y2);
+     l.setAttribute("stroke", color || "#44403c");
+     l.setAttribute("stroke-width", w || 1.5);
+     l.setAttribute("shape-rendering", "crispEdges");
+     svg.appendChild(l);
+   };
+   const mkText = (svg, x, y, txt, anchor, size, color, bold) => {
+     const tx = document.createElementNS(NS, "text");
+     tx.setAttribute("x", x); tx.setAttribute("y", y);
+     tx.setAttribute("text-anchor", anchor || "start");
+     tx.setAttribute("font-size", size || 10.5);
+     tx.setAttribute("fill", color || "#6b7280");
+     if (bold) tx.setAttribute("font-weight", "700");
+     tx.setAttribute("font-family", "inherit");
+     tx.setAttribute("paint-order", "stroke");
+     tx.setAttribute("stroke", "#fff");
+     tx.setAttribute("stroke-width", "3");
+     tx.setAttribute("stroke-linejoin", "round");
+     tx.textContent = txt;
+     svg.appendChild(tx);
+     return tx;
+   };
+   L.blocks.forEach((blk, b) => {
+     if (L.nBlocks > 1) box.appendChild(h("div", { className: "vbt-board-blk" },
+       String.fromCharCode(0xFF21 + b) + "ブロック"));
+     const svg = document.createElementNS(NS, "svg");
+     svg.setAttribute("viewBox", "0 0 " + L.W + " " + blk.height);
+     svg.setAttribute("xmlns", NS);
+     // コンテナ幅にフィットしつつ縮みすぎない(横スクロールで逃がす)
+     svg.style.width = "100%";
+     svg.style.height = "auto";
+     svg.style.display = "block";
+     svg.style.minWidth = Math.min(L.W, 860) + "px";
+     // 勝者確定joinのy集合(勝ち上がりの道を太くする)
+     const doneYs = new Set();
+     blk.joins.forEach(j => {
+       const mm = j.match;
+       if (mm.status === "completed" && ((mm.result && mm.result.winner_name) || mm.winner_name)) doneYs.add(j.y);
+     });
+     blk.segments.forEach(sg => {
+       const isRail = sg.x1 === 8 || sg.x2 === L.W - 8;
+       const winLine = !isRail && sg.y1 === sg.y2 && doneYs.has(sg.y1);
+       mkLine(svg, sg.x1, sg.y1, sg.x2, sg.y2, winLine ? (sg.w || 1.5) + 1 : (sg.w || 1.5), winLine ? "#1c1917" : "#44403c");
+     });
+     blk.rails.forEach(r => {
+       const isL = r.side === "L", lf = r.leaf;
+       const xEnd = isL ? L.RAIL_W - 4 : L.W - L.RAIL_W + 4;
+       const anc = isL ? "end" : "start";
+       const nm = lf.no + ". " + lf.name;
+       mkText(svg, xEnd, r.lineY - 5, lf.team ? nm + "　" + lf.team : nm, anc, 14, "#1c1917", true);
+     });
+     blk.joins.forEach(j => {
+       const mm = j.match;
+       const winnerName = (mm.result && mm.result.winner_name) || mm.winner_name;
+       const x = j.anchorSide === "L" ? j.xa + 3 : j.anchorSide === "R" ? j.xb - 3 : Math.round((j.xa + j.xb) / 2);
+       const anc = j.anchorSide === "L" ? "start" : j.anchorSide === "R" ? "end" : "middle";
+       const dy = j.kind === "blockFinal" ? 6 : 5;
+       const done = mm.status === "completed" && winnerName && winnerName !== "BYE";
+       if (done) {
+         const champ = j.kind === "blockFinal" && L.nBlocks === 1;
+         mkText(svg, x, j.y - dy, (champ ? "優勝 " : "") + winnerName, anc,
+           champ ? 14.5 : 13, champ ? "#c01526" : "#1c1917", true);
+       } else if (mm.status === "on_table") {
+         // 試合中バッジ(丹頂の淡地)。テキスト実測に頼らず固定幅・中央合わせで安定させる。
+         const bw = 56, bx = anc === "start" ? x : anc === "end" ? x - bw : x - bw / 2;
+         const rc = document.createElementNS(NS, "rect");
+         rc.setAttribute("x", bx); rc.setAttribute("y", j.y - dy - 12);
+         rc.setAttribute("width", bw); rc.setAttribute("height", 16);
+         rc.setAttribute("rx", 8); rc.setAttribute("fill", "#fdecee");
+         svg.appendChild(rc);
+         mkText(svg, bx + bw / 2, j.y - dy, "● 台" + (mm.table_no || "?"), "middle", 10.5, "#c01526", true);
+       } else if (j.ss) {
+         mkText(svg, x, j.y - dy, "スーパーシード戦", anc, 10.5, "#92400e", true);
+       } else {
+         const lbl = (mm.bracket_round || 1) + "-" + (mm.match_no || ((mm.bracket_pos || 0) + 1));
+         mkText(svg, x, j.y - dy, "(" + lbl + "の勝者)", anc, 10.5, "#9ca3af");
+       }
+       // 確定済みはタップで試合詳細(カード式と同じ挙動)。join帯に透明ヒット領域を置く。
+       if (done) {
+         const hit = document.createElementNS(NS, "rect");
+         hit.setAttribute("x", Math.min(j.xa, j.xb) - 2); hit.setAttribute("y", j.y - 20);
+         hit.setAttribute("width", Math.abs(j.xb - j.xa) + 4); hit.setAttribute("height", 26);
+         hit.setAttribute("fill", "transparent");
+         hit.style.cursor = "pointer";
+         hit.style.pointerEvents = "all";
+         hit.addEventListener("click", () => V.showBracketMatchDetail(mm));
+         svg.appendChild(hit);
+       }
+     });
+     box.appendChild(svg);
+   });
+   // 複数ブロック(SS大会)の決勝T: ブロック横断の準決勝・決勝。未確定枠は「Ａブロック優勝」
+   // 「(3-1の勝者)」のように供給元を実配線(incoming)の逆引きで注釈する(運営画面・印刷と同じ規則)。
+   if (L.nBlocks > 1) {
+     const byRPb = {};
+     matches.forEach(m => { byRPb[(m.bracket_round || 1) + "_" + (m.bracket_pos || 0)] = m; });
+     const blockName = (i) => String.fromCharCode(0xFF21 + i) + "ブロック";
+     box.appendChild(h("div", { className: "vbt-board-blk" }, "決勝トーナメント"));
+     const fbox = h("div", { className: "vbt-board-finals" });
+     for (let r = L.blockRounds + 1; r <= L.totalRounds; r++) {
+       const cnt = L.S / Math.pow(2, r);
+       const col = h("div", { className: "vbt-fin-col" },
+         h("div", { className: "vbt-fin-h" }, cnt === 1 ? "決勝" : cnt === 2 ? "準決勝" : cnt === 4 ? "準々決勝" : r + "回戦"));
+       for (let q = 0; q < cnt; q++) {
+         const mm = byRPb[r + "_" + q];
+         const feed = (k) => {
+           const nm = k === 1 ? (mm && mm.player1_name) : (mm && mm.player2_name);
+           if (nm && nm !== "BYE") return h("b", {}, nm);
+           const src = mm ? L.incoming.get(mm.id + ":" + k) : null;
+           const label = !src ? "(未定)"
+             : r === L.blockRounds + 1 ? (blockName(src.bracket_pos || 0) + "優勝")
+             : "(" + src.bracket_round + "-" + (src.match_no || ((src.bracket_pos || 0) + 1)) + "の勝者)";
+           return h("span", { className: "feed" }, label);
+         };
+         const wN = mm && ((mm.result && mm.result.winner_name) || mm.winner_name);
+         const done = mm && mm.status === "completed" && wN && wN !== "BYE";
+         const card = h("div", { className: "vbt-fin-m" + (mm && mm.status === "on_table" ? " live" : ""),
+           onClick: (done && mm) ? (() => V.showBracketMatchDetail(mm)) : undefined,
+           style: done ? { cursor: "pointer" } : {} },
+           h("div", { className: "vbt-fin-no" }, r + "-" + (q + 1) +
+             (mm && mm.status === "on_table" ? "　● 台" + (mm.table_no || "?") : "")),
+           h("div", {}, feed(1)),
+           h("div", { className: "vbt-fin-sep" }),
+           h("div", {}, feed(2)),
+           done ? h("div", { className: "vbt-fin-w" },
+             (cnt === 1 ? "優勝 " : "勝者 ") + wN +
+             (mm.winner_sets != null ? "　" + mm.winner_sets + "-" + (mm.loser_sets || 0) : "")) : null);
+         col.appendChild(card);
+       }
+       fbox.appendChild(col);
+     }
+     box.appendChild(fbox);
+   }
+   return box;
+ } catch (e) { return null; }
+ },
+
  _bracketCard(m) {
    const done = m.status === "completed" && !!m.winner_name;
    const live = m.status === "on_table";
