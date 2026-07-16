@@ -1598,6 +1598,7 @@
 <script src="/shared/common.js"></script>
 <script src="/shared/tournament-templates.js"></script>
 <script src="/shared/tie-order.js"></script>
+<script src="/shared/bracket-layout.js"></script>
 <script>
 const { h, esc, api, toast, ratingBadge, fmtDate, fmtDateShort, clear,
  parsePaste, downloadCSV, downloadJSON, openModal, EV_TYPES, ROUNDS, CATS } = TT;
@@ -11728,50 +11729,21 @@ const O = {
  // 「試合Xのslot(1|2)へ進出してくるのはどの試合か」の逆引きマップ(自由配線編集後も正しく動く)。
  const incomingOf = new Map();   // "matchId:slot" -> 試合
  matches.forEach(m => { if (m.next_match_id) incomingOf.set(m.next_match_id + ":" + (m.next_slot || 1), m); });
- const round1 = matches.filter(m => (m.bracket_round || 1) === 1)
-   .sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0));
- const S = round1.length * 2;
- const totalRounds = Math.max(1, Math.round(Math.log2(S)));
- // SS大会(open種目)はＡ〜Ｄ4ブロック固定(抽選と同じ)。それ以外は128リーフ=1ブロック。
+ // 幾何計算は共有モジュール TTBracketLayout(shared/bracket-layout.js)に集約。
+ // 罫線座標・レール幅・通し番号の定義はそちらが正典(viewer/印刷と同一の山になる)。
+ // SS大会(open種目)はＡ〜Ｄ4ブロック固定(抽選と同じ)。
  const _pbOpen = (() => { try {
    return !!(((typeof O._eventConfig === "function" && O._eventConfig()) || []).find(c => c && c.name === event) || {}).open;
  } catch (e) { return false; } })();
- const BL = (_pbOpen && S >= 16) ? S / 4 : (S >= 256 ? 128 : S);   // 1ブロックのリーフ数(Excel紙面と同式)
- const nBlocks = S / BL;
- const blockRounds = Math.max(1, Math.round(Math.log2(BL)));
- const sideR = Math.max(0, blockRounds - 1);
-
- // リーフ配列(BYE=null)と通し番号(BYEを除く連番=紙・Excelと同じ定義)
- const leafArr = new Array(S).fill(null);
- round1.forEach(m => {
-   const p = m.bracket_pos || 0;
-   [[1, m.player1_name, m.player1_team, m.player1_entrant_id],
-    [2, m.player2_name, m.player2_team, m.player2_entrant_id]].forEach(([sk, nm, tm, eid]) => {
-     if (nm && nm !== "BYE") leafArr[2 * p + (sk - 1)] = { name: nm, team: tm || "", eid, pos: p, slot: sk };
-   });
- });
- { let serial = 0; leafArr.forEach(lf => { if (lf) lf.no = ++serial; }); }
+ const layout = TTBracketLayout.computeBracketLayout(matches, { open: _pbOpen, event });
+ if (!layout) return h("div", { className: "empty-state" }, "試合データなし");
+ const { S, totalRounds, BL, nBlocks, blockRounds, isDbl, ROW_H, RAIL_W, W } = layout;
+ const leafArr = layout.leaves;
  const lockOf = (lf) => {   // 現行と同義: 進行中 or 実選手同士の確定済みは編集不可
    const m = byRP["1_" + lf.pos]; if (!m) return false;
    const bothReal = m.player1_name && m.player2_name && m.player1_name !== "BYE" && m.player2_name !== "BYE";
    return m.status === "on_table" || (m.status === "completed" && bothReal);
  };
-
- // 幾何(px)。罫線は全てこの座標系のSVGに描く=レール/山線/中央joinが構造的にズレない。
- // PC運用前提で横幅を使う: ダブルス/団体はペア名+所属が長いためレールを広く取り2行表示にする。
- // レール幅は最長の氏名/所属から自動算出(全角=フォントpx・半角=0.55px換算)=見切れゼロ。
- const isDbl = /ダブルス|団体/.test(event || "");
- const estW = (s, px) => { let w = 0; for (const ch of String(s || "")) w += ch.charCodeAt(0) > 0xFF ? px : px * 0.55; return w; };
- let railNeed = 0;
- leafArr.forEach(lf => {
-   if (!lf) return;
-   const w = isDbl ? Math.max(estW(lf.name, 12.5) + 40, estW(lf.team, 10.5) + 46)
-                   : estW(lf.name, 13) + estW(lf.team, 10.5) + 56;
-   if (w > railNeed) railNeed = w;
- });
- const ROW_H = isDbl ? 42 : 34, ADV_W = 44, CENTER_W = 150, PAD_T = 10, PAD_B = 10;
- const RAIL_W = Math.min(480, Math.max(isDbl ? 330 : 230, Math.ceil(railNeed)));
- const W = RAIL_W * 2 + sideR * ADV_W * 2 + CENTER_W;
  const NSVG = "http://www.w3.org/2000/svg";
  const sline = (svg, x1, y1, x2, y2, wpx, color) => {
    const l = document.createElementNS(NSVG, "line");
@@ -11917,21 +11889,10 @@ const O = {
      document.addEventListener("pointermove", onMove);
      document.addEventListener("pointerup", onUp);
    };
-   const railInfo = (g, side, idx) => {
-     const y0 = PAD_T + idx * ROW_H;
-     const lineY = y0 + ROW_H - 9;
-     return { g, side, y0, lineY, lf: leafArr[g] };
-   };
-   // 線は {y, deep} で運ぶ。deep=リーフからの連続延長数(join無しの長線)。
-   // deep>=2 の線が最初にjoinする試合=スーパーシード戦(登場3回戦以上のSSが初めて戦う)。
-   let li = 0, ri = 0;
-   for (let g = b * BL; g < b * BL + BL / 2; g++) {
-     if (leafArr[g]) { rails.push(railInfo(g, "L", li++)); }
-   }
-   for (let g = b * BL + BL / 2; g < (b + 1) * BL; g++) {
-     if (leafArr[g]) { rails.push(railInfo(g, "R", ri++)); }
-   }
-   const H = PAD_T + Math.max(li, ri, 1) * ROW_H + PAD_B;
+   // レール位置・罫線座標・join(注釈/ハンドルのアンカー)は共有レイアウトから取る。
+   const blk = layout.blocks[b];
+   blk.rails.forEach(r => rails.push(r));
+   const H = blk.height;
    wrap.style.height = H + "px";
    svg.setAttribute("width", W); svg.setAttribute("height", H);
    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
@@ -11941,8 +11902,7 @@ const O = {
    // 選択ハイライトはここでは塗らず refreshSel()(全再描画なし・スクロール保持)が担当する。
    rails.forEach(r => {
      const isL = r.side === "L";
-     sline(svg, isL ? 8 : W - RAIL_W, r.lineY, isL ? RAIL_W : W - 8, r.lineY);
-     const lf = r.lf;
+     const lf = r.leaf;
      const played = lockOf(lf);   // 進行済み(確定/試合中)の目印。ブロックはしない(確定時にforce確認)
      const noEl = h("span", { style: { fontSize: "11px", color: "#6b7280", minWidth: "22px",
        textAlign: "right", fontVariantNumeric: "tabular-nums", flex: "0 0 auto" } }, String(lf.no));
@@ -11992,98 +11952,24 @@ const O = {
      div.dataset.pbG = r.g;
      wrap.appendChild(div);
    });
-   // 罫線(グラフベース): next_match_id/next_slot という実配線を辿って描く(位置演算ではない)。
-   // 両子=join / 片子=長線延長 / 子なし=無し (Excel buildSideLines と同一規則)。
-   // 自由配線編集(relinkBracketMatch)後もこのまま正しく描ける(標準配置と1ピクセルも変わらない)。
-   const railY = new Map();   // leafArr のグローバルindex -> Y座標(このブロックのSVG内)
-   rails.forEach(rr => railY.set(rr.g, rr.lineY));
-   const matchState = new Map();   // matchId -> {y, deep} | null (このブロック内の試合のみ)
-   const r1lo = b * BL / 2, r1hi = (b + 1) * BL / 2;
-   matches.forEach(m => {
-     if ((m.bracket_round || 1) !== 1) return;
-     const p = m.bracket_pos || 0;
-     if (p < r1lo || p >= r1hi) return;
-     const y1 = railY.has(2 * p) ? railY.get(2 * p) : null;
-     const y2 = railY.has(2 * p + 1) ? railY.get(2 * p + 1) : null;
-     let state = null;
-     if (y1 != null && y2 != null) state = { y: Math.round((y1 + y2) / 2), deep: 0 };
-     else if (y1 != null || y2 != null) state = { y: y1 != null ? y1 : y2, deep: 1 };
-     matchState.set(m.id, state);
-     // 1回戦→2回戦の縦線・勝者横線(LADV(1)/RADV(1)相当)。blockRounds===1はこの列自体が無い
-     // (中央joinがリーフを直接aL/aRとして使う特別扱い=下のblockRounds===1分岐に譲る)。
-     if (!state || sideR < 1) return;
-     const side = (p - r1lo) < BL / 4 ? "L" : "R";
-     const x0 = side === "L" ? RAIL_W : W - RAIL_W, x2 = side === "L" ? x0 + ADV_W : x0 - ADV_W;
-     if (y1 != null && y2 != null) {
-       sline(svg, x0, y1, x0, y2);
-       sline(svg, Math.min(x0, x2), state.y, Math.max(x0, x2), state.y);
-       annotate(svg, m, Math.min(x0, x2), Math.max(x0, x2), state.y, side, false);
-       relinkHandle(m, x2, state.y);
-     } else {
-       sline(svg, Math.min(x0, x2), state.y, Math.max(x0, x2), state.y);
-     }
-   });
-   // 2回戦〜ブロック準決勝(bracket_round=2..blockRounds-1)を回戦昇順で処理。「回戦前進」の
-   // 不変条件(next_match_idは常に直後の回戦を指す)により、昇順処理だけで入力が必ず揃う
-   // (トポロジカルソート不要。自由配線で入替後もこの前提は変わらない=A-1のスコープ境界)。
-   for (let r = 2; r < blockRounds; r++) {
-     const perBlock = BL / Math.pow(2, r), half = perBlock / 2, base = b * perBlock;
-     const colOf = (side) => side === "L" ? RAIL_W + (r - 1) * ADV_W : W - RAIL_W - (r - 1) * ADV_W;
-     matches.filter(m => (m.bracket_round || 1) === r && (m.bracket_pos || 0) >= base && (m.bracket_pos || 0) < base + perBlock)
-       .forEach(m => {
-         const pos = m.bracket_pos || 0;
-         const side = (pos - base) < half ? "L" : "R";
-         const x0 = colOf(side), x2 = side === "L" ? x0 + ADV_W : x0 - ADV_W;
-         const src1 = incomingOf.get(m.id + ":1"), src2 = incomingOf.get(m.id + ":2");
-         const a = src1 ? matchState.get(src1.id) : null, bb = src2 ? matchState.get(src2.id) : null;
-         if (a != null && bb != null) {
-           const y = Math.round((a.y + bb.y) / 2);
-           sline(svg, x0, a.y, x0, bb.y);                          // 縦線(子2線を結ぶ)
-           sline(svg, Math.min(x0, x2), y, Math.max(x0, x2), y);   // 勝者横線
-           // 深い長線(登場3回戦以上のSS)が最初に戦うjoin=スーパーシード戦として明示
-           annotate(svg, m, Math.min(x0, x2), Math.max(x0, x2), y, side, a.deep >= 2 || bb.deep >= 2);
-           relinkHandle(m, x2, y);
-           matchState.set(m.id, { y, deep: 0 });
-         } else if (a != null || bb != null) {
-           const v = a != null ? a : bb;
-           sline(svg, Math.min(x0, x2), v.y, Math.max(x0, x2), v.y);  // 不戦勝の長線延長
-           matchState.set(m.id, { y: v.y, deep: v.deep + 1 });
-         } else matchState.set(m.id, null);
-       });
-   }
-   // ブロック決勝(1ブロック時=決勝線・複数ブロック時=ブロック勝者線)。中央(xL〜xR)に描く特別な列。
-   const xL = RAIL_W + sideR * ADV_W, xR = W - RAIL_W - sideR * ADV_W;
-   const blockFinalM = matches.find(m => (m.bracket_round || 1) === blockRounds && (m.bracket_pos || 0) === b);
-   if (blockFinalM) {
-     let aL, aR;
-     if (blockRounds === 1) {
-       // 1回戦の唯一の試合=ブロック決勝そのもの。合流のV字を正しく描くため、事前計算した
-       // 中間点(matchState)ではなく、2つのリーフの生のY座標を直接aL/aRとして使う。
-       const p = blockFinalM.bracket_pos || 0;
-       const y1 = railY.has(2 * p) ? railY.get(2 * p) : null;
-       const y2 = railY.has(2 * p + 1) ? railY.get(2 * p + 1) : null;
-       aL = y1 != null ? { y: y1, deep: 0 } : null;
-       aR = y2 != null ? { y: y2, deep: 0 } : null;
-     } else {
-       const src1 = incomingOf.get(blockFinalM.id + ":1"), src2 = incomingOf.get(blockFinalM.id + ":2");
-       aL = src1 ? matchState.get(src1.id) : null;
-       aR = src2 ? matchState.get(src2.id) : null;
-     }
-     if (aL != null || aR != null) {
-       const cy = (aL != null && aR != null) ? Math.round((aL.y + aR.y) / 2) : (aL != null ? aL.y : aR.y);
-       sline(svg, xL, cy, xR, cy, nBlocks === 1 ? 2.5 : 1.5);
-       if (aL != null && aL.y !== cy) sline(svg, xL, Math.min(aL.y, cy), xL, Math.max(aL.y, cy));
-       if (aR != null && aR.y !== cy) sline(svg, xR, Math.min(aR.y, cy), xR, Math.max(aR.y, cy));
-       const finalWinnerName = (blockFinalM.result && blockFinalM.result.winner_name) || blockFinalM.winner_name;
-       if (blockFinalM.status === "completed" && finalWinnerName && finalWinnerName !== "BYE") {
-         stext(svg, Math.round((xL + xR) / 2), cy - 5,
+   // 罫線: 共有レイアウトが実配線(next_match_id/next_slot)を辿って算出した座標をそのまま描く。
+   // 線を全部先に引き、注釈・ハンドルを後から重ねる(テキストが常に線の上=白フチと併せ可読性確保)。
+   blk.segments.forEach(sg => sline(svg, sg.x1, sg.y1, sg.x2, sg.y2, sg.w));
+   blk.joins.forEach(j => {
+     const mm = j.match;
+     if (j.kind === "blockFinal") {
+       const finalWinnerName = (mm.result && mm.result.winner_name) || mm.winner_name;
+       if (mm.status === "completed" && finalWinnerName && finalWinnerName !== "BYE") {
+         stext(svg, Math.round((j.xa + j.xb) / 2), j.y - 5,
            (nBlocks === 1 ? "優勝 " : "") + finalWinnerName, "middle", 12, "#c01526", true);
        } else {
-         const ssC = (aL != null && aL.deep >= 2) || (aR != null && aR.deep >= 2);
-         annotate(svg, blockFinalM, xL, xR, cy, "C", ssC);
+         annotate(svg, mm, j.xa, j.xb, j.y, "C", j.ss);
        }
+     } else {
+       annotate(svg, mm, j.xa, j.xb, j.y, j.anchorSide, j.ss);
+       if (j.handle) relinkHandle(mm, j.handle.x, j.handle.y);
      }
-   }
+   });
    return { wrap, rails };
  };
 

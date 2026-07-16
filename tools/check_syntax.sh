@@ -52,7 +52,7 @@ done
 
 echo ""
 echo "=== /shared/ 共通 JS ==="
-for f in public/shared/common.js public/shared/tournament-templates.js public/shared/tie-order.js; do
+for f in public/shared/common.js public/shared/tournament-templates.js public/shared/tie-order.js public/shared/bracket-layout.js; do
   if [ -f "$f" ]; then
     if node --check "$f" 2>/dev/null; then
       echo "  [OK] $f"
