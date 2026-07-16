@@ -8397,6 +8397,10 @@ const O = {
            title: "全試合終了。閲覧側で『終了した大会』として表示します(結果編集は引き続き可能)",
            onClick: () => O.closeTournament() }, "大会を終了する")
        : null),
+ // 表彰・入賞者(大会の締め): 結果から1〜3位を自動集計→Excel出力/選手DBへ記録
+ h("button", { className: "btn btn-sm btn-ghost",
+   title: "各種目の入賞者(優勝・準優勝・3位)を結果から自動集計。表彰式の読み上げ・Excel出力・選手データベースへの記録",
+   onClick: () => O.openPodium() }, "表彰・入賞者"),
  // 審判結果入力 (本部に来ず審判が報告。テスト→本番の段階運用 #211)
  h("button", {
    className: "btn btn-sm",
@@ -11207,6 +11211,81 @@ const O = {
  if (r && r.queued) return toast("オフライン: コートから戻す操作を保存しました（接続復帰後に自動送信）", "warn");
  toast("コートから戻しました", "ok");
  O.reload();
+ },
+
+ // ── 表彰・入賞者(大会の締め) ──
+ // 結果から各種目の1〜3位を自動集計してプレビュー(判定はサーバ computeTournamentPodium が正)。
+ // 選手DBへの記録は「プレビュー→人が確認→確定」の2段階(ktta-player-databaseの掟)。冪等なので押し直し可。
+ async openPodium() {
+ if (!O.tournamentId) return;
+ let pod;
+ try { pod = await api.get(`/api/tournaments/${O.tournamentId}/podium`); }
+ catch (e) { return toast("通信できません（オフライン）", "err"); }
+ if (!pod || pod.error) return toast((pod && pod.error) || "集計できません", "err");
+ const placeLabel = (p) => p === 1 ? "優勝" : p === 2 ? "準優勝" : p === 3 ? "3位" : "";
+ const linkable = [];
+ const unlinkedRows = [];
+ const body = h("div", {});
+ body.appendChild(h("div", { className: "text-sm text-sub", style: { marginBottom: "10px", lineHeight: "1.7" } },
+   "結果から自動集計した入賞者です(3位は準決勝敗者2名)。表彰式の読み上げ・Excel出力・選手データベースへの記録に使えます。"));
+ (pod.events || []).forEach(evb => {
+   if (evb.status === "none") return;
+   const sec = h("div", { style: { marginBottom: "12px" } });
+   sec.appendChild(h("div", { style: { fontWeight: 800, fontSize: "13.5px", borderBottom: "2px solid #1c1917",
+     paddingBottom: "3px", marginBottom: "6px" } }, evb.event));
+   if (evb.status === "final") {
+     evb.items.forEach(it => {
+       const linked = it.player_ids && it.player_ids.length;
+       if (linked) linkable.push(it); else unlinkedRows.push(evb.event + " " + placeLabel(it.place) + " " + it.name);
+       sec.appendChild(h("div", { style: { display: "flex", gap: "10px", alignItems: "baseline",
+         padding: "3px 2px", borderBottom: "1px dashed #e2e0db" } },
+         h("span", { style: { minWidth: "52px", fontWeight: it.place === 1 ? 800 : 600,
+           color: it.place === 1 ? "#c01526" : "#1c1917", fontSize: "12.5px" } }, placeLabel(it.place)),
+         h("span", { style: { fontWeight: 700, fontSize: "13.5px" } }, it.name),
+         h("span", { className: "text-sub", style: { fontSize: "12px" } }, it.team || ""),
+         linked ? null : h("span", { title: "選手データベースに未連携のため記録されません(枠の編集から連携できます)",
+           style: { marginLeft: "auto", fontSize: "10.5px", fontWeight: 700, color: "#92400e",
+             background: "#fef3c7", borderRadius: "6px", padding: "1px 6px" } }, "DB未連携")));
+     });
+   } else {
+     sec.appendChild(h("div", { className: "text-sm text-sub" },
+       (evb.status === "pending" ? "未確定: " : "") + (evb.note || "")));
+     (evb.items || []).forEach(it => sec.appendChild(h("div", { className: "text-sm",
+       style: { padding: "2px 2px" } }, (it.label || "") + "　" + it.name)));
+   }
+   body.appendChild(sec);
+ });
+ if (!body.children.length || (pod.events || []).every(e => e.status === "none")) {
+   body.appendChild(h("div", { className: "empty-state" }, "集計できる種目がまだありません"));
+ }
+ const regBtn = h("button", { className: "btn",
+   title: "確定済みの入賞者を選手データベースの入賞歴に記録します(再実行しても二重登録されません)",
+   onClick: async () => {
+     if (regBtn.dataset.armed !== "1") {
+       regBtn.dataset.armed = "1";
+       regBtn.textContent = `本当に記録する(対象${linkable.length}名分・もう一度押す)`;
+       regBtn.style.background = "#c01526"; regBtn.style.color = "#fff";
+       return;
+     }
+     let r;
+     try { r = await api.post(`/api/tournaments/${O.tournamentId}/podium/register`, {}); }
+     catch (e) { return toast("通信できません（オフライン）", "err"); }
+     if (!r || r.error) return toast((r && r.error) || "記録に失敗しました", "err");
+     toast(`選手DBへ記録: ${r.registered}件` + (r.skipped ? ` / 既登録スキップ${r.skipped}件` : "")
+       + (r.unlinked && r.unlinked.length ? ` / 未連携${r.unlinked.length}名は対象外` : ""), "ok");
+     regBtn.dataset.armed = ""; regBtn.textContent = "選手DBへ記録";
+     regBtn.style.background = ""; regBtn.style.color = "";
+   } }, "選手DBへ記録");
+ const foot = h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
+   h("button", { className: "btn",
+     onClick: () => A.downloadAuthedFile(`/api/tournaments/${O.tournamentId}/podium.xlsx`, "入賞者一覧.xlsx") },
+     "Excelに出力"),
+   regBtn,
+   unlinkedRows.length ? h("span", { className: "text-xs text-sub" },
+     `未連携${unlinkedRows.length}名(記録対象外)`) : null,
+   h("button", { className: "btn btn-ghost", style: { marginLeft: "auto" },
+     onClick: (e) => e.target.closest(".modal-bg")?.remove() }, "閉じる"));
+ openModal("表彰・入賞者", body, foot);
  },
 
  // ── 大会終了 / 再開 (#6) ──

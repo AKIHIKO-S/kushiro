@@ -2573,6 +2573,39 @@ app.get("/api/tournaments/:id/standings.xlsx", requireAdmin, (req, res) => {
   }
 });
 
+// ─── 入賞者(表彰)の集計・出力・選手DB登録(大会の締め業務) ───
+app.get("/api/tournaments/:id/podium", requireAdmin, (req, res) => {
+  const r = db.computeTournamentPodium(req.params.id);
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
+});
+// 登録は「プレビュー→人が確認→確定」の確定側。冪等(再実行は skipped)。
+app.post("/api/tournaments/:id/podium/register", requireAdmin, (req, res) => {
+  const r = db.registerPodiumAchievements(req.params.id);
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
+app.get("/api/tournaments/:id/podium.xlsx", requireAdmin, (req, res) => {
+  try {
+    const tournament = db.getTournament(req.params.id);
+    if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
+    const pod = db.computeTournamentPodium(req.params.id);
+    if (pod.error) return res.status(404).json(pod);
+    const buf = reports.buildPodiumXlsx(tournament, pod);
+    const safeName = (tournament.name || "tournament").replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_");
+    const filename = encodeURIComponent(`入賞者一覧_${safeName}.xlsx`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=UTF-8''${filename}`);
+    res.setHeader("Content-Length", Buffer.byteLength(buf));
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.end(buf);
+  } catch (e) {
+    console.error("podium.xlsx error:", e);
+    res.status(500).json({ error: "入賞者一覧の生成失敗: " + e.message });
+  }
+});
+
 // ─── 対戦票 (審判用記録票) 一括 Excel 出力 ───
 app.get("/api/tournaments/:id/match-cards.xlsx", requireAdmin, (req, res) => {
   try {

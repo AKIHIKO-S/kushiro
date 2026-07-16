@@ -1512,6 +1512,71 @@ function buildStandingsXlsx(tournament, standingsByEvent, matchesByEvent) {
   return XLSXS.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
 }
 
+// ── 入賞者一覧 (表彰式・協会報告・賞状差し込み用) ──
+// db.computeTournamentPodium の出力を 1シート・1行=1入賞者 で書く(差し込み印刷しやすい形)。
+// 未確定(pending)・自動判定不可(manual)の種目も状態を明記して漏れを見えるようにする。
+function buildPodiumXlsx(tournament, podium) {
+  const XLSXS = require("xlsx-js-style");
+  const wb = XLSXS.utils.book_new();
+  const thin = { style: "thin", color: { rgb: "444444" } };
+  const FONT = "Meiryo";
+  const base = { font: { sz: 10.5, name: FONT }, alignment: { horizontal: "center", vertical: "center" },
+    border: { top: thin, bottom: thin, left: thin, right: thin } };
+  const headSt = { ...base, font: { sz: 10.5, name: FONT, bold: true }, fill: { fgColor: { rgb: "F2EFE9" } } };
+  const leftSt = { ...base, alignment: { horizontal: "left", vertical: "center", shrinkToFit: true } };
+  const goldSt = { ...base, font: { sz: 10.5, name: FONT, bold: true } };
+  const noteSt = { font: { sz: 9.5, name: FONT, color: { rgb: "888888" } } };
+  const placeLabel = (p) => p === 1 ? "優勝" : p === 2 ? "準優勝" : p === 3 ? "3位" : "";
+
+  const ws = {};
+  const put = (r, c, v, style) => {
+    ws[XLSXS.utils.encode_cell({ r, c })] = { t: "s", v: v == null ? "" : String(v), s: style || base };
+  };
+  let row = 0;
+  put(row, 0, `${tournament.name || ""}  入賞者一覧`, { font: { sz: 13, name: FONT, bold: true } });
+  put(row, 4, _jaShortDate(tournament.date), { font: { sz: 10, name: FONT } });
+  row += 2;
+  ["種目", "順位", "氏名", "所属", "備考"].forEach((hh, c) => put(row, c, hh, headSt));
+  row++;
+  (podium.events || []).forEach(evb => {
+    if (evb.status === "none") return;
+    if (evb.status === "final") {
+      evb.items.forEach(it => {
+        put(row, 0, evb.event, leftSt);
+        put(row, 1, placeLabel(it.place) || (it.label || ""), it.place === 1 ? goldSt : base);
+        put(row, 2, it.name, { ...leftSt, font: { sz: 10.5, name: FONT, bold: it.place === 1 } });
+        put(row, 3, it.team, leftSt);
+        put(row, 4, "", base);
+        row++;
+      });
+    } else {
+      put(row, 0, evb.event, leftSt);
+      put(row, 1, evb.status === "pending" ? "未確定" : "手動確認", base);
+      put(row, 2, "", base); put(row, 3, "", base);
+      put(row, 4, evb.note || "", { ...leftSt, font: { sz: 9.5, name: FONT, color: { rgb: "888888" } } });
+      row++;
+      if (evb.status === "manual") {
+        evb.items.forEach(it => {
+          put(row, 0, "", base);
+          put(row, 1, it.label || "", base);
+          put(row, 2, it.name, leftSt);
+          put(row, 3, it.team, leftSt);
+          put(row, 4, "", base);
+          row++;
+        });
+      }
+    }
+  });
+  row++;
+  put(row, 0, "3位は準決勝敗者2名(3位決定戦なし)。「未確定」は決勝・残り試合の終了後に再出力してください。", noteSt);
+  ws["!ref"] = XLSXS.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(row, 3), c: 4 } });
+  ws["!cols"] = [{ wch: 24 }, { wch: 9 }, { wch: 24 }, { wch: 20 }, { wch: 42 }];
+  ws["!pageSetup"] = { orientation: "portrait", paperSize: 9, fitToHeight: 0 };
+  ws["!margins"] = { left: 0.5, right: 0.5, top: 0.6, bottom: 0.5, header: 0.2, footer: 0.2 };
+  XLSXS.utils.book_append_sheet(wb, ws, "入賞者一覧");
+  return XLSXS.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
+}
+
 module.exports = {
   buildAggregationXlsx,
   buildApplicantsXlsx,
@@ -1521,6 +1586,7 @@ module.exports = {
   buildMatchCardsXlsx,
   buildBracketXlsx,
   buildStandingsXlsx,
+  buildPodiumXlsx,
   buildCoachResultsHTML,
   classifyEvent, genderOf,
   buildAggregation, feesFromEventConfig,   // テスト用に公開 (#17)
