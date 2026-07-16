@@ -3279,11 +3279,13 @@ function bracketPositions(size) {
 // entries = シード強い順 [{p, w}]。w = 2^(entry_round-1) = そのシードが消費するリーフ数
 // (= BYE段差)。登場ラウンドR の選手は (R-1) ラウンドぶん BYE で繰り上がり、R回戦から登場する。
 // 標準シードで上下に振り分けつつ、各半分の「重み容量」を尊重する。区画を単独で専有できる
-// スーパーシードは、その区画の先頭リーフに置き残りをBYE(null)にする → 既存の autoAdvanceByes が
-// 多段BYEを自動進行させ、R回戦の相手(反対側の予選サブブラケット勝者)と当たる。
-// ※上下の「区画分割」(どのシードが上半分/下半分か)は bracketPositions と同一だが、区画内の細かな
-//   物理順は蛇行が浅く、外/中シード標準式(S2最下端等)とは鏡像方向が一部異なる。スーパーシードは
-//   登場回戦の枠が主眼で競技構造は正しいため許容。superseedの物理順の完全な標準式一致は段階1後半で対応(TODO)。
+// スーパーシードは、実際のシード席(絶対位置)に本人を置き残りをBYE(null)にする →
+// 既存の autoAdvanceByes が多段BYEを自動進行させ、R回戦の相手(反対側の予選サブブラケット
+// 勝者)と当たる。
+// シードの絶対物理位置(rankToSlot)は size全体で1回だけ計算して固定する(抽選ドロー側
+// computeDrawLeavesと同一アルゴリズム)。以前は再帰の各段階で計算し直しており、深い階層
+// (特にスーパーシードが絡む場合)で標準式とズレる不具合があった(2026-07-16解消。
+// test/kushiro-seed-order.test.jsで往復一致性を固定)。
 // ── 釧路式シード順(物理順): シード番号は紙の上から順に振る(2026-07-14ユーザー承認) ──
 // 構造アンカー(標準ドローのシード席: rank1,2,{3,4},{5-8},…の席)をK人を覆う最小ティアまで取り、
 // その席を「上から順(スロット昇順)」に rank 1..K へ割り当てる。
@@ -3308,39 +3310,56 @@ function kushiroSeedSlots(size, K) {
 function buildSeededLeaves(entries, size, opts2) {
   const kushiro = !!(opts2 && opts2.kushiroOrder);
   const leaves = new Array(size).fill(null);
+  // シードの絶対物理位置(rankToSlot)を size全体で1回だけ計算し固定する(抽選ドロー側
+  // computeDrawLeavesと同一アルゴリズム)。以前は再帰の各段階で(kushiroはkushiroSeedSlotsを、
+  // 通常はentries配列インデックスのスネークを)計算し直しており、深い階層(特にスーパーシードが
+  // 絡む場合)で常に上位区画へ寄る浅い蛇行が生まれ標準式とズレていた(実測: シードの過半数が
+  // 不一致。TODO解消・2026-07-16)。kushiro=釧路物理順(2026-07-14ユーザー承認・第1と第2が
+  // 同じ山) / 通常=for_mac.xls標準位置番号式(bracketPositionsの逆写像)。
+  const seededEntries = entries.filter(e => (parseInt(e.p && e.p.seed) || 0) >= 1);
+  const rankToSlot = {};
+  if (kushiro) {
+    const maxRank = seededEntries.reduce((mx, e) => Math.max(mx, parseInt(e.p.seed) || 0), 0);
+    const kSlots = maxRank >= 1 ? kushiroSeedSlots(size, Math.min(maxRank, size)) : [];
+    seededEntries.forEach(e => {
+      const r = parseInt(e.p.seed) || 0;
+      if (r >= 1 && r <= kSlots.length) rankToSlot[r] = kSlots[r - 1];
+    });
+  } else {
+    const positions = bracketPositions(size);
+    const posOfRank = {};
+    positions.forEach((rank, i) => { posOfRank[rank] = i; });
+    seededEntries.forEach(e => {
+      const r = parseInt(e.p.seed) || 0;
+      if (r >= 1 && posOfRank[r] != null) rankToSlot[r] = posOfRank[r];
+    });
+  }
   function place(ents, lo, span) {
     if (span === 1) { if (ents[0]) leaves[lo] = ents[0].p; return; }
     if (!ents.length) return;
-    if (ents.length === 1 && ents[0].w >= span) { leaves[lo] = ents[0].p; return; } // 単独=区画専有(残りBYE)
+    if (ents.length === 1 && ents[0].w >= span) {
+      // 単独=区画専有(残りBYE)。本人は「区画の先頭」ではなく rankToSlot が指す実際の絶対位置
+      // (=標準シード席そのもの)に置く(区画の先頭固定だと外/中シードの席がlo以外のケースで
+      // ズレていた)。
+      const r0 = parseInt(ents[0].p && ents[0].p.seed) || 0;
+      const targetSlot = (r0 >= 1 && rankToSlot[r0] != null) ? rankToSlot[r0] : lo;
+      leaves[targetSlot] = ents[0].p;
+      return;
+    }
     const half = span / 2;
     const top = [], bot = []; let wt = 0, wb = 0;
-    if (kushiro) {
-      // 釧路式(物理順・自己相似・SS大会用): 釧路席の上半分の数だけ先頭シードを上の山へ。
-      const seededEnts = ents.filter(x => (parseInt(x.p && x.p.seed) || 0) >= 1);
-      let topK = seededEnts.length;
-      if (seededEnts.length >= 2) {
-        const seats = kushiroSeedSlots(span, seededEnts.length);
-        topK = seats.filter(s => s < half).length;
-      }
-      let si = 0;
-      ents.forEach((e) => {
-        let side;
-        if ((parseInt(e.p && e.p.seed) || 0) >= 1) { side = (si < topK) ? 0 : 1; si++; }
-        else side = (wt + e.w <= half) ? 0 : 1;
-        if (side === 0 && wt + e.w > half) side = 1;          // 容量ガード
-        if (side === 1 && wb + e.w > half) side = (wt <= wb) ? 0 : 1;
-        if (side === 0) { top.push(e); wt += e.w; } else { bot.push(e); wb += e.w; }
-      });
-    } else {
-      // 通常大会: for_mac.xls 準拠の標準スネーク(top,bot,bot,top,…=標準位置番号式と同型)
-      ents.forEach((e, i) => {
-        let side = ((i % 4) === 0 || (i % 4) === 3) ? 0 : 1;
-        const fits = (s) => (s === 0 ? wt + e.w <= half : wb + e.w <= half);
-        if (!fits(side)) side = 1 - side;
-        if (!fits(side)) side = (wt <= wb) ? 0 : 1;
-        if (side === 0) { top.push(e); wt += e.w; } else { bot.push(e); wb += e.w; }
-      });
-    }
+    // 絶対物理位置(rankToSlot、size全体で1回だけ計算済み)がこの区画の上半分/下半分の
+    // どちらかで判定する(spanごとの再計算をやめ、常に同じ位置基準を使う=標準式と完全一致)。
+    ents.forEach((e) => {
+      let side;
+      const r = parseInt(e.p && e.p.seed) || 0;
+      const slot = (r >= 1) ? rankToSlot[r] : null;
+      if (slot != null) side = (slot - lo) < half ? 0 : 1;
+      else side = (wt + e.w <= half) ? 0 : 1;
+      if (side === 0 && wt + e.w > half) side = 1;          // 容量ガード
+      if (side === 1 && wb + e.w > half) side = (wt <= wb) ? 0 : 1;
+      if (side === 0) { top.push(e); wt += e.w; } else { bot.push(e); wb += e.w; }
+    });
     place(top, lo, half);
     place(bot, lo + half, half);
   }
