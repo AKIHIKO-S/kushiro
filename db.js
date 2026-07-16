@@ -5681,6 +5681,8 @@ function getLeagueMatchResults(tournamentId, event, block) {
       }
       return {
         id: m.id, block: m.league_block, round: m.league_round, label: m.match_label, status: m.status, done,
+        // 進行中(コート上)はセットカウント速報を添付(星取表セルが「● 2-1」を出す。表示専用・確定値と無関係)
+        live: m.status === "on_table" ? parseLiveScore(m.live_sets_json) : undefined,
         p1_id: m.player1_entrant_id, p1_name: m.player1_name, p2_id: m.player2_entrant_id, p2_name: m.player2_name,
         winner, team_score: done ? (Math.max(p1w, p2w) + "-" + Math.min(p1w, p2w)) : "",
         p1_wins: p1w, p2_wins: p2w,

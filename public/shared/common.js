@@ -1034,6 +1034,7 @@
       ".lg-table .lg-win{color:var(--lg-win,#15803d);font-weight:800}" +
       ".lg-table .lg-lose{color:var(--lg-lose,#b91c1c)}" +
       ".lg-table .lg-pending{color:#cbd5e1}.lg-table .lg-wl{font-weight:800}" +
+      ".lg-table .lg-live{color:#c01526;font-weight:800;font-size:11.5px}" +
       ".lg-note{margin-top:5px}";
     document.head.appendChild(st);
   }
@@ -1049,7 +1050,17 @@
       let mm = byPair[rowId + "|" + colId], rowIsP1 = true;
       if (!mm) { mm = byPair[colId + "|" + rowId]; rowIsP1 = false; }
       if (!mm) return { txt: "", cls: "lg-empty" };
-      if (!mm.done) return { txt: "・", cls: "lg-pending" };
+      if (!mm.done) {
+        // 進行中(コート上)は丹頂で明示。セットカウント速報が届いていれば途中経過も出す
+        // (行チーム視点に並べ替え)。確定表記(○/●+数字)とは別クラス=Excel出力の定義には影響しない。
+        if (mm.status === "on_table") {
+          const lv = mm.live && (mm.live.s1 || mm.live.s2) ? mm.live : null;
+          const a = lv ? (rowIsP1 ? lv.s1 : lv.s2) : null;
+          const b = lv ? (rowIsP1 ? lv.s2 : lv.s1) : null;
+          return { txt: lv ? "●" + a + "-" + b : "●試合中", cls: "lg-live", title: "試合中(途中経過)" };
+        }
+        return { txt: "・", cls: "lg-pending" };
+      }
       const rw = rowIsP1 ? mm.p1_wins : mm.p2_wins, cw = rowIsP1 ? mm.p2_wins : mm.p1_wins;
       const won = mm.winner === (rowIsP1 ? "p1" : "p2");
       return { txt: (won ? "○" : "●") + rw + "-" + cw, cls: won ? "lg-win" : "lg-lose" };
@@ -1071,7 +1082,7 @@
       teams.forEach((c, ci) => {
         if (ci === ri) { tr.appendChild(h("td", { className: "lg-self" }, "")); return; }
         const cell = cellFor(t.entrant_id, c.entrant_id);
-        tr.appendChild(h("td", { className: "lg-cell " + cell.cls }, cell.txt));
+        tr.appendChild(h("td", { className: "lg-cell " + cell.cls, title: cell.title || "" }, cell.txt));
       });
       tr.appendChild(h("td", { className: "lg-wl" }, t.wins + "-" + t.losses + (t.draws ? "-" + t.draws : "")));
       tr.appendChild(h("td", { title: "取得" + t.sets_won + " / 失" + t.sets_lost }, fmtRate(t.sets_won, t.sets_lost)));

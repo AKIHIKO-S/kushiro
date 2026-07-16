@@ -152,3 +152,24 @@ test("getLastUpdated: 速報の更新で値が変わる(観戦ポーラーの変
   db.clearLiveScore(m.id);
   assert.notStrictEqual(db.getLastUpdated(), after, "クリア(rev+1)でも変化する");
 });
+
+test("getLeagueMatchResults: 進行中(on_table)行に live が乗り、確定行には乗らない(星取表セルの速報)", () => {
+  const t = db.createTournament({ name: "リーグ速報", date: "2027-08-10" });
+  db.updateEntrySettings(t.id, { entries_open: 1,
+    event_config: [{ name: "男子団体", type: "team", fee: 0, tie_format: "" }] });
+  ["速報A", "速報B", "速報C"].forEach((nm, i) =>
+    db.createEntrant({ tournament_id: t.id, event: "男子団体", name: nm, team: nm, seed: i + 1, status: "confirmed" }));
+  db.generateTeamLeague(t.id, "男子団体", { num_blocks: 1 });
+  db.updateTournament(t.id, { status: "ongoing" });
+  const lm = () => db.getMatchesByTournament(t.id).filter(m => m.league_block);
+  const [m1, m2] = lm();
+  db.callMatch(m1.id, 3);
+  db.setLiveScore(m1.id, { s1: 2, s2: 0 });
+  db.finishMatchOp(m2.id, { winner_slot: 1, sets: [], winner_sets: 3, loser_sets: 1 });
+  const rows = db.getLeagueMatchResults(t.id, "男子団体");
+  const live = rows.find(r => r.id === m1.id);
+  assert.strictEqual(live.status, "on_table");
+  assert.deepStrictEqual({ s1: live.live.s1, s2: live.live.s2 }, { s1: 2, s2: 0 }, "on_table行に速報が乗る");
+  const doneRow = rows.find(r => r.id === m2.id);
+  assert.ok(doneRow.done && doneRow.live === undefined, "確定行に live は付かない");
+});
