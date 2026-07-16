@@ -408,6 +408,19 @@
  color: #fff; font-size: 11px; font-weight: 800; padding-right: 10px;
  white-space: nowrap;
  }
+ /* 対昨年ゴーストバー(本部版): 今年のバー直下に昨年の消化率を細く重ね、差分を1行で示す */
+ .op-vsprev-bar {
+ height: 8px; border-radius: 4px; background: var(--ink-100);
+ overflow: hidden; margin-top: 5px;
+ }
+ .op-vsprev-fill { height: 100%; border-radius: 4px; background: #cbbfae; transition: width .5s ease; }
+ .op-vsprev-line {
+ display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+ font-size: 12px; color: var(--ink-600); margin-top: 4px; font-variant-numeric: tabular-nums;
+ }
+ .op-vsprev-line .vp-up { color: #15803d; font-weight: 800; }
+ .op-vsprev-line .vp-down { color: #b45309; font-weight: 800; }
+ .op-vsprev-line .vp-even { color: var(--ink-700); font-weight: 700; }
 
  .op-summary {
  display: grid; grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
@@ -8228,6 +8241,27 @@ const O = {
  }
  },
 
+ // 対昨年 進捗レースの本部版(観戦viewerのrenderVsPrevHeroの縮約)。
+ // getOperationState が vs_prev({name,pct,done,delta})を既に返しているのに本部画面には
+ // 出ていなかった(観戦側のみ)。進捗カード内に昨年ゴーストバー+差分1行で常時可視化する。
+ // vs_prev 無し(比較対象未設定/初年)は何も出さない(グレースフル)。
+ renderVsPrevRow(state) {
+ const prev = state && state.vs_prev;
+ if (!prev) return null;
+ const ppct = Math.round((prev.pct || 0) * 100);
+ const d = prev.delta || 0;
+ const dNode = d > 0 ? h("span", { className: "vp-up" }, "+" + d + "試合 先行")
+   : d < 0 ? h("span", { className: "vp-down" }, Math.abs(d) + "試合 遅れ")
+   : h("span", { className: "vp-even" }, "ほぼ同ペース");
+ return h("div", {},
+   h("div", { className: "op-vsprev-bar", title: "昨年(" + (prev.name || "比較大会") + ")の同時刻の消化率" },
+     h("div", { className: "op-vsprev-fill", style: { width: ppct + "%" } })),
+   h("div", { className: "op-vsprev-line" },
+     h("span", {}, "昨年同時刻 " + ppct + "% (" + (prev.done || 0) + "試合)"),
+     dNode,
+     h("span", { className: "text-xs", style: { color: "var(--ink-500)" } }, prev.name || "")));
+ },
+
  render() {
  const main = document.getElementById("opMain");
  if (!main) { console.error("[Operations] opMain element not found"); return; }
@@ -8261,6 +8295,7 @@ const O = {
      h("div", { className: "op-progress-fill" + (pct >= 100 ? " done" : ""),
        style: { width: pct + "%" } },
        pct >= 12 ? h("span", { className: "op-progress-pct" }, pct + "%") : null)),
+   O.renderVsPrevRow(O.state),
  );
  // 種目別進捗を同じカード内・バーの直下に
  if (events.length) {
