@@ -11584,29 +11584,156 @@ const O = {
  O._vbReload = reload;
  O._vbEvent = () => selectedEv;
 
- // 印刷: 新ウィンドウに bracketArea を移して印刷 (インラインstyleなので体裁保持)
- const printBracket = () => {
+ // ── 大判印刷: 全ブロック一括+サイズ選択(A4〜A1横) ──
+ // 画面のDOM移植ではなく、共有レイアウト(TTBracketLayout)から印刷専用の静的SVGを組む。
+ // SVGはviewBox基準の無段階スケールなので、同じ座標データがA4でもA1でも原寸で崩れない。
+ // 編集ハンドル・タブ・検索窓など画面用UIが紙に混ざらないのもこの方式の狙い。
+ const _svgEsc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g,
+   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+ // 1ブロック分のSVG文字列。注釈の文言規則は画面(annotate)と同一:
+ // 確定=勝者名 / 進行中=● 台N / スーパーシード戦 / 未確定=(回戦-番号の勝者)
+ const _printBlockSVG = (L, blk) => {
+   const p = [];
+   p.push('<svg viewBox="0 0 ' + L.W + " " + blk.height + '" style="width:100%;height:auto;display:block" xmlns="http://www.w3.org/2000/svg">');
+   blk.segments.forEach(sg => {
+     p.push('<line x1="' + sg.x1 + '" y1="' + sg.y1 + '" x2="' + sg.x2 + '" y2="' + sg.y2 +
+       '" stroke="#1f2937" stroke-width="' + (sg.w || 1.5) + '" shape-rendering="crispEdges"/>');
+   });
+   const text = (x, y, txt, anchor, size, color, bold) =>
+     '<text x="' + x + '" y="' + y + '" text-anchor="' + (anchor || "start") + '" font-size="' + (size || 10.5) +
+     '" fill="' + (color || "#6b7280") + '"' + (bold ? ' font-weight="700"' : "") +
+     ' paint-order="stroke" stroke="#fff" stroke-width="3" stroke-linejoin="round">' + _svgEsc(txt) + "</text>";
+   // レール(番号+氏名+所属)。画面と同じく中央(罫線の内端)へ寄せる。ダブルス/団体は2行。
+   blk.rails.forEach(r => {
+     const isL = r.side === "L", lf = r.leaf;
+     const xEnd = isL ? L.RAIL_W - 4 : L.W - L.RAIL_W + 4;
+     const anc = isL ? "end" : "start";
+     const noTxt = lf.no + ".";
+     if (L.isDbl) {
+       p.push(text(xEnd, r.lineY - 15, noTxt + " " + lf.name, anc, 12.5, "#1c1917", true));
+       if (lf.team) p.push(text(xEnd, r.lineY - 3, lf.team, anc, 10, "#6b7280"));
+     } else {
+       p.push(text(xEnd, r.lineY - 4, lf.team ? noTxt + " " + lf.name + "　" + lf.team : noTxt + " " + lf.name,
+         anc, 13, "#1c1917", true));
+     }
+   });
+   blk.joins.forEach(j => {
+     const mm = j.match;
+     const winnerName = (mm.result && mm.result.winner_name) || mm.winner_name;
+     const x = j.anchorSide === "L" ? j.xa + 3 : j.anchorSide === "R" ? j.xb - 3 : Math.round((j.xa + j.xb) / 2);
+     const anc = j.anchorSide === "L" ? "start" : j.anchorSide === "R" ? "end" : "middle";
+     const dy = j.kind === "blockFinal" ? 5 : 4;
+     if (mm.status === "completed" && winnerName && winnerName !== "BYE") {
+       const label = (j.kind === "blockFinal" && L.nBlocks === 1 ? "優勝 " : "") + winnerName;
+       p.push(text(x, j.y - dy, label, anc, j.kind === "blockFinal" ? 12 : 11.5,
+         j.kind === "blockFinal" ? "#c01526" : "#1f2937", true));
+     } else if (mm.status === "on_table") {
+       p.push(text(x, j.y - dy, "● 台" + (mm.table_no || "?"), anc, 10.5, "#c01526", true));
+     } else if (j.ss) {
+       p.push(text(x, j.y - dy, "スーパーシード戦", anc, 10.5, "#92400e", true));
+     } else {
+       const lbl = (mm.bracket_round || 1) + "-" + (mm.match_no || ((mm.bracket_pos || 0) + 1));
+       p.push(text(x, j.y - dy, "(" + lbl + "の勝者)", anc, 10.5, "#9ca3af"));
+     }
+   });
+   p.push("</svg>");
+   return p.join("");
+ };
+ // 決勝T(複数ブロック時)の静的HTML。供給元表記は画面(buildFinalsEl)と同じ実配線の逆引き。
+ const _printFinalsHTML = (L, matches) => {
+   const byRPp = {};
+   matches.forEach(m => { byRPp[(m.bracket_round || 1) + "_" + (m.bracket_pos || 0)] = m; });
+   const blockName = (i) => String.fromCharCode(0xFF21 + i) + "ブロック";
+   const cols = [];
+   for (let r = L.blockRounds + 1; r <= L.totalRounds; r++) {
+     const cnt = L.S / Math.pow(2, r);
+     const cards = [];
+     for (let q = 0; q < cnt; q++) {
+       const mm = byRPp[r + "_" + q];
+       const feed = (k) => {
+         const nm = k === 1 ? (mm && mm.player1_name) : (mm && mm.player2_name);
+         if (nm && nm !== "BYE") return '<b style="font-size:13.5px">' + _svgEsc(nm) + "</b>";
+         const src = mm ? L.incoming.get(mm.id + ":" + k) : null;
+         const label = !src ? "(未定)"
+           : r === L.blockRounds + 1 ? (blockName(src.bracket_pos || 0) + "優勝")
+           : "(" + src.bracket_round + "-" + (src.match_no || ((src.bracket_pos || 0) + 1)) + "の勝者)";
+         return '<span style="color:#9ca3af;font-size:12.5px">' + _svgEsc(label) + "</span>";
+       };
+       const wN = mm && ((mm.result && mm.result.winner_name) || mm.winner_name);
+       const done = mm && mm.status === "completed" && wN && wN !== "BYE";
+       cards.push('<div style="border:1.5px solid #d6d3ce;border-radius:8px;padding:8px 12px;background:#fff">' +
+         '<div style="font-size:10.5px;color:#6b7280;margin-bottom:2px">' + r + "-" + (q + 1) + "</div>" +
+         "<div>" + feed(1) + "</div>" +
+         '<div style="border-top:1px dashed #e2e0db;margin:3px 0"></div>' +
+         "<div>" + feed(2) + "</div>" +
+         (done ? '<div style="font-size:11.5px;color:#c01526;font-weight:700;text-align:right;margin-top:2px">勝者 ' +
+           _svgEsc(wN) + (mm.result ? "　" + mm.result.winner_sets + "-" + mm.result.loser_sets : "") + "</div>" : "") +
+         "</div>");
+     }
+     cols.push('<div style="display:flex;flex-direction:column;gap:10px;min-width:230px">' +
+       '<div style="font-size:12px;font-weight:700;color:#6b7280;border-bottom:1px solid #d6d3ce;padding-bottom:4px">' +
+       (cnt === 1 ? "決勝" : cnt === 2 ? "準決勝" : cnt === 4 ? "準々決勝" : r + "回戦") + "</div>" + cards.join("") + "</div>");
+   }
+   return '<div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;padding:10px 2px">' + cols.join("") + "</div>";
+ };
+ const printBracket = async () => {
    const tName = (O.state && O.state.tournament && O.state.tournament.name) || "トーナメント表";
-   const w = window.open("", "_blank");
-   if (!w) return toast("ポップアップがブロックされました。許可してください。", "err");
-   w.document.write(
+   let bdata;
+   try {
+     bdata = await api.get(`/api/tournaments/${O.tournamentId}/bracket/export?event=` + encodeURIComponent(selectedEv));
+   } catch (e) { return toast("通信できません（オフライン）", "err"); }
+   if (!bdata || bdata.error) return toast((bdata && bdata.error) || "トーナメント表を読み込めません", "err");
+   const _pbOpenP = (() => { try {
+     return !!(((typeof O._eventConfig === "function" && O._eventConfig()) || []).find(c => c && c.name === selectedEv) || {}).open;
+   } catch (e) { return false; } })();
+   const L = TTBracketLayout.computeBracketLayout(bdata.matches || [], { open: _pbOpenP, event: selectedEv });
+   if (!L) return toast("試合データがありません", "err");
+   const pages = [];
+   L.blocks.forEach((blk, b) => {
+     const label = L.nBlocks > 1 ? String.fromCharCode(0xFF21 + b) + "ブロック" : "";
+     pages.push('<div class="pb-page">' + (label ? '<h2>' + label + "</h2>" : "") + _printBlockSVG(L, blk) + "</div>");
+   });
+   if (L.nBlocks > 1) pages.push('<div class="pb-page"><h2>決勝トーナメント</h2>' + _printFinalsHTML(L, bdata.matches || []) + "</div>");
+   const html =
      '<!doctype html><html lang="ja"><head><meta charset="utf-8">' +
      '<title>' + esc(tName) + " - " + esc(selectedEv) + '</title>' +
+     '<style id="pgsize">@page{size:A3 landscape;margin:8mm}</style>' +
      '<style>' +
-     '@page{size:A3 landscape;margin:8mm}' +
-     'body{font-family:"Hiragino Sans","Yu Gothic",system-ui,sans-serif;padding:12px;color:#1c1917}' +
-     'h1{font-size:18px;margin:0 0 2px}.sub{font-size:12px;color:#666;margin-bottom:12px}' +
-     '.vb-cols{display:flex;gap:16px;align-items:stretch}' +
-     '.toolbar{margin-bottom:10px}@media print{.toolbar{display:none}}' +
+     'body{font-family:"Hiragino Sans","Yu Gothic",system-ui,sans-serif;padding:0;margin:4mm;color:#1c1917}' +
+     // ヘッダ・見出しはmm指定=どの紙サイズでも同じ物理寸法で読める。表(SVG)だけが紙に合わせて拡大する。
+     'h1{font-size:7mm;margin:0 0 1mm}.sub{font-size:3.5mm;color:#666;margin-bottom:4mm}' +
+     'h2{font-size:5mm;margin:0 0 2mm}' +
+     '.pb-page{page-break-after:always}.pb-page:last-child{page-break-after:auto}' +
+     '.toolbar{margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}' +
+     '@media print{.toolbar{display:none}}' +
      'button{padding:8px 16px;font-size:14px;cursor:pointer;border:1px solid #ccc;border-radius:6px;background:#fff}' +
+     'select{padding:6px 10px;font-size:13px}' +
+     '.bignote{display:none;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fbbf24;border-radius:6px;padding:6px 10px}' +
      '</style></head><body>' +
-     '<div class="toolbar"><button onclick="window.print()">印刷する</button></div>' +
+     '<div class="toolbar">' +
+     '<button onclick="window.print()">印刷する</button>' +
+     '<label style="font-size:13px">用紙: <select id="psz" onchange="' +
+       "document.getElementById('pgsize').textContent='@page{size:'+this.value+' landscape;margin:8mm}';" +
+       "document.getElementById('bignote').style.display=(this.value==='A2'||this.value==='A1')?'block':'none';" +
+     '">' +
+     '<option value="A4">A4 横</option>' +
+     '<option value="A3" selected>A3 横</option>' +
+     '<option value="A2">A2 横（大判）</option>' +
+     '<option value="A1">A1 横（大判・掲示用）</option>' +
+     '</select></label>' +
+     '<span id="bignote" class="bignote">A2/A1は家庭用プリンタでは印刷できないことが多いため、印刷画面で「PDFに保存」し、コンビニ・出力センターで原寸印刷してください。</span>' +
+     '</div>' +
      '<h1>' + esc(tName) + '</h1>' +
-     '<div class="sub">' + esc(selectedEv) + '　トーナメント表</div>' +
-     bracketArea.innerHTML +
-     '</body></html>');
-   w.document.close();
-   setTimeout(() => { try { w.print(); } catch (e) {} }, 400);
+     '<div class="sub">' + esc(selectedEv) + '　トーナメント表' +
+     (L.nBlocks > 1 ? "（Ａ〜" + String.fromCharCode(0xFF21 + L.nBlocks - 1) + "ブロック+決勝トーナメント・全" + (L.nBlocks + 1) + "ページ）" : "") +
+     '</div>' +
+     pages.join("") +
+     '</body></html>';
+   // 新ウィンドウへは document.write ではなく Blob URL で渡す(全可視文字列はesc済み)
+   const blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+   const w = window.open(blobUrl, "_blank");
+   if (!w) { URL.revokeObjectURL(blobUrl); return toast("ポップアップがブロックされました。許可してください。", "err"); }
+   setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);   // 読み込み完了後に解放(1分で十分)
  };
 
  // 全画面トグル (大画面表示)
@@ -11640,7 +11767,7 @@ const O = {
    h("button", { className: "btn btn-sm btn-ghost", title: "横スクロール無しで全体が入るよう倍率を自動調整",
      onClick: fitWidth }, "⤢ 画面に合わせる"),
    h("button", { className: "btn btn-sm", style: { background: "#0ea5e9" }, onClick: toggleFs }, "⛶ 全画面"),
-   h("button", { className: "btn btn-sm", onClick: printBracket }, "印刷 (A3横)"),
+   h("button", { className: "btn btn-sm", onClick: printBracket, title: "全ブロック一括・用紙サイズ選択(A4/A3/A2/A1横)。大判は掲示用" }, "印刷・大判"),
    h("span", { className: "text-xs text-sub", style: { marginLeft: "auto" } },
      "選手を2人タップすると入れ替えできます(確定済みは不可)"),
  );
