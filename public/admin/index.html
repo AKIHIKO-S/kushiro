@@ -9303,8 +9303,8 @@ const O = {
    // opSend = op_id 冪等 + オフラインキュー。ネット断中の再コールも復帰後に自動送信され、
    // 再送されても call_count は +1 のまま(サーバの冪等ガードが前回応答をリプレイ)。
    const r = await api.opSend("POST", `/api/matches/${m.id}/recall`, slot ? { slot } : {}, { tag: m.id });
-   if (r && r.queued) { toast("オフライン: 再コールを保存しました（接続復帰後に自動送信）", "warn"); return; }
-   if (r.error) { toast(r.error, "err"); return; }
+   if (r && r.queued) { toast("オフライン: 再コールを保存しました（接続復帰後に自動送信）", "warn"); return r; }
+   if (r.error) { toast(r.error, "err"); return r; }
    const next = slot === 2 ? (parseInt(r.call_count_p2) || 0)
               : slot === 1 ? (parseInt(r.call_count_p1) || 0)
               : (parseInt(r.call_count) || 0);
@@ -9315,6 +9315,7 @@ const O = {
              : "呼出";
    toast((pname ? pname + ": " : "") + lbl, "ok");
    O.reload();
+   return r;
  } finally {
    O._recallInFlight.delete(key);
  }
@@ -11047,8 +11048,67 @@ const O = {
  openModal("結果入力", bodyContainer, foot);
  },
 
- openMatchActions(match) {
- O.openResultInput(match);
+ // ── コートセルのアクションシート ──
+ // コートグリッドを操作ハブにする: セルタップで進行中試合の全操作(結果入力/審判変更/
+ // 再コール/クリア/戻す/編集/名簿)に1画面で届く。以前は結果入力へ直行しており、
+ // 審判変更・再コールは「進行中」タブへの切替が必要だった。
+ // モーダルはスタック式(.modal-bg削除は最下=親を消す)ため、別モーダルを開く操作は
+ // 必ずこのシートを先に閉じてから遷移する。再コール/クリアはシートを開いたまま
+ // ボタン表示を楽観更新する(両選手を続けて再コールする現場動線を止めない)。
+ openMatchActions(m) {
+ const closeSheet = () => document.querySelector(".modal-bg")?.remove();
+ const cc = { 1: parseInt(m.call_count_p1) || 0, 2: parseInt(m.call_count_p2) || 0 };
+ const recallStyle = (c) => ({ padding: "8px 10px", fontSize: "12.5px", width: "100%",
+   background: c >= 2 ? "#dc2626" : (c >= 1 ? "#d97706" : "var(--ink-700)"), color: "#fff" });
+ const recallLabel = (slot, pname) => "再コール " + (pname || ("選手" + slot)) + (cc[slot] > 0 ? " (" + cc[slot] + ")" : "");
+ const recallBtns = {};
+ const clearRow = h("div", {});
+ const renderClearRow = () => {
+   clearRow.replaceChildren();
+   if (Math.max(cc[1], cc[2]) > 0) {
+     clearRow.appendChild(h("button", { className: "btn btn-sm btn-ghost", style: { width: "100%" },
+       onClick: async () => { await O.setCallCount(m, 0); cc[1] = 0; cc[2] = 0;
+         [1, 2].forEach(s => { if (recallBtns[s]) { recallBtns[s].textContent = recallLabel(s, s === 1 ? m.player1_name : m.player2_name); Object.assign(recallBtns[s].style, recallStyle(0)); } });
+         renderClearRow(); } }, "呼出回数をクリア"));
+   }
+ };
+ const mkRecall = (slot, pname) => {
+   const b = h("button", { className: "btn btn-sm", style: recallStyle(cc[slot]),
+     title: (pname || "") + " を再コール (+1)",
+     onClick: async () => {
+       const r = await O.recallMatch(m, slot);
+       if (r && r.error) return;   // 失敗時は表示を進めない(トーストは recallMatch が出す)
+       cc[slot] += 1;   // 楽観更新(正確な値はサーバ応答のトーストが示す)
+       b.textContent = recallLabel(slot, pname);
+       Object.assign(b.style, recallStyle(cc[slot]));
+       renderClearRow();
+     } }, recallLabel(slot, pname));
+   recallBtns[slot] = b;
+   return b;
+ };
+ renderClearRow();
+ const row = (label, onClick, opts) => h("button", {
+   className: "btn " + ((opts && opts.klass) || "btn-ghost"),
+   style: Object.assign({ display: "block", width: "100%", textAlign: "left", padding: "10px 14px" }, (opts && opts.style) || {}),
+   onClick }, label);
+ const body = h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+   h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
+     h("span", { className: "round-badge" }, `${m.event} ${m.round || ""}`),
+     O._elapsedBadge(m)),
+   h("div", { className: "text-sm", style: { fontWeight: 700 } },
+     (m.player1_name || "未定") + "  vs  " + (m.player2_name || "未定")),
+   row("結果を入力する", () => { closeSheet(); O.openResultInput(m); },
+     { klass: "btn-ok", style: { textAlign: "center", fontWeight: 800, fontSize: "15px", padding: "14px" } }),
+   h("div", { className: "text-xs text-sub", style: { marginTop: "4px" } },
+     "審判: " + (m.referee_name || "未指定")),
+   row("審判を変更…", () => { closeSheet(); O.openChangeReferee(m); }),
+   h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" } },
+     mkRecall(1, m.player1_name), mkRecall(2, m.player2_name)),
+   clearRow,
+   row("コートから戻す", () => { closeSheet(); O.uncallMatch(m.id); }),
+   row("試合を編集…", () => { closeSheet(); A.openEditMatch(m); }),
+   O._playerDbLinks(m));
+ openModal("コート" + (m.table_no || "?") + " の操作", body, null);
  },
 
  // 試合の選手を個人DB(編集/戦績)へリンク。シングルス/ダブルス両対応 (#255)
