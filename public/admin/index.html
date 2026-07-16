@@ -2869,6 +2869,20 @@ const A = {
      if (typeof O !== "undefined") O.selectTournament(t.id);
    }, 60);
  };
+ // 取込は精度100%を保証できない(番号アンカー方式)ため、取込直後にすぐ手直しできる導線を
+ // 常設する。進行管理へ切替→大会選択→データ読込を待って罫線編集モーダルを開く(#機能B)。
+ const openBracketEdit = () => {
+   if (typeof O !== "undefined") O.tournamentId = t.id;
+   A.showTab("operations");
+   setTimeout(() => {
+     const sel = document.getElementById("opTournamentSel");
+     if (sel) { sel.value = t.id; TT.mountTournamentSelect(sel, { accent: "#0e8fa3", accentBg: "#e6f6f8" }); }
+     if (typeof O !== "undefined") {
+       O.selectTournament(t.id);
+       setTimeout(() => { if (O.openVisualBracket) O.openVisualBracket(); }, 250);
+     }
+   }, 60);
+ };
 
  const s1 = t.entries_open ? chip("● 受付中", "ok") : chip("受付停止 / 未設定", "warn");
  mk(1, "申込フォームを作る・公開",
@@ -2898,6 +2912,10 @@ const A = {
  mk(4, "トーナメント表を作る",
    "取り込んだ名簿からトーナメント表を自動で作成します。組合せが決まっているExcel/PDFの取込も可。", s4, [
    h("button", { className: "btn btn-sm", onClick: () => { O.tournamentId = t.id; O.autoCreateAllBrackets(); } }, "名簿から一括作成"),
+   matches > 0 ? h("button", { className: "btn btn-sm",
+     style: { background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" },
+     title: "Excel取込やシード配置は読み取り誤りが起きうるため、表を見ながら罫線をドラッグ/タップで直せます",
+     onClick: () => openBracketEdit() }, "表を確認・修正") : null,
    h("button", { className: "btn btn-sm btn-ghost", onClick: () => openOps() }, "進行管理で作る/編集"),
    h("button", { className: "btn btn-sm btn-ghost", onClick: () => O.openImportChooser(t.id) }, "組合せ表を取込(稀)"),
  ]);
@@ -4183,7 +4201,7 @@ const A = {
  // ── seed-list(主経路)複数種目プレビュー: 種目ごとに解析結果＋品質警告を出し、確認後に取込 ──
  // 取込前のファクトチェック。各種目の出場者(氏名/所属/相方)を一覧し、相方欠落・氏名重複・
  // 組番号欠番などを目立つバナーで提示する。読み取り違いに operator が気づける状態で取り込む。
- showSeedListPreview(preview, tournamentId) {
+ showSeedListPreview(preview, tournamentId, usedParser) {
    const events = Array.isArray(preview.events) ? preview.events : [];
    // 良性寄り(黄・ℹ): 欠番/名簿の過大・表記揺れ・同名。要確認(赤・⚠): 相方欠落/氏名重複/名簿取りこぼし。
    const yellow = new Set(["seed_gap", "roster_extra", "roster_variant", "roster_dup"]);
@@ -4192,10 +4210,24 @@ const A = {
      : { bg: "#fef2f2", border: "#dc2626", color: "#991b1b", icon: "" };
    const totalCount = events.reduce((s, e) => s + (e.count || (e.players || []).length), 0);
    const totalNotices = events.reduce((s, e) => s + (e.notices || []).length, 0);
+   // どの読取エンジンが使われたか(#機能B・低コスト改善)。罫線精読(Python)以外は取りこぼしが
+   // 相対的に出やすいため、種目カードの内容を念入りに確認するよう一言添える。
+   const parserLabel = (up) => {
+     if (!up) return null;
+     if (up.startsWith("bracket_parser")) return { text: "罫線読取(主系統)", warn: false };
+     if (up.includes("複数種目シート分割")) return { text: "簡易読取(副系統・複数種目分割)", warn: true };
+     if (up.startsWith("parse_bracket_seedlist")) return { text: "簡易読取(副系統)", warn: true };
+     if (up.startsWith("parse_ktta_bracket")) return { text: "簡易読取(旧版)", warn: true };
+     return { text: up, warn: false };
+   };
+   const pl = parserLabel(usedParser);
 
    const head = h("div", { style: { padding: "10px 14px", background: "#eff6ff",
      borderLeft: "4px solid #3b82f6", borderRadius: "0 4px 4px 0", marginBottom: "12px" } },
-     h("div", { className: "font-bold", style: { fontSize: "16px" } }, "組合せ表 取込プレビュー（ファクトチェック）"),
+     h("div", { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" } },
+       h("div", { className: "font-bold", style: { fontSize: "16px" } }, "組合せ表 取込プレビュー（ファクトチェック）"),
+       pl ? h("span", { style: { fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "999px",
+         background: pl.warn ? "#fef3c7" : "#d1fae5", color: pl.warn ? "#78350f" : "#065f46" } }, pl.text) : null),
      h("div", { className: "text-sm text-sub mt-1" },
        `${events.length}種目 ・ 計${totalCount}名/組` + (totalNotices ? ` ・ 要確認 ${totalNotices}件` : " ・ 警告なし")),
      h("div", { className: "text-xs text-sub mt-1" },
@@ -4294,7 +4326,7 @@ const A = {
          }
          document.querySelector(".modal-bg")?.remove();
          if (fails.length) toast("一部失敗: " + fails.join(" / "), "err");
-         else toast(`${events.length}種目を取込 - 出場選手DBに自動連携しました`, "ok");
+         else toast(`${events.length}種目を取込 - 出場選手DBに自動連携しました(読み取り違いは「表を確認・修正」から直せます)`, "ok");
          await A.openTournament(tournamentId);
        } }, "この内容で取込"),
        h("button", { className: "btn btn-ghost",
@@ -4327,7 +4359,7 @@ const A = {
    openModal("取込の品質確認", body, foot);
  },
 
- showImportPreview(preview, tournamentId) {
+ showImportPreview(preview, tournamentId, usedParser) {
  const matches = preview.matches || [];
  const players = preview.players || [];
  const warnings = preview.warnings || [];
@@ -4342,12 +4374,28 @@ const A = {
  });
  const rounds = Object.keys(byRound).map(Number).sort((a, b) => a - b);
 
+ // どの読取エンジンが使われたか(#機能B・低コスト改善)。showSeedListPreviewと同じ規則。
+ const parserLabel = (up) => {
+   if (!up) return null;
+   if (up.startsWith("bracket_parser")) return { text: "罫線読取(主系統)", warn: false };
+   if (up.startsWith("parse_pdf_bracket")) return { text: "PDF読取", warn: false };
+   if (up.startsWith("parse_template_bracket")) return { text: "取込テンプレ", warn: false };
+   if (up.includes("複数種目シート分割")) return { text: "簡易読取(副系統・複数種目分割)", warn: true };
+   if (up.startsWith("parse_bracket_seedlist")) return { text: "簡易読取(副系統)", warn: true };
+   if (up.startsWith("parse_ktta_bracket")) return { text: "簡易読取(旧版)", warn: true };
+   return { text: up, warn: false };
+ };
+ const pl = parserLabel(usedParser);
+
  // ヘッダーサマリー
  const head = h("div", { style: { padding: "10px 14px", background: "#eff6ff",
  borderLeft: "4px solid #3b82f6", borderRadius: "0 4px 4px 0",
  marginBottom: "12px" } },
+ h("div", { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" } },
  h("div", { className: "font-bold", style: { fontSize: "16px" } },
  `${preview.event || "(種目未指定)"} - 取込プレビュー`),
+ pl ? h("span", { style: { fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "999px",
+   background: pl.warn ? "#fef3c7" : "#d1fae5", color: pl.warn ? "#78350f" : "#065f46" } }, pl.text) : null),
  h("div", { className: "text-sm text-sub mt-1" },
  `形式: ${meta.is_doubles ? "ダブルス" : "シングルス"} ・ ` +
  `${matches.length ? `${matches.length} 試合 / ${rounds.length} ラウンド` :
@@ -4604,7 +4652,7 @@ const A = {
  delete payload._editablePlayers;
  const r = await api.post(`/api/tournaments/${tournamentId}/bracket/import`, payload);
  if (r.error) return toast(r.error, "err");
- toast("取込完了 - 出場選手DBに自動連携しました", "ok");
+ toast("取込完了 - 出場選手DBに自動連携しました(読み取り違いは「表を確認・修正」から直せます)", "ok");
  document.querySelector(".modal-bg")?.remove();
  await A.openTournament(tournamentId);
  } }, "この内容で取込"),
@@ -5020,8 +5068,8 @@ const A = {
  // 取込前プレビューへ振分け(組合せ表取込と同一の規則)。
  // seed-list パーサ(events[])は showSeedListPreview(品質警告つき)、legacy 形状は showImportPreview。
  document.querySelector(".modal-bg")?.remove();
- if (r.preview && Array.isArray(r.preview.events)) A.showSeedListPreview(r.preview, tournamentId);
- else if (r.preview) A.showImportPreview(r.preview, tournamentId);
+ if (r.preview && Array.isArray(r.preview.events)) A.showSeedListPreview(r.preview, tournamentId, r.used_parser);
+ else if (r.preview) A.showImportPreview(r.preview, tournamentId, r.used_parser);
  else toast("プレビューを取得できませんでした", "err");
  } catch (e) {
  toast("アップロード失敗: " + e.message, "err");
