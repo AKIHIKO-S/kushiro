@@ -2095,13 +2095,16 @@ const V = {
            champ ? 14.5 : 13, champ ? "#c01526" : "#1c1917", true);
        } else if (mm.status === "on_table") {
          // 試合中バッジ(丹頂の淡地)。テキスト実測に頼らず固定幅・中央合わせで安定させる。
-         const bw = 56, bx = anc === "start" ? x : anc === "end" ? x - bw : x - bw / 2;
+         // セットカウント速報(m.live)が届いていれば「● 台5 2-1」まで出す(#4/#5の速報基盤)。
+         const lv = mm.live && (mm.live.s1 || mm.live.s2) ? mm.live : null;
+         const label = "● 台" + (mm.table_no || "?") + (lv ? " " + lv.s1 + "-" + lv.s2 : "");
+         const bw = lv ? 86 : 56, bx = anc === "start" ? x : anc === "end" ? x - bw : x - bw / 2;
          const rc = document.createElementNS(NS, "rect");
          rc.setAttribute("x", bx); rc.setAttribute("y", j.y - dy - 12);
          rc.setAttribute("width", bw); rc.setAttribute("height", 16);
          rc.setAttribute("rx", 8); rc.setAttribute("fill", "#fdecee");
          svg.appendChild(rc);
-         mkText(svg, bx + bw / 2, j.y - dy, "● 台" + (mm.table_no || "?"), "middle", 10.5, "#c01526", true);
+         mkText(svg, bx + bw / 2, j.y - dy, label, "middle", 10.5, "#c01526", true);
        } else if (j.ss) {
          mkText(svg, x, j.y - dy, "スーパーシード戦", anc, 10.5, "#92400e", true);
        } else {
@@ -2151,7 +2154,8 @@ const V = {
            onClick: (done && mm) ? (() => V.showBracketMatchDetail(mm)) : undefined,
            style: done ? { cursor: "pointer" } : {} },
            h("div", { className: "vbt-fin-no" }, r + "-" + (q + 1) +
-             (mm && mm.status === "on_table" ? "　● 台" + (mm.table_no || "?") : "")),
+             (mm && mm.status === "on_table" ? "　● 台" + (mm.table_no || "?") +
+               (mm.live && (mm.live.s1 || mm.live.s2) ? " " + mm.live.s1 + "-" + mm.live.s2 : "") : "")),
            h("div", {}, feed(1)),
            h("div", { className: "vbt-fin-sep" }),
            h("div", {}, feed(2)),
@@ -2173,8 +2177,10 @@ const V = {
    const live = m.status === "on_table";
    const p1Win = done && m.winner_name === m.player1_name && m.winner_name !== m.player2_name;
    const p2Win = done && m.winner_name === m.player2_name && m.winner_name !== m.player1_name;
-   const p1Sets = done ? (p1Win ? m.winner_sets : m.loser_sets) : null;
-   const p2Sets = done ? (p2Win ? m.winner_sets : m.loser_sets) : null;
+   // 進行中はセットカウント速報(m.live)が届いていれば暫定セット数を出す(無ければ従来の「・」)
+   const lv = live && m.live && (m.live.s1 || m.live.s2) ? m.live : null;
+   const p1Sets = done ? (p1Win ? m.winner_sets : m.loser_sets) : (lv ? lv.s1 : null);
+   const p2Sets = done ? (p2Win ? m.winner_sets : m.loser_sets) : (lv ? lv.s2 : null);
    const row = (name, team, seed, isW, isL, sets) =>
      h("div", { className: "vp" + (isW ? " vbt-p-w" : "") + (isL ? " vbt-p-l" : "") },
        h("span", { className: "vbt-seed" + (seed ? "" : " none") }, seed ? String(seed) : "0"),

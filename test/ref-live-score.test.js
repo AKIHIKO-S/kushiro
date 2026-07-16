@@ -76,14 +76,17 @@ test("正常系: 共有トークンで速報を書け、/live の on_table と t
   assert.ok(cell && cell.match.live && cell.match.live.s1 === 2, "コート盤面(tables[].match)にも live が乗る");
 });
 
-test("公開 /matches には速報列が一切乗らない(PUBLIC射影)", async () => {
-  const { tid, token, onTableId } = await setupTournament();
+test("公開 /matches: 進行中はパース済み live だけ乗り、生JSON/revは乗らない(観戦ボードの前提)", async () => {
+  const { tid, token, onTableId, pendingId } = await setupTournament();
   await sendLive(onTableId, { t: token, s1: 1, s2: 0 });
   const pub = await fetch(BASE + `/api/public/tournaments/${tid}/matches`).then(x => x.json());
   const m = pub.find(x => x.id === onTableId);
   assert.ok(m, "公開matchesに試合はある");
-  assert.ok(!("live_sets_json" in m) && !("live_score_rev" in m) && !("live" in m),
-    "速報系フィールドが乗らない: " + Object.keys(m).filter(k => /live/.test(k)).join(","));
+  assert.deepStrictEqual(m.live, { s1: 1, s2: 0 }, "on_table にはパース済み live が乗る(観戦ボードが「● 台N 1-0」を出す)");
+  assert.ok(!("live_sets_json" in m) && !("live_score_rev" in m),
+    "生JSON/revは乗らない: " + Object.keys(m).filter(k => /live/.test(k)).join(","));
+  const pend = pub.find(x => x.id === pendingId);
+  assert.ok(pend && !("live" in pend), "進行中でない試合に live は付かない");
 });
 
 test("認可: トークン無し=403相当 / 他大会のトークン=403 / on_tableでない試合=409", async () => {

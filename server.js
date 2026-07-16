@@ -691,10 +691,21 @@ const LIVE_MATCH_OMIT = new Set([
 function liveMatch(m) { const o = {}; for (const k in m) if (!LIVE_MATCH_OMIT.has(k)) o[k] = m[k]; return o; }
 app.get("/api/public/tournaments/:id/matches", (req, res) => {
   // 進行フィンガープリントを ETag 化(未変化の再取得は304で本体0=ポーリング軽量化)。
+  // fingerprint は live_score_rev を含むため、速報の更新でもポーラーが新データを取れる。
   const fp = db.getOpsFingerprint(req.params.id);
   const tag = (fp && fp.v != null ? fp.v : "0") + "|" + (fp && fp.status || "") + "|pm";
   if (conditional(req, res, tag, "public, max-age=2")) return;
-  res.json(db.getMatchesByTournament(req.params.id).map(publicMatch));
+  // セットカウント速報は進行中(on_table)の試合にだけパース済み `live`({s1,s2}) を添付する。
+  // 生JSON(live_sets_json)と改訂カウンタは PUBLIC_MATCH_OMIT で引き続き落とす
+  // (観戦フロントは m.live だけを見る規約=観戦ボード・カード面が「● 台N 2-1」を出す)。
+  res.json(db.getMatchesByTournament(req.params.id).map(m => {
+    const o = publicMatch(m);
+    if (m.status === "on_table") {
+      const lv = db.parseLiveScore(m.live_sets_json);
+      if (lv) o.live = lv;
+    }
+    return o;
+  }));
 });
 app.get("/api/public/stats", (req, res) => { res.json(db.getStats()); });
 // 全試合の平均値 (選手プロフィールの相対比較用 #243)。60秒キャッシュ。

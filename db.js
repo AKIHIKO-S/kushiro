@@ -2538,7 +2538,12 @@ function getLastUpdated() {
   const p = sqlite.prepare("SELECT MAX(updated_at) AS t FROM players").get().t;
   const t = sqlite.prepare("SELECT MAX(updated_at) AS t FROM tournaments").get().t;
   const m = sqlite.prepare("SELECT MAX(created_at) AS t FROM matches").get().t;
-  return [p, t, m].filter(Boolean).sort().reverse()[0] || new Date().toISOString();
+  const base = [p, t, m].filter(Boolean).sort().reverse()[0] || new Date().toISOString();
+  // セットカウント速報(live_score_rev)は matches のUPDATEのみで日時列を動かさないため、
+  // 改訂カウンタの総和を連結して変化検知に含める(クライアントは t の文字列比較しかしない)。
+  // これが無いと観戦の詳細ページのポーラーが速報だけの更新で発火しない。
+  const lrev = sqlite.prepare("SELECT COALESCE(SUM(COALESCE(live_score_rev,0)),0) AS n FROM matches").get().n;
+  return lrev ? base + "." + lrev : base;
 }
 
 // 進行(matches)の軽量フィンガープリント。呼出/結果/再コールで変化する。
