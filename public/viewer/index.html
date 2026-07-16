@@ -1292,6 +1292,18 @@ body{ background:#fbfaf7; }
  @media(max-width:560px){
    .rk-row .rk-wins{ grid-column:auto !important; }
  }
+ /* セットカウント速報チップ(審判入力の暫定値)。LIVE機能色=丹頂の正当用途 */
+ .live-score-chip{ display:inline-flex; align-items:baseline; gap:5px;
+   background:#fdf0f1; border:1px solid #e8bcc1; border-radius:4px; padding:1px 8px; }
+ .live-score-chip b{ color:var(--accent); font-size:15px; font-weight:800;
+   font-variant-numeric:tabular-nums; letter-spacing:.02em; }
+ .live-score-chip .lsc-nth{ font-size:10.5px; color:#8a5a5f; font-weight:700; }
+ .live-score-chip.big{ padding:3px 14px; }
+ .live-score-chip.big b{ font-size:22px; }
+ .live-score-chip.big .lsc-nth{ font-size:12px; }
+ /* コート盤面セルのセット速報(vs の代替表示) */
+ .live-court-score{ font-size:15px; font-weight:800; color:var(--accent);
+   font-variant-numeric:tabular-nums; line-height:1.2; }
 </style>
 </head>
 <body>
@@ -3552,6 +3564,18 @@ const L = {
  },
 
  // 進行中カード (旧 進行中セクションと同一)
+ // セットカウント速報チップ (審判入力の暫定値・m.live={s1,s2})。「2-1 第4セット」。
+ // 団体種目は「第4試合」(セットではなく個別試合の消化数)。速報なしは null(何も出さない)。
+ liveScoreChip(m, big) {
+ const lv = m.live;
+ if (!lv || (!lv.s1 && !lv.s2)) return null;
+ const nth = (lv.s1 || 0) + (lv.s2 || 0) + 1;
+ const unit = /団体|チーム/.test(m.event || "") ? "試合" : "セット";
+ return h("span", { className: "live-score-chip" + (big ? " big" : ""),
+   title: "審判入力のセットカウント速報(暫定)" },
+   h("b", {}, lv.s1 + "-" + lv.s2),
+   h("span", { className: "lsc-nth" }, "第" + nth + unit));
+ },
  renderOnTableCard(m) {
  return h("div", { className: "live-match-card", style: { cursor: "pointer" },
    title: "タップで試合詳細", onClick: () => L.showCourtDetail({ match: m, table_no: m.table_no }) },
@@ -3563,6 +3587,7 @@ const L = {
  h("span", { style: { color: "var(--sub)", margin: "0 8px" } }, "VS"),
  ...V.liveNameLinks(m, 2)),
  h("div", { className: "text-xs mt-1", style: { display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" } },
+ L.liveScoreChip(m),
  h("span", { className: "text-sub", style: { fontWeight: 700, color: "var(--accent)" },
    "data-elapsed-since": m.called_at || m.started_at || "" },
    TT.fmtElapsedClock(m.called_at || m.started_at) ? ("経過 " + TT.fmtElapsedClock(m.called_at || m.started_at)) : ""),
@@ -3670,9 +3695,13 @@ const L = {
  cell.appendChild(h("div", { className: "live-court-no" }, "コート" + t.table_no));
  if (t.match) {
  if (t.match.event) cell.appendChild(h("div", { className: "live-court-ev" }, t.match.event));
+ const lv = t.match.live;
  cell.appendChild(h("div", { className: "live-court-match" },
  h("div", {}, t.match.player1_name),
- h("div", { style: { fontSize: "10px", color: "var(--sub)" } }, "vs"),
+ // セット速報があれば vs の代わりにカウントを出す(コート盤面での一目把握)
+ (lv && (lv.s1 || lv.s2))
+   ? h("div", { className: "live-court-score" }, lv.s1 + "-" + lv.s2)
+   : h("div", { style: { fontSize: "10px", color: "var(--sub)" } }, "vs"),
  h("div", {}, t.match.player2_name),
  ));
  const since = t.match.called_at || t.match.started_at || "";
@@ -3779,7 +3808,8 @@ const L = {
      h("span", { style: { fontSize: "12px", color: "#15803d", fontWeight: "700" } }, "● 試合中")),
    playerLine(1, num1, m.player1_team, m.player1_furigana),
    h("div", { style: { textAlign: "center", fontWeight: "800", color: "var(--sub)",
-     padding: "6px 0", fontSize: "18px" } }, "VS"),
+     padding: "6px 0", fontSize: "18px" } },
+     (m.live && (m.live.s1 || m.live.s2)) ? L.liveScoreChip(m, true) : "VS"),
    playerLine(2, num2, m.player2_team, m.player2_furigana),
    m.referee_name ? h("div", { style: { marginTop: "10px", fontSize: "13px",
      color: "#6d28d9", textAlign: "center" } }, "審判: " + m.referee_name) : null,

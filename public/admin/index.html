@@ -575,6 +575,9 @@
  .court-cell-match .cc-team { font-size: 12px; color: var(--ink-600); font-weight: 600;
    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
  .court-cell-vs { font-size: 11px; color: var(--sub); font-weight: 600; margin: 2px 0; }
+ /* セットカウント速報(審判入力の暫定値): VS の位置に「2-1」 */
+ .cc-live { font-size: 16px; font-weight: 800; color: #c01526; margin: 2px 0;
+   font-variant-numeric: tabular-nums; line-height: 1.2; }
  /* 経過時間: 氏名・所属から区切り線で分離して見やすく #222 */
  .cc-elapsed { font-size: 12px !important; font-weight: 800; color: #475569;
    margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--ink-300); width: 88%;
@@ -9179,11 +9182,16 @@ const O = {
    cell.appendChild(h("div", { className: "cc-evbadge",
      style: { background: ec.soft, color: ec.border } }, m.event));
  }
+ // セットカウント速報(審判入力の暫定値)。あれば VS の代わりに「2-1」を出す
+ const lv = m.live;
+ const hasLive = !t.is_extra && lv && (lv.s1 || lv.s2);
  cell.appendChild(h("div", { className: "court-cell-match" },
  h("div", { className: "cc-name" }, shortName(m.player1_name)),
  m.player1_furigana ? h("div", { className: "cc-furi" }, m.player1_furigana) : null,
  m.player1_team ? h("div", { className: "cc-team" }, m.player1_team) : null,
- h("div", { className: "court-cell-vs" }, t.is_extra ? "(団体追加)" : "VS"),
+ hasLive
+   ? h("div", { className: "cc-live", title: "セットカウント速報(審判入力・暫定)" }, lv.s1 + "-" + lv.s2)
+   : h("div", { className: "court-cell-vs" }, t.is_extra ? "(団体追加)" : "VS"),
  h("div", { className: "cc-name" }, shortName(m.player2_name)),
  m.player2_furigana ? h("div", { className: "cc-furi" }, m.player2_furigana) : null,
  m.player2_team ? h("div", { className: "cc-team" }, m.player2_team) : null,
@@ -9270,6 +9278,12 @@ const O = {
  h("div", { className: "flex gap-2", style: { alignItems: "center", flexWrap: "wrap" } },
  h("span", { className: "round-badge" }, `${m.event} ${m.round}`),
  O._elapsedBadge(m),
+ (m.live && (m.live.s1 || m.live.s2))
+   ? h("span", { title: "セットカウント速報(審判入力・暫定)",
+       style: { fontSize: "14px", fontWeight: 800, color: "#c01526",
+         background: "#fdf0f1", borderRadius: "6px", padding: "1px 8px",
+         fontVariantNumeric: "tabular-nums" } }, m.live.s1 + "-" + m.live.s2)
+   : null,
  // 選手1 pill (badge付き)
  h("span", { className: "player-pill" },
    num1 ? h("span", { className: "pnum" }, "#" + num1) : null,
@@ -10929,6 +10943,10 @@ const O = {
  `${m.event} ${m.round}`),
  m.table_no ? h("span", { style: { marginLeft: "8px", fontSize: "13px",
    color: "var(--sub)" } }, `コート${m.table_no}`) : null,
+ // 審判のセット速報を参考表示(自動セットはしない=誤確定防止。最終値は本部が入力/承認)
+ (m.live && (m.live.s1 || m.live.s2)) ? h("span", { style: { marginLeft: "10px", fontSize: "13px",
+   fontWeight: 800, color: "#c01526", background: "#fdf0f1", borderRadius: "6px", padding: "1px 8px" } },
+   "速報 " + m.live.s1 + "-" + m.live.s2 + "（参考）") : null,
  );
 
  let inputs;

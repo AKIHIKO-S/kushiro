@@ -567,6 +567,14 @@
     color: var(--lv-sub);
     letter-spacing: 0.12em;
   }
+  /* セットカウント速報(審判入力の暫定値): VS の位置に大きく出す。大画面(lv-big)ではさらに拡大 */
+  .lv-match-vs.live-on { display: flex; flex-direction: column; align-items: center; gap: 1px;
+    letter-spacing: 0; }
+  .lv-match-vs.live-on b { font-size: 24px; font-weight: 800; color: var(--lv-accent, #c01526);
+    font-variant-numeric: tabular-nums; line-height: 1.05; }
+  .lv-match-vs.live-on .lvs-nth { font-size: 9.5px; font-weight: 700; color: var(--lv-sub); }
+  body.lv-big .lv-match-vs.live-on b { font-size: 34px; }
+  body.lv-big .lv-match-vs.live-on .lvs-nth { font-size: 12px; }
   .lv-match-meta {
     text-align: right;
     font-size: 10px; color: var(--lv-sub);
@@ -1599,6 +1607,9 @@ const LV = {
   renderOngoing(m) {
     const cc1 = parseInt(m.call_count_p1) || 0;
     const cc2 = parseInt(m.call_count_p2) || 0;
+    // セットカウント速報(審判入力の暫定値)。あれば VS の代わりに大きく出す(大画面の主情報)。
+    const lv = m.live;
+    const hasLive = lv && (lv.s1 || lv.s2);
     return h("div", { className: "lv-match",
         onClick: () => LV.showMatchDetail(m) },
       h("div", { className: "lv-match-table" },
@@ -1609,7 +1620,13 @@ const LV = {
           h("div", { className: "lv-match-team" }, m.player1_team || ""),
           cc1 >= 1 ? LV.callBadgeEl(cc1) : null,
         ),
-        h("div", { className: "lv-match-vs" }, "VS"),
+        hasLive
+          ? h("div", { className: "lv-match-vs live-on",
+              title: "セットカウント速報(審判入力・暫定)" },
+              h("b", {}, lv.s1 + "-" + lv.s2),
+              h("span", { className: "lvs-nth" },
+                "第" + ((lv.s1 || 0) + (lv.s2 || 0) + 1) + (/団体|チーム/.test(m.event || "") ? "試合" : "セット")))
+          : h("div", { className: "lv-match-vs" }, "VS"),
         h("div", { className: "lv-match-side right" },
           h("div", { className: "lv-match-name" }, ...LV.playerNameNodes(m, 2, m.player2_bracket_number)),
           h("div", { className: "lv-match-team" }, m.player2_team || ""),
