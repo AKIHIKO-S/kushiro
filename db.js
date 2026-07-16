@@ -5534,6 +5534,12 @@ function computeLeagueStandings(tournamentId, event, block) {
   return block ? (result[block] || []) : result;
 }
 
+// リーグ戦(league_blockあり)の種目名一覧(順位表Excel等の対象列挙用)
+function listLeagueEvents(tournamentId) {
+  return sqlite.prepare("SELECT DISTINCT event FROM matches WHERE tournament_id=? AND league_block!=''")
+    .all(tournamentId).map(r => r.event).filter(Boolean).sort();
+}
+
 // リーグ同率の抽選結果(手動確定順位)を保存。ranks = { entrantId: 1..k }(同率グループ内の抽選順)。
 // 0/null で解除。対象 entrant が大会+種目に属することを検証してから書き込む。
 function setLeagueTiebreak(tournamentId, event, ranks) {
@@ -11003,7 +11009,7 @@ module.exports = {
   generateBracket, addBracketSeed, promoteToSeed, drawSingleBracket, computeDrawLeaves, bracketPositions,
   checkDrawReadiness, bracketRev, undoDraw, undoLast, getDrawLog, getBracketDrawDiff, importBracketRoundtrip,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
-  generateTeamLeague, generateLeaguePlayoff, setLeagueTiebreak, computeLeagueStandings, getLeagueMatchResults, summarizeTie, computePromotionSuggestion,
+  generateTeamLeague, generateLeaguePlayoff, setLeagueTiebreak, computeLeagueStandings, getLeagueMatchResults, listLeagueEvents, summarizeTie, computePromotionSuggestion,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
   setCallCount, bumpCallCount,
   getPlayerRefereeLock, getPlayerPlayingLock,

@@ -8768,6 +8768,12 @@ const O = {
        const has = blocks && (Array.isArray(blocks) ? blocks.length : Object.keys(blocks).length);
        if (has) {
          area.innerHTML = "";
+         // 順位表のExcel出力(画面と同一定義の星取マトリクス)
+         area.appendChild(h("div", { style: { textAlign: "right", marginBottom: "6px" } },
+           h("button", { className: "btn btn-sm btn-ghost", title: "この種目のリーグ順位表(星取)をExcelで出力",
+             onClick: () => A.downloadAuthedFile(
+               `/api/tournaments/${O.tournamentId}/standings.xlsx?event=` + encodeURIComponent(sel),
+               `リーグ順位表_${sel}.xlsx`) }, "順位表をExcelに出力")));
          const byBlock = Array.isArray(blocks) ? { "": blocks } : blocks;
          Object.keys(byBlock).sort().forEach(bk => {
            area.appendChild(TT.leagueTableEl(bk, byBlock[bk], (sd.matches || []).filter(m => m.block === bk)));

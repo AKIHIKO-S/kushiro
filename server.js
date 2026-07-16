@@ -2526,6 +2526,40 @@ app.get("/api/tournaments/:id/receipts.xlsx", requireAdmin, (req, res) => {
   }
 });
 
+// ─── リーグ順位表 (星取マトリクス) Excel 出力 ───
+// 画面の順位表(TT.leagueTableEl)と同一定義。?event= で1種目に絞れる(未指定=全リーグ種目)。
+app.get("/api/tournaments/:id/standings.xlsx", requireAdmin, (req, res) => {
+  try {
+    const tournament = db.getTournament(req.params.id);
+    if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
+    // リーグ(league_block あり)の種目を列挙(公開 standings API と同じ判定)
+    const events = req.query.event ? [String(req.query.event)]
+      : db.listLeagueEvents(req.params.id);
+    if (!events.length) return res.status(400).json({ error: "リーグ戦(総当たり)の種目がありません" });
+    const standingsByEvent = {}, matchesByEvent = {};
+    for (const ev of events) {
+      const st = db.computeLeagueStandings(req.params.id, ev);   // 全ブロック形 {A:[...]}
+      if (!st || !Object.keys(st).length) continue;
+      standingsByEvent[ev] = st;
+      matchesByEvent[ev] = db.getLeagueMatchResults(req.params.id, ev);
+    }
+    if (!Object.keys(standingsByEvent).length) return res.status(400).json({ error: "リーグ戦の対戦がまだありません" });
+    const buf = reports.buildStandingsXlsx(tournament, standingsByEvent, matchesByEvent);
+    const safeName = (tournament.name || "tournament").replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_");
+    const evPart = req.query.event ? "_" + String(req.query.event).replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_") : "";
+    const filename = encodeURIComponent(`リーグ順位表_${safeName}${evPart}.xlsx`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=UTF-8''${filename}`);
+    res.setHeader("Content-Length", Buffer.byteLength(buf));
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.end(buf);
+  } catch (e) {
+    console.error("standings.xlsx error:", e);
+    res.status(500).json({ error: "順位表生成失敗: " + e.message });
+  }
+});
+
 // ─── 対戦票 (審判用記録票) 一括 Excel 出力 ───
 app.get("/api/tournaments/:id/match-cards.xlsx", requireAdmin, (req, res) => {
   try {

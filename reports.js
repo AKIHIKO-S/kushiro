@@ -1410,6 +1410,108 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
 }
 
+// ═══════════════════════════════════════════════════════
+// リーグ順位表 (星取マトリクス) Excel 出力
+// ═══════════════════════════════════════════════════════
+// 画面の TT.leagueTableEl(common.js) と同一定義で書く(画面とExcelの不一致を作らない):
+//   順位 / チーム / 相手1..N(○●スコア・自分は斜線) / 勝-敗 / セット率 / 得点率
+// 順位・同率抽選(＊)は db.computeLeagueStandings の出力をそのまま使う(KTTAルール:
+// 勝敗→セット得失差→総得点、直接対決不使用、完全同率は現地抽選)。
+// standingsByEvent: { [event]: { [block]: rows } } (computeLeagueStandings の全ブロック形)
+// matchesByEvent:   { [event]: getLeagueMatchResults(tid, event) の配列 }
+// 罫線必須のため xlsx-js-style を使用(SheetJS CE はセル罫線を書けない・CLAUDE.md規約)。
+function buildStandingsXlsx(tournament, standingsByEvent, matchesByEvent) {
+  const XLSXS = require("xlsx-js-style");
+  const wb = XLSXS.utils.book_new();
+  const thin = { style: "thin", color: { rgb: "444444" } };
+  const FONT = "Meiryo";
+  const base = { font: { sz: 10, name: FONT }, alignment: { horizontal: "center", vertical: "center" },
+    border: { top: thin, bottom: thin, left: thin, right: thin } };
+  const headSt = { ...base, font: { sz: 10, name: FONT, bold: true }, fill: { fgColor: { rgb: "F2EFE9" } } };
+  const leftSt = { ...base, alignment: { horizontal: "left", vertical: "center", shrinkToFit: true } };
+  const winSt = { ...base, font: { sz: 10, name: FONT, bold: true } };
+  const loseSt = { ...base, font: { sz: 10, name: FONT, color: { rgb: "888888" } } };
+  const fmtRate = (won, lost) => lost === 0 ? (won === 0 ? "-" : "∞") : (Math.round((won / lost) * 100) / 100).toFixed(2);
+
+  const events = Object.keys(standingsByEvent || {});
+  events.forEach(eventName => {
+    const blocks = standingsByEvent[eventName] || {};
+    const allMatches = matchesByEvent[eventName] || [];
+    const byPair = {};
+    allMatches.forEach(mm => { byPair[mm.p1_id + "|" + mm.p2_id] = mm; });
+    const ws = {};
+    const merges = [];
+    const put = (r, c, v, style) => {
+      ws[XLSXS.utils.encode_cell({ r, c })] = { t: "s", v: v == null ? "" : String(v), s: style || base };
+    };
+    let row = 0;
+    put(row, 0, `${tournament.name || ""}  ${eventName}  リーグ順位表`, { font: { sz: 13, name: FONT, bold: true } });
+    put(row, 6, _jaShortDate(tournament.date), { font: { sz: 10, name: FONT } });
+    row += 2;
+
+    let maxCols = 0;
+    Object.keys(blocks).sort().forEach(bk => {
+      const teams = blocks[bk] || [];
+      if (!teams.length) return;
+      const n = teams.length;
+      // ブロック見出し
+      put(row, 0, `${bk}ブロック`, { font: { sz: 11, name: FONT, bold: true } });
+      row++;
+      // ヘッダ行: 順 / チーム / 1..N / 勝-敗 / セット率 / 得点率
+      const hdr = ["順", "チーム"];
+      for (let i = 1; i <= n; i++) hdr.push(String(i));
+      hdr.push("勝-敗", "セット率", "得点率");
+      hdr.forEach((v, c) => put(row, c, v, headSt));
+      maxCols = Math.max(maxCols, hdr.length);
+      row++;
+      // 各チーム行(standingsの並び=rank順をそのまま)
+      teams.forEach((t, ri) => {
+        put(row, 0, String(t.rank) + (t.tiebreak ? "*" : ""), base);
+        put(row, 1, (ri + 1) + ". " + (t.team_name || "?"), leftSt);
+        teams.forEach((c2, ci) => {
+          const col = 2 + ci;
+          if (ci === ri) { put(row, col, "＼", { ...base, font: { sz: 10, name: FONT, color: { rgb: "BBBBBB" } } }); return; }
+          let mm = byPair[t.entrant_id + "|" + c2.entrant_id], rowIsP1 = true;
+          if (!mm) { mm = byPair[c2.entrant_id + "|" + t.entrant_id]; rowIsP1 = false; }
+          if (!mm) { put(row, col, "", base); return; }
+          if (!mm.done) { put(row, col, "・", base); return; }
+          const rw = rowIsP1 ? mm.p1_wins : mm.p2_wins, cw = rowIsP1 ? mm.p2_wins : mm.p1_wins;
+          const won = mm.winner === (rowIsP1 ? "p1" : "p2");
+          put(row, col, (won ? "○" : "●") + rw + "-" + cw, won ? winSt : loseSt);
+        });
+        put(row, 2 + n, t.wins + "-" + t.losses + (t.draws ? "-" + t.draws : ""), base);
+        put(row, 3 + n, fmtRate(t.sets_won, t.sets_lost), base);
+        put(row, 4 + n, fmtRate(t.pts_won, t.pts_lost), base);
+        row++;
+      });
+      // 注記(同率抽選)
+      if (teams.some(t => t.tiebreak)) {
+        put(row, 0, "＊＝勝敗・セット得失差・総得点が同率(順位は" +
+          (teams.some(t => t.tiebreak === "抽選済") ? "抽選で確定済み" : "現地抽選") + ")",
+          { font: { sz: 9, name: FONT, color: { rgb: "8A5A0B" } } });
+        row++;
+      }
+      row++;   // ブロック間の空行
+    });
+
+    const lastCol = Math.max(maxCols - 1, 6);
+    ws["!ref"] = XLSXS.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(row, 3), c: lastCol } });
+    const cols = [{ wch: 5 }, { wch: 22 }];
+    for (let c = 2; c <= lastCol; c++) cols.push({ wch: 9 });
+    ws["!cols"] = cols;
+    ws["!merges"] = merges;
+    ws["!pageSetup"] = { orientation: "landscape", paperSize: 9, fitToHeight: 0 };
+    ws["!margins"] = { left: 0.4, right: 0.4, top: 0.5, bottom: 0.4, header: 0.2, footer: 0.2 };
+    XLSXS.utils.book_append_sheet(wb, ws, (eventName || "順位表").slice(0, 30));
+  });
+
+  if (!wb.SheetNames.length) {
+    const ws = XLSXS.utils.aoa_to_sheet([[tournament.name || "順位表"], [""], ["リーグ戦(総当たり)の種目がありません。"]]);
+    XLSXS.utils.book_append_sheet(wb, ws, "順位表");
+  }
+  return XLSXS.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
+}
+
 module.exports = {
   buildAggregationXlsx,
   buildApplicantsXlsx,
@@ -1418,6 +1520,7 @@ module.exports = {
   buildReceiptsList,
   buildMatchCardsXlsx,
   buildBracketXlsx,
+  buildStandingsXlsx,
   buildCoachResultsHTML,
   classifyEvent, genderOf,
   buildAggregation, feesFromEventConfig,   // テスト用に公開 (#17)
