@@ -11523,6 +11523,8 @@ const O = {
  _pbSel: null,      // 選択中 {event, g, pos, slot, name}
  _pbSel2: null,     // 入替相手
  _pbBlock: {},      // 種目→表示中タブ("0".."n" or "F"=決勝T)
+ _pbRelinkSel: null,   // 罫線編集で選択中の1人目(送り元試合) {event, matchId, round, label}
+ _pbRelinkSel2: null,  // 罫線編集の2人目(入替相手試合) {event, matchId, round, label}
  renderPaperBracket(bdata, opts) {
  opts = opts || {};
  const matches = bdata.matches || [];
@@ -11637,6 +11639,98 @@ const O = {
    const rails = [];
    const wrap = h("div", { style: { position: "relative", width: W + "px", flex: "0 0 auto", margin: "0 auto" } });
    const svg = document.createElementNS(NSVG, "svg");
+   // ── 罫線編集(自由配線): 試合の進出先ハンドルをドラッグ、またはタップ2回で組み替える ──
+   // ハンドル=「次の対戦(next_match_id/next_slot)を持つ試合」の中間点に置く丸印。ドラッグ先/
+   // タップ2人目に選んだハンドルの試合が現在占めているslotへ、送り元の進出先を付け替える
+   // (relinkBracketMatch: 既にそのslotにいる試合とswapされ、常に有効な木を保つ)。
+   // 同じ回戦の試合どうしのみ対象(round_skipで拒否されるため、UI側でも最初から候補を絞る)。
+   const handles = [];   // {match, x, y}
+   const relinkLabel = (m) => (m.bracket_round || 1) + "-" + (m.match_no || ((m.bracket_pos || 0) + 1));
+   const relinkHandle = (m, x, y) => {
+     if (!editable || !state.relinkMode || !m || !m.next_match_id) return;
+     handles.push({ match: m, x, y });
+     const selected = (O._pbRelinkSel && O._pbRelinkSel.event === event && O._pbRelinkSel.matchId === m.id) ||
+       (O._pbRelinkSel2 && O._pbRelinkSel2.event === event && O._pbRelinkSel2.matchId === m.id);
+     const c = document.createElementNS(NSVG, "circle");
+     c.setAttribute("cx", x); c.setAttribute("cy", y); c.setAttribute("r", selected ? 7.5 : 6);
+     c.setAttribute("fill", selected ? "#d97706" : "#fff");
+     c.setAttribute("stroke", "#d97706"); c.setAttribute("stroke-width", "2");
+     c.style.cursor = "pointer";
+     c.style.pointerEvents = "all";
+     c.dataset.relinkHandle = "1";
+     svg.appendChild(c);
+     c.addEventListener("pointerdown", (ev) => startRelinkDrag(ev, m, x, y));
+   };
+   const nearestHandle = (x, y, exclude) => {
+     let best = null, bestD = Infinity;
+     handles.forEach(hd => {
+       if (hd.match.id === exclude.id) return;
+       if ((hd.match.bracket_round || 1) !== (exclude.bracket_round || 1)) return;
+       const d = Math.hypot(hd.x - x, hd.y - y);
+       if (d < bestD) { bestD = d; best = hd; }
+     });
+     return (best && bestD < 260) ? best : null;
+   };
+   // タップ/ドロップの両方がここに合流する: 1人目=選択 / 同じ人=解除 / 2人目=候補(まだAPIは呼ばず
+   // 下部バーで最終確認)。ネイティブ confirm() は自動化検証を止め見た目もKTTAの他UIと不揃いなため
+   // 使わない(既存の選手入替バーと同じ「下部固定バーで確認」方式に統一)。
+   const selectForRelink = (m) => {
+     if (O._pbRelinkSel && O._pbRelinkSel.event === event && O._pbRelinkSel.matchId === m.id) {
+       O._pbClearRelink(); render(); return;
+     }
+     if (O._pbRelinkSel2 && O._pbRelinkSel2.event === event && O._pbRelinkSel2.matchId === m.id) {
+       O._pbRelinkSel2 = null; render(); return;
+     }
+     if (O._pbRelinkSel && O._pbRelinkSel.event === event) {
+       if (O._pbRelinkSel.round !== (m.bracket_round || 1)) {
+         toast("同じ回戦の試合どうしのみ入れ替えできます", "err");
+         return;
+       }
+       O._pbRelinkSel2 = { event, matchId: m.id, round: m.bracket_round || 1, label: relinkLabel(m), match: m };
+     } else {
+       O._pbRelinkSel = { event, matchId: m.id, round: m.bracket_round || 1, label: relinkLabel(m), match: m };
+       O._pbRelinkSel2 = null;
+     }
+     render();
+   };
+   const startRelinkDrag = (ev, m, x0, y0) => {
+     ev.preventDefault(); ev.stopPropagation();
+     const startClientX = ev.clientX, startClientY = ev.clientY;
+     let moved = false;
+     const ghost = document.createElementNS(NSVG, "line");
+     ghost.setAttribute("x1", x0); ghost.setAttribute("y1", y0);
+     ghost.setAttribute("x2", x0); ghost.setAttribute("y2", y0);
+     ghost.setAttribute("stroke", "#d97706"); ghost.setAttribute("stroke-width", "2");
+     ghost.setAttribute("stroke-dasharray", "4,3");
+     ghost.style.pointerEvents = "none";
+     svg.appendChild(ghost);
+     const toSvgXY = (clientX, clientY) => {
+       const r = svg.getBoundingClientRect();
+       const vb = svg.viewBox.baseVal;
+       return { x: (clientX - r.left) * (vb.width / r.width), y: (clientY - r.top) * (vb.height / r.height) };
+     };
+     const onMove = (e) => {
+       if (Math.abs(e.clientX - startClientX) > 4 || Math.abs(e.clientY - startClientY) > 4) moved = true;
+       const p = toSvgXY(e.clientX, e.clientY);
+       ghost.setAttribute("x2", p.x); ghost.setAttribute("y2", p.y);
+     };
+     const onUp = (e) => {
+       document.removeEventListener("pointermove", onMove);
+       document.removeEventListener("pointerup", onUp);
+       ghost.remove();
+       if (!moved) { selectForRelink(m); return; }
+       const p = toSvgXY(e.clientX, e.clientY);
+       const target = nearestHandle(p.x, p.y, m);
+       if (target) {
+         // ドラッグは1操作で両方確定: 送り元→ドロップ先をそのまま選択状態にしてバー表示
+         O._pbRelinkSel = { event, matchId: m.id, round: m.bracket_round || 1, label: relinkLabel(m), match: m };
+         O._pbRelinkSel2 = { event, matchId: target.match.id, round: target.match.bracket_round || 1, label: relinkLabel(target.match), match: target.match };
+         render();
+       }
+     };
+     document.addEventListener("pointermove", onMove);
+     document.addEventListener("pointerup", onUp);
+   };
    const railInfo = (g, side, idx) => {
      const y0 = PAD_T + idx * ROW_H;
      const lineY = y0 + ROW_H - 9;
@@ -11738,6 +11832,7 @@ const O = {
        sline(svg, x0, y1, x0, y2);
        sline(svg, Math.min(x0, x2), state.y, Math.max(x0, x2), state.y);
        annotate(svg, m, Math.min(x0, x2), Math.max(x0, x2), state.y, side, false);
+       relinkHandle(m, x2, state.y);
      } else {
        sline(svg, Math.min(x0, x2), state.y, Math.max(x0, x2), state.y);
      }
@@ -11761,6 +11856,7 @@ const O = {
            sline(svg, Math.min(x0, x2), y, Math.max(x0, x2), y);   // 勝者横線
            // 深い長線(登場3回戦以上のSS)が最初に戦うjoin=スーパーシード戦として明示
            annotate(svg, m, Math.min(x0, x2), Math.max(x0, x2), y, side, a.deep >= 2 || bb.deep >= 2);
+           relinkHandle(m, x2, y);
            matchState.set(m.id, { y, deep: 0 });
          } else if (a != null || bb != null) {
            const v = a != null ? a : bb;
@@ -11854,7 +11950,7 @@ const O = {
 
  // ── 組立: タブ(Ａ〜/決勝T)+検索+ブロック紙面+選択バー ──
  const root = h("div", {});
- const state = { tab: (O._pbBlock[event] != null ? O._pbBlock[event] : 0) };
+ const state = { tab: (O._pbBlock[event] != null ? O._pbBlock[event] : 0), relinkMode: false };
  if (nBlocks === 1) state.tab = 0;
  const blockRange = (b) => {   // タブ表示用: ブロック内の通し番号範囲
    let lo = null, hi = null;
@@ -11906,6 +12002,14 @@ const O = {
        } }, cfgLocked ? "ロック中(解除)" : "ロック"));
    }
    if (editable) {
+     bar.appendChild(h("button", {
+       className: "btn btn-sm" + (state.relinkMode ? "" : " btn-ghost"),
+       style: state.relinkMode ? { background: "#d97706", color: "#fff", fontWeight: 700 } : {},
+       title: "罫線編集: 試合の進出先(次の対戦)を丸印のドラッグ、またはタップ2回で組み替える",
+       onClick: () => { state.relinkMode = !state.relinkMode; O._pbClear(); O._pbClearRelink(); render(); },
+     }, state.relinkMode ? "罫線編集中(終了)" : "罫線編集"));
+   }
+   if (editable) {
      const si = h("input", { className: "input", placeholder: "選手名・チーム・番号で探す",
        style: { marginLeft: "auto", width: "220px", fontSize: "12.5px", padding: "6px 10px" } });
      si.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(si.value); });
@@ -11925,6 +12029,8 @@ const O = {
    root.appendChild(selBox);
    renderBar();
    refreshSel();
+   root.appendChild(relinkBox);
+   renderRelinkBar();
  };
  // 選択ハイライトをその場で塗り直す(再描画なし=横スクロール位置が飛ばない)
  const refreshSel = () => {
@@ -11936,6 +12042,55 @@ const O = {
      d.style.background = (selA || selB) ? "#fff7e6" : "transparent";
      d.style.outline = selA ? "2px solid #d97706" : (selB ? "2px dashed #d97706" : "none");
    });
+ };
+ // 罫線編集の確定バー(選手入替バーと同型・下部固定)。ネイティブ confirm() は使わず、ここで
+ // 「入れ替える/強制的に入れ替える/やめる」を出す(自動化検証を止めない・見た目も既存UIと統一)。
+ const relinkBox = h("div", {});
+ const doRelink = async (matchA, matchB, force) => {
+   O._pbRelinkNeedsForce = null;
+   try {
+     const payload = { event, match_id: matchA.id, target_match_id: matchB.next_match_id, target_slot: matchB.next_slot, base_rev: ctx.getRev() };
+     if (force) payload.force = true;
+     const r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/relink`, payload);
+     if (r && r.needs_force) { O._pbRelinkNeedsForce = r.error || "確定済みの試合を巻き込みます。"; renderRelinkBar(); return; }
+     if (r && r.conflict) { toast(r.error || "他の端末で更新されました", "err"); O._pbClearRelink(); ctx.reload(); return; }
+     if (r && r.error) { toast(r.error, "err"); O._pbClearRelink(); render(); return; }
+     if (r && r.bracket_rev) ctx.setRev(r.bracket_rev);
+     toast(r.unchanged ? "変更ありません(既に同じ組み合わせです)" : "対戦相手を入れ替えました", "ok");
+     O._pbClearRelink();
+     ctx.reload();
+   } catch (e) { toast("入れ替えに失敗しました: " + (e.message || e), "err"); O._pbClearRelink(); render(); }
+ };
+ const renderRelinkBar = () => {
+   relinkBox.replaceChildren();
+   if (O._pbRelinkKeyH) { document.removeEventListener("keydown", O._pbRelinkKeyH); O._pbRelinkKeyH = null; }
+   if (!(editable && state.relinkMode && O._pbRelinkSel && O._pbRelinkSel.event === event)) return;
+   const s1 = O._pbRelinkSel, s2 = O._pbRelinkSel2;
+   O._pbRelinkKeyH = (ev) => {
+     if (ev.key === "Escape") { O._pbClearRelink(); render(); }
+     else if (ev.key === "Enter" && s2) { ev.preventDefault(); doRelink(s1.match, s2.match, !!O._pbRelinkNeedsForce); }
+   };
+   document.addEventListener("keydown", O._pbRelinkKeyH);
+   const needsForce = O._pbRelinkNeedsForce;
+   relinkBox.appendChild(h("div", { style: { position: "sticky", bottom: "8px", marginTop: "10px",
+     background: "#fff", border: "1.5px solid #d97706", borderRadius: "10px",
+     padding: "10px 14px", display: "flex", alignItems: "center", gap: "10px",
+     flexWrap: "wrap", boxShadow: "0 10px 26px -12px rgba(120,80,0,.3)", zIndex: 5 } },
+     h("span", { style: { fontWeight: 700, fontSize: "13px" } }, s1.label + "の進出先"),
+     h("span", { style: { color: "#d97706", fontWeight: 800 } }, "⇄"),
+     s2 ? h("span", { style: { fontWeight: 700, fontSize: "13px" } }, s2.label + "の進出先")
+        : h("span", { style: { color: "#6b7280", fontSize: "12.5px" } }, "入れ替える相手(同じ回戦)の丸印をタップ…(Escで解除)"),
+     s2 ? h("span", { className: "text-xs text-sub" }, "Enterで確定 / Escで解除") : null,
+     needsForce ? h("div", { style: { flexBasis: "100%", fontSize: "12.5px", color: "#c01526", fontWeight: 700 } }, needsForce) : null,
+     h("span", { style: { flex: "1 0 auto" } }),
+     s2 ? h("button", { className: "btn btn-sm", style: { background: needsForce ? "#c01526" : "#d97706", color: "#fff", fontWeight: 700 },
+       onClick: () => doRelink(s1.match, s2.match, !!needsForce) }, needsForce ? "強制的に入れ替える" : "入れ替える") : null,
+     h("button", { className: "btn btn-sm btn-ghost", onClick: () => { O._pbClearRelink(); render(); } }, "やめる"),
+   ));
+ };
+ O._pbClearRelink = () => {
+   O._pbRelinkSel = null; O._pbRelinkSel2 = null; O._pbRelinkNeedsForce = null;
+   if (O._pbRelinkKeyH) { document.removeEventListener("keydown", O._pbRelinkKeyH); O._pbRelinkKeyH = null; }
  };
  const selBox = h("div", {});
  const renderBar = () => {
