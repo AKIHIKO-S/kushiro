@@ -77,6 +77,18 @@
   /* 選手番号バッジ (審判が組合せ表と突き合わせて確認できるように #241) */
   .pbn { display:inline-block; background:#1c1917; color:#fff; font-size:15px; font-weight:800;
     font-family:var(--font-mono); border-radius:6px; padding:2px 8px; margin-right:5px; vertical-align:middle; }
+  /* セットカウント速報 (任意・観戦画面の「2-1 第4セット」用)。+タップで該当側+1・即送信。 */
+  .live-row { display:flex; align-items:center; gap:6px; margin: 2px 0 10px;
+    background:#fafaf9; border:1px dashed #d6d3d1; border-radius:10px; padding:8px 10px; }
+  .live-lbl { font-size: 11px; font-weight: 800; color:#78716c; line-height:1.3; flex:0 0 auto; }
+  .live-grp { display:flex; align-items:center; gap:4px; flex:1; justify-content:center; }
+  .lbtn { width:44px; height:44px; border:none; border-radius:10px; font-size:22px; font-weight:800;
+    background:#e7e5e4; color:#1c1917; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .lbtn.plus { background:#dcfce7; color:#166534; }
+  .lbtn:active { transform: scale(.95); }
+  .lnum { min-width:34px; text-align:center; font-size:26px; font-weight:800;
+    font-variant-numeric: tabular-nums; color:#1c1917; }
+  .lsep { font-size:20px; font-weight:800; color:#a8a29e; }
   .btn-row { display:flex; gap:10px; margin-top: 6px; }
   .b {
     flex:1; border:none; border-radius: 10px; padding: 13px; font-size: 15px; font-weight: 800;
@@ -174,6 +186,12 @@
   function loadQ() { try { return JSON.parse(localStorage.getItem(QKEY) || "[]"); } catch (e) { return []; } }
   function saveQ(q) { try { localStorage.setItem(QKEY, JSON.stringify(q.slice(-50))); } catch (e) {} }
   function enqueue(mid, body) { var q = loadQ(); q.push({ mid: mid, body: body, ts: Date.now() }); saveQ(q); }
+  // セット速報のオフラインキュー: 報告キューと分離した軽量版。matchIdごと最新1件だけ保持
+  // (last-write-wins・絶対値スナップショット送信なので中間値の再送は不要=自己修復的)。
+  var LQKEY = "ktta_ref_liveq_v1";
+  function loadLiveQ() { try { return JSON.parse(localStorage.getItem(LQKEY) || "{}"); } catch (e) { return {}; } }
+  function saveLiveQ(q) { try { localStorage.setItem(LQKEY, JSON.stringify(q)); } catch (e) {} }
+  var liveLocal = {};   // matchId -> {s1,s2} 表示中のローカル値(サーバ値 live_sets を初期値に)
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
     return { "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]; }); }
@@ -356,7 +374,28 @@
       +   '<div class="vs-mid">VS</div>'
       +   pbtnHtml(m, 2)
       + '</div>'
+      + liveRowHtml(m)
       + '<div class="confirm" id="confirm-' + esc(m.id) + '" style="display:none"></div>'
+      + '</div>';
+  }
+  // セットカウント速報行 (任意)。+タップ=該当側+1で即送信。観戦画面に「2-1 第4セット」が出る。
+  function liveRowHtml(m) {
+    var lv = liveLocal[m.id] || m.live_sets || { s1: 0, s2: 0 };
+    liveLocal[m.id] = { s1: lv.s1 || 0, s2: lv.s2 || 0 };
+    var short = function (nm) { var s = String(nm || "").split(/[\s　]/)[0]; return s.slice(0, 5) || "選手"; };
+    return '<div class="live-row" id="live-' + esc(m.id) + '">'
+      + '<span class="live-lbl">セット<br>速報</span>'
+      + '<div class="live-grp">'
+      +   '<button class="lbtn" data-lmid="' + esc(m.id) + '" data-lslot="1" data-ld="-1">−</button>'
+      +   '<span class="lnum" id="ln1-' + esc(m.id) + '">' + (liveLocal[m.id].s1) + '</span>'
+      +   '<button class="lbtn plus" data-lmid="' + esc(m.id) + '" data-lslot="1" data-ld="1">＋</button>'
+      + '</div>'
+      + '<span class="lsep">-</span>'
+      + '<div class="live-grp">'
+      +   '<button class="lbtn" data-lmid="' + esc(m.id) + '" data-lslot="2" data-ld="-1">−</button>'
+      +   '<span class="lnum" id="ln2-' + esc(m.id) + '">' + (liveLocal[m.id].s2) + '</span>'
+      +   '<button class="lbtn plus" data-lmid="' + esc(m.id) + '" data-lslot="2" data-ld="1">＋</button>'
+      + '</div>'
       + '</div>';
   }
   function pbtnHtml(m, slot) {
@@ -385,6 +424,21 @@
       };
       return;
     }
+    // セット速報 +/- : ローカル値を進めて絶対値スナップショットを即送信(0..9にクランプ)
+    card.querySelectorAll(".lbtn").forEach(function (btn) {
+      btn.onclick = function () {
+        var mid = btn.getAttribute("data-lmid");
+        var slot = btn.getAttribute("data-lslot");
+        var d = parseInt(btn.getAttribute("data-ld"));
+        var lv = liveLocal[mid] || { s1: 0, s2: 0 };
+        var key = "s" + slot;
+        lv[key] = Math.max(0, Math.min(9, (lv[key] || 0) + d));
+        liveLocal[mid] = lv;
+        var numEl = document.getElementById("ln" + slot + "-" + mid);
+        if (numEl) numEl.textContent = lv[key];
+        sendLiveScore(mid, { s1: lv.s1, s2: lv.s2 });
+      };
+    });
     card.querySelectorAll(".pbtn").forEach(function (btn) {
       btn.onclick = function () {
         var slot = parseInt(btn.getAttribute("data-slot"));
@@ -479,9 +533,38 @@
       body: JSON.stringify(payload),
     }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); });
   }
+  // セット速報の送信。失敗(回線断)は liveQ に matchIdごと最新1件で退避し、復旧時に送る。
+  // 表示専用の暫定値なので報告(finish)ほどの信頼性経路は持たせない(4xxは黙って破棄)。
+  function sendLiveScore(mid, sc) {
+    var payload = authBody({ s1: sc.s1, s2: sc.s2, op_id: uuid() });
+    if (passcode) payload.passcode = passcode;
+    fetch("/api/ref/matches/" + encodeURIComponent(mid) + "/live-score", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then(function (r) {
+      if (r.ok) {
+        var q = loadLiveQ(); if (q[mid]) { delete q[mid]; saveLiveQ(q); }
+        return;
+      }
+      if (r.status >= 500) { var q2 = loadLiveQ(); q2[mid] = { s1: sc.s1, s2: sc.s2 }; saveLiveQ(q2); }
+      // 4xx(コートに無い等)は破棄: 状態が変わった後の速報は意味を持たない
+    }).catch(function () {
+      var q = loadLiveQ(); q[mid] = { s1: sc.s1, s2: sc.s2 }; saveLiveQ(q);   // 回線断: 最新値だけ退避
+    });
+  }
+  function flushLiveQ() {
+    if (!navigator.onLine) return;
+    var q = loadLiveQ();
+    Object.keys(q).forEach(function (mid) {
+      var sc = q[mid];
+      delete q[mid]; saveLiveQ(q);       // 先に取り除く(送信失敗なら sendLiveScore が再退避)
+      sendLiveScore(mid, sc);
+    });
+  }
   // 貯めた報告を順次送信 (回線復旧時/ポーリング毎)。op_id 冪等なので二重適用なし。
   var flushing = false;
   function flushQueue() {
+    flushLiveQ();   // 速報キューを先に掃く(軽量・matchIdごと最新1件)
     if (flushing || !navigator.onLine) return;
     var q = loadQ(); if (!q.length) return;
     flushing = true;

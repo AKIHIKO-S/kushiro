@@ -670,6 +670,7 @@ const PUBLIC_MATCH_OMIT = new Set([
   "next_match_id", "next_slot",
   "call_count", "call_count_p1", "call_count_p2", "recall_count", "called_at",
   "sets_json", "tournament_id", "created_at", "updated_at",
+  "live_sets_json", "live_score_rev",   // 速報は /live 専用(下のLIVE射影でsets側を残す)。revは常に内部
 ]);
 function publicMatch(m) { const o = {}; for (const k in m) if (!PUBLIC_MATCH_OMIT.has(k)) o[k] = m[k]; return o; }
 // /live(on_table/recent_finished)専用の射影。/matches より残す列が多い: 再コール系
@@ -681,6 +682,9 @@ const LIVE_MATCH_OMIT = new Set([
   "winner_rating_delta", "loser_rating_delta",
   "next_match_id", "next_slot",
   "sets_json", "tournament_id", "created_at", "updated_at",
+  // セットカウント速報は getOperationState がパース済み `live`({s1,s2}) を付与するため、
+  // 生JSONと改訂カウンタは落とす(観戦フロントは m.live だけを見る規約)。
+  "live_sets_json", "live_score_rev",
 ]);
 function liveMatch(m) { const o = {}; for (const k in m) if (!LIVE_MATCH_OMIT.has(k)) o[k] = m[k]; return o; }
 app.get("/api/public/tournaments/:id/matches", (req, res) => {
@@ -3777,6 +3781,36 @@ app.post("/api/ref/matches/:id/finish",
     winner_name: r.pending.winner_name, loser_name: r.pending.loser_name,
     winner_sets: r.pending.winner_sets, loser_sets: r.pending.loser_sets,
   });
+});
+
+// 審判のセットカウント速報 (表示専用の暫定値・観戦画面の「2-1 第4セット」用)。
+// finish(最終報告・承認制)とは別経路: 進出処理も承認も無く、確定/呼出/戻すで消える。
+// ガード列は finish と同一(パスコード/大会一致/コート一致/on_table)。op_id は冪等ミドルウェアが拾う。
+// recordOp は呼ばない(undo対象の結果操作ではない・セット毎の更新でop_logを埋めない)。
+app.post("/api/ref/matches/:id/live-score",
+  rateLimit({ windowMs: 60000, max: 240, message: "送信が多すぎます。少し待って再試行してください。" }),
+  requireReferee, (req, res) => {
+  const _refIp = _coachIp(req);
+  if (refPassBlocked(_refIp)) return res.status(429).json({ error: REF_PASS_BLOCK_MSG, passcode_error: true });
+  if (!db.verifyRefereePasscode(req.refTournament.id, req.body && req.body.passcode)) {
+    refPassFail(_refIp);
+    return res.status(403).json({
+      error: "会場パスコードが正しくありません。本部にご確認ください。",
+      passcode_error: true,
+    });
+  }
+  refPassOk(_refIp);
+  const m = db.getMatch(req.params.id);
+  if (!m) return res.status(404).json({ error: "試合が見つかりません" });
+  if (m.tournament_id !== req.refTournament.id)
+    return res.status(403).json({ error: "この試合はこのリンクの対象外です" });
+  if (req.refCourt && Number(m.table_no) !== Number(req.refCourt))
+    return res.status(403).json({ error: "このリンクはコート" + req.refCourt + "専用です。担当コートの試合のみ報告できます。" });
+  if (m.status !== "on_table")
+    return res.status(409).json({ error: "この試合は現在コートに入っていません。" });
+  const r = db.setLiveScore(req.params.id, { s1: req.body && req.body.s1, s2: req.body && req.body.s2, by: "referee" });
+  if (r && r.error) return res.status(400).json(r);
+  res.json({ ok: true, live: r.live });
 });
 
 // 審判の暫定結果を本部が承認 → 確定 (勝者を進出させコートから外す) #223

@@ -584,6 +584,12 @@ try {
   addMCol("call_count", "INTEGER DEFAULT 0");  // 互換用 (累計)
   addMCol("call_count_p1", "INTEGER DEFAULT 0");  // 選手1の再コール回数
   addMCol("call_count_p2", "INTEGER DEFAULT 0");  // 選手2の再コール回数
+  // 試合中のセットカウント速報 (審判入力・表示専用の暫定値)。確定値(winner_sets等)とは別カラムで
+  // 進出処理・Elo・undoに一切関与しない。{"s1":2,"s2":1,"at":ISO,"by":"referee"} / '' = 速報なし。
+  addMCol("live_sets_json", "TEXT DEFAULT ''");
+  // 速報の改訂カウンタ (単調増加・リセットしない)。getOpsFingerprint が SUM で拾い SSE/ETag を
+  // 起動する。クリア時も +1 する(=0リセットだと SUM が逆行し変化検知が漏れる)。
+  addMCol("live_score_rev", "INTEGER DEFAULT 0");
   addMCol("match_label", "TEXT DEFAULT ''");  // "1-1", "2-1" 形式の試合番号 (R-N)
   addMCol("is_walkover", "INTEGER DEFAULT 0");  // 1=不戦勝/BYE (DB戦績・参加記録に算入しない)
   // finish 時に適用したElo差分を保存し、訂正/undo/編集で厳密に逆算する (#3/#4/#6/#10/#12/#22)。
@@ -2551,6 +2557,7 @@ const _opsFpStmt = sqlite.prepare(
           COALESCE(SUM(CASE WHEN COALESCE(referee_id,'')!='' OR COALESCE(referee_name,'')!='' THEN 1 ELSE 0 END),0) AS refc,
           COALESCE(SUM(COALESCE(referee_id,0)),0) AS refid,
           COALESCE(SUM(LENGTH(COALESCE(referee_name,''))),0) AS refnl,
+          COALESCE(SUM(COALESCE(live_score_rev,0)),0) AS lrev,
           COALESCE(MAX(finished_at),'') AS f
      FROM matches WHERE tournament_id = ?`
 );
@@ -2563,7 +2570,8 @@ function getOpsFingerprint(tournamentId) {
   // tu = tournaments.updated_at(数字のみ): コートレイアウト・会場名など大会行の変更でも
   // 公開/liveキャッシュ・ETag・SSEが更新されるように(試合が動くまで古い表示が固着するバグの修正)。
   const tu = String(t.updated_at || "").replace(/\D/g, "");
-  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.pend}.${r.ssum}.${r.trlen}.${r.refc}.${r.refid}.${r.refnl}.${r.f}.${tu}`, status: t.status };
+  // lrev = セットカウント速報の改訂合計(単調増加)。審判の速報更新を SSE/ETag が即時検知する。
+  return { v: `${r.c}.${r.done}.${r.live}.${r.tsum}.${r.calls}.${r.unconf}.${r.pend}.${r.ssum}.${r.trlen}.${r.refc}.${r.refid}.${r.refnl}.${r.lrev}.${r.f}.${tu}`, status: t.status };
 }
 
 // ═══════════════════════════════════════════════════════
@@ -5844,6 +5852,9 @@ function finishMatchInternal(matchId, data) {
   const isWO = !!data.walkover || winner.name === "BYE" || loser.name === "BYE";
   sqlite.prepare("UPDATE matches SET is_walkover=? WHERE id=?").run(isWO ? 1 : 0, matchId);
 
+  // セットカウント速報は確定値に役目を引き継いで消す(completed後に暫定 2-1 が残らない)
+  clearLiveScore(matchId);
+
   // 団体戦(tie)の内訳を保存(指定があれば)。correct 経由でも data.tie_results を渡せば上書きされる。
   // 個人戦の finish では未指定なので既存値を触らない。
   if (data.tie_results !== undefined) {
@@ -6473,6 +6484,7 @@ function callMatch(matchId, tableNo, refereeId, opts) {
   // 検証はすべて通過。台割当・追加台・審判を原子的に適用。
   const applyTx = sqlite.transaction(() => {
     opStmts.setTable.run(tableNo, matchId);
+    clearLiveScore(matchId);   // 前回コート投入時の速報が残らないように(再呼出で古い 2-1 が出る事故防止)
     if (extrasStr) sqlite.prepare(`UPDATE matches SET extra_tables = ? WHERE id = ?`).run(extrasStr, matchId);
     if (refAssign) opStmts.setReferee.run(refAssign.id, refAssign.name, matchId);
   });
@@ -6575,6 +6587,7 @@ function assignAnyReferee(matchId, refereeId, opts) {
 // 台から戻す（キャンセル）
 function uncallMatch(matchId) {
   opStmts.clearTable.run(matchId);
+  clearLiveScore(matchId);   // 速報の残留防止(コートを離れた試合に 2-1 が残らない)
   return stmts.getMatch.get(matchId);
 }
 
@@ -6789,7 +6802,8 @@ function getOperationState(tournamentId) {
   };
   const _parsePend = (s) => { if (!s) return null; try { return JSON.parse(s); } catch (e) { return null; } };
   const onTable = allMatches.filter(m => m.status === "on_table")
-    .map(m => ({ ...m, elapsed_min: _minsSince(m.started_at), pending: _parsePend(m.pending_result) }));
+    .map(m => ({ ...m, elapsed_min: _minsSince(m.started_at), pending: _parsePend(m.pending_result),
+      live: parseLiveScore(m.live_sets_json) }));
   const callableRaw = allMatches.filter(m => m.status === "pending");
   const waiting = allMatches.filter(m => m.status === "waiting");
   const finished = allMatches.filter(m => m.status === "completed");
@@ -7013,7 +7027,7 @@ function getOpMatchList(tournamentId) {
     SELECT m.id, m.event, m.round, m.round_order, m.match_label, m.status, m.table_no,
       m.player1_name, m.player2_name, m.player1_team, m.player2_team,
       m.winner_name, m.loser_name, m.winner_team, m.loser_team, m.winner_sets, m.loser_sets,
-      COALESCE(m.is_walkover,0) AS is_walkover, m.tie_results,
+      COALESCE(m.is_walkover,0) AS is_walkover, m.tie_results, m.live_sets_json,
       m.called_at, m.started_at, m.finished_at, m.duration_sec, m.result_source,
       e1.bracket_number AS player1_bracket_number,
       e2.bracket_number AS player2_bracket_number
@@ -7023,7 +7037,11 @@ function getOpMatchList(tournamentId) {
     WHERE m.tournament_id=?
     ORDER BY m.bracket_round ASC, m.bracket_pos ASC, m.match_no ASC
   `).all(tournamentId);
-  rows.forEach(m => { m.tie_results = _parseTieResults(m.tie_results); });
+  rows.forEach(m => {
+    m.tie_results = _parseTieResults(m.tie_results);
+    m.live = parseLiveScore(m.live_sets_json);
+    delete m.live_sets_json;   // 生JSONは出さない(参照タブはパース済みliveのみ使う)
+  });
   return { matches: rows, total: rows.length };
 }
 
@@ -10614,7 +10632,7 @@ function getRefereeView(tournamentId, courtNo) {
   const rows = sqlite.prepare(`
     SELECT m.id, m.table_no, m.event, m.round, m.match_label, m.match_no,
            m.player1_name, m.player2_name, m.player1_team, m.player2_team,
-           m.started_at, m.called_at, m.status, m.pending_result,
+           m.started_at, m.called_at, m.status, m.pending_result, m.live_sets_json,
            e1.bracket_number AS player1_bracket_number,
            e2.bracket_number AS player2_bracket_number
     FROM matches m
@@ -10629,6 +10647,9 @@ function getRefereeView(tournamentId, courtNo) {
     delete r.pending_result;
     r.awaiting_approval = !!pending;
     if (pending) r.reported = { winner_slot: pending.winner_slot, winner_name: pending.winner_name };
+    // セットカウント速報の現在値(審判画面の +/- ボタンの初期表示用)。生JSONは返さない。
+    r.live_sets = parseLiveScore(r.live_sets_json);
+    delete r.live_sets_json;
     return r;
   });
   // コート番号順に整列 (コート未割当は末尾)。
@@ -10692,6 +10713,39 @@ function getPendingResult(matchId) {
   const m = stmts.getMatch.get(matchId);
   if (!m || !m.pending_result) return null;
   try { return JSON.parse(m.pending_result); } catch (e) { return null; }
+}
+
+// ── 試合中のセットカウント速報 (表示専用の暫定値) ──
+// pending_result(承認待ちの最終報告)とは役割が別: 速報は審判がセット終了ごとに更新し、観戦画面が
+// 「2-1 第4セット」を出すためだけの値。進出処理・Elo・undo・承認フローに一切関与しない。
+// 確定(finish)/呼出(call)/戻す(uncall)で消える。live_score_rev は消す時も +1 (SUM検知の単調性)。
+function setLiveScore(matchId, data) {
+  const m = stmts.getMatch.get(matchId);
+  if (!m) return { error: "試合が見つかりません" };
+  if (m.status !== "on_table") return { error: "この試合は現在コートに入っていません" };
+  const clamp = (v) => Math.max(0, Math.min(9, parseInt(v) || 0));
+  const payload = {
+    s1: clamp(data.s1), s2: clamp(data.s2),
+    by: data.by || "referee",
+    at: new Date().toISOString(),
+  };
+  sqlite.prepare("UPDATE matches SET live_sets_json=?, live_score_rev=COALESCE(live_score_rev,0)+1 WHERE id=?")
+    .run(JSON.stringify(payload), matchId);
+  return { ok: true, live: { s1: payload.s1, s2: payload.s2 } };
+}
+function clearLiveScore(matchId) {
+  // 速報が無ければ何もしない(revを無駄に進めない=fingerprint誤発火防止)
+  sqlite.prepare("UPDATE matches SET live_sets_json='', live_score_rev=COALESCE(live_score_rev,0)+1 WHERE id=? AND live_sets_json != ''")
+    .run(matchId);
+}
+// live_sets_json の安全なパース(表示用 {s1,s2} のみ返す。壊れていれば null)
+function parseLiveScore(json) {
+  if (!json) return null;
+  try {
+    const v = JSON.parse(json);
+    if (v && Number.isFinite(+v.s1) && Number.isFinite(+v.s2)) return { s1: +v.s1, s2: +v.s2 };
+  } catch (e) {}
+  return null;
 }
 
 // ── コート別トークン (試験運用 #229) ──
@@ -10816,6 +10870,7 @@ module.exports = {
   setRefereeToken, setRefereeInputEnabled, getRefereeConfig,
   getTournamentByRefereeToken, getRefereeView, markResultSource,
   setPendingResult, clearPendingResult, getPendingResult,
+  setLiveScore, clearLiveScore, parseLiveScore,   // セットカウント速報(表示専用の暫定値)
   getRefereeCourtLinks, resolveRefereeCourt,
   setRefereePasscode, verifyRefereePasscode,   // #261 会場パスコード
   kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription, getPushPlayerIds,
