@@ -9293,14 +9293,17 @@ const O = {
  },
 
  async recallMatch(m, slot) {
- // 連打防止: recall は call_count+1 で冪等でない(op_id も付かない)ため、
- // 送信中の重複タップを弾く。これが無いと1回の物理再コールで +2 され警告が誤発火する。
+ // 連打防止: op_id は「同一opの再送」の重複適用を防ぐが、連打は別opになるため
+ // 送信中の重複タップはこの Set で弾く(役割が別。両方必要)。
  const key = m.id + ":" + (slot || 0);
  if (!O._recallInFlight) O._recallInFlight = new Set();
  if (O._recallInFlight.has(key)) return;
  O._recallInFlight.add(key);
  try {
-   const r = await api.post(`/api/matches/${m.id}/recall`, slot ? { slot } : {});
+   // opSend = op_id 冪等 + オフラインキュー。ネット断中の再コールも復帰後に自動送信され、
+   // 再送されても call_count は +1 のまま(サーバの冪等ガードが前回応答をリプレイ)。
+   const r = await api.opSend("POST", `/api/matches/${m.id}/recall`, slot ? { slot } : {}, { tag: m.id });
+   if (r && r.queued) { toast("オフライン: 再コールを保存しました（接続復帰後に自動送信）", "warn"); return; }
    if (r.error) { toast(r.error, "err"); return; }
    const next = slot === 2 ? (parseInt(r.call_count_p2) || 0)
               : slot === 1 ? (parseInt(r.call_count_p1) || 0)
