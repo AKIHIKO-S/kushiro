@@ -8552,9 +8552,50 @@ function setEntrantEntryRound(entrantId, entryRound) {
 
 // ── Phase4: データ品質 (種目名と gender/category の不整合・ふりがな欠落・氏名空 を検出) ──
 // 自動推定や手入力のズレを本部が一覧で確認し、推定値で一括/個別修正できるようにする。
+// 2026-07-16 追加検出4種(候補提示まで・確定は人=選手DBの掟):
+//   duplicate_entry     同大会同種目に同一人物とみられる申込が複数(normalizeName+_normClub一致)
+//   club_variant        同一所属とみられる表記ゆれ(_normClub同値グループに複数の生表記)
+//   age_mismatch/birth_missing  年齢チェック種目(age_check.mode=birthdate)で区分の年齢範囲外/生年月日欠落
+//   player_link_mismatch 連携先の選手DBの氏名と entrant 氏名が不一致(リンク先違いの疑い)
 function findEntrantDataIssues(tournamentId) {
   const rows = sqlite.prepare(`SELECT * FROM entrants WHERE tournament_id=?`).all(tournamentId);
   const items = [];
+
+  // 事前集計1: 重複申込(同種目内で 正規化氏名+正規化所属 が一致する組。rejected は除外)
+  const dupKeyOf = (e) => String(e.event || "") + " " + normalizeName(e.name).replace(/\s/g, "") + " " + _normClub(e.team);
+  const dupCount = {};
+  for (const e of rows) {
+    if (e.status === "rejected") continue;
+    if (!e.name || !String(e.name).trim()) continue;
+    dupCount[dupKeyOf(e)] = (dupCount[dupKeyOf(e)] || 0) + 1;
+  }
+  // 事前集計2: 所属表記ゆれ(大会全体で _normClub 同値グループに複数の生表記→多数派を提案)
+  const clubForms = {};   // norm -> { 表記: 件数 }
+  for (const e of rows) {
+    const raw = String(e.team || "").trim();
+    if (!raw) continue;
+    const norm = _normClub(raw);
+    if (!norm) continue;
+    (clubForms[norm] = clubForms[norm] || {})[raw] = (clubForms[norm][raw] || 0) + 1;
+  }
+  const clubMajority = {};   // norm -> 多数派の生表記(複数表記がある場合のみ)
+  for (const norm in clubForms) {
+    const forms = Object.entries(clubForms[norm]);
+    if (forms.length >= 2) clubMajority[norm] = forms.sort((a, b) => b[1] - a[1])[0][0];
+  }
+  // 事前集計3: 年齢チェック設定(種目名 → {asOf, cats})。age_check.mode==="birthdate" の種目のみ。
+  const t = getTournament(tournamentId);
+  const ageCfg = {};
+  try {
+    const evCfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []);
+    (Array.isArray(evCfg) ? evCfg : []).forEach(c => {
+      if (!c || !c.name || !c.age_check || c.age_check.mode !== "birthdate") return;
+      const ac = c.age_check;
+      const asOf = (ac.as_of && /^\d{4}-\d{2}-\d{2}/.test(String(ac.as_of))) ? String(ac.as_of).slice(0, 10) : fiscalAprilFirst(t.date);
+      ageCfg[String(c.name)] = { asOf, cats: Array.isArray(c.entry_categories) ? c.entry_categories : [] };
+    });
+  } catch (_) {}
+
   for (const e of rows) {
     const evName = String(e.event || "");
     const inf = inferGenderCategory(evName, "", "");   // 種目名のみからの推定値
@@ -8585,6 +8626,56 @@ function findEntrantDataIssues(tournamentId) {
     // 氏名空
     if (!e.name || !String(e.name).trim()) {
       issues.push({ code: "missing_name", field: "name", label: "氏名が空", suggested: "" });
+    }
+    // 重複申込の疑い: 同種目に同一人物(正規化氏名+正規化所属が一致)が複数。該当全行に付与。
+    // 一括修正は不可(どちらが正か機械では決められない=人が片方を削除/却下する)。
+    if (e.status !== "rejected" && e.name && String(e.name).trim() && dupCount[dupKeyOf(e)] >= 2) {
+      issues.push({ code: "duplicate_entry", field: "",
+        label: `同一人物の重複申込の疑い(同種目に${dupCount[dupKeyOf(e)]}件)`, suggested: "" });
+    }
+    // 所属の表記ゆれ: 同一所属とみられるグループに複数の生表記→少数派の行に多数派表記を提案
+    {
+      const raw = String(e.team || "").trim();
+      const norm = raw ? _normClub(raw) : "";
+      if (norm && clubMajority[norm] && clubMajority[norm] !== raw) {
+        issues.push({ code: "club_variant", field: "team",
+          label: `所属の表記ゆれ(多数派は「${clubMajority[norm]}」)`, suggested: clubMajority[norm] });
+      }
+    }
+    // 年齢チェック種目(生年月日基準)の再検証: 区分(division)の年齢範囲外/生年月日欠落。
+    // 申込フォームは送信時に検証済みだが、Excel取込・申込後の種目/区分編集は素通りするため
+    // ここで補足する。表示のみ(年齢制限は要項事項=一括修正しない)。団体・合計年齢区分は対象外。
+    if (!isTeam && ageCfg[evName] && ageCfg[evName].asOf) {
+      const { asOf, cats } = ageCfg[evName];
+      const cat = cats.find(x => x && String(x.value || x.label) === String(e.division || ""));
+      if (cat && !cat.combined && ((cat.min_age != null && cat.min_age !== "") || (cat.max_age != null && cat.max_age !== ""))) {
+        let ex = null;
+        try { ex = e.extra_json ? JSON.parse(e.extra_json) : null; } catch (_) {}
+        const bd = ex && ex.birth_date;
+        const age = bd ? ageAtDate(bd, asOf) : null;
+        if (age == null) {
+          issues.push({ code: "birth_missing", field: "",
+            label: `年齢チェック種目なのに生年月日が未登録/不正(区分「${cat.short || cat.label || e.division}」)`, suggested: "" });
+        } else {
+          const tooYoung = cat.min_age != null && cat.min_age !== "" && age < parseInt(cat.min_age);
+          const tooOld = cat.max_age != null && cat.max_age !== "" && age > parseInt(cat.max_age);
+          if (tooYoung || tooOld) {
+            issues.push({ code: "age_mismatch", field: "division",
+              label: `区分「${cat.short || cat.label || e.division}」の年齢範囲外(基準日${asOf}時点 ${age}歳)`, suggested: "" });
+          }
+        }
+      }
+    }
+    // 選手DB連携先の氏名不一致: player_id が指す選手と entrant の氏名が食い違う(リンク先違いの疑い)。
+    // 修正は既存の連携UI(候補提示→人が確定)で行う。姓名の空白差は正規化して無視。
+    if (!isTeam && e.player_id) {
+      const pl = getPlayer(e.player_id);
+      const eN = normalizeName(e.name).replace(/\s/g, "");
+      const pN = pl ? normalizeName(pl.name).replace(/\s/g, "") : "";
+      if (pl && eN && pN && eN !== pN) {
+        issues.push({ code: "player_link_mismatch", field: "",
+          label: `連携先の選手DB「${pl.name}」と氏名不一致(リンク先違いの疑い)`, suggested: "" });
+      }
     }
 
     if (issues.length) {
@@ -8624,6 +8715,8 @@ function fixEntrant(entrantId, fields) {
 }
 
 // 検出された不整合を推定値で一括修正(チェックした種類のみ)。
+// duplicate_entry/age_mismatch/birth_missing/player_link_mismatch は一括修正の対象外
+// (機械では正解を決められない=人が個別に判断する。club_variant のみ opts.club でオプトイン)。
 function bulkFixEntrantInference(tournamentId, opts) {
   opts = opts || {};
   const issues = findEntrantDataIssues(tournamentId);
@@ -8635,6 +8728,7 @@ function bulkFixEntrantInference(tournamentId, opts) {
       if (is.code === "gender_mismatch" && opts.gender !== false) patch.gender = is.suggested;
       if (is.code === "category_mismatch" && opts.category !== false) patch.category = is.suggested;
       if (is.code === "missing_furigana" && opts.furigana && is.suggested) patch.furigana = is.suggested;
+      if (is.code === "club_variant" && opts.club && is.suggested) patch.team = is.suggested;
     }
     if (Object.keys(patch).length) { updateEntrant(it.id, patch); fixed++; }
   }

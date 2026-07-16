@@ -5422,8 +5422,8 @@ const A = {
    catch (err) { toast("失敗: " + err.message, "err"); }
  };
  const bulkFix = async () => {
-   if (!window.confirm(`種目名から推定した値で ${issueTotal} 件の不整合(性別/区分/ふりがな)を一括修正します。よろしいですか?`)) return;
-   try { const r = await api.post(`/api/tournaments/${t.id}/entry-issues/bulk-fix`, { gender: true, category: true, furigana: true });
+   if (!window.confirm(`種目名から推定した値で不整合(性別/区分/ふりがな/所属ゆれ)を一括修正します。\n※ 重複申込・年齢範囲外・選手DB連携の不一致は自動修正されません(個別にご確認ください)。よろしいですか?`)) return;
+   try { const r = await api.post(`/api/tournaments/${t.id}/entry-issues/bulk-fix`, { gender: true, category: true, furigana: true, club: true });
      toast(`${(r && r.fixed) || 0}件を修正しました`, "ok"); await load(); }
    catch (err) { toast("失敗: " + err.message, "err"); }
  };
@@ -5436,11 +5436,21 @@ const A = {
    if (c.category_mismatch) parts.push(`区分不一致 ${c.category_mismatch}`);
    if (c.missing_furigana) parts.push(`ふりがな欠落 ${c.missing_furigana}`);
    if (c.missing_name) parts.push(`氏名空 ${c.missing_name}`);
+   if (c.club_variant) parts.push(`所属表記ゆれ ${c.club_variant}`);
+   // 要人判断(自動修正されない)系: 別トーンで明示
+   const manual = [];
+   if (c.duplicate_entry) manual.push(`重複申込疑い ${c.duplicate_entry}`);
+   if (c.age_mismatch) manual.push(`年齢範囲外 ${c.age_mismatch}`);
+   if (c.birth_missing) manual.push(`生年月日欠落 ${c.birth_missing}`);
+   if (c.player_link_mismatch) manual.push(`選手DB連携の不一致 ${c.player_link_mismatch}`);
    qualityBar.appendChild(h("div", {
      style: { display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap",
        padding: "10px 14px", borderRadius: "8px", background: "#fef3c7", border: "1px solid #fbbf24" } },
      h("span", { style: { fontWeight: 700, color: "#78350f" } }, `データ不整合 ${issueTotal} 件`),
      h("span", { className: "text-xs", style: { color: "#92400e" } }, parts.join(" ・ ")),
+     manual.length ? h("span", { className: "text-xs", style: { fontWeight: 700, color: "#b91c1c",
+       background: "#fee2e2", borderRadius: "6px", padding: "2px 8px" } },
+       manual.join(" ・ ") + "（要確認・自動修正なし）") : null,
      h("button", { className: "btn btn-sm", style: { marginLeft: "auto", background: "#d97706", color: "#fff", borderColor: "#b45309" },
        onClick: bulkFix }, "推定値で一括修正")));
  };
