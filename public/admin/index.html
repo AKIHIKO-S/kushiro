@@ -11610,6 +11610,12 @@ const O = {
    t.setAttribute("fill", color || "#6b7280");
    if (bold) t.setAttribute("font-weight", "700");
    t.setAttribute("font-family", "inherit");
+   // 白フチ(袋文字)。自由配線で罫線が離れた場所を結ぶと縦線やラベルどうしが重なることがあるため、
+   // 線の上に乗っても文字が読めるようにする(getBBoxを要らない軽量な対策)。
+   t.setAttribute("paint-order", "stroke");
+   t.setAttribute("stroke", "#fff");
+   t.setAttribute("stroke-width", "3");
+   t.setAttribute("stroke-linejoin", "round");
    t.textContent = txt;
    svg.appendChild(t);
  };
@@ -12052,7 +12058,11 @@ const O = {
      const payload = { event, match_id: matchA.id, target_match_id: matchB.next_match_id, target_slot: matchB.next_slot, base_rev: ctx.getRev() };
      if (force) payload.force = true;
      const r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/relink`, payload);
-     if (r && r.needs_force) { O._pbRelinkNeedsForce = r.error || "確定済みの試合を巻き込みます。"; renderRelinkBar(); return; }
+     if (r && r.needs_force) {
+       const aff = (r.affected && r.affected.length) ? "影響する試合: " + r.affected.join("、") : "";
+       O._pbRelinkNeedsForce = [r.error || "確定済みの試合を巻き込みます。", aff].filter(Boolean).join(" ");
+       renderRelinkBar(); return;
+     }
      if (r && r.conflict) { toast(r.error || "他の端末で更新されました", "err"); O._pbClearRelink(); ctx.reload(); return; }
      if (r && r.error) { toast(r.error, "err"); O._pbClearRelink(); render(); return; }
      if (r && r.bracket_rev) ctx.setRev(r.bracket_rev);
