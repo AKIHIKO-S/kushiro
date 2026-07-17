@@ -4054,13 +4054,27 @@ function getSheetState(tournamentId, event) {
     `SELECT COUNT(*) c FROM bracket_sheets WHERE tournament_id=? AND event=? AND status='dirty'`)
     .get(tournamentId, event).c > 0;
   const parse = (row) => row ? { ...row, seats: JSON.parse(row.seats_json || "[]") } : null;
+  // 出力履歴の最新(print_log)。「掲示中の紙が最新版か」の参考情報(掲示の実態は知らない=目視確認前提)。
+  const lastPrint = sqlite.prepare(
+    `SELECT sheet_rev, kind, created_at FROM print_log WHERE tournament_id=? AND event=?
+     ORDER BY id DESC LIMIT 1`).get(tournamentId, event) || null;
   const active = draft || confirmed;
   // 未配置: この種目の出場のうち、アクティブなシートのどの枠にも居ない者
   const placed = new Set(active ? JSON.parse(active.seats_json || "[]").map(s => s.entrant_id).filter(Boolean) : []);
   const unplaced = entrantStmts.listByEvent.all(tournamentId, event)
     .filter(e => !e.is_bye && !placed.has(e.id))
     .map(e => ({ id: e.id, name: e.display_name || e.name, team: e.team || "", entry_round: parseInt(e.entry_round) || 1 }));
-  return { draft: parse(draft), confirmed: parse(confirmed), legacy_review: parse(legacy), dirty, unplaced };
+  return { draft: parse(draft), confirmed: parse(confirmed), legacy_review: parse(legacy), dirty, unplaced,
+    last_print: lastPrint };
+}
+
+// 出力履歴を記録する(kind: large_print/xlsx/match_cards等)。呼ぶのは管理画面の明示的な
+// 印刷・出力操作のみ(公開GETでは記録しない=バナーの誤発火防止。外部検証の要修正)。
+function recordPrintLog(tournamentId, event, kind) {
+  const conf = sheetStmts.latestConfirmed.get(tournamentId, event);
+  sqlite.prepare(`INSERT INTO print_log (tournament_id, event, sheet_rev, kind) VALUES (?, ?, ?, ?)`)
+    .run(tournamentId, event, conf ? conf.rev_no : 0, String(kind || ""));
+  return { ok: true, sheet_rev: conf ? conf.rev_no : 0 };
 }
 
 // 下書きを用意する(無ければ作る): 最新確定版→現物の表→空、の順で初期化。
@@ -11942,6 +11956,7 @@ module.exports = {
   sheetHashOf, synthesizeSheetFromMatches, canonicalStructHash, materializeSheet,
   migrateBracketSheets,
   getSheetState, ensureDraftSheet, applySheetOps, undoSheetOp, confirmSheet, markSheetDirty,
+  recordPrintLog,
   setEntrantSeedRound, rebuildSeededBracket,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,

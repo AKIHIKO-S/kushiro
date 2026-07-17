@@ -4210,6 +4210,12 @@ app.post("/api/tournaments/:id/bracket/sheet/undo", requireAdmin, (req, res) => 
   if (r && r.error) return res.status(400).json(r);
   res.json(r);
 });
+// 出力履歴の記録(管理画面の明示的な印刷・出力操作のみが呼ぶ。公開GETは記録しない)
+app.post("/api/tournaments/:id/bracket/print-log", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (!b.event) return res.status(400).json({ error: "event が必要です" });
+  res.json(db.recordPrintLog(req.params.id, b.event, b.kind || ""));
+});
 app.post("/api/tournaments/:id/bracket/sheet/confirm", requireAdmin, (req, res) => {
   const b = req.body || {};
   if (!b.event) return res.status(400).json({ error: "event が必要です" });

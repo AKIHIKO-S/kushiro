@@ -146,3 +146,22 @@ test("markSheetDirty: 旧経路の編集で確定版が dirty に落ち、確定
   st = db.getSheetState(t.id, EV);
   assert.ok(!st.dirty && st.confirmed, "確定し直しで解消");
 });
+
+test("print_log: 記録は現在の確定版revを持ち、last_printで版落ちを検知できる(P5)", () => {
+  const { t } = setup(4, false);
+  db.ensureDraftSheet(t.id, EV);
+  assert.ok(db.confirmSheet(t.id, EV, {}).ok, "第1版確定");
+  const p1 = db.recordPrintLog(t.id, EV, "large_print");
+  assert.strictEqual(p1.sheet_rev, 1, "第1版として記録");
+  let st = db.getSheetState(t.id, EV);
+  assert.strictEqual(st.last_print.sheet_rev, 1);
+  // 第2版に上げると last_print(第1版) < confirmed(第2版) = 再印刷が必要な状態
+  db.ensureDraftSheet(t.id, EV);
+  const c2 = db.confirmSheet(t.id, EV, { force: true });
+  assert.strictEqual(c2.rev_no, 2);
+  st = db.getSheetState(t.id, EV);
+  assert.ok(st.last_print.sheet_rev < st.confirmed.rev_no, "版落ちを検知できる");
+  db.recordPrintLog(t.id, EV, "large_print");
+  st = db.getSheetState(t.id, EV);
+  assert.strictEqual(st.last_print.sheet_rev, 2, "再印刷で最新版に追随");
+});

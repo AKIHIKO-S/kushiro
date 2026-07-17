@@ -5777,6 +5777,19 @@ const A = {
        } }, "この組合せで確定して表を作る");
      previewBox.appendChild(h("div", { style: { display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } },
        h("b", { style: { fontSize: "13.5px" } }, "割当表(座席表)"), badge, h("span", { style: { flex: "1 0 auto" } }), undoB, confirmB));
+     // 再印刷の案内(print_log=出力履歴にすぎない。掲示中の紙が何版かは目視確認が前提)。
+     if (st.confirmed && !st.dirty) {
+       const lp = st.last_print;
+       if (lp && lp.sheet_rev > 0 && lp.sheet_rev < st.confirmed.rev_no) {
+         previewBox.appendChild(h("div", { style: { marginBottom: "8px", padding: "8px 12px", background: "#fef3c7",
+           border: "1px solid #fbbf24", borderRadius: "8px", fontSize: "12.5px", color: "#92400e", lineHeight: "1.6" } },
+           h("b", {}, "最後に印刷したのは第" + lp.sheet_rev + "版です(現在は第" + st.confirmed.rev_no + "版)。"),
+           " 差し替え用に印刷し直してください。掲示中の紙が第" + st.confirmed.rev_no + "版かは、紙の下部の版スタンプを目視で確認してください。"));
+       } else if (!lp || !lp.sheet_rev) {
+         previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "8px" } },
+           "第" + st.confirmed.rev_no + "版はまだ印刷されていません(進行LIVEタブの「印刷・大判」から版スタンプ入りで印刷できます)。"));
+       }
+     }
      previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "8px", lineHeight: "1.6" } },
        "枠を1つ選んでから別の枠を押すと入れ替わります。右の「未配置」の選手を選んでから枠を押すとそこに入ります。外した選手は必ず未配置に残ります(消えません)。表とアプリの対戦カードは「確定」した瞬間にこの割当表から作られます。"));
      // 本体: 左=枠リスト / 右=未配置
@@ -12265,12 +12278,30 @@ const O = {
    } catch (e) { return false; } })();
    const L = TTBracketLayout.computeBracketLayout(bdata.matches || [], { open: _pbOpenP, event: selectedEv });
    if (!L) return toast("試合データがありません", "err");
+   // 版スタンプ(案B P5): 確定済みシートがあれば「第N版・確定日時・照合コード」を全ページに印字し、
+   // 出力履歴(print_log)を記録する。未確定・要再確定(dirty)は「見本」透かし=正式な掲示物にできない。
+   let stamp = "", mihon = false;
+   try {
+     const shSt = await api.get(`/api/tournaments/${O.tournamentId}/bracket/sheet?event=` + encodeURIComponent(selectedEv));
+     if (shSt && shSt.confirmed && !shSt.dirty) {
+       const c = shSt.confirmed;
+       const dt = (c.confirmed_at || "").replace("T", " ").slice(0, 16);
+       stamp = "組合せ 第" + c.rev_no + "版・確定 " + dt + "・照合 " + String(c.sheet_hash || "").slice(0, 6) +
+         "｜印刷 " + new Date().toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+       api.post(`/api/tournaments/${O.tournamentId}/bracket/print-log`, { event: selectedEv, kind: "large_print" }).catch(() => {});
+     } else {
+       mihon = true;   // シート未確定 or 旧経路編集でズレあり
+     }
+   } catch (e) { mihon = true; }
+   const stampHtml = stamp
+     ? '<div class="pb-stamp">' + esc(stamp) + '</div>'
+     : '<div class="pb-mihon">見本（確定前）——正式な掲示物は「割当表で編集(新)」で組合せを確定してから印刷してください</div>';
    const pages = [];
    L.blocks.forEach((blk, b) => {
      const label = L.nBlocks > 1 ? String.fromCharCode(0xFF21 + b) + "ブロック" : "";
-     pages.push('<div class="pb-page">' + (label ? '<h2>' + label + "</h2>" : "") + _printBlockSVG(L, blk) + "</div>");
+     pages.push('<div class="pb-page">' + (label ? '<h2>' + label + "</h2>" : "") + _printBlockSVG(L, blk) + stampHtml + "</div>");
    });
-   if (L.nBlocks > 1) pages.push('<div class="pb-page"><h2>決勝トーナメント</h2>' + _printFinalsHTML(L, bdata.matches || []) + "</div>");
+   if (L.nBlocks > 1) pages.push('<div class="pb-page"><h2>決勝トーナメント</h2>' + _printFinalsHTML(L, bdata.matches || []) + stampHtml + "</div>");
    const html =
      '<!doctype html><html lang="ja"><head><meta charset="utf-8">' +
      '<title>' + esc(tName) + " - " + esc(selectedEv) + '</title>' +
@@ -12286,6 +12317,11 @@ const O = {
      'button{padding:8px 16px;font-size:14px;cursor:pointer;border:1px solid #ccc;border-radius:6px;background:#fff}' +
      'select{padding:6px 10px;font-size:13px}' +
      '.bignote{display:none;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fbbf24;border-radius:6px;padding:6px 10px}' +
+     // 版スタンプ(確定済み)は各ページ下部に小さく。見本(未確定)は目立つ帯=正式掲示物との見分けを紙側に作る
+     '.pb-stamp{margin-top:2mm;font-size:2.8mm;color:#555;border-top:0.3mm solid #999;padding-top:1mm;' +
+       'font-variant-numeric:tabular-nums;letter-spacing:.02em}' +
+     '.pb-mihon{margin-top:2mm;font-size:3.5mm;font-weight:700;color:#92400e;background:#fef3c7;' +
+       'border:0.5mm dashed #d97706;padding:2mm 3mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
      '</style></head><body>' +
      '<div class="toolbar">' +
      '<button onclick="window.print()">印刷する</button>' +
