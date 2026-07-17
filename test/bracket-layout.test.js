@@ -249,3 +249,63 @@ test("leaf に entry_round が乗る(罫線ドラッグ=スーパーシード手
   // 通常選手は entry_round=1
   assert.ok(L.leaves.filter(Boolean).every(lf => lf.entry_round >= 1), "全leafにentry_roundがある");
 });
+
+// ── linear(単一方向・1列) の幾何回帰(オーナー要望 2026-07-17: 管理画面のトーナメント表を1列化) ──
+// 両山を廃し、全リーフを縦1列に積み、全ラウンドを右へ勝ち上げる。座標は
+// RAIL_W=230/ADV_W=44/CENTER_W=150/ROW_H=34/PAD 10 から手計算。
+test("linear S=8: 1ブロック・全リーフ縦1列・全ラウンド右方向・寸法を固定する", () => {
+  const t = setup(8);
+  const L = computeBracketLayout(exportMatches(t), { event: EV, linear: true });
+  assert.strictEqual(L.S, 8);
+  assert.strictEqual(L.totalRounds, 3);
+  assert.strictEqual(L.nBlocks, 1, "linearは常に1ブロック(全員を1列)");
+  assert.strictEqual(L.BL, 8);
+  assert.strictEqual(L.RAIL_W, 230, "短い名前ではレール幅は下限230");
+  assert.strictEqual(L.W, 230 + 3 * 44 + 150, "W=RAIL_W + totalRounds*ADV_W + CENTER_W = 512");
+
+  assert.strictEqual(L.blocks.length, 1);
+  const blk = L.blocks[0];
+  assert.strictEqual(blk.height, 10 + 8 * 34 + 10, "高さ=PAD_T + 8*ROW_H + PAD_B = 292(左右分割せず実人数分)");
+  assert.strictEqual(blk.rails.length, 8, "8リーフ全部");
+  assert.ok(blk.rails.every(r => r.side === "L"), "全レールが左(side=L)=1列");
+  // リーフは 0,1,2..7 の順に縦へ(y0が単調増加)
+  const ys = blk.rails.map(r => r.y0);
+  for (let i = 1; i < ys.length; i++) assert.ok(ys[i] > ys[i - 1], "リーフy0が縦に単調増加");
+  // レール下線は全て左端(x1=8 -> x2=RAIL_W)
+  const railUnders = blk.segments.filter(s => s.x1 === 8);
+  assert.strictEqual(railUnders.length, 8, "レール下線8本すべて左端始まり");
+  assert.ok(railUnders.every(s => s.x2 === 230), "レール下線は x=8→230");
+  // 決勝(blockFinal)は右への合流=anchorSide:"L"(両山の中央"C"ではない)
+  const bf = blk.joins.find(j => j.kind === "blockFinal");
+  assert.ok(bf, "blockFinal join がある");
+  assert.strictEqual(bf.anchorSide, "L", "linearの決勝は右合流(anchorSide=L)");
+  // 決勝の右端 xb = RAIL_W + totalRounds*ADV_W = 230+132=362
+  assert.strictEqual(bf.xb, 230 + 3 * 44, "決勝線の右端=362");
+});
+
+test("linear: 両山(既定)とは別物=同じデータでW/高さ/side分布が変わる", () => {
+  const t = setup(8);
+  const ms = exportMatches(t);
+  const lin = computeBracketLayout(ms, { event: EV, linear: true });
+  const two = computeBracketLayout(ms, { event: EV });
+  assert.notStrictEqual(lin.W, two.W, "幅が異なる(1列は中央決勝ぶん狭い/縦長)");
+  // 両山は L4本/R4本、1列は L8本
+  const twoSides = new Set(two.blocks[0].rails.map(r => r.side));
+  assert.strictEqual(twoSides.size, 2, "両山はL/R両方");
+  const linSides = new Set(lin.blocks[0].rails.map(r => r.side));
+  assert.strictEqual(linSides.size, 1, "1列はLのみ");
+  assert.ok(lin.blocks[0].height > two.blocks[0].height, "1列は縦に長い(左右分割しないため)");
+});
+
+test("linear S=16: 全16リーフが1列・4ラウンドを右へ", () => {
+  const t = setup(16);
+  const L = computeBracketLayout(exportMatches(t), { event: EV, linear: true });
+  assert.strictEqual(L.S, 16);
+  assert.strictEqual(L.totalRounds, 4);
+  assert.strictEqual(L.nBlocks, 1);
+  assert.strictEqual(L.blocks[0].rails.length, 16, "16リーフ全部1列");
+  assert.ok(L.blocks[0].rails.every(r => r.side === "L"));
+  assert.strictEqual(L.blocks[0].height, 10 + 16 * 34 + 10, "高さ=PAD_T+16*ROW_H+PAD_B");
+  const bf = L.blocks[0].joins.find(j => j.kind === "blockFinal");
+  assert.strictEqual(bf.xb, 230 + 4 * 44, "決勝右端=RAIL_W+4*ADV_W");
+});

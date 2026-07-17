@@ -9392,6 +9392,7 @@ function exportBracket(tournamentId, event) {
     tournament: {
       name: t.name, date: t.date, venue: t.venue,
       category: t.category || "", organizer: t.organizer || "",
+      status: t.status || "",   // 進行中(ongoing)は編集不可の判定に使う
     },
     event,
     bracket_size: bracketSize,

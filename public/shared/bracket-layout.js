@@ -56,8 +56,12 @@
     const S = round1.length * 2;
     if (!S) return null;
     const totalRounds = Math.max(1, Math.round(Math.log2(S)));
+    // linear(単一方向・1列)= 左右対称の両山をやめ、全リーフを縦1列に積み全ラウンドを右へ勝ち上げる
+    //   (オーナー要望 2026-07-17)。この時はブロック分割せず1ブロックに全員を収める。
+    const linear = !!opts.linear;
     // SS大会(open種目)はＡ〜Ｄ4ブロック固定(抽選と同じ)。それ以外は128リーフ=1ブロック。
-    const BL = (opts.open && S >= 16) ? S / 4 : (S >= 256 ? 128 : S);
+    // linear は「1列で全て表示」なので常に1ブロック(全リーフ)。
+    const BL = linear ? S : ((opts.open && S >= 16) ? S / 4 : (S >= 256 ? 128 : S));
     const nBlocks = S / BL;
     const blockRounds = Math.max(1, Math.round(Math.log2(BL)));
     const sideR = Math.max(0, blockRounds - 1);
@@ -93,7 +97,10 @@
     // rowH は呼び出し側で上書き可(観戦面の広め/速報面の詰めなど密度違い用)。既定=admin紙面と同一。
     const ROW_H = (opts.rowH > 0 ? opts.rowH : (isDbl ? 42 : 34)), ADV_W = 44, CENTER_W = 150, PAD_T = 10, PAD_B = 10;
     const RAIL_W = Math.min(480, Math.max(isDbl ? 330 : 230, Math.ceil(railNeed)));
-    const W = RAIL_W * 2 + sideR * ADV_W * 2 + CENTER_W;
+    // linear: 左レール + 全ラウンド分の前進列(右方向のみ) + 優勝表記の余白。
+    // 両山: 左レール + 右レール + 両側の前進列 + 中央決勝。
+    const W = linear ? (RAIL_W + totalRounds * ADV_W + CENTER_W)
+                     : (RAIL_W * 2 + sideR * ADV_W * 2 + CENTER_W);
 
     // ブロックごとの幾何(rails / segments / joins)
     const blocks = [];
@@ -101,6 +108,53 @@
       const rails = [];
       const segments = [];   // { x1, y1, x2, y2, w } 罫線(レール下線含む)
       const joins = [];      // { match, kind:'r1'|'mid'|'blockFinal', x?, y, xa, xb, anchorSide, ss, handle? }
+
+      // ── linear(単一方向・1列): 全リーフを縦1列に積み、全ラウンドを一律で右へ勝ち上げる ──
+      // 中央V字決勝を廃し、決勝も他ラウンドと同じ「右への合流」。氏名は常に左端(anchorSide:'L')。
+      if (linear) {
+        let li = 0;
+        for (let g = 0; g < S; g++) {
+          if (leaves[g]) { rails.push({ g, side: "L", y0: PAD_T + li * ROW_H, lineY: PAD_T + li * ROW_H + ROW_H - 9, leaf: leaves[g] }); li++; }
+        }
+        const height = PAD_T + Math.max(li, 1) * ROW_H + PAD_B;
+        rails.forEach(r => segments.push({ x1: 8, y1: r.lineY, x2: RAIL_W, y2: r.lineY, w: 1.5 }));   // レール下線(全て左端)
+        const railY = new Map();
+        rails.forEach(rr => railY.set(rr.g, rr.lineY));
+        const matchState = new Map();
+        for (let r = 1; r <= totalRounds; r++) {
+          const x0 = RAIL_W + (r - 1) * ADV_W, x2 = x0 + ADV_W;
+          const isFinal = (r === totalRounds);
+          matches.filter(m => (m.bracket_round || 1) === r).forEach(m => {
+            let a = null, bb = null;
+            if (r === 1) {
+              const p = m.bracket_pos || 0;
+              const y1 = railY.has(2 * p) ? railY.get(2 * p) : null;
+              const y2 = railY.has(2 * p + 1) ? railY.get(2 * p + 1) : null;
+              a = y1 != null ? { y: y1, deep: 0 } : null;
+              bb = y2 != null ? { y: y2, deep: 0 } : null;
+            } else {
+              const src1 = incoming.get(m.id + ":1"), src2 = incoming.get(m.id + ":2");
+              a = src1 ? matchState.get(src1.id) : null;
+              bb = src2 ? matchState.get(src2.id) : null;
+            }
+            if (a != null && bb != null) {
+              const y = Math.round((a.y + bb.y) / 2);
+              segments.push({ x1: x0, y1: a.y, x2: x0, y2: bb.y, w: 1.5 });                // 縦の合流線
+              segments.push({ x1: x0, y1: y, x2: x2, y2: y, w: isFinal ? 2.5 : 1.5 });     // 右への前進線
+              joins.push({ match: m, kind: isFinal ? "blockFinal" : (r === 1 ? "r1" : "mid"), y, xa: x0, xb: x2,
+                anchorSide: "L", ss: (a.deep >= 2 || bb.deep >= 2), handle: isFinal ? null : { x: x2, y } });
+              matchState.set(m.id, { y, deep: 0 });
+            } else if (a != null || bb != null) {
+              const v = a != null ? a : bb;
+              segments.push({ x1: x0, y1: v.y, x2: x2, y2: v.y, w: 1.5 });                 // 不戦勝/スーパーシード=右へ延長
+              matchState.set(m.id, { y: v.y, deep: v.deep + 1 });
+            } else matchState.set(m.id, null);
+          });
+        }
+        blocks.push({ index: b, height, rails, segments, joins });
+        continue;
+      }
+
       let li = 0, ri = 0;
       for (let g = b * BL; g < b * BL + BL / 2; g++) {
         if (leaves[g]) rails.push({ g, side: "L", y0: PAD_T + li * ROW_H, lineY: PAD_T + li * ROW_H + ROW_H - 9, leaf: leaves[g] }), li++;

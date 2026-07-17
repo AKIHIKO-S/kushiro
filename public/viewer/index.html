@@ -2077,11 +2077,12 @@ const V = {
      });
      blk.rails.forEach(r => {
        const isL = r.side === "L", lf = r.leaf;
-       // 氏名は罫線の外側(名前を書き始める側)に揃える(オーナー要望 2026-07-17)。左山=左端/右山=右端。
+       // 氏名は罫線の外側(名前を書き始める側)に揃え、罫線の高さに置く(白フチで名前の下の罫線を消す
+       // =「氏名→罫線→接続」の並び)。オーナー要望 2026-07-17。
        const xEnd = isL ? 10 : L.W - 10;
        const anc = isL ? "start" : "end";
        const nm = lf.no + ". " + lf.name;
-       mkText(svg, xEnd, r.lineY - 5, lf.team ? nm + "　" + lf.team : nm, anc, 14, "#1c1917", true);
+       mkText(svg, xEnd, r.lineY - 1, lf.team ? nm + "　" + lf.team : nm, anc, 14, "#1c1917", true);
      });
      blk.joins.forEach(j => {
        const mm = j.match;
