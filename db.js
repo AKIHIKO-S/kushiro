@@ -4025,6 +4025,199 @@ function migrateBracketSheets() {
   return { migrated: confirmed, legacy_review: review, scanned: targets.length };
 }
 
+// ── 割当表正本(案B) P3: シートの下書き・編集・確定・共存フック(DAL) ──────────
+
+const sheetStmts = {
+  latestConfirmed: sqlite.prepare(
+    `SELECT * FROM bracket_sheets WHERE tournament_id=? AND event=? AND status='confirmed'
+     ORDER BY rev_no DESC LIMIT 1`),
+  draft: sqlite.prepare(
+    `SELECT * FROM bracket_sheets WHERE tournament_id=? AND event=? AND status='draft'
+     ORDER BY created_at DESC LIMIT 1`),
+  byId: sqlite.prepare(`SELECT * FROM bracket_sheets WHERE id=?`),
+  maxRev: sqlite.prepare(
+    `SELECT COALESCE(MAX(rev_no),0) r FROM bracket_sheets WHERE tournament_id=? AND event=?`),
+};
+
+// 種目のシート状態(下書き・最新確定版・未配置)をまとめて返す。UI(座席表エディタ)の読み取り面。
+function getSheetState(tournamentId, event) {
+  const draft = sheetStmts.draft.get(tournamentId, event) || null;
+  const confirmed = sheetStmts.latestConfirmed.get(tournamentId, event) || null;
+  const legacy = sqlite.prepare(
+    `SELECT * FROM bracket_sheets WHERE tournament_id=? AND event=? AND status='legacy_review' LIMIT 1`)
+    .get(tournamentId, event) || null;
+  const dirty = sqlite.prepare(
+    `SELECT COUNT(*) c FROM bracket_sheets WHERE tournament_id=? AND event=? AND status='dirty'`)
+    .get(tournamentId, event).c > 0;
+  const parse = (row) => row ? { ...row, seats: JSON.parse(row.seats_json || "[]") } : null;
+  const active = draft || confirmed;
+  // 未配置: この種目の出場のうち、アクティブなシートのどの枠にも居ない者
+  const placed = new Set(active ? JSON.parse(active.seats_json || "[]").map(s => s.entrant_id).filter(Boolean) : []);
+  const unplaced = entrantStmts.listByEvent.all(tournamentId, event)
+    .filter(e => !e.is_bye && !placed.has(e.id))
+    .map(e => ({ id: e.id, name: e.display_name || e.name, team: e.team || "", entry_round: parseInt(e.entry_round) || 1 }));
+  return { draft: parse(draft), confirmed: parse(confirmed), legacy_review: parse(legacy), dirty, unplaced };
+}
+
+// 下書きを用意する(無ければ作る): 最新確定版→現物の表→空、の順で初期化。
+function ensureDraftSheet(tournamentId, event, opts) {
+  opts = opts || {};
+  const cur = sheetStmts.draft.get(tournamentId, event);
+  if (cur) return { ...cur, seats: JSON.parse(cur.seats_json || "[]") };
+  let size, seats, source;
+  const conf = sheetStmts.latestConfirmed.get(tournamentId, event);
+  const synth = synthesizeSheetFromMatches(tournamentId, event);
+  if (conf) { size = conf.size; seats = JSON.parse(conf.seats_json || "[]"); source = "confirmed"; }
+  else if (synth) { size = synth.size; seats = synth.seats; source = "matches"; }
+  else {
+    // 表も確定版も無い: 出場者数から最小の2累乗で空シート(順序=紙順=bracket_number/seed昇順)
+    const ents = entrantStmts.listByEvent.all(tournamentId, event).filter(e => !e.is_bye);
+    if (ents.length < 2) return { error: "出場が2名未満です" };
+    size = 2; while (size < ents.length) size *= 2;
+    ents.sort((a, b) => ((a.bracket_number || a.seed || 99999) - (b.bracket_number || b.seed || 99999)) ||
+      String(a.id).localeCompare(String(b.id)));
+    seats = ents.map((e, i) => ({ pos: i, entrant_id: e.id, entry_round: parseInt(e.entry_round) || 1 }));
+    source = "roster";
+  }
+  const canon = _canonSeats(size, seats);
+  const row = {
+    id: crypto.randomUUID(), tournament_id: tournamentId, event,
+    rev_no: 0, status: "draft", size,
+    seats_json: JSON.stringify(canon),
+    sheet_hash: sheetHashOf(size, canon), tree_hash: "",
+    reason: "", source,
+  };
+  sqlite.prepare(`INSERT INTO bracket_sheets (id, tournament_id, event, rev_no, status, size,
+    seats_json, sheet_hash, tree_hash, reason, source)
+    VALUES (@id, @tournament_id, @event, @rev_no, @status, @size, @seats_json, @sheet_hash, @tree_hash, @reason, @source)`)
+    .run(row);
+  return { ...row, seats: canon };
+}
+
+// 下書きへ編集操作を適用する(単一トランザクション・全席スナップショットundo・楽観ロック)。
+// ops: [{op:'place', pos, entrant_id} | {op:'clear', pos} | {op:'swap', a, b} | {op:'set_entry_round', pos, entry_round} | {op:'set_size', size}]
+// base_hash には編集開始時の sheet_hash を渡す(不一致=他端末が先に編集→409相当のconflict)。
+function applySheetOps(tournamentId, event, baseHash, ops, opts) {
+  opts = opts || {};
+  const draft = ensureDraftSheet(tournamentId, event);
+  if (draft.error) return draft;
+  if (baseHash && draft.sheet_hash !== baseHash) {
+    return { error: "他の端末がこの下書きを先に変更しています。読み込み直してください。", conflict: true };
+  }
+  let size = draft.size;
+  const byPos = new Map(_canonSeats(size, draft.seats).map(s => [s.pos, { ...s }]));
+  const posOf = (eid) => { for (const [p, s] of byPos) if (s.entrant_id === eid) return p; return null; };
+  const labels = [];
+  for (const op of (ops || [])) {
+    if (!op || !op.op) return { error: "不正な操作です" };
+    if (op.op === "set_size") {
+      const ns = parseInt(op.size);
+      if (!ns || ns < 2 || (ns & (ns - 1)) !== 0) return { error: "枠数は2の累乗で指定してください" };
+      const occupied = [...byPos.values()].filter(s => s.entrant_id && s.pos >= ns);
+      if (occupied.length) return { error: "枠数を減らすには、枠" + ns + "以降の選手(" + occupied.length + "名)を先に外してください" };
+      size = ns;
+      for (let p = 0; p < size; p++) if (!byPos.has(p)) byPos.set(p, { pos: p, entrant_id: null, entry_round: 1 });
+      for (const p of [...byPos.keys()]) if (p >= size) byPos.delete(p);
+      labels.push("枠数を" + ns + "に変更");
+      continue;
+    }
+    const pos = parseInt(op.pos);
+    if (op.op !== "swap" && (!Number.isInteger(pos) || pos < 0 || pos >= size)) return { error: "枠番号が不正です: " + op.pos };
+    if (op.op === "place") {
+      const ent = entrantStmts.get.get(op.entrant_id);
+      if (!ent || ent.tournament_id !== tournamentId || ent.event !== event) return { error: "この種目の出場ではありません" };
+      const old = posOf(op.entrant_id);
+      if (old != null) byPos.get(old).entrant_id = null;                 // 旧枠は空く(重複配置は構造的に不可能)
+      byPos.get(pos).entrant_id = op.entrant_id;
+      byPos.get(pos).entry_round = Math.max(1, parseInt(ent.entry_round) || 1);
+      labels.push("枠" + (pos + 1) + "に" + (ent.display_name || ent.name) + "を配置");
+    } else if (op.op === "clear") {
+      byPos.get(pos).entrant_id = null; byPos.get(pos).entry_round = 1;
+      labels.push("枠" + (pos + 1) + "を空きに");
+    } else if (op.op === "swap") {
+      const a = parseInt(op.a), b = parseInt(op.b);
+      if (![a, b].every(x => Number.isInteger(x) && x >= 0 && x < size)) return { error: "入替の枠番号が不正です" };
+      const sa = byPos.get(a), sb = byPos.get(b);
+      [sa.entrant_id, sb.entrant_id] = [sb.entrant_id, sa.entrant_id];
+      [sa.entry_round, sb.entry_round] = [sb.entry_round, sa.entry_round];
+      labels.push("枠" + (a + 1) + "と枠" + (b + 1) + "を入替");
+    } else if (op.op === "set_entry_round") {
+      const er = Math.max(1, Math.min(8, parseInt(op.entry_round) || 1));
+      byPos.get(pos).entry_round = er;
+      labels.push("枠" + (pos + 1) + "の登場回戦を" + er + "に");
+    } else return { error: "未知の操作: " + op.op };
+  }
+  const canon = _canonSeats(size, [...byPos.values()]);
+  const hash = sheetHashOf(size, canon);
+  const tx = sqlite.transaction(() => {
+    sqlite.prepare(`INSERT INTO sheet_log (sheet_id, op_label, before_seats_json)
+      VALUES (?, ?, ?)`).run(draft.id, labels.join(" / ").slice(0, 200), draft.seats_json);
+    sqlite.prepare(`UPDATE bracket_sheets SET size=?, seats_json=?, sheet_hash=? WHERE id=?`)
+      .run(size, JSON.stringify(canon), hash, draft.id);
+  });
+  tx();
+  return { ok: true, sheet: { ...draft, size, seats: canon, sheet_hash: hash }, labels };
+}
+
+// 下書きの取り消し(直前の全席スナップショットを1枚戻す)。
+function undoSheetOp(tournamentId, event) {
+  const draft = sheetStmts.draft.get(tournamentId, event);
+  if (!draft) return { error: "下書きがありません" };
+  const last = sqlite.prepare(
+    `SELECT * FROM sheet_log WHERE sheet_id=? ORDER BY id DESC LIMIT 1`).get(draft.id);
+  if (!last) return { error: "取り消せる操作がありません" };
+  const seats = JSON.parse(last.before_seats_json || "[]");
+  const size = Math.max(draft.size, seats.length);
+  const canon = _canonSeats(size, seats);
+  const tx = sqlite.transaction(() => {
+    sqlite.prepare(`UPDATE bracket_sheets SET size=?, seats_json=?, sheet_hash=? WHERE id=?`)
+      .run(size, JSON.stringify(canon), sheetHashOf(size, canon), draft.id);
+    sqlite.prepare(`DELETE FROM sheet_log WHERE id=?`).run(last.id);
+  });
+  tx();
+  return { ok: true, undone: last.op_label };
+}
+
+// 確定: 下書き(または指定シート)を検査→導出→第N版として封印する。
+// 進行中(ongoing)は「その種目に確定版が無い初回確定」のみ許可(予選リーグ→決勝Tの新種目を通すため。
+// 実測: 決勝Tは srcEvent+" 決勝T" の別種目として生成される=generateLeaguePlayoff)。
+function confirmSheet(tournamentId, event, opts) {
+  opts = opts || {};
+  const t = stmts.getTournament.get(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  const draft = sheetStmts.draft.get(tournamentId, event);
+  if (!draft) return { error: "確定する下書きがありません" };
+  const prev = sheetStmts.latestConfirmed.get(tournamentId, event);
+  if (t.status === "ongoing" && prev) {
+    return { error: "進行中の大会では、確定済みの組合せを作り直せません。棄権などの当日対応は結果処理で行ってください。", ongoing: true };
+  }
+  const sheet = { size: draft.size, seats: JSON.parse(draft.seats_json || "[]") };
+  const made = materializeSheet(tournamentId, event, sheet, { force: !!opts.force });
+  if (made && made.error) return made;
+  const revNo = (sheetStmts.maxRev.get(tournamentId, event).r || 0) + 1;
+  const now = new Date().toISOString();
+  const tx = sqlite.transaction(() => {
+    if (prev) sqlite.prepare(`UPDATE bracket_sheets SET status='superseded' WHERE id=?`).run(prev.id);
+    sqlite.prepare(`UPDATE bracket_sheets SET status='superseded' WHERE tournament_id=? AND event=? AND status IN ('legacy_review','dirty')`)
+      .run(tournamentId, event);   // 確定し直しで「旧配線の要確認」「旧経路編集のズレ」は解消(履歴行として残す)
+    sqlite.prepare(`UPDATE bracket_sheets SET status='confirmed', rev_no=?, tree_hash=?,
+      reason=?, confirmed_by=?, confirmed_at=? WHERE id=?`)
+      .run(revNo, canonicalStructHash(tournamentId, event),
+        String(opts.reason || ""), String(opts.by || ""), now, draft.id);
+  });
+  tx();
+  return { ok: true, rev_no: revNo, sheet_hash: draft.sheet_hash, matches: made };
+}
+
+// 共存フック: 旧経路(木の直接編集API)が matches を書いたら、確定済みシートを dirty に落とす。
+// dirty=「シートと現物の木が食い違っている(要再確定)」。版スタンプ印刷はP5で保留対象になる。
+function markSheetDirty(tournamentId, event) {
+  try {
+    sqlite.prepare(`UPDATE bracket_sheets SET status='dirty'
+      WHERE tournament_id=? AND event=? AND status='confirmed'`).run(tournamentId, event);
+  } catch (e) {}
+}
+
 function generateBracket(tournamentId, event, options) {
   options = options || {};
   // 破壊的再生成ガード: 結果入力済みの試合がある種目を force 無しで再生成しない(当日の不可逆データ破壊防止)。
@@ -11737,9 +11930,10 @@ module.exports = {
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
   swapBracketMatches, relinkBracketMatch, setBracketSlotFromPlayer, placeEntrantInSlot, setEntrantMemberFromPlayer,
-  // 割当表正本(案B) P1: シート⇔木の変換層 / P2: 移行
+  // 割当表正本(案B) P1: シート⇔木の変換層 / P2: 移行 / P3: 下書き・編集・確定・共存フック
   sheetHashOf, synthesizeSheetFromMatches, canonicalStructHash, materializeSheet,
   migrateBracketSheets,
+  getSheetState, ensureDraftSheet, applySheetOps, undoSheetOp, confirmSheet, markSheetDirty,
   setEntrantSeedRound, rebuildSeededBracket,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,
