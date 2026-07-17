@@ -9359,6 +9359,11 @@ function exportBracket(tournamentId, event) {
 
   const round1 = matches.filter(m => m.bracket_round === 1);
   const bracketSize = round1.length * 2;
+  // 罫線ドラッグ(登場回戦の手動指定)用: entrant → entry_round。1回戦の各選手の現在の登場回戦を
+  // 描画側に渡し、つまみを現在の罫線の端に置く。
+  const erMap = {};
+  try { sqlite.prepare("SELECT id, entry_round FROM entrants WHERE tournament_id=? AND event=?")
+    .all(tournamentId, event).forEach(e => { erMap[e.id] = Math.max(1, parseInt(e.entry_round) || 1); }); } catch (e) {}
 
   return {
     format: "tabletennis-bracket-v1",
@@ -9384,6 +9389,9 @@ function exportBracket(tournamentId, event) {
       // 紙面ミラービュー用: 組換UI(シード設定)のentrant参照と「台N」注釈
       player1_entrant_id: m.player1_entrant_id || null,
       player2_entrant_id: m.player2_entrant_id || null,
+      // 罫線ドラッグ用: 各選手の現在の登場回戦(1=通常/2=シード/3以上=スーパーシード)
+      player1_entry_round: m.bracket_round === 1 ? (m.player1_entrant_id ? (erMap[m.player1_entrant_id] || 1) : 1) : 1,
+      player2_entry_round: m.bracket_round === 1 ? (m.player2_entrant_id ? (erMap[m.player2_entrant_id] || 1) : 1) : 1,
       table_no: m.table_no || 0,
       status: m.status,
       // 罫線の自由配線編集(relinkBracketMatch)用: 進出先(次の試合・スロット)。

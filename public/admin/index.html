@@ -12179,7 +12179,7 @@ const O = {
    h("button", { className: "btn btn-sm", style: { background: "#0ea5e9" }, onClick: toggleFs }, "⛶ 全画面"),
    h("button", { className: "btn btn-sm", onClick: printBracket, title: "全ブロック一括・用紙サイズ選択(A4/A3/A2/A1横)。大判は掲示用" }, "印刷・大判"),
    h("span", { className: "text-xs text-sub", style: { marginLeft: "auto" } },
-     "選手を2人タップすると入れ替えできます(確定済みは不可)"),
+     "選手を2人タップ=入れ替え ／ 選手の罫線の端(茶の丸)を右へドラッグ=スーパーシード(大罫線)"),
  );
  renderTabs();
  if (events.length > 1) fsWrap.appendChild(tabStrip); // 複数種目/ブロック時のみタブ表示
@@ -12275,6 +12275,7 @@ const O = {
  const layout = TTBracketLayout.computeBracketLayout(matches, { open: _pbOpen, event });
  if (!layout) return h("div", { className: "empty-state" }, "試合データなし");
  const { S, totalRounds, BL, nBlocks, blockRounds, isDbl, ROW_H, RAIL_W, W } = layout;
+ const ADV_W = layout.ADV_W, sideR = layout.sideR;   // 罫線ドラッグ(登場回戦)用の列幅・片側列数
  const leafArr = layout.leaves;
  const lockOf = (lf) => {   // 現行と同義: 進行中 or 実選手同士の確定済みは編集不可
    const m = byRP["1_" + lf.pos]; if (!m) return false;
@@ -12507,6 +12508,73 @@ const O = {
        if (j.handle) relinkHandle(mm, j.handle.x, j.handle.y);
      }
    });
+   // ── 罫線ドラッグ(スーパーシードの大罫線を直接ひく): 各選手の罫線の内端に丸つまみを置き、
+   // 中央方向へドラッグ→ADV_W(1回戦=1列)刻みでスナップ→放すと登場回戦を設定(位置保持で再構築)。
+   // relinkMode(進出先の組み替え)中は出さない(操作の衝突回避)。オーナー要望 2026-07-17。
+   if (editable && !state.relinkMode && ADV_W > 0) {
+     const maxR = Math.max(1, Math.min(6, blockRounds));   // 登場回戦の上限(このブロックの決勝まで)
+     const baseX = (side) => side === "L" ? RAIL_W : W - RAIL_W;
+     const endX = (side, R) => side === "L" ? baseX(side) + (R - 1) * ADV_W : baseX(side) - (R - 1) * ADV_W;
+     const roundFromX = (side, x) => {
+       const dx = side === "L" ? (x - baseX(side)) : (baseX(side) - x);
+       return Math.max(1, Math.min(maxR, Math.round(dx / ADV_W) + 1));
+     };
+     const toSvgXY = (clientX, clientY) => {
+       const rc = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal;
+       return { x: (clientX - rc.left) * (vb.width / rc.width), y: (clientY - rc.top) * (vb.height / rc.height) };
+     };
+     blk.rails.forEach(r => {
+       const lf = r.leaf; if (!lf || !lf.eid) return;
+       const curR = Math.max(1, parseInt(lf.entry_round) || 1);
+       // 通常(1回戦)のつまみは選手名DOMの右端と重なるため、進出列側へ8pxずらして掴めるようにする。
+       const gx = curR <= 1 ? (r.side === "L" ? baseX("L") + 8 : baseX("R") - 8) : endX(r.side, Math.min(curR, maxR));
+       const gy = r.lineY;
+       const grip = document.createElementNS(NSVG, "circle");
+       grip.setAttribute("cx", gx); grip.setAttribute("cy", gy); grip.setAttribute("r", 5.5);
+       grip.setAttribute("fill", curR > 1 ? "#92400e" : "#fff");
+       grip.setAttribute("stroke", "#92400e"); grip.setAttribute("stroke-width", "2");
+       grip.style.cursor = "ew-resize"; grip.style.pointerEvents = "all";
+       grip.dataset.seedGrip = "1";
+       const title = document.createElementNS(NSVG, "title");
+       title.textContent = "ドラッグで登場回戦を変更(右へ=後の回戦から/スーパーシードの大罫線)";
+       grip.appendChild(title);
+       grip.addEventListener("pointerdown", (ev) => {
+         ev.preventDefault(); ev.stopPropagation();
+         let moved = false;
+         const ghost = document.createElementNS(NSVG, "line");
+         ghost.setAttribute("x1", baseX(r.side)); ghost.setAttribute("y1", gy);
+         ghost.setAttribute("x2", gx); ghost.setAttribute("y2", gy);
+         ghost.setAttribute("stroke", "#92400e"); ghost.setAttribute("stroke-width", "3");
+         ghost.setAttribute("stroke-dasharray", "5,3"); ghost.style.pointerEvents = "none";
+         svg.appendChild(ghost);
+         const lbl = document.createElementNS(NSVG, "text");
+         lbl.setAttribute("y", gy - 8); lbl.setAttribute("font-size", "11"); lbl.setAttribute("font-weight", "700");
+         lbl.setAttribute("fill", "#92400e"); lbl.setAttribute("paint-order", "stroke");
+         lbl.setAttribute("stroke", "#fff"); lbl.setAttribute("stroke-width", "3"); lbl.style.pointerEvents = "none";
+         svg.appendChild(lbl);
+         let targetR = curR;
+         const onMove = (e) => {
+           moved = true;
+           const p = toSvgXY(e.clientX, e.clientY);
+           targetR = roundFromX(r.side, p.x);
+           const ex = endX(r.side, targetR);
+           ghost.setAttribute("x2", ex);
+           lbl.setAttribute("x", r.side === "L" ? ex + 4 : ex - 4);
+           lbl.setAttribute("text-anchor", r.side === "L" ? "start" : "end");
+           lbl.textContent = targetR <= 1 ? "通常(1回戦から)" : targetR + "回戦から" + (targetR >= 3 ? "(SS)" : "");
+         };
+         const onUp = () => {
+           document.removeEventListener("pointermove", onMove);
+           document.removeEventListener("pointerup", onUp);
+           ghost.remove(); lbl.remove();
+           if (moved && targetR !== curR) O._applySeedRound(ctx, lf.eid, targetR);
+         };
+         document.addEventListener("pointermove", onMove);
+         document.addEventListener("pointerup", onUp);
+       });
+       svg.appendChild(grip);
+     });
+   }
    return { wrap, rails };
  };
 

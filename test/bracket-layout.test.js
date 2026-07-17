@@ -230,3 +230,22 @@ test("ダブルス種目: 2行レール寸法(ROW_H=42)と下限330が効く", (
   assert.strictEqual(L.ROW_H, 42);
   assert.strictEqual(L.RAIL_W, 330, "ダブルスのレール下限330");
 });
+
+test("leaf に entry_round が乗る(罫線ドラッグ=スーパーシード手動指定の土台)", () => {
+  const t = setup(8);
+  // 先頭選手を3回戦からのスーパーシードに(位置保持で再構築)
+  const ms0 = db.getMatchesByTournament(t.id).filter(m => m.event === EV && m.bracket_round === 1)
+    .sort((a, b) => a.bracket_pos - b.bracket_pos);
+  const eid = ms0[0].player1_entrant_id;
+  const r = db.setEntrantSeedRound(eid, 3, { force: true });
+  assert.ok(!r.error, JSON.stringify(r).slice(0, 120));
+  const bd = db.exportBracket(t.id, EV);
+  // export に entry_round が乗る
+  const r1 = bd.matches.filter(m => m.bracket_round === 1);
+  assert.ok(r1.some(m => (m.player1_entry_round || 1) === 3 || (m.player2_entry_round || 1) === 3), "exportにentry_round=3が乗る");
+  const L = computeBracketLayout(bd.matches, { event: EV });
+  const ssLeaf = L.leaves.find(lf => lf && lf.entry_round === 3);
+  assert.ok(ssLeaf, "leafにentry_round=3が伝播する");
+  // 通常選手は entry_round=1
+  assert.ok(L.leaves.filter(Boolean).every(lf => lf.entry_round >= 1), "全leafにentry_roundがある");
+});

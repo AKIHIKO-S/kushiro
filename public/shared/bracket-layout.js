@@ -73,9 +73,10 @@
     const leaves = new Array(S).fill(null);
     round1.forEach(m => {
       const p = m.bracket_pos || 0;
-      [[1, m.player1_name, m.player1_team, m.player1_entrant_id],
-       [2, m.player2_name, m.player2_team, m.player2_entrant_id]].forEach(([sk, nm, tm, eid]) => {
-        if (nm && nm !== "BYE") leaves[2 * p + (sk - 1)] = { name: nm, team: tm || "", eid, pos: p, slot: sk };
+      [[1, m.player1_name, m.player1_team, m.player1_entrant_id, m.player1_entry_round],
+       [2, m.player2_name, m.player2_team, m.player2_entrant_id, m.player2_entry_round]].forEach(([sk, nm, tm, eid, er]) => {
+        if (nm && nm !== "BYE") leaves[2 * p + (sk - 1)] = { name: nm, team: tm || "", eid, pos: p, slot: sk,
+          entry_round: Math.max(1, parseInt(er) || 1) };   // 罫線ドラッグ用: 現在の登場回戦
       });
     });
     { let serial = 0; leaves.forEach(lf => { if (lf) lf.no = ++serial; }); }
