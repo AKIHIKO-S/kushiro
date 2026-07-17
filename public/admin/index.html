@@ -5689,29 +5689,34 @@ const A = {
      await load();
    } }, "出場者を一括削除");
  // ⑤ 生成済みトーナメント表をこの画面で編集(選手入替・罫線の組み替え)。オーナー要望 2026-07-17。
+ // 生成済みトーナメント表を編集モードで(再)描画。編集(入替/罫線/移動/シード)の後、
+ // ctx.reload からこれを呼ぶことで【編集がすぐに反映】される(申込表の配置状況も load で更新)。
+ const renderEditableBracket = async () => {
+   if (activeTab === "all") return toast("種目タブを選んでください", "err");
+   previewOpen = true; previewBox.style.display = "block";
+   previewBtn.textContent = "▲ 配置プレビューを閉じる";
+   previewBox.innerHTML = '<div class="text-sub" style="padding:10px">読込中…</div>';
+   try {
+     const bdata = await api.get(`/api/tournaments/${t.id}/bracket/export?event=` + encodeURIComponent(activeTab) + "&ts=" + Date.now());
+     if (!bdata || bdata.error) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + ((bdata && bdata.error) || "この種目のトーナメント表はまだ生成されていません。先に『トーナメント表を生成/再生成』してください。") + '</div>'; return; }
+     if (bdata.event) { O._bracketRev = O._bracketRev || {}; O._bracketRev[bdata.event] = bdata.bracket_rev; }
+     previewBox.innerHTML = "";
+     previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "6px", lineHeight: "1.6" } },
+       "生成済みのトーナメント表を編集しています。選手を2人タップで入替、『罫線編集』で進出先(次の対戦)を組み替えできます。スーパーシードの大きい罫線を手で引くには、選手を1人タップ→下の『シード・登場回戦（大罫線）』→『3回戦から』等を選ぶと、その場で大罫線が引かれます(再生成なし・他の選手の位置は保持)。編集は即座に反映されます。"));
+     const ctx = { tournamentId: t.id, event: activeTab,
+       getRev: () => (O._bracketRev && O._bracketRev[activeTab]),
+       setRev: (rev) => { O._bracketRev = O._bracketRev || {}; if (rev) O._bracketRev[activeTab] = rev; },
+       // 編集後: 申込表(配置状況)を更新し、ブラケットも再描画=すぐ反映。
+       reload: async () => { try { await load(); } catch (e) {} await renderEditableBracket(); } };
+     previewBox.appendChild(O.renderPaperBracket(bdata, { editable: true, ctx }));
+   } catch (e) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + (e.message || e) + '</div>'; }
+ };
  const editBtn = h("button", { className: "btn btn-sm",
-   title: "生成済みのトーナメント表をこの画面で修正(選手を2人タップで入替 / 罫線編集で進出先を組み替え)",
-   onClick: async () => {
-     if (activeTab === "all") return toast("種目タブを選んでください", "err");
-     previewOpen = true; previewBox.style.display = "block";
-     previewBtn.textContent = "▲ 配置プレビューを閉じる";
-     previewBox.innerHTML = '<div class="text-sub" style="padding:10px">読込中…</div>';
-     try {
-       const bdata = await api.get(`/api/tournaments/${t.id}/bracket/export?event=` + encodeURIComponent(activeTab));
-       if (!bdata || bdata.error) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + ((bdata && bdata.error) || "この種目のトーナメント表はまだ生成されていません。先に『トーナメント表を生成/再生成』してください。") + '</div>'; return; }
-       if (bdata.event) { O._bracketRev = O._bracketRev || {}; O._bracketRev[bdata.event] = bdata.bracket_rev; }
-       previewBox.innerHTML = "";
-       previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "6px", lineHeight: "1.6" } },
-         "生成済みのトーナメント表を編集しています。選手を2人タップで入替、『罫線編集』で進出先(次の対戦)を組み替えできます。スーパーシードの大きい罫線を手で引くには、選手を1人タップ→下の『シード・登場回戦（大罫線）』→『3回戦から』等を選ぶと、その場で大罫線が引かれます(再生成なし・他の選手の位置は保持)。"));
-       const ctx = { tournamentId: t.id, event: activeTab,
-         getRev: () => (O._bracketRev && O._bracketRev[activeTab]),
-         setRev: (rev) => { O._bracketRev = O._bracketRev || {}; if (rev) O._bracketRev[activeTab] = rev; },
-         reload: async () => { await load(); } };
-       previewBox.appendChild(O.renderPaperBracket(bdata, { editable: true, ctx }));
-     } catch (e) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + (e.message || e) + '</div>'; }
-   } }, "生成済みの表を編集");
- const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", marginTop: "10px" } }, genBtn, editBtn, previewBtn, bulkDelBtn);
- const body = h("div", {}, summary, compareBar, qualityBar, tabStrip, filterBar, ssNote, tableWrap, btnBar, previewBox);
+   title: "生成済みのトーナメント表をこの画面で修正(選手を2人タップで入替 / 罫線編集で進出先を組み替え)。編集は即反映",
+   onClick: () => renderEditableBracket() }, "生成済みの表を編集");
+ // メニュー(生成/編集/プレビュー/一括削除)は最上部に置く(オーナー要望 2026-07-17)。
+ const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } }, genBtn, editBtn, previewBtn, bulkDelBtn);
+ const body = h("div", {}, summary, compareBar, qualityBar, tabStrip, btnBar, previewBox, filterBar, ssNote, tableWrap);
  if (opts && opts.panel) {
    // 専用ページ(タブ)描画: モーダルを開かず、高さ制限も外して画面全体で見せる
    tableWrap.style.maxHeight = "";
