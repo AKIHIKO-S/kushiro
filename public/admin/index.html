@@ -7054,7 +7054,18 @@ const A = {
      // チーム内は出場回数の多い選手を上に (#194)
      const players = byTeam[tn].sort((a, b) => (b.appearances || 0) - (a.appearances || 0)
        || (a.furigana || "").localeCompare(b.furigana || "", "ja"));
-     pdbAcc(idx === 0 ? " open" : "", h("div", { className: "pdb-row-num", style: { fontSize: "16px" } }, "団"), tn, players);
+     // アコーディオンの色は【そのチームの所属支部】で分ける(支部別ビューと同じ配色。オーナー要望)。
+     // 支部は所属選手の多数決(道内24+道外46に対応。支部不明のチームは無色)。
+     const bc = (() => {
+       const tally = {};
+       players.forEach(p => { const b = TT.officialBranch(p.branch || p.team); if (b) tally[b] = (tally[b] || 0) + 1; });
+       let best = null, bcnt = 0;
+       Object.keys(tally).forEach(b => { if (tally[b] > bcnt) { best = b; bcnt = tally[b]; } });
+       return best ? TT.branchColor(best) : null;
+     })();
+     const numEl = h("div", { className: "pdb-row-num",
+       style: bc ? { fontSize: "16px", background: bc.bg, color: bc.fg } : { fontSize: "16px" } }, "団");
+     pdbAcc(idx === 0 ? " open" : "", numEl, tn, players, bc ? { borderLeft: "6px solid " + bc.fg } : undefined);
    });
    return;
  }

@@ -854,7 +854,11 @@
       .replace(/支部$/g, "")
       .trim();
     if (HOKKAIDO_BRANCHES.includes(base)) return base;
-    // 前方一致 (例: 「札幌市」「釧路地区」等)
+    // 道外(都府県)は末尾の 都/府/県/市 を落として【完全一致】のみ採用。
+    // 前方一致に含めない=「宮城野(札幌の地名)→宮城」のような地名の誤爆を避けるため。
+    const dgai = base.replace(/(都|府|県|市)$/g, "");
+    if (DOUKAI_BRANCHES.includes(dgai)) return dgai;
+    // 北海道支部の前方一致 (例: 「札幌市」「釧路地区」等)
     for (const b of HOKKAIDO_BRANCHES) { if (s.indexOf(b) === 0) return b; }
     return null;
   }
@@ -872,11 +876,12 @@
     const base = _branchBase(raw);
     return base ? base + "支部" : "";
   }
-  // 支部名 → 色。公式24支部は固定の異色、対象外/空はグレー。同名は常に同色。
+  // 支部名 → 色。道内24支部+道外46都府県に固定の異色、対象外/空はグレー。同名は常に同色。
+  const ALL_BRANCHES = HOKKAIDO_BRANCHES.concat(DOUKAI_BRANCHES);
   function branchColor(raw) {
     const base = _branchBase(raw);
     if (base == null) return GRAY_BRANCH;
-    const idx = HOKKAIDO_BRANCHES.indexOf(base);
+    const idx = ALL_BRANCHES.indexOf(base);   // 道内+道外の通し番号で色相を割り当て(道外もグレーにならない)
     const hue = Math.round(idx * 137.508) % 360; // 黄金角で必ず色相が離れる
     const sat = 64 + (idx % 3) * 6;   // 64/70/76
     const light = 90 + (idx % 2) * 3; // 90/93
