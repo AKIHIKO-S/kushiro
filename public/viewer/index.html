@@ -2618,12 +2618,38 @@ const V = {
  ["性別", p.gender === "female" ? "女子" : "男子"],
  ["カテゴリ", TT.catLabel(p.category)],
  ];
+ // 旧登録名(統合で吸収した表記・改姓など)。過去大会の紙面と同一人物かを閲覧者が照合できる。
+ if (p.former_names && p.former_names.length) bioFields.push(["旧登録名", p.former_names.join("、")]);
  const bioDl = h("dl", {});
  bioFields.forEach(([k, v]) => {
  bioDl.appendChild(h("dt", {}, k));
  bioDl.appendChild(h("dd", {}, v));
  });
  card.appendChild(h("div", { className: "player-guide-bio" }, bioDl));
+
+ // 所属の履歴(進学・移籍の年表 #298)。現所属1件だけなら出さない(情報ゼロのため)。
+ // 過去大会の成績は「当時の所属」で読める、という規約をここで可視化する。
+ // 日付なしの行(createPlayerが作る現所属キャッシュ行)は、同じ所属の日付つき行があれば畳む
+ // (マージ・手動追加でキャッシュ行と履歴行が重複しうるため。実レンダ検証 2026-07-17)。
+ const affsAll = (p.affiliations || []).slice();
+ const datedTeams = new Set(affsAll.filter(a => a.start_date).map(a => a.team));
+ const affs = affsAll.filter(a => a.start_date || !datedTeams.has(a.team))
+   .sort((a, b) => String(b.start_date || "").localeCompare(String(a.start_date || "")));
+ if (affs.length >= 2 || affs.some(a => a.end_date)) {
+   // 期間が長い(最大15字)ため既存bioのdlグリッドでは列幅が足りない。専用のflex行で組む(375px検証済)。
+   const rows = h("div", {});
+   affs.forEach(a => {
+     const fmtYM = (d) => (d ? String(d).slice(0, 7).replace("-", ".") : "");
+     const span = (fmtYM(a.start_date) || "…") + "〜" + (a.end_date ? fmtYM(a.end_date) : "現在");
+     rows.appendChild(h("div", { style: { display: "flex", gap: "10px", alignItems: "baseline", padding: "3px 0" } },
+       h("span", { style: { color: "#8a8378", fontSize: "12px", minWidth: "122px", flex: "0 0 auto",
+         fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } }, span),
+       h("span", { style: { fontSize: "13px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, a.team || "")));
+   });
+   card.appendChild(h("div", { className: "player-guide-bio", style: { borderTop: "1px solid #eee7dc" } },
+     h("div", { style: { fontSize: "11.5px", fontWeight: 700, color: "#8a8378", letterSpacing: ".08em", margin: "10px 0 4px" } }, "所属の履歴"),
+     rows));
+ }
 
  el.appendChild(card);
 

@@ -1076,14 +1076,24 @@ const stmts = {
 };
 
 // ── 選手 ────────────────────────────────────────────────
+// 検索語の正規化(2026-07-17): 全半角(NFKC)・カタカナ→ひらがな・空白除去・小文字化。
+// 「サトウ」「ｻﾄｳ」「さとう」「佐藤」のどれで打っても同じ選手に当たるようにする。
+// admin(/api/players)と viewer(/api/public/players)の両方が getPlayers を通るため挙動が統一される。
+function _searchNorm(s) {
+  return String(s || "").normalize("NFKC").toLowerCase()
+    .replace(/[ァ-ヶ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60))
+    .replace(/[\s　]/g, "");
+}
+
 function getPlayers({ search, gender, category, team, sort } = {}) {
   let rows = stmts.getPlayers.all();
   if (search) {
-    const q = String(search).toLowerCase();
+    const q = _searchNorm(search);
     rows = rows.filter(r =>
-      (r.name || "").toLowerCase().includes(q) ||
-      (r.furigana || "").includes(q) ||
-      (r.team || "").toLowerCase().includes(q)
+      _searchNorm(r.name).includes(q) ||
+      _searchNorm(r.furigana).includes(q) ||
+      _searchNorm(r.team).includes(q) ||
+      _searchNorm(r.branch).includes(q)
     );
   }
   if (gender && gender !== "all") rows = rows.filter(r => r.gender === gender);
@@ -1130,6 +1140,18 @@ function getPlayer(id) {
   // 大会レベル別の勝敗内訳 (全道/全国の戦績を別記録)
   player.level_stats = getPlayerLevelStats(player.id);
   player.affiliations = listAffiliations(player.id);   // 所属履歴 (#298)
+  // 統合(マージ)で吸収した旧登録名(表記が異なるもののみ・チェーン対応)。
+  // 過去大会の紙面・旧表記と同一人物であることを閲覧者が照合できる(2026-07-17)。
+  try {
+    player.former_names = sqlite.prepare(`
+      WITH RECURSIVE chain(id) AS (
+        SELECT id FROM players WHERE merged_into = @root
+        UNION ALL
+        SELECT p.id FROM players p JOIN chain c ON p.merged_into = c.id
+      )
+      SELECT DISTINCT name FROM players WHERE id IN (SELECT id FROM chain) AND name != @name
+    `).all({ root: player.id, name: player.name }).map(r => r.name);
+  } catch (e) { player.former_names = []; }
   return player;
 }
 
@@ -7937,23 +7959,30 @@ function getSearchFilters() {
 // ═══════════════════════════════════════════════════════
 // 対戦相手別戦績 (Head-to-Head)
 // ═══════════════════════════════════════════════════════
+// 集計母集団は通算(getMatchesByPlayer/getPlayerLevelStats)と同一=地区大会のみ
+// (全道/全国 hokkaido/national は選手DBに反映しない独立運用 #227)。2026-07-17統一:
+// 従来ここだけ除外が無く、選手詳細の「通算」と「対戦相手別」で勝敗合計が食い違っていた。
 function getPlayerOpponents(playerId) {
   playerId = resolvePlayerId(playerId);
   const wins = sqlite.prepare(`
-    SELECT loser_id AS opp_id, loser_name AS opp_name, loser_team AS opp_team,
+    SELECT m.loser_id AS opp_id, m.loser_name AS opp_name, m.loser_team AS opp_team,
       COUNT(*) AS count
-    FROM matches WHERE winner_id = ? AND loser_id IS NOT NULL
-      AND status = 'completed' AND loser_name != 'BYE'
-      AND COALESCE(is_walkover,0) = 0
-    GROUP BY loser_id
+    FROM matches m JOIN tournaments t ON t.id = m.tournament_id
+    WHERE m.winner_id = ? AND m.loser_id IS NOT NULL
+      AND m.status = 'completed' AND m.loser_name != 'BYE'
+      AND COALESCE(m.is_walkover,0) = 0
+      AND COALESCE(t.level,'district') NOT IN ('hokkaido','national')
+    GROUP BY m.loser_id
   `).all(playerId);
   const losses = sqlite.prepare(`
-    SELECT winner_id AS opp_id, winner_name AS opp_name, winner_team AS opp_team,
+    SELECT m.winner_id AS opp_id, m.winner_name AS opp_name, m.winner_team AS opp_team,
       COUNT(*) AS count
-    FROM matches WHERE loser_id = ? AND winner_id IS NOT NULL
-      AND status = 'completed' AND winner_name != 'BYE'
-      AND COALESCE(is_walkover,0) = 0
-    GROUP BY winner_id
+    FROM matches m JOIN tournaments t ON t.id = m.tournament_id
+    WHERE m.loser_id = ? AND m.winner_id IS NOT NULL
+      AND m.status = 'completed' AND m.winner_name != 'BYE'
+      AND COALESCE(m.is_walkover,0) = 0
+      AND COALESCE(t.level,'district') NOT IN ('hokkaido','national')
+    GROUP BY m.winner_id
   `).all(playerId);
   const map = {};
   wins.forEach(w => {
@@ -7971,19 +8000,21 @@ function getPlayerOpponents(playerId) {
   })).sort((a, b) => b.total - a.total);
 }
 
-// 選手の種目別統計
+// 選手の種目別統計(母集団は通算と同一=地区のみ。2026-07-17統一)
 function getPlayerEventStats(playerId) {
   playerId = resolvePlayerId(playerId);
   const stats = sqlite.prepare(`
-    SELECT event,
-      SUM(CASE WHEN winner_id = ? THEN 1 ELSE 0 END) AS wins,
-      SUM(CASE WHEN loser_id = ? THEN 1 ELSE 0 END) AS losses,
-      SUM(CASE WHEN winner_id = ? THEN winner_sets WHEN loser_id = ? THEN loser_sets ELSE 0 END) AS sets_won,
-      SUM(CASE WHEN winner_id = ? THEN loser_sets WHEN loser_id = ? THEN winner_sets ELSE 0 END) AS sets_lost
-    FROM matches WHERE (winner_id = ? OR loser_id = ?)
-      AND status = 'completed' AND event != ''
-      AND loser_name != 'BYE' AND winner_name != 'BYE' AND COALESCE(is_walkover,0) = 0
-    GROUP BY event
+    SELECT m.event,
+      SUM(CASE WHEN m.winner_id = ? THEN 1 ELSE 0 END) AS wins,
+      SUM(CASE WHEN m.loser_id = ? THEN 1 ELSE 0 END) AS losses,
+      SUM(CASE WHEN m.winner_id = ? THEN m.winner_sets WHEN m.loser_id = ? THEN m.loser_sets ELSE 0 END) AS sets_won,
+      SUM(CASE WHEN m.winner_id = ? THEN m.loser_sets WHEN m.loser_id = ? THEN m.winner_sets ELSE 0 END) AS sets_lost
+    FROM matches m JOIN tournaments t ON t.id = m.tournament_id
+    WHERE (m.winner_id = ? OR m.loser_id = ?)
+      AND m.status = 'completed' AND m.event != ''
+      AND m.loser_name != 'BYE' AND m.winner_name != 'BYE' AND COALESCE(m.is_walkover,0) = 0
+      AND COALESCE(t.level,'district') NOT IN ('hokkaido','national')
+    GROUP BY m.event
     ORDER BY (wins + losses) DESC
   `).all(playerId, playerId, playerId, playerId, playerId, playerId, playerId, playerId);
   return stats;
