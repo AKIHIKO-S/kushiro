@@ -8767,18 +8767,27 @@ function getEntries(tournamentId, statusFilter) {
   // 承認待ち(pending)を先頭に → confirmed → rejected。同status内は種目・seed・ふりがな順。
   sql += ` ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'confirmed' THEN 1 WHEN 'rejected' THEN 2 ELSE 3 END,
            event, seed, furigana`;
+  // 支部を「DB通り」に出すための補完: entrant.region が空なら連携先の選手DBの branch を引く。
+  const _brStmt = sqlite.prepare("SELECT branch FROM players WHERE id=?");
+  const _plBranch = (pid) => { if (!pid) return ""; try { const r = _brStmt.get(pid); return (r && r.branch) || ""; } catch (e) { return ""; } };
   return sqlite.prepare(sql).all(...params).map(e => ({
     id: e.id,                                   // entrant id (status/seed 操作のキー)
-    name: e.display_name || e.name,
+    name: e.display_name || e.name,             // 表示名(ダブルスは「選手1 / 選手2」)
+    p1_name: e.name,                            // 選手1の氏名のみ(ダブルス行を別々に描くため)
     display_short: e.display_short,
-    furigana: e.furigana,
-    team: e.team,
+    furigana: e.furigana,                       // 選手1のふりがな
+    team: e.team,                               // 選手1の所属
+    region: e.region || _plBranch(e.player_id), // 選手1の支部(entrant.region 優先・空なら連携選手DBのbranch=DB通り)
     gender: e.gender,
     category: e.category,
     division: e.division || "",                 // Phase4: 申込区分(general/middle/high/student)
     fee: e.fee || 0,                            // Phase4: 申込時の課金額
     is_doubles: e.is_doubles,
-    partner_name: e.partner_name,
+    partner_name: e.partner_name,               // 選手2の氏名
+    partner_furigana: e.partner_furigana || "", // 選手2のふりがな
+    partner_team: e.partner_team || "",         // 選手2の所属(別々に表記)
+    partner_region: e.partner_region || _plBranch(e.partner_player_id), // 選手2の支部(DB通り)
+    partner_player_id: e.partner_player_id || null,
     team_members: entrantMembers(e),            // Phase4: 団体メンバー(構造化)
     entry_event: e.event,
     seed: e.seed,

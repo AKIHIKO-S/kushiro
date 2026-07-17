@@ -5482,14 +5482,35 @@ const A = {
      const item = issueMap[e.id];
      const members = (e.team_members && e.team_members.length)
        ? h("span", { className: "text-xs text-sub", style: { display: "block", fontWeight: 400 } }, e.team_members.join("、")) : null;
+     // 氏名: ダブルスは選手1/選手2を別の行にし、各自のふりがなを添える(相方名の二重表示・
+     // ふりがな取り違えを解消。オーナー要望 2026-07-17)。連携済みは名前に緑ドット。
+     const nameLine = (nm, furi, linked) => h("div", {},
+       linked ? h("span", { title: "選手DB連携済み", style: { color: "#16a34a", marginRight: "3px", fontSize: "11px" } }, "●") : null,
+       nm || "?",
+       furi ? h("span", { className: "text-xs text-sub", style: { fontWeight: 400, marginLeft: "4px" } }, `(${furi})`) : null);
+     const nameCell = (e.is_doubles && e.partner_name)
+       ? h("td", { className: "font-bold" },
+           nameLine(e.p1_name || e.name, e.furigana, !!e.player_id),
+           nameLine(e.partner_name, e.partner_furigana, !!e.partner_player_id),
+           members)
+       : h("td", { className: "font-bold" }, nameLine(e.p1_name || e.name, e.furigana, !!e.player_id), members);
+     // 所属: ダブルスは選手1/選手2の所属を別々に必ず表記
+     const teamCell = (e.is_doubles && e.partner_name)
+       ? h("td", { className: "text-xs" },
+           h("div", {}, e.team || h("span", { className: "text-sub" }, "未登録")),
+           h("div", {}, e.partner_team || h("span", { className: "text-sub" }, "未登録")))
+       : h("td", {}, e.team || "未登録");
+     // 支部: DB通りに表記(ダブルスは両者)。entrant.region優先・空なら連携選手DBのbranch
+     const brCell = (e.is_doubles && e.partner_name)
+       ? h("td", { className: "text-xs" },
+           h("div", {}, e.region || h("span", { className: "text-sub" }, "-")),
+           h("div", {}, e.partner_region || h("span", { className: "text-sub" }, "-")))
+       : h("td", { className: "text-xs" }, e.region || h("span", { className: "text-sub" }, "-"));
      tbody.appendChild(h("tr", {},
        h("td", {}, stBadge(status)),
-       h("td", { className: "font-bold" }, e.name,
-         e.furigana ? h("span", { className: "text-xs text-sub", style: { fontWeight: 400, marginLeft: "4px" } }, `(${e.furigana})`) : null,
-         e.is_doubles && e.partner_name ? h("span", { className: "text-xs text-sub", style: { display: "block", fontWeight: 400 } }, `/ ${e.partner_name}`) : null,
-         members),
-       h("td", {}, e.team || "未登録"),
-       h("td", { className: "text-xs" }, e.region || h("span", { className: "text-sub" }, "-")),
+       nameCell,
+       teamCell,
+       brCell,
        h("td", { className: "text-xs text-sub", title: [e.contact_email, e.contact_tel].filter(Boolean).join(" / ") },
          e.contact_name || "未登録"),
        h("td", {}, h("span", { className: "badge badge-ghost" }, divLabel(e)),
