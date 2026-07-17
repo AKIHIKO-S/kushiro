@@ -3728,15 +3728,36 @@ function rebuildSeededBracket(tournamentId, event, opts) {
     .filter(e => !e.is_bye)
     .sort((a, b) => ((a.seed || 99999) - (b.seed || 99999)) || String(a.id).localeCompare(String(b.id)));
   if (ents.length < 2) return { error: "出場が2名未満です" };
-  const leaves = [];
-  for (const e of ents) {
-    const R = Math.max(1, Math.min(8, parseInt(e.entry_round) || 1));
-    leaves.push(e);
-    for (let i = 1; i < Math.pow(2, R - 1); i++) leaves.push(null);   // この区画のBYE(=シードの不戦勝上がり)
-  }
-  let size = Math.pow(2, Math.ceil(Math.log2(Math.max(2, leaves.length))));
+  // 各出場の消費リーフ数 w=2^(R-1)(スーパーシードは大きい区画を専有)
+  const items = ents.map(e => ({ e, w: Math.pow(2, Math.max(0, Math.min(7, (parseInt(e.entry_round) || 1) - 1))) }));
+  const totalW = items.reduce((s, it) => s + it.w, 0);
+  const maxW = items.reduce((m, it) => Math.max(m, it.w), 1);
+  let size = Math.pow(2, Math.ceil(Math.log2(Math.max(2, totalW))));
+  while (size / 2 < maxW) size *= 2;   // 最大区画が片側(size/2)に収まる大きさを確保
   if (size > 2048) return { error: "ブラケットが大きすぎます。登場回戦を下げてください。", bracket_size: size };
-  while (leaves.length < size) leaves.push(null);
+  const hasSS = items.some(it => it.w > 1);
+  let leaves;
+  if (!hasSS) {
+    // スーパーシード無し=通常。紙順に詰める(左山=前半/右山=後半で元々ほぼ左右対称)。
+    leaves = [];
+    items.forEach(it => { leaves.push(it.e); for (let i = 1; i < it.w; i++) leaves.push(null); });
+    while (leaves.length < size) leaves.push(null);
+  } else {
+    // スーパーシードあり=大区画が片側に寄って左右の人数が偏るのを防ぐ。左右の実人数が
+    // 均等になるよう、区画ごと(順序は保つ)に人数の少ない側へ振り分ける(オーナー要望 2026-07-17)。
+    const half = size / 2;
+    const Lh = [], Rh = []; let lw = 0, rw = 0, lr = 0, rr = 0;
+    items.forEach(it => {
+      const canL = lw + it.w <= half, canR = rw + it.w <= half;
+      const toL = (canL && canR) ? (lr <= rr) : canL;   // 両方可なら実人数の少ない側へ
+      const arr = toL ? Lh : Rh;
+      arr.push(it.e); for (let i = 1; i < it.w; i++) arr.push(null);
+      if (toL) { lw += it.w; lr++; } else { rw += it.w; rr++; }
+    });
+    while (Lh.length < half) Lh.push(null);
+    while (Rh.length < half) Rh.push(null);
+    leaves = Lh.concat(Rh);
+  }
   // no_auto_advance は付けない=BYE自動進行でシードが登場回戦の枠まで上がる(表示が紙どおりになる)。
   return generateBracket(tournamentId, event, { regenerate: true, force: true, fixedLeaves: leaves });
 }

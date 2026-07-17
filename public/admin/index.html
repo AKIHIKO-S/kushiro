@@ -12042,8 +12042,9 @@ const O = {
    // レール(番号+氏名+所属)。画面と同じく中央(罫線の内端)へ寄せる。ダブルス/団体は2行。
    blk.rails.forEach(r => {
      const isL = r.side === "L", lf = r.leaf;
-     const xEnd = isL ? L.RAIL_W - 4 : L.W - L.RAIL_W + 4;
-     const anc = isL ? "end" : "start";
+     // 氏名は罫線の外側(名前を書き始める側)に揃える(オーナー要望 2026-07-17)。左山=左端/右山=右端。
+     const xEnd = isL ? 10 : L.W - 10;
+     const anc = isL ? "start" : "end";
      const noTxt = lf.no + ".";
      if (L.isDbl) {
        p.push(text(xEnd, r.lineY - 15, noTxt + " " + lf.name, anc, 12.5, "#1c1917", true));
@@ -12490,7 +12491,9 @@ const O = {
          display: "flex", gap: isDbl ? "1px" : "6px", paddingBottom: "10px",
          flexDirection: isDbl ? "column" : (isL ? "row" : "row-reverse"),
          alignItems: isDbl ? "stretch" : "flex-end",
-         justifyContent: "flex-end",
+         // 氏名(番号・名前・所属)は罫線の外側=名前を書き始める側に揃える(オーナー要望 2026-07-17)。
+         // 左山は左端・右山は右端(row-reverse により flex-start が右端になる)。
+         justifyContent: "flex-start",
          textAlign: isL ? "left" : "right",
          cursor: editable ? "pointer" : "default",
          opacity: 1,
