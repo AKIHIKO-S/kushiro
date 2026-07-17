@@ -1018,6 +1018,21 @@ app.post("/api/players/normalize-categories", requireAdmin, (req, res) => {
 app.post("/api/players/normalize-branches", requireAdmin, (req, res) => {
   res.json(db.normalizePlayerBranches({ dry_run: !!(req.body && req.body.dry_run) }));
 });
+// 空欄の支部を入力済みの選手(所属→支部の多数決)から推測補完。dry_run でプレビュー。
+app.post("/api/players/infer-branches", requireAdmin, (req, res) => {
+  res.json(db.inferPlayerBranches({ dry_run: !!(req.body && req.body.dry_run) }));
+});
+// 空欄のふりがなを名字辞書から姓の読みで推測補完。dry_run でプレビュー。
+app.post("/api/players/infer-furigana", requireAdmin, (req, res) => {
+  res.json(db.inferPlayerFurigana({ dry_run: !!(req.body && req.body.dry_run) }));
+});
+// 推測補完のうち人が選んだ行だけを確定書き込み(field=branch|furigana, changes=[{id,to}])。
+app.post("/api/players/apply-fill", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const r = db.applyInferredFill(b.field, b.changes);
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
 
 app.delete("/api/players/:id", requireAdmin, (req, res) => {
   const r = db.deletePlayer(req.params.id);

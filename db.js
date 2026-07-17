@@ -722,8 +722,29 @@ const FD = {
   "馬場":"ばば","東野":"ひがしの","日野":"ひの","平山":"ひらやま","福井":"ふくい","福本":"ふくもと","古田":"ふるた","堀田":"ほった",
   "前川":"まえかわ","牧田":"まきた","増井":"ますい","町田":"まちだ","三上":"みかみ","水口":"みずぐち","溝口":"みぞぐち","宮川":"みやがわ",
   "宮田":"みやた","向井":"むかい","村山":"むらやま","百瀬":"ももせ","諸星":"もろほし","矢田":"やだ","柳":"やなぎ","山岸":"やまぎし",
-  "湯浅":"ゆあさ","横田":"よこた","吉川":"よしかわ","吉岡":"よしおか","吉村":"よしむら","米田":"よねだ"
+  "湯浅":"ゆあさ","横田":"よこた","吉川":"よしかわ","吉岡":"よしおか","吉村":"よしむら","米田":"よねだ",
+  // 追加(実データの未補完頻出姓・2026-07)。新字形で登録=旧字は下の _foldNameVariants で畳んで一致させる。
+  "熊谷":"くまがい","児玉":"こだま","大友":"おおとも","荒井":"あらい","奈良":"なら","長嶋":"ながしま",
+  "大倉":"おおくら","門脇":"かどわき","皆川":"みなかわ","谷川":"たにがわ","大越":"おおこし","金野":"こんの",
+  "田沢":"たざわ","中沢":"なかざわ","大野":"おおの","大西":"おおにし","大山":"おおやま","大森":"おおもり",
+  "小野寺":"おのでら","佐野":"さの","柴田":"しばた","杉山":"すぎやま","関口":"せきぐち","高木":"たかぎ",
+  "武田":"たけだ","田村":"たむら","土屋":"つちや","中田":"なかた","西田":"にしだ","野村":"のむら",
+  "橋本":"はしもと","浜口":"はまぐち","本間":"ほんま","松井":"まつい","三浦":"みうら","森下":"もりした"
 };
+
+// 姓の旧字・異体字→新字の畳み込みマップ(名寄せ・ふりがな推定の1箇所に集約=identity.md準拠)。
+// 表示名は旧字のまま保持し、照合キーだけをここで新字へ寄せる(例: 髙橋→高橋 として読みを引く)。
+// 表に無い異体字で漏れたら、その字をここへ足す運用。恒等(髙→髙 等)や、別姓化しうる字は入れない。
+const NAME_VARIANT = {
+  "髙":"高","﨑":"崎","邊":"辺","邉":"辺","澤":"沢","齋":"斎","齊":"斉","濵":"浜","濱":"浜","廣":"広",
+  "冨":"富","惠":"恵","栁":"柳","桒":"桑","眞":"真","萬":"万","條":"条","圀":"国","兒":"児","德":"徳",
+  "靑":"青","靏":"鶴","渕":"淵","槗":"橋",
+};
+function _foldNameVariants(s) {
+  let out = "";
+  for (const ch of String(s == null ? "" : s)) out += (NAME_VARIANT[ch] || ch);
+  return out;
+}
 
 // ═══════════════════════════════════════════════════════
 // 名前正規化 (Japanese name handling)
@@ -817,7 +838,8 @@ function buildEntrantNames(data) {
 
 function lookupFurigana(name) {
   if (!name) return "";
-  const n = String(name).replace(/\s+/g, "");
+  // 空白除去 + 旧字→新字の畳み込み(髙橋→高橋 として辞書を引く)。表示名は呼び出し側で旧字のまま。
+  const n = _foldNameVariants(String(name).replace(/\s+/g, ""));
   if (FD[n]) return FD[n];
   // prefix フォールバックは2文字以上に限定する。1文字だと「西野→西(にし)」「関口→関(せき)」のように
   // 実在の複漢字姓が単漢字姓へ誤マッチし、誤読が無言で確定してブラケットのふりがな順が崩れる。
@@ -1224,6 +1246,79 @@ function normalizePlayerBranches(opts) {
   const tx = sqlite.transaction(() => { changes.forEach(c => upd.run(c.to, c.id)); });
   tx();
   return { updated: changes.length, total: all.length, changes };
+}
+
+// 支部が空欄の選手に、【入力済みの選手からの推測】で支部を補完する(オーナー要望 2026-07-17)。
+// 手がかりは所属(team): 支部が入っている選手から「所属→支部」の多数決マップを作り、同じ所属で
+// 支部が空欄の選手に埋める。所属の表記ゆれは _normClub、支部の表記ゆれは normalizeShibuName で吸収。
+// 同数で割れる所属は曖昧なので埋めない(人の判断へ)。所属が無い/対応が無い選手は変更しない。
+// opts.dry_run=true でプレビュー(DB不変)。
+function inferPlayerBranches(opts) {
+  opts = opts || {};
+  const all = stmts.getPlayers.all();
+  // 1) 入力済みの選手から 所属(正規化)→支部(正規化) の出現数を集計
+  const tally = new Map();   // normTeam -> Map(branch -> count)
+  for (const p of all) {
+    const tk = _normClub(p.team), br = normalizeShibuName(p.branch || "");
+    if (!tk || !br) continue;
+    if (!tally.has(tk)) tally.set(tk, new Map());
+    const m = tally.get(tk); m.set(br, (m.get(br) || 0) + 1);
+  }
+  // 2) 所属ごとに多数決の支部を決める(同数の割れは採用しない)
+  const teamBranch = new Map();
+  tally.forEach((m, tk) => {
+    let best = "", bc = -1, tie = false;
+    m.forEach((c, br) => { if (c > bc) { best = br; bc = c; tie = false; } else if (c === bc) tie = true; });
+    if (best && !tie) teamBranch.set(tk, best);
+  });
+  // 3) 支部空欄・所属既知の選手へ提案
+  const changes = [];
+  for (const p of all) {
+    if ((p.branch || "").trim()) continue;
+    const tk = _normClub(p.team);
+    if (!tk) continue;
+    const br = teamBranch.get(tk);
+    if (br) changes.push({ id: p.id, name: p.name, team: p.team || "", to: br });
+  }
+  if (opts.dry_run) return { updated: 0, total: all.length, changes, teams_with_branch: teamBranch.size };
+  const upd = sqlite.prepare("UPDATE players SET branch=?, updated_at=datetime('now','localtime') WHERE id=?");
+  const tx = sqlite.transaction(() => { changes.forEach(c => upd.run(c.to, c.id)); });
+  tx();
+  return { updated: changes.length, total: all.length, changes, teams_with_branch: teamBranch.size };
+}
+
+// ふりがなが空欄の選手に、【一般的な日本の名字の読み(辞書FD)】から姓の読みを推測して補完する
+// (オーナー要望 2026-07-17)。lookupFurigana は完全一致→2〜4字prefixで姓を引く(単字姓の誤マッチは回避済)。
+// 既にふりがながある選手は上書きしない。名(下の名前)の読みは推測できないため姓の読みのみ入る
+// =ふりがな順の並びが姓で揃うのが主目的。多読み姓(東=あずま/ひがし 等)はプレビューで人が弾ける。
+// opts.dry_run=true でプレビュー(DB不変)。
+function inferPlayerFurigana(opts) {
+  opts = opts || {};
+  const all = stmts.getPlayers.all();
+  const changes = [];
+  for (const p of all) {
+    if ((p.furigana || "").trim()) continue;   // 人の入力を上書きしない
+    const f = lookupFurigana(p.name);
+    if (f) changes.push({ id: p.id, name: p.name, to: f });
+  }
+  if (opts.dry_run) return { updated: 0, total: all.length, changes };
+  const upd = sqlite.prepare("UPDATE players SET furigana=?, updated_at=datetime('now','localtime') WHERE id=?");
+  const tx = sqlite.transaction(() => { changes.forEach(c => upd.run(c.to, c.id)); });
+  tx();
+  return { updated: changes.length, total: all.length, changes };
+}
+
+// プレビューで人が選んだ行だけを書き込む(推測補完の確定側)。field は branch|furigana のみ許可
+// (文字列連結でSQLに埋めるためホワイトリスト必須)。空欄の選手だけ更新する(その後に誰かが
+// 入力していたら尊重して上書きしない=競合安全)。list=[{id,to},...]。
+function applyInferredFill(field, list) {
+  if (field !== "branch" && field !== "furigana") return { error: "対象外の項目です" };
+  const rows = Array.isArray(list) ? list.filter(x => x && x.id && x.to != null && String(x.to).trim() !== "") : [];
+  const upd = sqlite.prepare(`UPDATE players SET ${field}=?, updated_at=datetime('now','localtime') WHERE id=? AND COALESCE(${field},'')=''`);
+  let updated = 0;
+  const tx = sqlite.transaction(() => { rows.forEach(r => { updated += upd.run(String(r.to), String(r.id)).changes; }); });
+  tx();
+  return { updated };
 }
 
 // 個人名らしいかをチェック (チーム名・学校名・地名と区別)
@@ -11189,6 +11284,7 @@ module.exports = {
   getCoachDashboard, saveCoachSubscription, deleteCoachSubscription, getCoachSubscriptionsForPlayer,
   getAllCoachSubscriptions, createCoachAnnouncement, listCoachAnnouncements, deleteCoachAnnouncement,
   getGlobalMatchAverages, detectSchoolCategory, normalizePlayerCategories, normalizePlayerBranches,
+  inferPlayerBranches, inferPlayerFurigana, applyInferredFill,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,
   getTournaments, getTournament, getTournamentMeta, createTournament, updateTournament, deleteTournament,

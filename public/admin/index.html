@@ -1438,6 +1438,7 @@
  <div class="flex gap-2">
  <button class="btn btn-sm btn-ghost" onclick="A.cleanupInvalidPlayers()">チーム名混入を削除</button>
  <button class="btn btn-sm btn-ghost" onclick="A.openTidyDialog()" title="所属(学校名)からカテゴリを判定し、支部名を正規化。変更内容をプレビューで確認してから一括適用します">支部・カテゴリを整える</button>
+ <button class="btn btn-sm btn-ghost" onclick="A.openInferDialog()" title="空欄の支部を同じ所属の選手から、空欄のふりがなを名字辞書から推測して補完(プレビュー確認あり)">空欄を推測で補完</button>
  <button class="btn btn-sm btn-ghost" style="background:#fef3c7;color:#78350f;border-color:#fcd34d" onclick="A.openMergeDialog()" title="氏名・ふりがなが近い重複選手を検出して1人に結合(戦績も統合)">重複の結合</button>
  <button class="btn btn-sm" onclick="A.newPlayer()">+ 新規選手</button>
  </div>
@@ -7179,6 +7180,77 @@ const A = {
        } catch (e) { toast("適用に失敗: " + e.message, "err"); applyBtn.disabled = null; }
      } }, total ? `適用する（計${total}件）` : "変更なし");
    openModal("支部・カテゴリを整える", body,
+     h("div", { className: "flex gap-2", style: { alignItems: "center" } }, applyBtn,
+       h("button", { className: "btn btn-ghost", style: { marginLeft: "auto" },
+         onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる")));
+ },
+
+ // 空欄の支部・ふりがなを推測で補完する(プレビュー→行ごとに確認して適用)。
+ // 支部=入力済みの選手の「所属→支部」多数決 / ふりがな=一般的な名字辞書の姓読み。
+ // 推測は外れることがある(例: 小山内→こやま は誤り)ため、行ごとにチェックを外して除外できる。
+ async openInferDialog() {
+   let brs, furis;
+   try {
+     [brs, furis] = await Promise.all([
+       api.post("/api/players/infer-branches", { dry_run: true }),
+       api.post("/api/players/infer-furigana", { dry_run: true }),
+     ]);
+   } catch (e) { return toast("プレビューの取得に失敗: " + e.message, "err"); }
+   const brCh = (brs && brs.changes) || [], fuCh = (furis && furis.changes) || [];
+   const body = h("div", {});
+   body.appendChild(h("div", { className: "text-sm text-sub mb-3", style: { lineHeight: "1.6" } },
+     "空欄の項目だけを推測で埋めます(入力済みは変更しません)。支部は同じ所属の選手の支部から、ふりがなは一般的な名字の読みから推測します。推測なので誤りがあることがあります。チェックの付いた行だけを適用します（間違っている行はチェックを外してください／ふりがなは名字の読みのみ入ります）。"));
+   // 各行にチェックボックスを付け、選択されたものだけ返す。行データに checkbox を保持。
+   const buildSection = (title, changes, cols, emptyNote) => {
+     const sec = h("div", { style: { marginBottom: "14px" } });
+     const head = h("div", { style: { display: "flex", alignItems: "baseline", gap: "10px",
+       borderBottom: "2px solid #1c1917", paddingBottom: "3px", marginBottom: "6px" } },
+       h("span", { style: { fontWeight: 800, fontSize: "13px" } }, title + "（" + changes.length + "件）"));
+     sec.appendChild(head);
+     const rows = [];
+     if (!changes.length) { sec.appendChild(h("div", { className: "text-sm text-sub" }, emptyNote || "推測できる項目はありませんでした")); return { sec, rows }; }
+     const allCb = h("input", { type: "checkbox", checked: "" });
+     head.appendChild(h("label", { style: { fontSize: "11.5px", color: "var(--sub)", marginLeft: "auto", cursor: "pointer" } },
+       allCb, " すべて"));
+     const list = h("div", { style: { maxHeight: "240px", overflowY: "auto", fontSize: "12.5px" } });
+     changes.forEach(c => {
+       const cb = h("input", { type: "checkbox", checked: "" });
+       rows.push({ change: c, cb });
+       list.appendChild(h("label", { style: { display: "flex", gap: "8px", alignItems: "baseline",
+         padding: "2px 2px", borderBottom: "1px dashed #e2e0db", cursor: "pointer" } }, cb, ...cols(c)));
+     });
+     allCb.addEventListener("change", () => rows.forEach(r => { r.cb.checked = allCb.checked; }));
+     sec.appendChild(list);
+     return { sec, rows };
+   };
+   const brSec = buildSection("支部の推測補完（所属から）", brCh, (c) => [
+     h("span", { style: { fontWeight: 700, minWidth: "104px" } }, c.name),
+     h("span", { className: "text-sub", style: { flex: "1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.team || "(所属なし)"),
+     h("span", {}, "支部→ "), h("span", { style: { fontWeight: 700, color: "#c01526" } }, c.to)],
+     "支部が入力済みの選手が少ないため、推測の元になる情報がありません（本番で支部を数名入力すると、同じ所属の選手へ広がります）。");
+   const fuSec = buildSection("ふりがなの推測補完（名字辞書から）", fuCh, (c) => [
+     h("span", { style: { fontWeight: 700, minWidth: "104px" } }, c.name),
+     h("span", {}, "ふりがな→ "), h("span", { style: { fontWeight: 700, color: "#c01526" } }, c.to)]);
+   body.appendChild(brSec.sec);
+   body.appendChild(fuSec.sec);
+   const total = brCh.length + fuCh.length;
+   const applyBtn = h("button", { className: "btn", disabled: total ? null : "",
+     onClick: async () => {
+       const brSel = brSec.rows.filter(r => r.cb.checked).map(r => ({ id: r.change.id, to: r.change.to }));
+       const fuSel = fuSec.rows.filter(r => r.cb.checked).map(r => ({ id: r.change.id, to: r.change.to }));
+       if (!brSel.length && !fuSel.length) return toast("適用する行がありません（チェックを付けてください）", "err");
+       applyBtn.disabled = "";
+       try {
+         const [rb, rf] = await Promise.all([
+           brSel.length ? api.post("/api/players/apply-fill", { field: "branch", changes: brSel }) : Promise.resolve({ updated: 0 }),
+           fuSel.length ? api.post("/api/players/apply-fill", { field: "furigana", changes: fuSel }) : Promise.resolve({ updated: 0 }),
+         ]);
+         toast(`補完しました: 支部${(rb && rb.updated) || 0}件 / ふりがな${(rf && rf.updated) || 0}件`, "ok");
+         document.querySelector(".modal-bg")?.remove();
+         await A.reload();
+       } catch (e) { toast("補完に失敗: " + e.message, "err"); applyBtn.disabled = null; }
+     } }, total ? "チェックした行を適用" : "補完できる項目なし");
+   openModal("空欄を推測で補完", body,
      h("div", { className: "flex gap-2", style: { alignItems: "center" } }, applyBtn,
        h("button", { className: "btn btn-ghost", style: { marginLeft: "auto" },
          onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる")));
