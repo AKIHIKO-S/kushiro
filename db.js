@@ -3959,6 +3959,72 @@ function materializeSheet(tournamentId, event, sheet, opts) {
   });
 }
 
+// 配線が標準二分木(pos p の次戦=次回戦の floor(p/2)・slot=p%2+1)か判定する。
+// シートからの導出は常に標準配線なので、非標準(過去のrelink自由配線の痕跡)の種目は
+// シートで表現できない=移行時に legacy_review へ落とす。next が null(欠落)は非標準扱いしない
+// (欠落は描画側が標準合成で補う系であり、relinkの痕跡ではない)。
+function _isStandardWiring(tournamentId, event) {
+  const ms = sqlite.prepare(
+    `SELECT id, bracket_round, bracket_pos, next_match_id, next_slot
+     FROM matches WHERE tournament_id=? AND event=?`).all(tournamentId, event);
+  if (!ms.length) return true;
+  const byRP = new Map();
+  let maxRound = 1;
+  ms.forEach(m => {
+    const r = m.bracket_round || 1;
+    byRP.set(r + ":" + (m.bracket_pos || 0), m.id);
+    if (r > maxRound) maxRound = r;
+  });
+  for (const m of ms) {
+    const r = m.bracket_round || 1;
+    if (r >= maxRound || !m.next_match_id) continue;
+    const pos = m.bracket_pos || 0;
+    const expectId = byRP.get((r + 1) + ":" + Math.floor(pos / 2));
+    const expectSlot = (pos % 2) + 1;
+    if (m.next_match_id !== expectId || (m.next_slot || 1) !== expectSlot) return false;
+  }
+  return true;
+}
+
+// 移行(起動時1回・冪等): 準備中(scheduled)/進行中(ongoing)の大会について、matchesが存在し
+// bracket_sheets 未作成の種目からシートを合成する。標準配線なら「第1版(移行)」として確定済みに、
+// 非標準(relink痕跡)なら legacy_review に(勝手に木を書き換えない)。
+// 終了済み大会は対象外=閲覧専用のまま(外部検証の要修正: 移行範囲の限定)。
+function migrateBracketSheets() {
+  const targets = sqlite.prepare(`
+    SELECT DISTINCT m.tournament_id, m.event FROM matches m
+    JOIN tournaments t ON t.id = m.tournament_id
+    WHERE COALESCE(t.status,'scheduled') IN ('scheduled','ongoing')
+      AND NOT EXISTS (SELECT 1 FROM bracket_sheets s
+                      WHERE s.tournament_id = m.tournament_id AND s.event = m.event)
+  `).all();
+  let confirmed = 0, review = 0;
+  const ins = sqlite.prepare(`
+    INSERT INTO bracket_sheets (id, tournament_id, event, rev_no, status, size, seats_json,
+                                sheet_hash, tree_hash, reason, source, confirmed_at)
+    VALUES (@id, @tournament_id, @event, @rev_no, @status, @size, @seats_json,
+            @sheet_hash, @tree_hash, @reason, 'migration', @confirmed_at)`);
+  for (const tg of targets) {
+    const sheet = synthesizeSheetFromMatches(tg.tournament_id, tg.event);
+    if (!sheet) continue;
+    const std = _isStandardWiring(tg.tournament_id, tg.event);
+    ins.run({
+      id: crypto.randomUUID(),
+      tournament_id: tg.tournament_id, event: tg.event,
+      rev_no: std ? 1 : 0,
+      status: std ? "confirmed" : "legacy_review",
+      size: sheet.size,
+      seats_json: JSON.stringify(sheet.seats),
+      sheet_hash: sheetHashOf(sheet.size, sheet.seats),
+      tree_hash: std ? canonicalStructHash(tg.tournament_id, tg.event) : "",
+      reason: std ? "第1版(既存の表から移行)" : "旧方式の配線編集を含むため要確認",
+      confirmed_at: std ? new Date().toISOString() : "",
+    });
+    if (std) confirmed++; else review++;
+  }
+  return { migrated: confirmed, legacy_review: review, scanned: targets.length };
+}
+
 function generateBracket(tournamentId, event, options) {
   options = options || {};
   // 破壊的再生成ガード: 結果入力済みの試合がある種目を force 無しで再生成しない(当日の不可逆データ破壊防止)。
@@ -11584,6 +11650,16 @@ try {
   }
 } catch (e) { console.error("submission_tokens backfill error:", e.message); }
 
+// ── 割当表正本(案B) P2: 起動時移行(冪等・毎起動) ──
+// bracket_sheets の無い種目(準備中/進行中の大会のみ)にシートを合成する。NOT EXISTS ガードで
+// 再実行しても増えない。旧経路で新規生成された表も次回起動で正本化される(共存期間の取りこぼし防止)。
+try {
+  const mig = migrateBracketSheets();
+  if (mig.migrated || mig.legacy_review) {
+    console.log(`[migration] 割当表: 確定${mig.migrated}件 / 要確認(旧配線)${mig.legacy_review}件`);
+  }
+} catch (e) { console.error("bracket_sheets migration error:", e.message); }
+
 module.exports = {
   // 審判結果入力 (テスト環境付き)
   setRefereeToken, setRefereeInputEnabled, getRefereeConfig,
@@ -11661,8 +11737,9 @@ module.exports = {
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
   swapBracketMatches, relinkBracketMatch, setBracketSlotFromPlayer, placeEntrantInSlot, setEntrantMemberFromPlayer,
-  // 割当表正本(案B) P1: シート⇔木の変換層
+  // 割当表正本(案B) P1: シート⇔木の変換層 / P2: 移行
   sheetHashOf, synthesizeSheetFromMatches, canonicalStructHash, materializeSheet,
+  migrateBracketSheets,
   setEntrantSeedRound, rebuildSeededBracket,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,
