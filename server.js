@@ -1872,6 +1872,7 @@ app.post("/api/tournaments/:id/bracket/generate", requireAdmin, blockOngoingBrac
     force: !!req.body?.force,   // 結果入力済み試合がある種目の再生成ガードを越える(運営が確認の上)
   });
   if (r?.error) return res.status(400).json(r);
+  db.markSheetDirty(req.params.id, event);   // 旧経路の再生成(共存フック)
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
 // 抽選ドロー: シードを標準位置に固定 + 非シードをランダム抽選(同一所属/地区を分散) → ブラケット凍結。
@@ -1897,6 +1898,7 @@ app.post("/api/tournaments/:id/bracket/draw", requireAdmin, blockOngoingBracketE
     drawn_by: req.body?.drawn_by,
   });
   if (r?.error) return res.status(400).json(r);
+  if (!preview) db.markSheetDirty(req.params.id, event);   // 旧経路の抽選確定(共存フック)
   res.json(preview ? r : { ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
 // 進行開始(不戦勝を確定): 抽選で配置・編集した1回戦を確定し、不戦勝(vs BYE)を繰り上げて進行を開始する。
@@ -2759,6 +2761,10 @@ app.post("/api/tournaments/:id/bracket/import-xlsx", requireAdmin, blockOngoingB
     }
     const r = db.importBracketRoundtrip(req.params.id, rows, { force, preview });
     if (r.error) return res.status(400).json(r);
+    // 旧経路の往復取込(共存フック): 取り込んだ種目ごとに確定シートをdirtyへ
+    if (!preview && Array.isArray(r.results)) {
+      r.results.forEach(x => { if (x && x.event && x.success) db.markSheetDirty(req.params.id, x.event); });
+    }
     return res.json(r);
   } catch (e) {
     console.error("bracket import-xlsx error:", e);
@@ -3185,6 +3191,7 @@ app.post("/api/tournaments/:id/bracket", requireAdmin, blockOngoingBracketEdit, 
   // entrant_ids(新・出場者ID)指定時はその選択を尊重。未指定は種目の全出場者(entrants)で生成。
   const r = db.generateBracket(req.params.id, event, { regenerate, player_ids, entrant_ids, force: !!force });
   if (r.error) return res.status(400).json(r);
+  db.markSheetDirty(req.params.id, event);   // 旧経路の生成(共存フック): 確定シートとズレたら要再確定
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
 
@@ -4035,6 +4042,7 @@ app.post("/api/tournaments/:id/bracket/import", requireAdmin, blockOngoingBracke
   if (_ev && bracketRevStale(req.params.id, _ev, req.body)) return sendBracketConflict(res, req.params.id, _ev);
   const r = db.importBracket(req.params.id, req.body || {});
   if (r.error) return res.status(400).json(r);
+  if (_ev) db.markSheetDirty(req.params.id, _ev);   // 旧経路の取込(共存フック)
   res.json(_ev ? { ...r, bracket_rev: db.bracketRev(req.params.id, _ev) } : r);
 });
 
@@ -4170,6 +4178,45 @@ app.post("/api/tournaments/:id/bracket/place-entrant", requireAdmin, blockOngoin
     { mode: req.body.mode || "move", force: !!req.body.force });
   if (r && r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
+});
+
+// ═══ 割当表(案B P3-2): 座席表エディタの読み書きAPI ═══════════════════════
+// 注意: これらは blockOngoingBracketEdit を通さない(下書き編集はmatchesに触れず、確定の可否は
+// confirmSheet が「進行中は新種目の初回確定のみ可」というより正確なルールで判定するため)。
+app.get("/api/tournaments/:id/bracket/sheet", requireAdmin, (req, res) => {
+  const event = req.query.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  res.json(db.getSheetState(req.params.id, event));
+});
+app.post("/api/tournaments/:id/bracket/sheet/draft", requireAdmin, (req, res) => {
+  const event = req.body && req.body.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.ensureDraftSheet(req.params.id, event);
+  if (r && r.error) return res.status(400).json(r);
+  res.json({ ok: true, draft: { ...r, seats: r.seats } });
+});
+app.post("/api/tournaments/:id/bracket/sheet/ops", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (!b.event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.applySheetOps(req.params.id, b.event, b.base_hash || "", b.ops || []);
+  if (r && r.conflict) return res.status(409).json(r);
+  if (r && r.error) return res.status(400).json(r);
+  res.json(r);
+});
+app.post("/api/tournaments/:id/bracket/sheet/undo", requireAdmin, (req, res) => {
+  const event = req.body && req.body.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.undoSheetOp(req.params.id, event);
+  if (r && r.error) return res.status(400).json(r);
+  res.json(r);
+});
+app.post("/api/tournaments/:id/bracket/sheet/confirm", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (!b.event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.confirmSheet(req.params.id, b.event, { by: b.by || "", reason: b.reason || "", force: !!b.force });
+  if (r && r.needs_force) return res.status(400).json(r);
+  if (r && r.error) return res.status(r.ongoing ? 403 : 400).json(r);
+  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, b.event) });
 });
 
 app.put("/api/tournaments/:id/court-layout", requireAdmin, (req, res) => {

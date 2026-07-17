@@ -3759,7 +3759,9 @@ function addBracketSeed(tournamentId, event, opts) {
   let leaves = (opts.side === "bottom") ? existing.concat(seedRegion) : seedRegion.concat(existing);
   while (leaves.length < size) leaves.push(null);   // BYE で 2^k に
   // fixedLeaves で配置を凍結して再構築(既存の組み合わせ保持・自動進行はしない=確認後に進行開始)
-  return generateBracket(tournamentId, event, { regenerate: true, force: true, fixedLeaves: leaves, no_auto_advance: true });
+  const _r = generateBracket(tournamentId, event, { regenerate: true, force: true, fixedLeaves: leaves, no_auto_advance: true });
+  if (_r && !_r.error && !opts._fromSheet) markSheetDirty(tournamentId, event);   // 旧経路の再構築=シートとズレる
+  return _r;
 }
 
 // トーナメント表で既存の選手を「シードに繰り上げ」る(クリックした枠の選手を、登場回戦Rのシードとして
@@ -3823,7 +3825,9 @@ function rebuildSeededBracket(tournamentId, event, opts) {
     leaves = Lh.concat(Rh);
   }
   // no_auto_advance は付けない=BYE自動進行でシードが登場回戦の枠まで上がる(表示が紙どおりになる)。
-  return generateBracket(tournamentId, event, { regenerate: true, force: true, fixedLeaves: leaves });
+  const _r = generateBracket(tournamentId, event, { regenerate: true, force: true, fixedLeaves: leaves });
+  if (_r && !_r.error && !opts._fromSheet) markSheetDirty(tournamentId, event);   // 旧経路の再構築=シートとズレる
+  return _r;
 }
 
 // 1ペア(entrant)の登場回戦を設定し、紙順を保ったまま再構築する。
@@ -10202,6 +10206,7 @@ function swapBracketSlots(tournamentId, event, a, b, opts) {
   //   進行開始後(実戦の結果あり)は従来どおり、入替で生じたBYEを繰り上げる。
   if (eventResultCount(tournamentId, event) > 0) autoAdvanceByes(tournamentId, event);
   recordOp(tournamentId, "swap_slot", `選手の位置入替(${event})`, beforeRows.map(r => r.id), beforeRows);
+  markSheetDirty(tournamentId, event);   // 旧経路の編集=確定シートとズレる(共存フック)
   return { success: true };
 }
 
@@ -10243,6 +10248,7 @@ function swapBracketMatches(tournamentId, event, posA, posB, opts) {
   // 入替で「実選手 vs BYE」が生じうるが、進行開始後のみ自動繰り上げ(編集フェーズは自由入替を優先)。
   if (eventResultCount(tournamentId, event) > 0) autoAdvanceByes(tournamentId, event);
   recordOp(tournamentId, "swap_match", `試合まるごと入替(${event})`, beforeRows.map(r => r.id), beforeRows);
+  markSheetDirty(tournamentId, event);   // 旧経路の編集(共存フック)
   return { success: true };
 }
 
@@ -10337,6 +10343,7 @@ function relinkBracketMatch(tournamentId, event, matchId, targetMatchId, targetS
   recordOp(tournamentId, "relink_match",
     `進出先を組み替え(${event}): ${A.match_label || A.id} → ${TB.match_label || TB.id}のslot${slot}`,
     beforeRows.map(r => r.id), beforeRows);
+  markSheetDirty(tournamentId, event);   // 旧経路の編集(共存フック)
   return { success: true };
 }
 
@@ -10400,6 +10407,7 @@ function setBracketSlot(tournamentId, event, pos, slot, data) {
   });
   tx();
   recordOp(tournamentId, "set_slot", `枠の設定(${event})`, beforeRows.map(r => r.id), beforeRows);
+  markSheetDirty(tournamentId, event);   // 旧経路の編集(共存フック。place/DB検索経由もここを通る)
   return { success: true };
 }
 
