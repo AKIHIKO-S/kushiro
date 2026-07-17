@@ -5483,17 +5483,22 @@ const A = {
      const members = (e.team_members && e.team_members.length)
        ? h("span", { className: "text-xs text-sub", style: { display: "block", fontWeight: 400 } }, e.team_members.join("、")) : null;
      // 氏名: ダブルスは選手1/選手2を別の行にし、各自のふりがなを添える(相方名の二重表示・
-     // ふりがな取り違えを解消。オーナー要望 2026-07-17)。連携済みは名前に緑ドット。
-     const nameLine = (nm, furi, linked) => h("div", {},
+     // ふりがな取り違えを解消。オーナー要望 2026-07-17)。連携済みは緑●、未連携は「連携」ボタン。
+     const isTeamEntry = (e.team_members && e.team_members.length) || /団体|チーム/.test(e.entry_event || "");
+     const nameLine = (nm, furi, linked, isPartner) => h("div", {},
        linked ? h("span", { title: "選手DB連携済み", style: { color: "#16a34a", marginRight: "3px", fontSize: "11px" } }, "●") : null,
        nm || "?",
-       furi ? h("span", { className: "text-xs text-sub", style: { fontWeight: 400, marginLeft: "4px" } }, `(${furi})`) : null);
+       furi ? h("span", { className: "text-xs text-sub", style: { fontWeight: 400, marginLeft: "4px" } }, `(${furi})`) : null,
+       (!linked && !isTeamEntry && (nm && nm !== "?"))
+         ? h("button", { className: "btn btn-sm btn-ghost", style: { marginLeft: "6px", padding: "1px 7px", fontSize: "10.5px" },
+             title: "選手データベースを検索して連携、または新規登録", onClick: () => A.openEntrantLinkDialog(e, !!isPartner, load) }, "連携")
+         : null);
      const nameCell = (e.is_doubles && e.partner_name)
        ? h("td", { className: "font-bold" },
-           nameLine(e.p1_name || e.name, e.furigana, !!e.player_id),
-           nameLine(e.partner_name, e.partner_furigana, !!e.partner_player_id),
+           nameLine(e.p1_name || e.name, e.furigana, !!e.player_id, false),
+           nameLine(e.partner_name, e.partner_furigana, !!e.partner_player_id, true),
            members)
-       : h("td", { className: "font-bold" }, nameLine(e.p1_name || e.name, e.furigana, !!e.player_id), members);
+       : h("td", { className: "font-bold" }, nameLine(e.p1_name || e.name, e.furigana, !!e.player_id, false), members);
      // 所属: ダブルスは選手1/選手2の所属を別々に必ず表記
      const teamCell = (e.is_doubles && e.partner_name)
        ? h("td", { className: "text-xs" },
@@ -7290,6 +7295,70 @@ const A = {
  },
 
  newPlayer() { A.editPlayer(null); },
+
+ // 申込一覧から、未連携の選手を選手DBに連携する(検索して選ぶ or 新規登録して連携)。
+ // entrant=対象の申込, isPartner=ダブルスの相方側か, reload=一覧再描画関数。
+ async openEntrantLinkDialog(entrant, isPartner, reload) {
+   const name = isPartner ? (entrant.partner_name || "") : (entrant.p1_name || entrant.name || "");
+   const team = isPartner ? (entrant.partner_team || "") : (entrant.team || "");
+   const furi = isPartner ? (entrant.partner_furigana || "") : (entrant.furigana || "");
+   const link = async (playerId) => {
+     try {
+       const r = await api.put(`/api/entrants/${entrant.id}/link`, { player_id: playerId, is_partner: isPartner });
+       if (r && r.error) return toast(r.error, "err");
+       toast("選手DBに連携しました", "ok");
+       document.querySelector(".modal-bg")?.remove();
+       if (typeof reload === "function") await reload();
+     } catch (e) { toast("連携に失敗: " + e.message, "err"); }
+   };
+   // 選手DB一覧を取得(氏名/所属/ふりがなで絞り込み)
+   let players = [];
+   try {
+     const list = await api.get("/api/players");
+     players = Array.isArray(list) ? list : (list && list.players) || [];
+   } catch (e) {}
+   const listBox = h("div", { style: { maxHeight: "300px", overflow: "auto", border: "1px solid var(--border)",
+     borderRadius: "6px", marginTop: "6px", background: "#fff" } });
+   const searchInput = h("input", { className: "input", placeholder: "氏名・所属・ふりがなで絞り込み…", value: name });
+   const renderList = () => {
+     const q = (searchInput.value || "").trim().toLowerCase();
+     clear(listBox);
+     const items = (q ? players.filter(p => [(p.name || ""), (p.team || ""), (p.furigana || "")].join(" ").toLowerCase().includes(q)) : players).slice(0, 60);
+     if (!items.length) { listBox.appendChild(h("div", { style: { padding: "12px", color: "var(--sub)" } }, "該当する選手がいません。下の「新規登録して連携」で追加できます。")); return; }
+     items.forEach(p => {
+       const row = h("div", { style: { display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px",
+         borderBottom: "1px solid #f1f5f9", cursor: "pointer" }, onClick: () => link(p.id) },
+         h("span", { style: { fontWeight: 600, flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.name || "（無名）"),
+         p.furigana ? h("span", { className: "text-xs text-sub" }, p.furigana) : null,
+         p.team ? h("span", { className: "text-xs text-sub" }, p.team) : null,
+         p.branch ? h("span", { className: "text-xs", style: { color: "#94a3b8" } }, p.branch) : null);
+       row.addEventListener("mouseenter", () => row.style.background = "#f3f4f6");
+       row.addEventListener("mouseleave", () => row.style.background = "");
+       listBox.appendChild(row);
+     });
+   };
+   searchInput.addEventListener("input", renderList);
+   renderList();
+   const newBtn = h("button", { className: "btn",
+     title: "この申込の氏名・所属で選手DBに新規登録し、そのまま連携します",
+     onClick: async () => {
+       if (!name) return toast("氏名がありません", "err");
+       let np;
+       try { np = await api.post("/api/players", { name, team, furigana: furi, gender: entrant.gender || "male", branch: (isPartner ? entrant.partner_region : entrant.region) || "" }); }
+       catch (e) { return toast("新規登録に失敗: " + e.message, "err"); }
+       if (!np || np.error || !np.id) return toast((np && np.error) || "新規登録に失敗しました", "err");
+       await link(np.id);
+     } }, "新規登録して連携");
+   const body = h("div", {},
+     h("div", { className: "text-sm text-sub", style: { marginBottom: "8px", lineHeight: "1.6" } },
+       "「", h("b", {}, name || "(氏名なし)"), "」", team ? "（" + team + "）" : "", " を選手データベースに連携します。既存の選手を選ぶか、いなければ新規登録してください。"),
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "選手を検索"), searchInput),
+     listBox);
+   openModal("選手DBに連携" + (isPartner ? "（相方）" : ""), body,
+     h("div", { className: "flex gap-2", style: { alignItems: "center" } }, newBtn,
+       h("button", { className: "btn btn-ghost", style: { marginLeft: "auto" },
+         onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる")));
+ },
 
  // 所属名の統一(表記ゆれの一括変更 例: 鳥取中学 → 鳥取中学校)。件数プレビュー→適用。
  async openRenameTeamDialog() {
