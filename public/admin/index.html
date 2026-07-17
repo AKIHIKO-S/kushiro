@@ -5720,6 +5720,134 @@ const A = {
  const editBtn = h("button", { className: "btn btn-sm",
    title: "生成済みのトーナメント表をこの画面で修正(選手を2人タップで入替 / 罫線編集で進出先を組み替え)。編集は即反映",
    onClick: () => renderEditableBracket() }, "生成済みの表を編集");
+
+ // ── 座席表エディタ(案B「割当表正本」P4)。組合せ=「枠番号1..Nに誰を置くか」の一枚の割当表として
+ // 編集し、「確定」した瞬間にトーナメントの木を導出する。外した選手は必ず右の「未配置」に現れる
+ // =選手が消える先が構造上存在しない。旧編集UIと併設(P8で一本化予定)。
+ const renderSheetEditor = async () => {
+   if (activeTab === "all") return toast("種目タブを選んでください", "err");
+   const event = activeTab;
+   previewOpen = true; previewBox.style.display = "block";
+   previewBtn.textContent = "▲ 配置プレビューを閉じる";
+   previewBox.innerHTML = '<div class="text-sub" style="padding:10px">読込中…</div>';
+   const mk = await api.post(`/api/tournaments/${t.id}/bracket/sheet/draft`, { event });
+   if (mk && mk.error) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + esc(mk.error) + '</div>'; return; }
+   let sel = null;   // {kind:'seat', pos} | {kind:'unplaced', entrant_id, name}
+   const render = async () => {
+     let st;
+     try { st = await api.get(`/api/tournaments/${t.id}/bracket/sheet?event=` + encodeURIComponent(event)); }
+     catch (e) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + esc(e.message || String(e)) + '</div>'; return; }
+     const draft = st.draft;
+     if (!draft) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">下書きがありません</div>'; return; }
+     const entName = new Map();
+     try {
+       (await api.get(`/api/tournaments/${t.id}/entrants?event=` + encodeURIComponent(event)))
+         .forEach(e => entName.set(e.id, { name: e.display_name || e.name || "", team: e.team || "" }));
+     } catch (e) {}
+     const send = async (ops) => {
+       const r = await api.post(`/api/tournaments/${t.id}/bracket/sheet/ops`, { event, base_hash: draft.sheet_hash, ops });
+       if (r && r.conflict) { toast(r.error || "他の端末が先に編集しました。読み込み直します", "err"); sel = null; await render(); return false; }
+       if (r && r.error) { toast(r.error, "err"); return false; }
+       sel = null; await render(); return true;
+     };
+     clear(previewBox);
+     // 状態バッジ+操作列
+     const badge = st.dirty
+       ? h("span", { style: { background: "#fef3c7", color: "#92400e", fontWeight: 700, fontSize: "12px", padding: "3px 10px", borderRadius: "999px" } }, "要再確定(旧方式の編集とズレあり)")
+       : st.confirmed
+         ? h("span", { style: { background: "#dcfce7", color: "#166534", fontWeight: 700, fontSize: "12px", padding: "3px 10px", borderRadius: "999px" } }, "確定 第" + st.confirmed.rev_no + "版")
+         : st.legacy_review
+           ? h("span", { style: { background: "#fee2e2", color: "#b91c1c", fontWeight: 700, fontSize: "12px", padding: "3px 10px", borderRadius: "999px" } }, "旧配線(要確認)")
+           : h("span", { style: { background: "#e0e7ff", color: "#3730a3", fontWeight: 700, fontSize: "12px", padding: "3px 10px", borderRadius: "999px" } }, "下書き(未確定)");
+     const undoB = h("button", { className: "btn btn-sm btn-ghost", onClick: async () => {
+       const r = await api.post(`/api/tournaments/${t.id}/bracket/sheet/undo`, { event });
+       if (r && r.error) return toast(r.error, "err");
+       toast("取り消しました: " + (r.undone || ""), "ok"); sel = null; await render();
+     } }, "↶ 取り消す");
+     const confirmB = h("button", { className: "btn btn-sm", style: { background: "#166534", color: "#fff", fontWeight: 700 },
+       onClick: async () => {
+         let r = await api.post(`/api/tournaments/${t.id}/bracket/sheet/confirm`, { event, by: "" });
+         if (r && r.needs_force) {
+           if (!confirm(r.error + "\n\n本当に作り直しますか？")) return;
+           r = await api.post(`/api/tournaments/${t.id}/bracket/sheet/confirm`, { event, by: "", force: true });
+         }
+         if (r && r.error) return toast(r.error, "err");
+         toast("第" + r.rev_no + "版として確定し、トーナメント表を作りました", "ok");
+         sel = null; try { await load(); } catch (e) {} await render();
+       } }, "この組合せで確定して表を作る");
+     previewBox.appendChild(h("div", { style: { display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } },
+       h("b", { style: { fontSize: "13.5px" } }, "割当表(座席表)"), badge, h("span", { style: { flex: "1 0 auto" } }), undoB, confirmB));
+     previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "8px", lineHeight: "1.6" } },
+       "枠を1つ選んでから別の枠を押すと入れ替わります。右の「未配置」の選手を選んでから枠を押すとそこに入ります。外した選手は必ず未配置に残ります(消えません)。表とアプリの対戦カードは「確定」した瞬間にこの割当表から作られます。"));
+     // 本体: 左=枠リスト / 右=未配置
+     const seatRow = (s) => {
+       const info = s.entrant_id ? entName.get(s.entrant_id) : null;
+       const isSel = sel && sel.kind === "seat" && sel.pos === s.pos;
+       const row = h("div", { style: {
+         display: "flex", gap: "8px", alignItems: "baseline", padding: "6px 10px",
+         borderBottom: "1px solid #f1efec", cursor: "pointer", borderRadius: "6px",
+         background: isSel ? "#fff7e6" : "transparent",
+         outline: isSel ? "2px solid #d97706" : "none",
+       }, onClick: async () => {
+         if (sel && sel.kind === "unplaced") { await send([{ op: "place", pos: s.pos, entrant_id: sel.entrant_id }]); return; }
+         if (sel && sel.kind === "seat") {
+           if (sel.pos === s.pos) { sel = null; await render(); return; }
+           await send([{ op: "swap", a: sel.pos, b: s.pos }]); return;
+         }
+         sel = { kind: "seat", pos: s.pos }; await render();
+       } },
+         h("span", { style: { color: "#9ca3af", fontSize: "11.5px", minWidth: "34px", fontVariantNumeric: "tabular-nums" } }, String(s.pos + 1)),
+         info
+           ? h("span", { style: { fontWeight: 600, fontSize: "13.5px" } }, info.name,
+               info.team ? h("span", { style: { fontWeight: 400, color: "#78716c", fontSize: "11.5px", marginLeft: "6px" } }, info.team) : null)
+           : h("span", { style: { color: "#c8c3ba", fontSize: "13px" } }, "(空き)"),
+         s.entry_round > 1 ? h("span", { style: { marginLeft: "auto", background: "#fef3c7", color: "#92400e", fontSize: "11px", fontWeight: 700, padding: "1px 8px", borderRadius: "999px" } }, s.entry_round + "回戦から") : null);
+       return row;
+     };
+     const seatCol = h("div", { style: { flex: "1 1 340px", minWidth: "300px", border: "1px solid #e7e5e4", borderRadius: "10px", padding: "6px", maxHeight: "460px", overflow: "auto", background: "#fff" } },
+       ...draft.seats.map(seatRow));
+     const unplacedCol = h("div", { style: { flex: "0 1 240px", minWidth: "200px" } },
+       h("div", { style: { fontSize: "12px", fontWeight: 700, color: "#78716c", margin: "2px 0 6px" } },
+         "未配置(" + st.unplaced.length + "名)"),
+       ...(st.unplaced.length ? st.unplaced.map(u => {
+         const isSel = sel && sel.kind === "unplaced" && sel.entrant_id === u.id;
+         return h("div", { style: { padding: "6px 10px", border: "1px dashed #d6d3ce", borderRadius: "8px", marginBottom: "6px", cursor: "pointer", fontSize: "13px", background: isSel ? "#fff7e6" : "#faf9f7", outline: isSel ? "2px solid #d97706" : "none" },
+           onClick: async () => {
+             if (isSel) { sel = null; await render(); return; }
+             sel = { kind: "unplaced", entrant_id: u.id, name: u.name }; await render();
+           } }, h("b", {}, u.name), u.team ? h("span", { className: "text-xs text-sub", style: { marginLeft: "6px" } }, u.team) : null);
+       }) : [h("div", { className: "text-xs text-sub" }, "全員配置済みです")]));
+     previewBox.appendChild(h("div", { style: { display: "flex", gap: "14px", flexWrap: "wrap", alignItems: "flex-start" } }, seatCol, unplacedCol));
+     // 選択バー(下部): 外す・登場回戦・やめる
+     if (sel && sel.kind === "seat") {
+       const s = draft.seats[sel.pos] || {};
+       const erSel = h("select", { className: "input input-sm", style: { width: "120px" } },
+         ...[1, 2, 3, 4, 5, 6].map(rr => h("option", { value: String(rr), selected: rr === (s.entry_round || 1) ? "" : null },
+           rr === 1 ? "1回戦(通常)" : rr + "回戦から")));
+       erSel.addEventListener("change", () => send([{ op: "set_entry_round", pos: sel.pos, entry_round: parseInt(erSel.value) }]));
+       previewBox.appendChild(h("div", { style: { position: "sticky", bottom: "8px", marginTop: "10px", background: "#fff",
+         border: "1.5px solid #d97706", borderRadius: "10px", padding: "8px 12px", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", zIndex: 5 } },
+         h("b", { style: { fontSize: "13px" } }, "枠" + (sel.pos + 1) + "を選択中"),
+         h("span", { className: "text-xs text-sub" }, "別の枠を押すと入れ替え / 未配置に移すなら「外す」"),
+         s.entrant_id ? erSel : null,
+         s.entrant_id ? h("button", { className: "btn btn-sm btn-ghost", onClick: () => send([{ op: "clear", pos: sel.pos }]) }, "外す(未配置へ)") : null,
+         h("span", { style: { flex: "1 0 auto" } }),
+         h("button", { className: "btn btn-sm btn-ghost", onClick: async () => { sel = null; await render(); } }, "やめる")));
+     } else if (sel && sel.kind === "unplaced") {
+       previewBox.appendChild(h("div", { style: { position: "sticky", bottom: "8px", marginTop: "10px", background: "#fff",
+         border: "1.5px solid #166534", borderRadius: "10px", padding: "8px 12px", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", zIndex: 5 } },
+         h("b", { style: { fontSize: "13px" } }, "「" + (sel.name || "") + "」を選択中"),
+         h("span", { className: "text-xs text-sub" }, "入れたい枠を押してください(空き枠でも選手のいる枠でも可。いた選手は未配置へ)"),
+         h("span", { style: { flex: "1 0 auto" } }),
+         h("button", { className: "btn btn-sm btn-ghost", onClick: async () => { sel = null; await render(); } }, "やめる")));
+     }
+   };
+   await render();
+ };
+ const sheetBtn = h("button", { className: "btn btn-sm",
+   style: { background: "#1c3a2e", color: "#fff" },
+   title: "組合せを「枠番号に誰を置くか」の割当表として編集し、確定した瞬間に表を作ります。外した選手は必ず未配置に残るので消えません",
+   onClick: () => renderSheetEditor() }, "割当表で編集(新)");
  // トーナメント表だけ全種目一括削除(名簿=出場者は残す)。オーナー要望 2026-07-17。
  // 既存の「出場者を一括削除」(名簿ごと消す)とは逆=表だけ消して名簿は生かす。
  const clearBracketsBtn = h("button", { className: "btn btn-sm btn-ghost",
@@ -5742,7 +5870,7 @@ const A = {
      await load();
    } }, "表を全削除（名簿は残す）");
  // メニュー(生成/編集/プレビュー/表削除/出場者削除)は最上部に置く(オーナー要望 2026-07-17)。
- const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } }, genBtn, editBtn, previewBtn, clearBracketsBtn, bulkDelBtn);
+ const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } }, genBtn, sheetBtn, editBtn, previewBtn, clearBracketsBtn, bulkDelBtn);
  const body = h("div", {}, summary, compareBar, qualityBar, tabStrip, btnBar, previewBox, filterBar, ssNote, tableWrap);
  if (opts && opts.panel) {
    // 専用ページ(タブ)描画: モーダルを開かず、高さ制限も外して画面全体で見せる
