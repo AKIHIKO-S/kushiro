@@ -4064,8 +4064,14 @@ function getSheetState(tournamentId, event) {
   const unplaced = entrantStmts.listByEvent.all(tournamentId, event)
     .filter(e => !e.is_bye && !placed.has(e.id))
     .map(e => ({ id: e.id, name: e.display_name || e.name, team: e.team || "", entry_round: parseInt(e.entry_round) || 1 }));
-  return { draft: parse(draft), confirmed: parse(confirmed), legacy_review: parse(legacy), dirty, unplaced,
+  const out = { draft: parse(draft), confirmed: parse(confirmed), legacy_review: parse(legacy), dirty, unplaced,
     last_print: lastPrint };
+  // 確定前の差分(「確定するとこう変わる」): 下書きと最新確定版の両方があるときだけ。
+  if (out.draft && out.confirmed) {
+    try { out.diff = _sheetDiff({ size: out.confirmed.size, seats: out.confirmed.seats },
+      { size: out.draft.size, seats: out.draft.seats }); } catch (e) {}
+  }
+  return out;
 }
 
 // 出力履歴を記録する(kind: large_print/xlsx/match_cards等)。呼ぶのは管理画面の明示的な

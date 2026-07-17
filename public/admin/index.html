@@ -5719,7 +5719,7 @@ const A = {
  };
  const editBtn = h("button", { className: "btn btn-sm",
    title: "生成済みのトーナメント表をこの画面で修正(選手を2人タップで入替 / 罫線編集で進出先を組み替え)。編集は即反映",
-   onClick: () => renderEditableBracket() }, "生成済みの表を編集");
+   onClick: () => renderEditableBracket() }, "生成済みの表を編集(旧)");
 
  // ── 座席表エディタ(案B「割当表正本」P4)。組合せ=「枠番号1..Nに誰を置くか」の一枚の割当表として
  // 編集し、「確定」した瞬間にトーナメントの木を導出する。外した選手は必ず右の「未配置」に現れる
@@ -5782,8 +5782,26 @@ const A = {
          toast("第" + r.rev_no + "版として確定し、トーナメント表を作りました", "ok");
          sel = null; try { await load(); } catch (e) {} await render();
        } }, "この組合せで確定して表を作る");
+     // Excel導線(P4): 出力=管理DL(先頭タブが割当表シート)。取込=下書きへ反映(差分パネルで検収)。
+     const xlOutB = h("button", { className: "btn btn-sm btn-ghost",
+       title: "先頭タブ「割当表(編集用)」を直して、そのまま取込できます",
+       onClick: () => A.downloadAuthedFile(`/api/tournaments/${t.id}/bracket/export.xlsx?event=${encodeURIComponent(event)}`, `トーナメント表_${event}.xlsx`) }, "Excelへ出力");
+     const xlInB = h("button", { className: "btn btn-sm btn-ghost", onClick: () => sheetImportXlsx() }, "Excelから取込");
      previewBox.appendChild(h("div", { style: { display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } },
-       h("b", { style: { fontSize: "13.5px" } }, "割当表(座席表)"), badge, h("span", { style: { flex: "1 0 auto" } }), undoB, confirmB));
+       h("b", { style: { fontSize: "13.5px" } }, "割当表(座席表)"), badge, h("span", { style: { flex: "1 0 auto" } }), xlOutB, xlInB, undoB, confirmB));
+     // 確定前の差分バー: 「確定するとこう変わる」を最新確定版との比較で見せる(空なら出さない)。
+     const df = st.diff;
+     if (df && (df.moves.length + df.added.length + df.removed.length) > 0) {
+       const lines = [].concat(
+         df.moves.map(s => "移動: " + s),
+         df.added.map(s => "入る: " + s),
+         df.removed.map(s => "外れる: " + s));
+       previewBox.appendChild(h("div", { style: { marginBottom: "8px", padding: "8px 12px", background: "#eef6ee",
+         border: "1px solid #bbdcbb", borderRadius: "8px", fontSize: "12.5px", lineHeight: "1.7" } },
+         h("b", { style: { color: "#166534" } }, "確定すると第" + (st.confirmed.rev_no + 1) + "版でこう変わります(" + lines.length + "件): "),
+         h("div", {}, ...lines.slice(0, 12).map(s => h("div", {}, s)),
+           lines.length > 12 ? h("div", { className: "text-xs text-sub" }, "ほか" + (lines.length - 12) + "件") : null)));
+     }
      // 再印刷の案内(print_log=出力履歴にすぎない。掲示中の紙が何版かは目視確認が前提)。
      if (st.confirmed && !st.dirty) {
        const lp = st.last_print;
@@ -5862,6 +5880,55 @@ const A = {
          h("button", { className: "btn btn-sm btn-ghost", onClick: async () => { sel = null; await render(); } }, "やめる")));
      }
    };
+   // Excel取込(P4): dry_runの差分・警告をエディタ内の検収パネルで見せてから下書きへ反映する
+   // (ネイティブconfirmは使わない)。反映後の確定は通常フロー(差分バー→確定ボタン)。
+   const sheetImportXlsx = () => {
+     if (!api.adminKey && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+       return toast("管理キーが必要です（管理設定で入力）", "err");
+     }
+     const inp = document.createElement("input");
+     inp.type = "file"; inp.accept = ".xlsx";
+     inp.onchange = async () => {
+       const f = inp.files && inp.files[0]; if (!f) return;
+       const post = async (qs) => {
+         const fd = new FormData(); fd.append("file", f);
+         const resp = await fetch(`/api/tournaments/${t.id}/bracket/import-xlsx${qs || ""}`,
+           { method: "POST", headers: api.adminKey ? { "X-Admin-Key": api.adminKey } : {}, body: fd });
+         return resp.json().catch(() => ({ error: "サーバーからの返事を読み取れませんでした" }));
+       };
+       const pv = await post("?dry_run=1");
+       if (pv.error) return toast(pv.error, "err");
+       const rs = (pv.results || []).find(x => x.event === event) || (pv.results || [])[0];
+       if (!rs) return toast("このファイルに取込対象がありません", "err");
+       if (rs.error) return toast(rs.error, "err");
+       // 検収パネル(エディタ最下部): 差分+警告+[下書きに反映する]
+       const old = previewBox.querySelector("[data-xl-panel]"); if (old) old.remove();
+       const d = rs.diff || { moves: [], added: [], removed: [] };
+       const lines = [].concat(
+         (rs.warnings || []).map(w => "注意: " + w),
+         d.moves.map(s => "移動: " + s), d.added.map(s => "入る: " + s), d.removed.map(s => "外れる: " + s));
+       const panel = h("div", { dataset: { xlPanel: "1" }, style: { marginTop: "10px", padding: "10px 14px",
+         background: "#fff", border: "1.5px solid #166534", borderRadius: "10px" } },
+         h("b", { style: { fontSize: "13px" } }, "Excelの内容(" + (rs.event || event) + "・" + rs.placed + "名配置)"),
+         h("div", { style: { fontSize: "12.5px", lineHeight: "1.7", margin: "6px 0" } },
+           ...(lines.length ? lines.slice(0, 15).map(s => h("div", {}, s)) : [h("div", { className: "text-sub" }, "いまの割当表と同じ内容です(差分なし)")]),
+           lines.length > 15 ? h("div", { className: "text-xs text-sub" }, "ほか" + (lines.length - 15) + "件") : null),
+         h("div", { className: "flex gap-2" },
+           h("button", { className: "btn btn-sm", style: { background: "#166534", color: "#fff", fontWeight: 700 },
+             onClick: async () => {
+               const r = await post("");
+               const rr = (r.results || []).find(x => x.event === (rs.event || event)) || {};
+               if (r.error || rr.error) return toast(r.error || rr.error, "err");
+               toast("下書きに反映しました。内容を確認して「確定」してください", "ok");
+               panel.remove(); sel = null; await render();
+             } }, "下書きに反映する"),
+           h("button", { className: "btn btn-sm btn-ghost", onClick: () => panel.remove() }, "やめる")));
+       previewBox.appendChild(panel);
+       panel.scrollIntoView({ block: "nearest" });
+     };
+     inp.click();
+   };
+
    // 当日修正モード(進行中専用): 表示は確定版。操作は「2枠入替」「補欠差替」の2種だけで、
    // どちらも理由必須・実行すると必ず新版(第N+1版)になり再印刷案内が出る。
    const renderPatchMode = async (st) => {
@@ -5985,7 +6052,7 @@ const A = {
      await load();
    } }, "表を全削除（名簿は残す）");
  // メニュー(生成/編集/プレビュー/表削除/出場者削除)は最上部に置く(オーナー要望 2026-07-17)。
- const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } }, genBtn, sheetBtn, editBtn, previewBtn, clearBracketsBtn, bulkDelBtn);
+ const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } }, sheetBtn, genBtn, editBtn, previewBtn, clearBracketsBtn, bulkDelBtn);
  const body = h("div", {}, summary, compareBar, qualityBar, tabStrip, btnBar, previewBox, filterBar, ssNote, tableWrap);
  if (opts && opts.panel) {
    // 専用ページ(タブ)描画: モーダルを開かず、高さ制限も外して画面全体で見せる
@@ -11165,7 +11232,9 @@ const O = {
      const resp = await fetch(`/api/tournaments/${tid}/bracket/import-xlsx${qs || ""}`, { method: "POST", headers: { "X-Admin-Key": api.adminKey }, body: fd });
      return resp.json().catch(() => ({ error: "サーバーからの返事を読み取れませんでした" }));
    };
-   const summOf = (r) => (r.results || []).map(x => x.error ? `${x.event}: ${x.error}` : `${x.event}: ${x.placed}名配置 / BYE${x.byes}`).join("\n");
+   const summOf = (r) => (r.results || []).map(x => x.error ? `${x.event}: ${x.error}`
+   : x.to_draft ? `${x.event}: ${x.placed}名を下書きに反映(座席表で確認して確定)`
+   : `${x.event}: ${x.placed}名配置 / BYE${x.byes}`).join("\n");
    const pv = await post("?dry_run=1");
    if (pv.error) return toast(pv.error, "err");
    if (!pv.ok) return alert("取込できません:\n\n" + summOf(pv));
