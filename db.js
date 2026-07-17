@@ -1161,12 +1161,23 @@ function getGlobalMatchAverages() {
 }
 
 // 所属(または現カテゴリ文字列)から学年カテゴリを推定。該当なし=null。(#247)
+// 所属名(学校名)から学種カテゴリを判定する。オーナー要望(2026-07-17)で判定を強めに:
+// 正式名称(中学/高校/大学/小学…)に加え、末尾の略字(○○中/○○高/○○大/○○小)も拾う。
+// 略字は【末尾限定】=中間一致にしない。これで「大楽毛/中標津/小樽」等の地名や「田中」等の
+// 氏名を誤って学校と判定するのを避ける(所属欄の末尾に学種略字が付くのが実際の表記のため)。
 function detectSchoolCategory(team, category) {
   const s = String(team || "") + " " + String(category || "");
-  if (/高校|高等学校/.test(s)) return "high";
-  if (/中学/.test(s)) return "middle";
+  // 1) 正式名称(どこにあっても学種が確定する語)を優先
+  if (/高等学校|高校|高等専門|高専/.test(s)) return "high";
+  if (/中学|中等/.test(s)) return "middle";
   if (/小学/.test(s)) return "elementary";
-  if (/大学/.test(s)) return "university";
+  if (/大学/.test(s)) return "university";   // 大学校(防大等)も含む
+  // 2) 略字(所属名の末尾のみ)。全半角空白と末尾のチーム区分マーカー(A)/（1）を落としてから判定。
+  const t = String(team || "").replace(/[\s　]+/g, "").replace(/[（(][A-D0-9][)）]$/, "");
+  if (/高$/.test(t)) return "high";        // ○○高
+  if (/中$/.test(t)) return "middle";       // ○○中
+  if (/大$/.test(t)) return "university";    // ○○大(教育大 等)
+  if (/小$/.test(t)) return "elementary";    // ○○小
   return null;
 }
 const _VALID_CATS = ["elementary", "middle", "high", "university", "general", "individual"];
@@ -1177,19 +1188,42 @@ function _autoCategory(team, cat) {
   if (auto && (c === "general" || !_VALID_CATS.includes(c))) c = auto;
   return c;
 }
-// 既存全選手のカテゴリを所属から一括自動振り分け (#247)
-function normalizePlayerCategories() {
+// 既存全選手のカテゴリを所属から一括自動振り分け (#247)。
+// opts.dry_run=true でプレビュー(変更一覧のみ返し、DBは書き換えない=人が確認してから適用)。
+function normalizePlayerCategories(opts) {
+  opts = opts || {};
   const all = stmts.getPlayers.all();
-  const upd = sqlite.prepare("UPDATE players SET category=? WHERE id=?");
-  let updated = 0;
-  const tx = sqlite.transaction(() => {
-    for (const p of all) {
-      const cat = detectSchoolCategory(p.team, p.category);
-      if (cat && cat !== p.category) { upd.run(cat, p.id); updated++; }
-    }
-  });
+  const changes = [];
+  for (const p of all) {
+    const cat = detectSchoolCategory(p.team, p.category);
+    if (cat && cat !== (p.category || "general"))
+      changes.push({ id: p.id, name: p.name, team: p.team || "", from: p.category || "general", to: cat });
+  }
+  if (opts.dry_run) return { updated: 0, total: all.length, changes };
+  const upd = sqlite.prepare("UPDATE players SET category=?, updated_at=datetime('now','localtime') WHERE id=?");
+  const tx = sqlite.transaction(() => { changes.forEach(c => upd.run(c.to, c.id)); });
   tx();
-  return { updated, total: all.length };
+  return { updated: changes.length, total: all.length, changes };
+}
+
+// 既存全選手の支部名を、取込と同じ正規化ルール(normalizeShibuName: 釧路市→釧路・根室管内→根室
+// ・根釧→釧根 等)で一括整形する。空欄の支部は触らない(データを捏造しない)。
+// opts.dry_run=true でプレビュー。
+function normalizePlayerBranches(opts) {
+  opts = opts || {};
+  const all = stmts.getPlayers.all();
+  const changes = [];
+  for (const p of all) {
+    const cur = (p.branch || "").trim();
+    if (!cur) continue;
+    const norm = normalizeShibuName(cur);
+    if (norm && norm !== cur) changes.push({ id: p.id, name: p.name, from: cur, to: norm });
+  }
+  if (opts.dry_run) return { updated: 0, total: all.length, changes };
+  const upd = sqlite.prepare("UPDATE players SET branch=?, updated_at=datetime('now','localtime') WHERE id=?");
+  const tx = sqlite.transaction(() => { changes.forEach(c => upd.run(c.to, c.id)); });
+  tx();
+  return { updated: changes.length, total: all.length, changes };
 }
 
 // 個人名らしいかをチェック (チーム名・学校名・地名と区別)
@@ -1661,31 +1695,36 @@ function listPlayerMerges(limit = 50) {
 
 function _normName(s) { return String(s == null ? "" : s).replace(/[\s　]+/g, ""); }
 
-// 重複候補を検出 (漢字氏名一致[スペース/表記ゆれ含む] または ふりがな一致 のみに限定。
-// 「漢字1文字違い」は別人(例: 山田太郎/山田次郎)を誤検出するため除外) #275
+// ふりがなの照合キー: カタカナ→ひらがなに統一し、長音符・中黒・空白を除去する。
+// 「ヤマダ」と「やまだ」、「とうおん」と「とーおん」を同じ読みとして一致させる(表記だけ違う同一人物を拾う)。
+function _normFuri(s) {
+  let t = String(s == null ? "" : s);
+  t = t.replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60)); // カタカナ→ひらがな
+  t = t.replace(/[\s　ー・･]+/g, "");                                                    // 空白・長音・中黒除去
+  return t;
+}
+
+// 重複候補を検出。KTTAの掟(候補提示まで・確定は人)に従い、【漢字氏名とふりがなの両方が一致】する
+// 選手だけを高信頼の候補として抽出する(オーナー要望 2026-07-17: 誤統合を避け、ふりがな漢字一致のみ)。
+//   - 漢字1文字違い(山田太郎/山田次郎)は氏名が違うため非検出。
+//   - 同じ読みの別漢字(佐藤/佐東、ともに「さとう」)も氏名が違うため非検出(=別人を出さない)。
+//   - ふりがな未登録の選手は「読みで裏取りできない」ため候補に出さない(recall より precision を優先)。
 function findDuplicatePlayerCandidates() {
   const players = getPlayers();   // match_wins/match_losses/total_achievements を含む
   const slim = p => ({ id: p.id, name: p.name, team: p.team || "", furigana: p.furigana || "",
     gender: p.gender, appearances: p.appearances || 0, wins: p.match_wins || 0,
     losses: p.match_losses || 0, achievements: p.total_achievements || 0,
     created_at: p.created_at || "" });   // 既定の残存者=「古いID(先に登録)」の判定用
+  const byKey = new Map();   // "正規化名|正規化ふりがな" -> [players]
+  players.forEach(p => {
+    const nk = _normName(p.name), fk = _normFuri(p.furigana);
+    if (!nk || !fk || fk.length < 2) return;   // 漢字氏名・ふりがなの両方が必要
+    const key = nk + "|" + fk;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(p);
+  });
   const groups = [];
-  const seen = new Set();
-  const add = (reason, arr) => {
-    if (arr.length < 2) return;
-    const key = arr.map(p => p.id).sort().join(",");
-    if (seen.has(key)) return;
-    seen.add(key);
-    groups.push({ reason, players: arr.map(slim) });
-  };
-  // 1. 正規化名(スペース/全半角除去)が一致するが元表記が異なる
-  const byNorm = new Map();
-  players.forEach(p => { const k = _normName(p.name); if (!k) return; if (!byNorm.has(k)) byNorm.set(k, []); byNorm.get(k).push(p); });
-  byNorm.forEach(arr => { if (arr.length > 1 && new Set(arr.map(p => p.name)).size > 1) add("氏名一致(スペース/表記ゆれ)", arr); });
-  // 2. ふりがな一致 (漢字表記が違う)
-  const byFuri = new Map();
-  players.forEach(p => { const k = _normName(p.furigana); if (!k || k.length < 2) return; if (!byFuri.has(k)) byFuri.set(k, []); byFuri.get(k).push(p); });
-  byFuri.forEach(arr => { if (arr.length > 1 && new Set(arr.map(p => _normName(p.name))).size > 1) add("ふりがな一致", arr); });
+  byKey.forEach(arr => { if (arr.length > 1) groups.push({ reason: "氏名・ふりがな一致", players: arr.map(slim) }); });
   return { count: groups.length, groups };
 }
 
@@ -11149,7 +11188,7 @@ module.exports = {
   createPlayerRequest, getCoachRequests, listPlayerRequests, resolvePlayerRequest, cancelPlayerRequest, countPendingRequests,
   getCoachDashboard, saveCoachSubscription, deleteCoachSubscription, getCoachSubscriptionsForPlayer,
   getAllCoachSubscriptions, createCoachAnnouncement, listCoachAnnouncements, deleteCoachAnnouncement,
-  getGlobalMatchAverages, detectSchoolCategory, normalizePlayerCategories,
+  getGlobalMatchAverages, detectSchoolCategory, normalizePlayerCategories, normalizePlayerBranches,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,
   getTournaments, getTournament, getTournamentMeta, createTournament, updateTournament, deleteTournament,

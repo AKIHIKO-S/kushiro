@@ -1437,7 +1437,7 @@
  <div class="card-title">選手データベース</div>
  <div class="flex gap-2">
  <button class="btn btn-sm btn-ghost" onclick="A.cleanupInvalidPlayers()">チーム名混入を削除</button>
- <button class="btn btn-sm btn-ghost" onclick="A.normalizeCategories()" title="所属に「小学校/中学校/高校/大学」が含まれる選手のカテゴリを自動設定">所属からカテゴリ自動振分</button>
+ <button class="btn btn-sm btn-ghost" onclick="A.openTidyDialog()" title="所属(学校名)からカテゴリを判定し、支部名を正規化。変更内容をプレビューで確認してから一括適用します">支部・カテゴリを整える</button>
  <button class="btn btn-sm btn-ghost" style="background:#fef3c7;color:#78350f;border-color:#fcd34d" onclick="A.openMergeDialog()" title="氏名・ふりがなが近い重複選手を検出して1人に結合(戦績も統合)">重複の結合</button>
  <button class="btn btn-sm" onclick="A.newPlayer()">+ 新規選手</button>
  </div>
@@ -6776,7 +6776,7 @@ const A = {
  body.appendChild(h("div", { className: "text-sm text-sub mb-3", style: { lineHeight: "1.6" } },
  groups.length
  ? `重複の可能性がある ${groups.length} 組を検出しました。各組で「残す選手」を選んで結合してください。戦績・入賞・出場記録は残す選手に統合され、統合元のIDは「統合済み」として残ります（オーナーの「選手マージ履歴」から取り消せます）。`
- : "重複の可能性がある選手は見つかりませんでした。漢字氏名（スペース/表記ゆれを含む）またはふりがなが一致する選手を自動抽出しています。"));
+ : "重複の可能性がある選手は見つかりませんでした。ふりがなと漢字氏名の両方が一致する選手だけを候補に出しています（別人の誤検出を防ぐため。ふりがな未登録の選手は候補に出ません）。"));
  groups.forEach((g, gi) => body.appendChild(A._renderMergeGroup(g, gi)));
  openModal("重複選手の結合", body,
  h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
@@ -7128,11 +7128,60 @@ const A = {
  },
 
  // 所属(校名)からカテゴリ(小/中/高/大)を一括自動振り分け (#247)
- async normalizeCategories() {
-   if (!confirm("所属に「小学校/中学校/高校/大学」が含まれる選手のカテゴリを自動設定します。よろしいですか?")) return;
-   const r = await api.post("/api/players/normalize-categories", {});
-   toast(`${(r && r.updated) || 0}件のカテゴリを自動設定しました`, "ok");
-   await A.reload();
+ // 支部名の正規化 + 所属からカテゴリ判定 を、変更プレビュー付きで一括適用する。
+ // KTTAの掟(候補提示→人が確定)に従い、まず dry_run で変更一覧を見せてから適用する。
+ async openTidyDialog() {
+   let cats, brs;
+   try {
+     [cats, brs] = await Promise.all([
+       api.post("/api/players/normalize-categories", { dry_run: true }),
+       api.post("/api/players/normalize-branches", { dry_run: true }),
+     ]);
+   } catch (e) { return toast("プレビューの取得に失敗: " + e.message, "err"); }
+   const catCh = (cats && cats.changes) || [], brCh = (brs && brs.changes) || [];
+   const catL = (c) => (TT.catLabel ? TT.catLabel(c) : c) || c;
+   const body = h("div", {});
+   body.appendChild(h("div", { className: "text-sm text-sub mb-3", style: { lineHeight: "1.6" } },
+     "所属(学校名)からカテゴリを判定し、支部名を取込と同じルールで正規化します。下の変更内容を確認して「適用する」を押してください。所属が空・判定できない選手は変更しません。"));
+   const section = (title, changes, render) => {
+     const sec = h("div", { style: { marginBottom: "14px" } });
+     sec.appendChild(h("div", { style: { fontWeight: 800, fontSize: "13px", borderBottom: "2px solid #1c1917",
+       paddingBottom: "3px", marginBottom: "6px" } }, title + "（" + changes.length + "件）"));
+     if (!changes.length) { sec.appendChild(h("div", { className: "text-sm text-sub" }, "変更はありません")); return sec; }
+     const list = h("div", { style: { maxHeight: "240px", overflowY: "auto", fontSize: "12.5px" } });
+     changes.slice(0, 300).forEach(c => list.appendChild(render(c)));
+     if (changes.length > 300) list.appendChild(h("div", { className: "text-xs text-sub", style: { padding: "4px 2px" } },
+       "ほか " + (changes.length - 300) + " 件（適用時はすべて反映されます）"));
+     sec.appendChild(list);
+     return sec;
+   };
+   body.appendChild(section("カテゴリの自動振分", catCh, (c) => h("div", { style: { display: "flex", gap: "8px",
+     alignItems: "baseline", padding: "2px 2px", borderBottom: "1px dashed #e2e0db" } },
+     h("span", { style: { fontWeight: 700, minWidth: "110px" } }, c.name),
+     h("span", { className: "text-sub", style: { flex: "1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.team || "(所属なし)"),
+     h("span", {}, catL(c.from) + " → "), h("span", { style: { fontWeight: 700, color: "#c01526" } }, catL(c.to)))));
+   body.appendChild(section("支部名の正規化", brCh, (c) => h("div", { style: { display: "flex", gap: "8px",
+     alignItems: "baseline", padding: "2px 2px", borderBottom: "1px dashed #e2e0db" } },
+     h("span", { style: { fontWeight: 700, minWidth: "110px" } }, c.name),
+     h("span", {}, c.from + " → "), h("span", { style: { fontWeight: 700, color: "#c01526" } }, c.to))));
+   const total = catCh.length + brCh.length;
+   const applyBtn = h("button", { className: "btn", disabled: total ? null : "" ,
+     onClick: async () => {
+       applyBtn.disabled = "";
+       try {
+         const [rc, rb] = await Promise.all([
+           catCh.length ? api.post("/api/players/normalize-categories", {}) : Promise.resolve({ updated: 0 }),
+           brCh.length ? api.post("/api/players/normalize-branches", {}) : Promise.resolve({ updated: 0 }),
+         ]);
+         toast(`適用しました: カテゴリ${(rc && rc.updated) || 0}件 / 支部名${(rb && rb.updated) || 0}件`, "ok");
+         document.querySelector(".modal-bg")?.remove();
+         await A.reload();
+       } catch (e) { toast("適用に失敗: " + e.message, "err"); applyBtn.disabled = null; }
+     } }, total ? `適用する（計${total}件）` : "変更なし");
+   openModal("支部・カテゴリを整える", body,
+     h("div", { className: "flex gap-2", style: { alignItems: "center" } }, applyBtn,
+       h("button", { className: "btn btn-ghost", style: { marginLeft: "auto" },
+         onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる")));
  },
 
  newPlayer() { A.editPlayer(null); },

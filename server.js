@@ -1012,7 +1012,11 @@ app.post("/api/players/cleanup-invalid", requireOwner, (req, res) => {
 });
 // 所属(校名)から小/中/高/大カテゴリを一括自動振り分け (#247)
 app.post("/api/players/normalize-categories", requireAdmin, (req, res) => {
-  res.json(db.normalizePlayerCategories());
+  res.json(db.normalizePlayerCategories({ dry_run: !!(req.body && req.body.dry_run) }));
+});
+// 支部名の一括整形(取込と同じ normalizeShibuName ルール)。dry_run でプレビュー。
+app.post("/api/players/normalize-branches", requireAdmin, (req, res) => {
+  res.json(db.normalizePlayerBranches({ dry_run: !!(req.body && req.body.dry_run) }));
 });
 
 app.delete("/api/players/:id", requireAdmin, (req, res) => {
