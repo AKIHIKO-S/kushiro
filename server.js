@@ -2715,7 +2715,23 @@ function _sendBracketXlsx(req, res) {
       const committed = (db.getDrawLog(req.params.id, req.query.event) || []).find(x => x.status === "committed");
       if (committed) drawMeta = { draw_seed: committed.draw_seed, drawn_by: committed.drawn_by, drawn_at: committed.created_at };
     }
-    const buf = reports.buildBracketXlsx(tournament, matches, entrants, { event: req.query.event || "", draw_meta: drawMeta });
+    // 割当表(編集用)シートと版情報は管理DLのみ(公開DLは印刷用シートだけ)。案B P6。
+    const isAdminDL = !String(req.path || "").includes("/api/public/");
+    let sheetStates = null;
+    if (isAdminDL) {
+      sheetStates = {};
+      const evs = req.query.event ? [req.query.event]
+        : [...new Set(matches.map(m => m.event).filter(Boolean))];
+      evs.forEach(ev => {
+        try {
+          const st = db.getSheetState(req.params.id, ev);
+          if (st.confirmed && !st.dirty) sheetStates[ev] = { rev_no: st.confirmed.rev_no };
+          db.recordPrintLog(req.params.id, ev, "xlsx");   // 管理者の明示DL=出力履歴に記録
+        } catch (e) {}
+      });
+    }
+    const buf = reports.buildBracketXlsx(tournament, matches, entrants,
+      { event: req.query.event || "", draw_meta: drawMeta, include_edit_sheet: isAdminDL, sheetStates });
     const safeName = (tournament.name || "tournament").replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_");
     const evPart = req.query.event ? "_" + String(req.query.event).replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_") : "";
     const filename = encodeURIComponent(`トーナメント表_${safeName}${evPart}.xlsx`);
@@ -2741,6 +2757,27 @@ app.post("/api/tournaments/:id/bracket/import-xlsx", requireAdmin, blockOngoingB
   try {
     const XLSX = require("xlsx");
     const wb = XLSX.readFile(filePath);
+    // 新形式(案B P6): 「割当表(編集用)」シートがあれば優先。編集する面=読む面(視覚シートを直しても
+    // 反映されない従来の自己矛盾を解消)。適用先は下書き=座席表で確認して確定する検収フロー。
+    const editSheet = wb.Sheets["割当表(編集用)"];
+    if (editSheet) {
+      const aoa2 = XLSX.utils.sheet_to_json(editSheet, { header: 1, blankrows: false });
+      if (String((aoa2[0] || [])[0]) === "__KTTA_SHEET__") {
+        const fileTid = String((aoa2[0] || [])[2] || "");
+        if (fileTid && fileTid !== req.params.id) {
+          return res.status(400).json({ error: "このExcelは別の大会のファイルです。この大会から出力し直してください。" });
+        }
+        const hi = aoa2.findIndex(r => (r || [])[0] === "種目");
+        if (hi < 0) return res.status(400).json({ error: "割当表(編集用)シートの見出し行が見つかりません。出力し直してください。" });
+        const rows2 = aoa2.slice(hi + 1).filter(r => r && r.length).map(r => ({
+          event: r[0], pos: r[1], name: r[2], team: r[3], entrant_id: r[4], entry_round: r[5], rev: r[6],
+        }));
+        const preview2 = req.query.dry_run === "1" || req.body?.dry_run === "1" || req.body?.dry_run === "true";
+        const r2 = db.importSheetRows(req.params.id, rows2, { preview: preview2 });
+        if (r2.error) return res.status(400).json(r2);
+        return res.json(r2);   // 下書きへの反映のみ(matches不変)=dirtyフック不要
+      }
+    }
     const sheet = wb.Sheets["_import"];
     if (!sheet) return res.status(400).json({ error: "このExcelには取込用データ(_importシート)がありません。システムが出力したトーナメント表Excelをそのまま使ってください。" });
     const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false });

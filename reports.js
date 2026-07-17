@@ -1049,6 +1049,7 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
   }
 
   const importRows = [];   // ラウンドトリップ取込用(機械可読): [event,bracket_pos,slot,entrant_id,seed,name,team,bye]
+  const sheetRows = [];    // 割当表(編集用)シート: [種目,枠番号(1..N),選手名,所属,選手ID,登場回戦,版]。編集面=取込面(案B P6)
   events.forEach(eventName => {
     const list = byEvent.get(eventName);
     const round1 = list.filter(m => m.bracket_round === 1).sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0));
@@ -1188,6 +1189,7 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
       placeLeaf(leafArr[g], g);
     }
     // _import 用(取込)は正準位置(bye込み)のまま出力=ラウンドトリップ取込互換。
+    // 併せて「割当表(編集用)」シート用の行(1行=1枠・人が読める番号)も同じ走査で作る(案B P6)。
     round1.forEach(m => {
       const p = m.bracket_pos || 0;
       [1, 2].forEach(sk => {
@@ -1197,6 +1199,10 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
         const bye = (!nm || nm === "BYE") ? 1 : 0;
         const seed = (eid != null && seedByEntrant.has(eid)) ? seedByEntrant.get(eid) : "";
         importRows.push([eventName, p, sk, eid || "", seed, bye ? "" : nm, bye ? "" : tm, bye]);
+        const er = (eid != null && entById.has(eid)) ? (parseInt(entById.get(eid).entry_round) || 1) : 1;
+        const sst = (opts.sheetStates || {})[eventName] || null;
+        sheetRows.push([eventName, 2 * p + sk, bye ? "" : nm, bye ? "" : tm, eid || "",
+          er > 1 ? er : "", sst ? sst.rev_no : ""]);
       });
     });
     // ── 山の罫線(勝者横線・縦線・勝者名)をグラフベースで構築 ──
@@ -1390,6 +1396,26 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
     ws["!margins"] = { left: 0.3, right: 0.3, top: 0.45, bottom: 0.4, header: 0.2, footer: 0.2 };
     XLSX.utils.book_append_sheet(wb, ws, (eventName || "表").slice(0, 30));
   });
+
+  // 割当表(編集用)シート: 人が直す面と機械が読む面を同一にする(案B P6。従来は視覚シートを
+  // 直しても取込に反映されない自己矛盾があった)。1行=1枠。選手IDが正(氏名は表示用)。
+  // 先頭タブに置き、ファイル直接印刷の紙が正式掲示物に化けないよう注意書きを常設(偽スタンプ対策)。
+  // 管理用DLのみ(opts.include_edit_sheet)。公開DLには載せない=部外者が古い編集シートを
+  // 取込に回す事故・entrant IDの不用意な流通を構造的に防ぐ(外部検証の要修正)。
+  if (opts.include_edit_sheet && sheetRows.length) {
+    const meta = [
+      ["__KTTA_SHEET__", "v2", tournament.id || "", new Date().toISOString().slice(0, 16).replace("T", " ")],
+      ["この表を直して「割当表の取込」から反映します。選手の入替=選手名と選手IDの行を入れ替える/外す=選手名とIDを消す。枠番号の列は変更しないでください。"],
+      ["このファイルから直接印刷した紙は正式な掲示物ではありません。正式な紙は、アプリで確定してから「印刷・大判」で出してください(版スタンプが入ります)。"],
+      ["種目", "枠番号", "選手名", "所属", "選手ID", "登場回戦", "版"],
+    ];
+    const shWs = XLSX.utils.aoa_to_sheet(meta.concat(sheetRows));
+    shWs["!cols"] = [{ wch: 16 }, { wch: 7 }, { wch: 16 }, { wch: 13 }, { wch: 20 }, { wch: 8 }, { wch: 5 }];
+    XLSX.utils.book_append_sheet(wb, shWs, "割当表(編集用)");
+    // 先頭タブへ移動(オーナーが最初に目にする面=編集面)
+    const i = wb.SheetNames.indexOf("割当表(編集用)");
+    if (i > 0) { wb.SheetNames.splice(i, 1); wb.SheetNames.unshift("割当表(編集用)"); }
+  }
 
   // ラウンドトリップ取込用シート(_import): 手修正後に再取込して『位置だけ』差分更新するための
   // 機械可読データ。視覚チャート(各種目シート)は人間用に残す。編集は禁止(編集はチャート側で)。

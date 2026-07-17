@@ -4227,6 +4227,112 @@ function confirmSheet(tournamentId, event, opts) {
   return { ok: true, rev_no: revNo, sheet_hash: draft.sheet_hash, matches: made };
 }
 
+// シート間の人間可読な差分(所属併記=同定ミスを目で見抜けるように)。案B P6。
+function _sheetDiff(before, after) {
+  const label = (eid) => {
+    const e = entrantStmts.get.get(eid);
+    return e ? (e.display_name || e.name || "?") + (e.team ? "(" + e.team + ")" : "") : "?";
+  };
+  const posOf = (sheet) => {
+    const m = new Map();
+    if (sheet) _canonSeats(sheet.size, sheet.seats).forEach(s => { if (s.entrant_id) m.set(s.entrant_id, s.pos); });
+    return m;
+  };
+  const A = posOf(before), B = posOf(after);
+  const moves = [], added = [], removed = [];
+  B.forEach((pos, eid) => {
+    if (!A.has(eid)) added.push(label(eid) + " → 枠" + (pos + 1));
+    else if (A.get(eid) !== pos) moves.push(label(eid) + ": 枠" + (A.get(eid) + 1) + " → 枠" + (pos + 1));
+  });
+  A.forEach((pos, eid) => { if (!B.has(eid)) removed.push(label(eid) + " (枠" + (pos + 1) + "から外れる=未配置へ)"); });
+  return { moves, added, removed };
+}
+
+// 割当表(編集用)シートの取込(案B P6): 編集する面=機械が読む面。適用先は常に「下書き」で、
+// 確定は座席表で人が行う(検収フロー)。選手同定は entrant_id 優先(安定キー)。ID空欄の行は
+// 種目内で一意な氏名一致のみ解決し、同名複数・不明は具体的な確認リストにして取り込まない。
+// rows: [{event, pos(1始まり), name, team, entrant_id, entry_round, rev}]
+function importSheetRows(tournamentId, rows, opts) {
+  opts = opts || {};
+  const byEvent = {};
+  (rows || []).forEach(r => {
+    const ev = String(r.event || "").trim();
+    if (ev) (byEvent[ev] = byEvent[ev] || []).push(r);
+  });
+  const events = Object.keys(byEvent);
+  if (!events.length) return { error: "取込データに種目がありません" };
+  const results = [];
+  for (const event of events) {
+    const evRows = byEvent[event];
+    const ents = entrantStmts.listByEvent.all(tournamentId, event).filter(e => !e.is_bye);
+    const byId = new Map(ents.map(e => [e.id, e]));
+    const byName = new Map();
+    ents.forEach(e => {
+      const key = normalizeName(e.display_name || e.name || "");
+      if (!key) return;
+      byName.set(key, byName.has(key) ? "DUP" : e);
+    });
+    const problems = [];
+    const seats = [];
+    const seenPos = new Set(), seenEnt = new Set();
+    let maxPos = 0;
+    for (const r of evRows) {
+      const pos1 = parseInt(r.pos);
+      if (!Number.isInteger(pos1) || pos1 < 1) { problems.push("枠番号が不正: " + JSON.stringify(r.pos)); continue; }
+      if (seenPos.has(pos1)) { problems.push("枠" + pos1 + " の行が重複しています"); continue; }
+      seenPos.add(pos1);
+      maxPos = Math.max(maxPos, pos1);
+      const nm = String(r.name || "").trim();
+      const eid = String(r.entrant_id || "").trim();
+      let ent = null;
+      if (eid) {
+        ent = byId.get(eid) || null;
+        if (!ent) { problems.push("枠" + pos1 + ": 選手IDがこの種目の名簿にありません(" + eid.slice(0, 8) + "…)"); continue; }
+      } else if (nm) {
+        const hit = byName.get(normalizeName(nm));
+        if (hit === "DUP") { problems.push("枠" + pos1 + ": 「" + nm + "」は同名が複数いるため選手IDが必要です"); continue; }
+        if (!hit) { problems.push("枠" + pos1 + ": 「" + nm + "」が名簿に見つかりません(先に申込管理で登録)"); continue; }
+        ent = hit;
+      }
+      if (ent) {
+        if (seenEnt.has(ent.id)) { problems.push("「" + (ent.display_name || ent.name) + "」が複数の枠に指定されています"); continue; }
+        seenEnt.add(ent.id);
+        seats.push({ pos: pos1 - 1, entrant_id: ent.id,
+          entry_round: Math.max(1, Math.min(8, parseInt(r.entry_round) || 1)) });
+      }
+    }
+    if (problems.length) {
+      results.push({ event, error: "取込できません: " + problems.slice(0, 6).join(" / ") + (problems.length > 6 ? " ほか" + (problems.length - 6) + "件" : ""), problems });
+      continue;
+    }
+    if (seats.length < 2) { results.push({ event, error: "配置が2名未満です" }); continue; }
+    let size = 2; while (size < maxPos) size *= 2;
+    // stale警告: Excelの版列と現在の確定版を突合(古いファイルの黙った上書きを防ぐ)
+    const conf = sheetStmts.latestConfirmed.get(tournamentId, event);
+    const revIn = parseInt((evRows.find(x => parseInt(x.rev)) || {}).rev) || 0;
+    const warnings = [];
+    if (conf && revIn && revIn < conf.rev_no) {
+      warnings.push("このExcelは第" + revIn + "版から作られています(現在は第" + conf.rev_no + "版)。下の差分をよく確認してください");
+    }
+    const st = getSheetState(tournamentId, event);
+    const base = st.draft || st.confirmed;
+    const diff = _sheetDiff(base ? { size: base.size, seats: base.seats } : null, { size, seats });
+    if (opts.preview) { results.push({ event, preview: true, placed: seats.length, size, warnings, diff }); continue; }
+    const draft = ensureDraftSheet(tournamentId, event);
+    if (draft.error) { results.push({ event, error: draft.error }); continue; }
+    const canon = _canonSeats(size, seats);
+    const tx = sqlite.transaction(() => {
+      sqlite.prepare(`INSERT INTO sheet_log (sheet_id, op_label, before_seats_json) VALUES (?, ?, ?)`)
+        .run(draft.id, "Excel割当表を取込", JSON.stringify(draft.seats));
+      sqlite.prepare(`UPDATE bracket_sheets SET size=?, seats_json=?, sheet_hash=?, source='excel' WHERE id=?`)
+        .run(size, JSON.stringify(canon), sheetHashOf(size, canon), draft.id);
+    });
+    tx();
+    results.push({ event, success: true, placed: seats.length, size, warnings, diff, to_draft: true });
+  }
+  return { ok: results.every(r => r.success || r.preview), results, sheet_flow: true };
+}
+
 // 共存フック: 旧経路(木の直接編集API)が matches を書いたら、確定済みシートを dirty に落とす。
 // dirty=「シートと現物の木が食い違っている(要再確定)」。版スタンプ印刷はP5で保留対象になる。
 function markSheetDirty(tournamentId, event) {
@@ -11956,7 +12062,7 @@ module.exports = {
   sheetHashOf, synthesizeSheetFromMatches, canonicalStructHash, materializeSheet,
   migrateBracketSheets,
   getSheetState, ensureDraftSheet, applySheetOps, undoSheetOp, confirmSheet, markSheetDirty,
-  recordPrintLog,
+  recordPrintLog, importSheetRows,
   setEntrantSeedRound, rebuildSeededBracket,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,
