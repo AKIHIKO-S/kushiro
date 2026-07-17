@@ -448,6 +448,48 @@ const AFFILIATIONS_SCHEMA = `
 `;
 sqlite.exec(AFFILIATIONS_SCHEMA);
 
+// 割当表正本(案B 2026-07-17 / 実装計画v2=scratchpad/20260717_案B実装計画v2.md):
+//   組合せの正本を「種目ごとの 枠番号1..N × 出場(entrant) × 登場回戦」の一枚(bracket_sheets)にし、
+//   matches(木)は確定済みシートからの導出でのみ作る。紙・Excel・アプリを結ぶ鍵=版番号+sheet_hash。
+//   sheet_log=下書きundo用の全席スナップショット / print_log=出力履歴(掲示実態は知らない=参考表示)。
+const BRACKET_SHEETS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS bracket_sheets (
+    id TEXT PRIMARY KEY,
+    tournament_id TEXT NOT NULL,
+    event TEXT NOT NULL,
+    rev_no INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'draft',
+    size INTEGER NOT NULL DEFAULT 0,
+    seats_json TEXT NOT NULL DEFAULT '[]',
+    sheet_hash TEXT NOT NULL DEFAULT '',
+    tree_hash TEXT DEFAULT '',
+    reason TEXT DEFAULT '',
+    confirmed_by TEXT DEFAULT '',
+    source TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    confirmed_at TEXT DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_bracket_sheets_te ON bracket_sheets(tournament_id, event);
+  CREATE TABLE IF NOT EXISTS sheet_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sheet_id TEXT NOT NULL,
+    op_label TEXT DEFAULT '',
+    before_seats_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_sheet_log_sheet ON sheet_log(sheet_id);
+  CREATE TABLE IF NOT EXISTS print_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tournament_id TEXT NOT NULL,
+    event TEXT NOT NULL,
+    sheet_rev INTEGER DEFAULT 0,
+    kind TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_print_log_te ON print_log(tournament_id, event);
+`;
+sqlite.exec(BRACKET_SHEETS_SCHEMA);
+
 // 既存DBにカラムがない場合は追加
 try {
   const pcols = sqlite.prepare("PRAGMA table_info(players)").all();
@@ -3801,6 +3843,120 @@ function setEntrantSeedRound(entrantId, entryRound, opts) {
   // 再構築がガード以外の理由で失敗したら entry_round も元へ戻す(半端な状態を残さない)。
   if (r && r.error) sqlite.prepare("UPDATE entrants SET entry_round=? WHERE id=?").run(prev, entrantId);
   return r;
+}
+
+// ═══ 割当表正本(案B) P1: 正準化・逆算・ID非依存コンパレータ・導出 ═══════════
+// 正典=scratchpad/20260717_案B実装計画v2.md。ここは「シート⇔木」の変換層のみ(API/UIはP3/P4)。
+
+// シートの正準形: 全枠0..size-1を昇順で列挙し、空き枠は entrant_id=null / entry_round=1。
+// 入力の順序・余分なキー・欠落枠に依存しない(同じ配置なら必ず同じJSON→同じハッシュ)。
+function _canonSeats(size, seats) {
+  const byPos = new Map();
+  (seats || []).forEach(s => {
+    if (!s) return;
+    const pos = parseInt(s.pos);
+    if (!Number.isInteger(pos) || pos < 0 || pos >= size) return;
+    byPos.set(pos, {
+      pos,
+      entrant_id: s.entrant_id || null,
+      entry_round: Math.max(1, Math.min(8, parseInt(s.entry_round) || 1)),
+    });
+  });
+  const out = [];
+  for (let p = 0; p < size; p++) out.push(byPos.get(p) || { pos: p, entrant_id: null, entry_round: 1 });
+  return out;
+}
+
+function sheetHashOf(size, seats) {
+  const canon = _canonSeats(size, seats);
+  return crypto.createHash("sha256")
+    .update(JSON.stringify({ size, seats: canon })).digest("hex");
+}
+
+// 現物の木からシートを逆算する(移行と往復一致テストの共通部品)。
+// R1の枠占有(entrant_id)+entrants.entry_round のみを読む。R2以降・結果・match IDは見ない
+// (進行中でもR1スロットは書き換わらないため、当日途中でも正しく逆算できる)。
+function synthesizeSheetFromMatches(tournamentId, event) {
+  const round1 = sqlite.prepare(
+    `SELECT bracket_pos, player1_entrant_id, player2_entrant_id
+     FROM matches WHERE tournament_id=? AND event=? AND bracket_round=1
+     ORDER BY bracket_pos`).all(tournamentId, event);
+  if (!round1.length) return null;
+  const size = round1.length * 2;
+  const erOf = new Map();
+  entrantStmts.listByEvent.all(tournamentId, event).forEach(e => {
+    erOf.set(e.id, Math.max(1, parseInt(e.entry_round) || 1));
+  });
+  const seats = [];
+  round1.forEach(m => {
+    const p = m.bracket_pos || 0;
+    if (m.player1_entrant_id) seats.push({ pos: 2 * p, entrant_id: m.player1_entrant_id, entry_round: erOf.get(m.player1_entrant_id) || 1 });
+    if (m.player2_entrant_id) seats.push({ pos: 2 * p + 1, entrant_id: m.player2_entrant_id, entry_round: erOf.get(m.player2_entrant_id) || 1 });
+  });
+  return { size, seats: _canonSeats(size, seats) };
+}
+
+// ID非依存の構造コンパレータ(移行突合の正)。match ID・R2以降の勝ち上がり氏名・作成時刻に
+// 依存せず、「R1の枠占有 + 配線トポロジ(回戦・位置へ写像) + 登場回戦」だけを正準化してハッシュする。
+// ※既存 bracketRev は match ID と進行中の氏名を材料に含むため移行突合には使えない
+//   (導出し直した木はIDが変わるので、同じ形でも常に不一致になる)。
+function canonicalStructHash(tournamentId, event) {
+  const ms = sqlite.prepare(
+    `SELECT id, bracket_round, bracket_pos, player1_entrant_id, player2_entrant_id,
+            next_match_id, next_slot
+     FROM matches WHERE tournament_id=? AND event=?
+     ORDER BY bracket_round, bracket_pos`).all(tournamentId, event);
+  if (!ms.length) return "";
+  const rpOf = new Map();   // match id → "回戦:位置"
+  ms.forEach(m => rpOf.set(m.id, (m.bracket_round || 1) + ":" + (m.bracket_pos || 0)));
+  const leaves = [];
+  const wiring = [];
+  ms.forEach(m => {
+    if ((m.bracket_round || 1) === 1) {
+      leaves.push([(m.bracket_pos || 0) * 2, m.player1_entrant_id || null]);
+      leaves.push([(m.bracket_pos || 0) * 2 + 1, m.player2_entrant_id || null]);
+    }
+    wiring.push([rpOf.get(m.id),
+      m.next_match_id ? (rpOf.get(m.next_match_id) || "?") + ":" + (m.next_slot || 1) : ""]);
+  });
+  const erOf = {};
+  entrantStmts.listByEvent.all(tournamentId, event).forEach(e => {
+    const er = parseInt(e.entry_round) || 1;
+    if (er > 1) erOf[e.id] = er;   // 既定値1は載せない(正準形を小さく保つ)
+  });
+  return crypto.createHash("sha256")
+    .update(JSON.stringify({ leaves, wiring, entry_rounds: erOf })).digest("hex");
+}
+
+// シート→木の導出(確定のコア)。既存 generateBracket({fixedLeaves}) を流用し、
+// 枠番号どおりのリーフ配列(entrant or null=BYE)に変換して全再生成する。
+// 自動進行はしない(従来どおり「進行開始」で明示発火)。結果入力済みは
+// generateBracket 内の破壊ガード(needs_force)がそのまま効く。
+function materializeSheet(tournamentId, event, sheet, opts) {
+  opts = opts || {};
+  const size = parseInt(sheet && sheet.size) || 0;
+  if (size < 2 || (size & (size - 1)) !== 0) return { error: "枠数が不正です(2の累乗が必要): " + size };
+  const canon = _canonSeats(size, sheet.seats);
+  const seen = new Set();
+  const leaves = new Array(size).fill(null);
+  for (const s of canon) {
+    if (!s.entrant_id) continue;
+    if (seen.has(s.entrant_id)) return { error: "同じ出場が2つの枠に指定されています(枠" + (s.pos + 1) + ")" };
+    seen.add(s.entrant_id);
+    const ent = entrantStmts.get.get(s.entrant_id);
+    if (!ent) return { error: "枠" + (s.pos + 1) + " の出場が見つかりません" };
+    if (ent.tournament_id !== tournamentId || ent.event !== event) {
+      return { error: "枠" + (s.pos + 1) + " の出場はこの種目のものではありません" };
+    }
+    leaves[s.pos] = ent;
+  }
+  if (seen.size < 2) return { error: "配置されている出場が2名未満です" };
+  // 登場回戦はシートが正: entrants.entry_round を先に同期(表示・帳票のキャッシュ)。
+  const erUpd = sqlite.prepare("UPDATE entrants SET entry_round=? WHERE id=?");
+  canon.forEach(s => { if (s.entrant_id) erUpd.run(s.entry_round, s.entrant_id); });
+  return generateBracket(tournamentId, event, {
+    regenerate: true, force: !!opts.force, fixedLeaves: leaves, no_auto_advance: true,
+  });
 }
 
 function generateBracket(tournamentId, event, options) {
@@ -11505,6 +11661,8 @@ module.exports = {
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
   swapBracketMatches, relinkBracketMatch, setBracketSlotFromPlayer, placeEntrantInSlot, setEntrantMemberFromPlayer,
+  // 割当表正本(案B) P1: シート⇔木の変換層
+  sheetHashOf, synthesizeSheetFromMatches, canonicalStructHash, materializeSheet,
   setEntrantSeedRound, rebuildSeededBracket,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,
