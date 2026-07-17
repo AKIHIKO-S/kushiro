@@ -604,3 +604,33 @@ test("(u) 名簿取込→POST /bracket が entrant_ids で生成でき、DELETE 
   const entsAfter = await fetch(BASE + `/api/tournaments/${t.id}/entrants`, { headers: akhead }).then(r => r.json());
   assert.strictEqual(entsAfter.filter(e => e.event === "男子シングルス").length, 6, "名簿は残る(6名)");
 });
+
+test("(y) 進行中(ongoing)の大会は構造編集APIがサーバ側で403になる(2026-07-17 第0段)", async () => {
+  const t = await adminPost("/api/tournaments", { name: "進行中ゲート", date: "2027-01-01" });
+  await adminPut(`/api/tournaments/${t.id}/entry-settings`, { entries_open: 1, event_config: [{ name: "男子シングルス", type: "singles", fee: 0 }] });
+  for (const nm of ["ゲート 一郎", "ゲート 二郎", "ゲート 三郎", "ゲート 四郎"])
+    await adminPost(`/api/tournaments/${t.id}/entrants`, { event: "男子シングルス", name: nm, status: "confirmed" });
+  await adminPost(`/api/tournaments/${t.id}/bracket`, { event: "男子シングルス", regenerate: true });
+  await adminPut(`/api/tournaments/${t.id}`, { status: "ongoing" });
+  // 代表的な構造編集ルートが全て403+ongoing印になる(UIだけでなくサーバが遮断=別端末・API直叩き対策)
+  const denied = [];
+  const post = (p, b) => fetch(BASE + p, { method: "POST", headers: akhead, body: JSON.stringify(b) });
+  let r = await post(`/api/tournaments/${t.id}/bracket/swap`, { event: "男子シングルス", a: { pos: 0, slot: 1 }, b: { pos: 1, slot: 1 } });
+  denied.push(["swap", r.status, await r.json()]);
+  r = await post(`/api/tournaments/${t.id}/bracket/place-entrant`, { event: "男子シングルス", pos: 0, slot: 1, entrant_id: "x" });
+  denied.push(["place-entrant", r.status, await r.json()]);
+  r = await post(`/api/tournaments/${t.id}/bracket/generate`, { event: "男子シングルス", regenerate: true, force: true });
+  denied.push(["generate", r.status, await r.json()]);
+  r = await post(`/api/tournaments/${t.id}/bracket/set-seed-round`, { event: "男子シングルス", entrant_id: "x", entry_round: 3 });
+  denied.push(["set-seed-round", r.status, await r.json()]);
+  r = await fetch(BASE + `/api/tournaments/${t.id}/bracket?event=` + encodeURIComponent("男子シングルス"), { method: "DELETE", headers: akhead });
+  denied.push(["DELETE bracket", r.status, await r.json()]);
+  for (const [name, status, body] of denied) {
+    assert.strictEqual(status, 403, name + " は403: " + JSON.stringify(body).slice(0, 80));
+    assert.ok(body.ongoing, name + " に ongoing 印がある");
+  }
+  // 進行を戻す(scheduled)と編集できる
+  await adminPut(`/api/tournaments/${t.id}`, { status: "scheduled" });
+  const ok = await post(`/api/tournaments/${t.id}/bracket/swap`, { event: "男子シングルス", a: { pos: 0, slot: 1 }, b: { pos: 1, slot: 1 } }).then(x => x.json());
+  assert.ok(!ok.error || ok.needs_force, "scheduled に戻すと編集が通る: " + JSON.stringify(ok).slice(0, 100));
+});

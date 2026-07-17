@@ -1842,9 +1842,27 @@ ${eventSections || '<p class="empty">エントリーがまだありません</p>
 </body></html>`;
 }
 
+// 進行中(ongoing)の大会はトーナメント表の構造を変更できない(2026-07-17)。
+// 従来は管理画面の紙面ビュー(renderPaperBracket)だけのUIガードで、別端末・古いタブ・
+// API直叩き・トーナメント管理グリッドからは進行中でも書き換えられた。サーバ側で一律遮断する。
+// 対象=構造を変えるルート(生成/抽選/取込/入替/枠設定/配線/シード/削除)。進行そのもの
+// (呼出・結果入力・BYE進行)と保護操作(ロック)・氏名同期は対象外。
+function blockOngoingBracketEdit(req, res, next) {
+  try {
+    const t = db.getTournamentMeta(req.params.id);
+    if (t && t.status === "ongoing") {
+      return res.status(403).json({
+        error: "進行中の大会はトーナメント表の構造を変更できません。変更が必要な場合は、大会一覧から進行を一時停止(状態を「予定」へ戻す)してから編集してください。",
+        ongoing: true,
+      });
+    }
+  } catch (e) {}
+  next();
+}
+
 // シード配置でトーナメント生成
 // body: { event, regenerate?, entrant_ids? }
-app.post("/api/tournaments/:id/bracket/generate", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/generate", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const event = req.body?.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
@@ -1861,7 +1879,7 @@ app.post("/api/tournaments/:id/bracket/generate", requireAdmin, (req, res) => {
 //   preview=1(query/body): DBを書かず組合せだけ返す(確定前dry_run)。
 //   確定(preview無し)は実施者名 drawn_by 必須(単一ADMIN_KEYで個人識別できないため最小の説明責任)。
 // 同じ draw_seed を指定すれば同一結果を再現できる(検証・引き直し用)。結果入力済みは force ガード。
-app.post("/api/tournaments/:id/bracket/draw", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/draw", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const event = req.body?.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
   const preview = req.query.preview === "1" || req.body?.preview === true || req.body?.preview === 1;
@@ -1909,11 +1927,11 @@ app.get("/api/tournaments/:id/bracket/preview", requireAdmin, (req, res) => {
   res.json(r);   // { preview:true, event, bracket_size, total_rounds, matches:[...] }
 });
 // 直前の抽選を取り消し、抽選直前のブラケットへ戻す。body: { event }
-app.post("/api/tournaments/:id/bracket/undo-draw", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/undo-draw", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const event = req.body?.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
-  const r = db.undoDraw(req.params.id, event);
+  const r = db.undoDraw(req.params.id, event, { force: !!req.body?.force });
   if (r?.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
@@ -2715,7 +2733,7 @@ app.get("/api/public/tournaments/:id/bracket/export.xlsx", _sendBracketXlsx);
 
 // Excelラウンドトリップ取込: export.xlsx を手修正→再取込して『位置だけ』正本化する(往復ループを閉じる)。
 // _import シート(機械可読)を読み、entrantを消さず差分でブラケットを再構成。dry_run=1でプレビュー・force=1で結果上書き。
-app.post("/api/tournaments/:id/bracket/import-xlsx", requireAdmin, upload.single("file"), (req, res) => {
+app.post("/api/tournaments/:id/bracket/import-xlsx", requireAdmin, blockOngoingBracketEdit, upload.single("file"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "ファイルが添付されていません" });
   const filePath = req.file.path;
   try {
@@ -3159,7 +3177,7 @@ app.get("/api/tournaments/:id/entrants/stats", (req, res) => {
 });
 
 // ═══ 進行管理 (Operations) API ═══════════════════════
-app.post("/api/tournaments/:id/bracket", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const { event, regenerate, player_ids, entrant_ids, force } = req.body || {};
   if (!event) return res.status(400).json({ error: "event が必要です" });
   // 旧・生成口も同時作業ガード対象(regenerate でR1総入替する破壊的操作=draw/swap と同じ競合面)
@@ -3174,11 +3192,13 @@ app.get("/api/tournaments/:id/bracket", (req, res) => {
   res.json(db.getBracket(req.params.id, req.query.event || ""));
 });
 
-app.delete("/api/tournaments/:id/bracket", requireAdmin, (req, res) => {
+app.delete("/api/tournaments/:id/bracket", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const event = req.query.event || req.body?.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
-  res.json(db.deleteEventMatches(req.params.id, event));
+  const r = db.deleteEventMatches(req.params.id, event, { force: !!(req.body?.force || req.query.force) });
+  if (r && r.error) return res.status(400).json(r);
+  res.json(r);
 });
 
 // トーナメント表の構造チェック(生成/抽選/手修正後の整合を機械検証)
@@ -3189,7 +3209,7 @@ app.get("/api/tournaments/:id/bracket/validate", requireAdmin, (req, res) => {
 });
 
 // 作成済みトーナメント表の全削除(全種目一括・名簿は残す)。結果入力済みがあれば needs_force。
-app.delete("/api/tournaments/:id/brackets", requireAdmin, (req, res) => {
+app.delete("/api/tournaments/:id/brackets", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const force = !!(req.body && req.body.force) || req.query.force === "1";
   const r = db.deleteAllBrackets(req.params.id, { force });
   if (r.error) return res.status(r.needs_force ? 409 : 400).json(r);
@@ -4010,7 +4030,7 @@ app.get("/api/public/tournaments/:id/bracket/export", (req, res) => {
   }
 });
 
-app.post("/api/tournaments/:id/bracket/import", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/import", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const _ev = req.body && req.body.event;
   if (_ev && bracketRevStale(req.params.id, _ev, req.body)) return sendBracketConflict(res, req.params.id, _ev);
   const r = db.importBracket(req.params.id, req.body || {});
@@ -4027,7 +4047,7 @@ app.post("/api/tournaments/:id/bracket/lock", requireAdmin, (req, res) => {
   if (r.error) return res.status(400).json(r);
   res.json(r);
 });
-app.post("/api/tournaments/:id/bracket/swap", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/swap", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const { event, a, b } = req.body || {};
   if (!event || !a || !b) return res.status(400).json({ error: "event, a, b が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
@@ -4037,7 +4057,7 @@ app.post("/api/tournaments/:id/bracket/swap", requireAdmin, (req, res) => {
 });
 
 // 1回戦の1スロットを設定 (BYE化/空き/別選手に置換) — 取込ズレ・シードの手動修正
-app.post("/api/tournaments/:id/bracket/set-slot", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/set-slot", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const { event, pos, slot } = req.body || {};
   if (!event || pos == null || slot == null) return res.status(400).json({ error: "event, pos, slot が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
@@ -4048,7 +4068,7 @@ app.post("/api/tournaments/:id/bracket/set-slot", requireAdmin, (req, res) => {
 
 // ⑤ トーナメント表に選手をシードとして追加(上/下に登場回戦Rで合流・既存配置は保持)。
 // body: { event, name|entrant_id, side:'top'|'bottom', entry_round, seed?, team?, force?, base_rev? }
-app.post("/api/tournaments/:id/bracket/add-seed", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/add-seed", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const event = req.body && req.body.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
@@ -4057,7 +4077,7 @@ app.post("/api/tournaments/:id/bracket/add-seed", requireAdmin, (req, res) => {
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
 // 既存選手をシードに繰り上げ(クリックした枠 pos/slot の選手を登場回戦Rのシードとして再配置)。
-app.post("/api/tournaments/:id/bracket/promote-seed", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/promote-seed", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const b = req.body || {};
   if (!b.event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, b.event, b)) return sendBracketConflict(res, req.params.id, b.event);
@@ -4086,7 +4106,7 @@ app.post("/api/tournaments/:id/bracket/resync-names", requireAdmin, (req, res) =
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
 // ダブルスのペア構成を組み替え(2ペアの相方を交換)。body: { event, a_entrant_id, b_entrant_id, base_rev }
-app.post("/api/tournaments/:id/bracket/swap-partner", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/swap-partner", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const b = req.body || {};
   if (!b.event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, b.event, b)) return sendBracketConflict(res, req.params.id, b.event);
@@ -4095,7 +4115,7 @@ app.post("/api/tournaments/:id/bracket/swap-partner", requireAdmin, (req, res) =
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, b.event) });
 });
 // 整合性チェック(ダブルス並び): 種目内の全ダブルスの選手1↔選手2を一括入替。body: { event, base_rev }
-app.post("/api/tournaments/:id/bracket/swap-doubles-order", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/swap-doubles-order", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const event = req.body && req.body.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
@@ -4104,7 +4124,7 @@ app.post("/api/tournaments/:id/bracket/swap-doubles-order", requireAdmin, (req, 
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
 // 紙どおりのシード: 1ペアの登場回戦を設定し再構築。body: { entrant_id, entry_round, base_rev, force }
-app.post("/api/tournaments/:id/bracket/set-seed-round", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/set-seed-round", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const b = req.body || {};
   const e = db.getEntrant(b.entrant_id);
   if (!e) return res.status(400).json({ error: "エントリーが見つかりません" });
@@ -4114,7 +4134,7 @@ app.post("/api/tournaments/:id/bracket/set-seed-round", requireAdmin, (req, res)
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, e.event) });
 });
 // 試合まるごと入替。body: { event, posA, posB, base_rev }
-app.post("/api/tournaments/:id/bracket/swap-match", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/swap-match", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const event = req.body && req.body.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
@@ -4123,7 +4143,7 @@ app.post("/api/tournaments/:id/bracket/swap-match", requireAdmin, (req, res) => 
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
 // 罫線の自由配線編集: 試合の進出先を組み替える。body: { event, match_id, target_match_id, target_slot, base_rev, force }
-app.post("/api/tournaments/:id/bracket/relink", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/relink", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const b = req.body || {};
   if (!b.event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, b.event, b)) return sendBracketConflict(res, req.params.id, b.event);
@@ -4132,7 +4152,7 @@ app.post("/api/tournaments/:id/bracket/relink", requireAdmin, (req, res) => {
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, b.event) });
 });
 // 選手マスタDBから枠へ(未エントリーは自動で出場追加)。body: { event, pos, slot, player_id, base_rev }
-app.post("/api/tournaments/:id/bracket/set-slot-from-player", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/set-slot-from-player", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const event = req.body && req.body.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
@@ -4141,11 +4161,13 @@ app.post("/api/tournaments/:id/bracket/set-slot-from-player", requireAdmin, (req
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
 // 参加者一覧から枠へ「移動」配置(選んだ選手の元位置を空欄に・元の占有者は未配置に)。
-app.post("/api/tournaments/:id/bracket/place-entrant", requireAdmin, (req, res) => {
+app.post("/api/tournaments/:id/bracket/place-entrant", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const event = req.body && req.body.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
-  const r = db.placeEntrantInSlot(req.params.id, event, req.body.pos, req.body.slot, req.body.entrant_id);
+  // mode:"exchange"=双方配置済みなら2枠交換(誰も未配置にならない) / 既定"move"=移動(元占有者は未配置)
+  const r = db.placeEntrantInSlot(req.params.id, event, req.body.pos, req.body.slot, req.body.entrant_id,
+    { mode: req.body.mode || "move", force: !!req.body.force });
   if (r && r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });

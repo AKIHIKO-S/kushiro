@@ -3768,8 +3768,17 @@ function setEntrantSeedRound(entrantId, entryRound, opts) {
   const e = entrantStmts.get.get(entrantId);
   if (!e) return { error: "エントリーが見つかりません" };
   const R = Math.max(1, Math.min(8, parseInt(entryRound) || 1));
+  // 破壊ガードは entry_round を書き込む「前」に判定する(2026-07-17修正)。
+  // 従来は先に UPDATE していたため、needs_force の確認をキャンセルしても値だけが残り、
+  // 後日の別の再構築(他選手のシード指定等)で「やめたはずの登場回戦」が突然発火していた。
+  const g = _destructiveGuard(e.tournament_id, e.event, opts && opts.force, "シード配置の再構築");
+  if (g) return g;
+  const prev = parseInt(e.entry_round) || 1;
   sqlite.prepare("UPDATE entrants SET entry_round=? WHERE id=?").run(R, entrantId);
-  return rebuildSeededBracket(e.tournament_id, e.event, opts || {});
+  const r = rebuildSeededBracket(e.tournament_id, e.event, opts || {});
+  // 再構築がガード以外の理由で失敗したら entry_round も元へ戻す(半端な状態を残さない)。
+  if (r && r.error) sqlite.prepare("UPDATE entrants SET entry_round=? WHERE id=?").run(prev, entrantId);
+  return r;
 }
 
 function generateBracket(tournamentId, event, options) {
@@ -5258,11 +5267,16 @@ function drawSingleBracket(tournamentId, event, opts) {
 }
 
 // 直前の抽選を取り消し、抽選直前のブラケットへ戻す(抽選専用Undo。op_log/finish系には触れない)。
-function undoDraw(tournamentId, event) {
+function undoDraw(tournamentId, event, opts) {
+  opts = opts || {};
   const row = sqlite.prepare(
     "SELECT * FROM draw_log WHERE tournament_id=? AND event=? AND status='committed' ORDER BY id DESC LIMIT 1"
   ).get(tournamentId, event);
   if (!row) return { error: "取り消せる抽選がありません" };
+  // 2026-07-17: 結果入力済みガードを追加(結果消失の唯一の無防備経路だった)。
+  // 抽選取り消しは当該種目の全 matches を DELETE して抽選前へ戻すため、入力済みの結果も消える。
+  const g = _destructiveGuard(tournamentId, event, opts.force, "抽選を取り消し");
+  if (g) return g;
   let before = {};
   try { before = JSON.parse(row.before_state || "{}"); } catch (e) {}
   const tx = sqlite.transaction(() => {
@@ -7514,7 +7528,12 @@ function getBracket(tournamentId, event) {
 }
 
 // イベントの全試合を削除（ブラケット再生成用）
-function deleteEventMatches(tournamentId, event) {
+// 2026-07-17: 結果入力済みガードを追加。全種目版(deleteAllBrackets)には needs_force があるのに
+// 種目単位版は confirm 1回で確定結果ごと不可逆に消えていた(保護レベルの逆転)。
+function deleteEventMatches(tournamentId, event, opts) {
+  opts = opts || {};
+  const g = _destructiveGuard(tournamentId, event, opts.force, "トーナメント表を削除");
+  if (g) return g;
   opStmts.deleteEventMatches.run(tournamentId, event);
   return { ok: true };
 }
@@ -9952,18 +9971,21 @@ function setBracketSlotFromPlayer(tournamentId, event, pos, slot, playerId) {
       name: player.name, furigana: player.furigana || "", team: player.team || "",
       gender: player.gender || "male", player_id: playerId, status: "confirmed" });
   }
-  // 既存 setBracketSlot を mode:"player" で流用(スロット設定・状態再計算・op_logを一元化)。
-  return setBracketSlot(tournamentId, event, pos, slot,
-    { mode: "player", name: ent.display_name || ent.name, team: ent.team || "",
-      entrant_id: ent.id, player_id: playerId });
+  // placeEntrantInSlot(移動セマンティクス・単一tx)に委譲する(2026-07-17修正)。
+  // 従来は setBracketSlot 直呼びで、選手が既に別の枠にいても旧位置をクリアしなかったため
+  // 同一選手の2枠重複配置が作れてしまっていた(構造チェックまで気づけない)。
+  return placeEntrantInSlot(tournamentId, event, pos, slot, ent.id);
 }
 
-// 参加者一覧から選手を枠へ「移動」する(オーナー要望 2026-07-17)。
-//  - 選んだ選手が既に別の枠にいれば、その【元の枠を空欄にする】(重複配置を作らない)。
-//  - 対象枠に元々いた選手は参照が外れ「未配置」になる(=トーナメントから一旦落とす。entrantは残す)。
-// setBracketSlot を(元位置クリア→対象枠へ設定)の順で呼ぶ。ネストtx不可のため各々が独立tx/op_log
-// (取消は2手=対象枠→元位置クリア の順に戻る)。
-function placeEntrantInSlot(tournamentId, event, pos, slot, entrantId) {
+// 参加者一覧から選手を枠へ配置する(オーナー要望 2026-07-17 / 2026-07-17 原子化+交換対応)。
+//  - mode:"move"(既定) 移動: 選んだ選手の元の枠は空欄・対象枠の元の占有者は「未配置」になる。
+//  - mode:"exchange"  交換: 双方が配置済みなら2枠の占有者を入れ替える(誰も未配置にならない)。
+// かつては(元位置クリア→対象枠へ設定)を2つの独立トランザクションで実行しており、後半が
+// 「進行中の試合は編集できません」等で拒否されると選手がどの枠にも居ない状態で終わっていた
+// (=「選手がどこかに行った」の直接原因)。全体を単一トランザクションで包み、途中失敗は
+// 全て巻き戻す(better-sqlite3 はネストした transaction() を savepoint として扱う)。
+function placeEntrantInSlot(tournamentId, event, pos, slot, entrantId, opts) {
+  opts = opts || {};
   if (!event) return { error: "event が必要です" };
   if (_bracketLocked(tournamentId, event)) return { error: "この種目の表は手動ロック中です。解除してから編集してください。", locked: true };
   if (!entrantId) return { error: "選手が指定されていません" };
@@ -9971,25 +9993,46 @@ function placeEntrantInSlot(tournamentId, event, pos, slot, entrantId) {
   if (!ent) return { error: "参加者が見つかりません" };
   const p = parseInt(pos), s = (parseInt(slot) === 2) ? 2 : 1;
   if (!Number.isInteger(p)) return { error: "位置が不正です" };
-  // 選んだ選手の現在位置(1回戦)を探す
+  // 選んだ選手の現在位置と、対象枠の現在の占有者(1回戦)を調べる
   const round1 = sqlite.prepare(
     "SELECT bracket_pos, player1_entrant_id, player2_entrant_id FROM matches WHERE tournament_id=? AND event=? AND bracket_round=1")
     .all(tournamentId, event);
-  let oldPos = null, oldSlot = null;
+  let oldPos = null, oldSlot = null, targetOccupied = false;
   for (const m of round1) {
-    if (m.player1_entrant_id === entrantId) { oldPos = m.bracket_pos || 0; oldSlot = 1; break; }
-    if (m.player2_entrant_id === entrantId) { oldPos = m.bracket_pos || 0; oldSlot = 2; break; }
+    const mp = m.bracket_pos || 0;
+    if (m.player1_entrant_id === entrantId) { oldPos = mp; oldSlot = 1; }
+    if (m.player2_entrant_id === entrantId) { oldPos = mp; oldSlot = 2; }
+    if (mp === p) {
+      const occ = (s === 1) ? m.player1_entrant_id : m.player2_entrant_id;
+      if (occ && occ !== entrantId) targetOccupied = true;
+    }
   }
   if (oldPos === p && oldSlot === s) return { success: true, noop: true };   // 既にその枠
-  // 1) 元位置を空欄に(既に別の枠にいた場合)
-  if (oldPos != null) {
-    const r1 = setBracketSlot(tournamentId, event, oldPos, oldSlot, { mode: "clear" });
-    if (r1 && r1.error) return r1;
+  // 交換: 双方が配置済みのときは既存の選手入替(swapBracketSlots)に委譲(ツリー不変・原子的)。
+  if (opts.mode === "exchange" && oldPos != null && targetOccupied) {
+    const rs = swapBracketSlots(tournamentId, event,
+      { pos: oldPos, slot: oldSlot }, { pos: p, slot: s }, { force: !!opts.force });
+    return (rs && !rs.error) ? { ...rs, applied: "exchange" } : rs;
   }
-  // 2) 対象枠へ設定(元の占有者は参照が外れて未配置になる)
-  return setBracketSlot(tournamentId, event, p, s,
-    { mode: "player", name: ent.display_name || ent.name, team: ent.team || "",
-      entrant_id: ent.id, player_id: ent.player_id || null });
+  // 移動: (元位置クリア→対象枠へ設定)を単一トランザクションで。内側の setBracketSlot の
+  // transaction は savepoint になり、どちらかが error を返したら例外で全体を巻き戻す。
+  const abort = (r) => { const e = new Error("place_abort"); e._result = r; throw e; };
+  const tx = sqlite.transaction(() => {
+    if (oldPos != null) {
+      const r1 = setBracketSlot(tournamentId, event, oldPos, oldSlot, { mode: "clear" });
+      if (r1 && r1.error) abort(r1);
+    }
+    const r2 = setBracketSlot(tournamentId, event, p, s,
+      { mode: "player", name: ent.display_name || ent.name, team: ent.team || "",
+        entrant_id: ent.id, player_id: ent.player_id || null });
+    if (r2 && r2.error) abort(r2);
+    return { ...r2, applied: "move" };
+  });
+  try { return tx(); }
+  catch (e) {
+    if (e && e._result) return e._result;   // ガードで拒否: 元位置クリアも巻き戻し済み
+    throw e;
+  }
 }
 
 // 既存 entrant のメンバー(本人 or 相方)を、選手マスタDBの選手にリンクして上書きする。

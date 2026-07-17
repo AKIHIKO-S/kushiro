@@ -10857,7 +10857,12 @@ const O = {
  };
  const doUndo = async () => {
    if (!confirm("直前の抽選を取り消し、抽選前のブラケットに戻します。よろしいですか？")) return;
-   const r = await api.post(`/api/tournaments/${tid}/bracket/undo-draw`, { event, base_rev: rdy && rdy.bracket_rev });
+   let r = await api.post(`/api/tournaments/${tid}/bracket/undo-draw`, { event, base_rev: rdy && rdy.bracket_rev });
+   if (r && r.needs_force) {
+     // 結果入力済みガード(2026-07-17): 抽選取り消しは種目の全試合を抽選前へ戻すため結果も消える。
+     if (!confirm(r.error + "\n\n本当に取り消しますか？(入力済みの結果も消えます)")) return;
+     r = await api.post(`/api/tournaments/${tid}/bracket/undo-draw`, { event, force: true, base_rev: rdy && rdy.bracket_rev });
+   }
    if (!r || r.error) return toast((r && r.error) || "取り消せません", "err");
    toast("直前の抽選を取り消しました", "ok");
    document.querySelector(".modal-bg")?.remove();
@@ -13381,19 +13386,40 @@ const O = {
      h("button", { className: "btn btn-sm btn-ghost",
        onClick: () => submit({ mode: "clear" }) }, "空きにする"));
 
-   // 参加者一覧から枠へ「移動」配置(オーナー要望 2026-07-17): 選んだ選手の元位置は空欄に、
-   // 元々この枠にいた選手は未配置に(トーナメントから一旦落とす)。
-   const placeSubmit = async (entrantId, nm) => {
+   // 参加者一覧から枠へ配置(オーナー要望 2026-07-17 / 2026-07-17 交換対応)。
+   // mode:"exchange"=双方配置済みなら2枠の中身を入れ替え(誰も未配置にならない・紙の感覚)
+   // mode:"move"=移動(選んだ選手の元位置は空欄・元々この枠にいた選手は未配置)。
+   const placeSubmit = async (entrantId, nm, mode) => {
      try {
        const r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/place-entrant`,
-         { event, pos, slot, entrant_id: entrantId, base_rev: ctx.getRev() });
+         { event, pos, slot, entrant_id: entrantId, mode: mode || "move", base_rev: ctx.getRev() });
+       if (r && r.needs_force) { toast(r.error || "進行済みの試合が絡むため入れ替えできません", "err"); return; }
        if (r && r.conflict) { toast(r.error || "他の端末で更新されました", "err"); ctx.reload(); return; }
        if (r && r.error) return toast(r.error, "err");
        if (r && r.bracket_rev) ctx.setRev(r.bracket_rev);
-       toast(`「${nm}」をこの枠に入れました` + (currentName && currentName !== "BYE" ? `（元の「${currentName}」は未配置に）` : ""), "ok");
+       if (r && r.applied === "exchange") {
+         toast(`「${nm}」と「${currentName}」の枠を入れ替えました`, "ok");
+       } else {
+         toast(`「${nm}」をこの枠に入れました` + (currentName && currentName !== "BYE" ? `（元の「${currentName}」は未配置に）` : ""), "ok");
+       }
        modal.remove();
        ctx.reload();
      } catch (e) { toast("更新に失敗しました: " + (e.message || e), "err"); }
+   };
+   // 占有枠への配置は「入れ替える(推奨)/未配置にして入れる」を選ばせる(confirm不使用の確認バー方式)。
+   const placeChoiceBox = h("div", {});
+   const showPlaceChoice = (entrantId, nm) => {
+     clear(placeChoiceBox);
+     placeChoiceBox.appendChild(h("div", { style: { marginTop: "8px", padding: "10px 12px",
+       background: "#fff7ed", border: "1.5px solid #fdba74", borderRadius: "8px" } },
+       h("div", { style: { fontSize: "12.5px", marginBottom: "8px", lineHeight: "1.6" } },
+         `この枠には「${currentName}」がいます。「${nm}」をどう入れますか？`),
+       h("div", { className: "flex gap-2", style: { flexWrap: "wrap" } },
+         h("button", { className: "btn btn-sm", style: { background: "#166534", color: "#fff", fontWeight: 700 },
+           onClick: () => placeSubmit(entrantId, nm, "exchange") }, "2人の枠を入れ替える(推奨)"),
+         h("button", { className: "btn btn-sm btn-ghost",
+           onClick: () => placeSubmit(entrantId, nm, "move") }, `「${currentName}」を未配置にして入れる`),
+         h("button", { className: "btn btn-sm btn-ghost", onClick: () => clear(placeChoiceBox) }, "やめる"))));
    };
    // 別の選手に置き換え (出場選手リストから選択)
    const searchInput = h("input", { className: "input", placeholder: "氏名・所属・No. で絞り込み…" });
@@ -13422,7 +13448,11 @@ const O = {
        const row = h("div", { className: "es-row",
          style: { display: "flex", alignItems: "center", gap: "8px",
            padding: "8px 10px", borderBottom: "1px solid #f1f5f9", cursor: "pointer" },
-         onClick: () => placeSubmit(e.id, nm) },
+         onClick: () => {
+           // 対象枠が実選手で占有されているときは交換/移動を選ばせる。空き/BYEなら即配置。
+           if (currentName && currentName !== "BYE") showPlaceChoice(e.id, nm);
+           else placeSubmit(e.id, nm, "move");
+         } },
          e.bracket_number
            ? h("span", { className: "meta-chip", style: { flex: "0 0 auto" } }, "No." + e.bracket_number) : null,
          e.seed
@@ -13474,11 +13504,12 @@ const O = {
      h("div", { className: "modal-section-title", style: { marginTop: "12px" } },
        "参加者一覧からこの枠に入れる"),
      h("div", { className: "text-xs text-sub", style: { marginBottom: "6px", lineHeight: "1.6" } },
-       "選ぶと、その選手をこの枠に入れます。選んだ選手が既に別の枠にいた場合はそこを空欄にし、"
-       + (currentName && currentName !== "BYE" ? "元々この枠にいた「" + currentName + "」" : "元々この枠にいた選手")
-       + "は未配置(トーナメントから一旦外れる)になります。"),
+       currentName && currentName !== "BYE"
+         ? "選ぶと「2人の枠を入れ替える(推奨)」か「未配置にして入れる」を選べます。入れ替えなら誰も表から外れません。"
+         : "選ぶと、その選手をこの枠に入れます。選んだ選手が既に別の枠にいた場合、そこは空欄になります。"),
      searchInput,
      listBox,
+     placeChoiceBox,
      eventIsDoubles ? null : h("div", { className: "modal-section-title", style: { marginTop: "12px" } },
        "選手DBから選択（未エントリーは自動で出場追加）"),
      eventIsDoubles ? null : dbSearchInput,
@@ -13600,8 +13631,13 @@ const O = {
  // ── トーナメント表(対戦)だけを一括削除(名簿は残す・すぐ作り直せる) ──
  async clearBracket(event) {
    if (!event) return toast("種目を選んでください", "err");
-   if (!confirm(`「${event}」のトーナメント表(対戦)を全て削除します。\n出場選手名簿は残るので、すぐ作り直せます。\n※結果入力済みの試合も消えます。よろしいですか？`)) return;
-   const r = await api.del(`/api/tournaments/${O.tournamentId}/bracket?event=${encodeURIComponent(event)}`);
+   if (!confirm(`「${event}」のトーナメント表(対戦)を全て削除します。\n出場選手名簿は残るので、すぐ作り直せます。よろしいですか？`)) return;
+   let r = await api.del(`/api/tournaments/${O.tournamentId}/bracket?event=${encodeURIComponent(event)}`);
+   if (r && r.needs_force) {
+     // 結果入力済みガード(2026-07-17): 件数を明示して2段目の確認。全種目版と同じ保護レベルにする。
+     if (!confirm(r.error + "\n\n本当に削除しますか？(取り消せません)")) return;
+     r = await api.del(`/api/tournaments/${O.tournamentId}/bracket?event=${encodeURIComponent(event)}&force=1`);
+   }
    if (r && r.error) return toast(r.error, "err");
    toast(`「${event}」のトーナメント表を削除しました(名簿は保持)`, "ok");
    if (O._bracketRev) delete O._bracketRev[event];
