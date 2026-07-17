@@ -5702,7 +5702,7 @@ const A = {
        if (bdata.event) { O._bracketRev = O._bracketRev || {}; O._bracketRev[bdata.event] = bdata.bracket_rev; }
        previewBox.innerHTML = "";
        previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "6px", lineHeight: "1.6" } },
-         "生成済みのトーナメント表を編集しています。選手を2人タップで入替、『罫線編集』で進出先(次の対戦)を組み替えできます。スーパーシード(3回戦から等の大きい罫線)は各選手の『登場R』を変えてから再生成すると反映されます。"));
+         "生成済みのトーナメント表を編集しています。選手を2人タップで入替、『罫線編集』で進出先(次の対戦)を組み替えできます。スーパーシードの大きい罫線を手で引くには、選手を1人タップ→下の『シード・登場回戦（大罫線）』→『3回戦から』等を選ぶと、その場で大罫線が引かれます(再生成なし・他の選手の位置は保持)。"));
        const ctx = { tournamentId: t.id, event: activeTab,
          getRev: () => (O._bracketRev && O._bracketRev[activeTab]),
          setRev: (rev) => { O._bracketRev = O._bracketRev || {}; if (rev) O._bracketRev[activeTab] = rev; },
@@ -12734,8 +12734,9 @@ const O = {
        onClick: () => O._pbSwap(ctx) }, "入れ替える") : null,
      !s2 ? h("button", { className: "btn btn-sm btn-ghost",
        onClick: () => { const s = O._pbSel; O._pbClear(); renderBar(); refreshSel(); O._editSlot(ctx, s.pos, s.slot, s.name || ""); } }, "この枠を変更…") : null,
-     (!s2 && s1.eid) ? h("button", { className: "btn btn-sm btn-ghost",
-       onClick: () => { const s = O._pbSel; O._pbClear(); renderBar(); refreshSel(); O._seedMenu(ctx, s.eid, s.name); } }, "シードにする") : null,
+     (!s2 && s1.eid) ? h("button", { className: "btn btn-sm", style: { background: "#92400e", color: "#fff", fontWeight: 700 },
+       title: "この選手を何回戦から登場させるか指定します。3回戦から等にすると、その場で大きい罫線(スーパーシード)が引かれます(再生成なし)",
+       onClick: () => { const s = O._pbSel; O._pbClear(); renderBar(); refreshSel(); O._seedMenu(ctx, s.eid, s.name); } }, "シード・登場回戦（大罫線）") : null,
      h("button", { className: "btn btn-sm btn-ghost", onClick: () => { O._pbClear(); renderBar(); refreshSel(); } }, "やめる"),
    ));
  };
