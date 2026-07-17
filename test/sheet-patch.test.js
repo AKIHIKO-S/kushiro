@@ -88,3 +88,15 @@ test("補欠差替(substitute): 未配置の選手を空いた枠に入れられ
   assert.strictEqual(leafEnt(t.id, 7), outEnt, "matchesにも入った");
   assert.strictEqual(st.unplaced.length, 0, "未配置から消えた");
 });
+
+test("版間差分(getSheetDiffBetween): 当日修正の前後で変更一覧が取れる(A4差分掲示票の材料)", () => {
+  const { t } = setupOngoing(8);
+  const before = seatsOf(t.id);
+  db.patchSheet(t.id, EV, { type: "swap", a_pos: 1, b_pos: 6, reason: "遅刻" });
+  const d = db.getSheetDiffBetween(t.id, EV, 1, 2);
+  assert.ok(d.ok, JSON.stringify(d).slice(0, 120));
+  assert.strictEqual(d.diff.moves.length, 2, "入替=移動2件");
+  assert.ok(/遅刻/.test(d.reason), "理由が載る");
+  assert.ok(d.sheet_hash6 && d.sheet_hash6.length === 6, "照合コード6桁");
+  assert.ok(db.getSheetDiffBetween(t.id, EV, 1, 9).error, "存在しない版はエラー");
+});

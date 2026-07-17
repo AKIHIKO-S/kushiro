@@ -4251,6 +4251,17 @@ app.post("/api/tournaments/:id/bracket/sheet/undo", requireAdmin, (req, res) => 
   if (r && r.error) return res.status(400).json(r);
   res.json(r);
 });
+// 版間差分(A4差分掲示票の材料): 第from版→第to版の変更一覧
+app.get("/api/tournaments/:id/bracket/sheet/diff", requireAdmin, (req, res) => {
+  const event = req.query.event;
+  const from = parseInt(req.query.from), to = parseInt(req.query.to);
+  if (!event || !Number.isInteger(from) || !Number.isInteger(to)) {
+    return res.status(400).json({ error: "event, from, to が必要です" });
+  }
+  const r = db.getSheetDiffBetween(req.params.id, event, from, to);
+  if (r && r.error) return res.status(400).json(r);
+  res.json(r);
+});
 // 出力履歴の記録(管理画面の明示的な印刷・出力操作のみが呼ぶ。公開GETは記録しない)
 app.post("/api/tournaments/:id/bracket/print-log", requireAdmin, (req, res) => {
   const b = req.body || {};

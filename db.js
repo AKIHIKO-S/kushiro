@@ -4074,6 +4074,22 @@ function getSheetState(tournamentId, event) {
   return out;
 }
 
+// 版間差分(A4差分掲示票用): 第fromRev版→第toRev版で誰がどう動いたか。
+// 「大判は貼り直さず、変更のお知らせを横に貼る」という実際の掲示運用に紙で追随するための材料。
+function getSheetDiffBetween(tournamentId, event, fromRev, toRev) {
+  const rowOf = (rev) => sqlite.prepare(
+    `SELECT * FROM bracket_sheets WHERE tournament_id=? AND event=? AND rev_no=?
+     ORDER BY CASE status WHEN 'confirmed' THEN 0 ELSE 1 END LIMIT 1`).get(tournamentId, event, rev);
+  const a = rowOf(fromRev), b = rowOf(toRev);
+  if (!a || !b) return { error: "指定した版が見つかりません(第" + fromRev + "版→第" + toRev + "版)" };
+  const sheetOf = (r) => ({ size: r.size, seats: JSON.parse(r.seats_json || "[]") });
+  return {
+    ok: true, event, from_rev: fromRev, to_rev: toRev,
+    diff: _sheetDiff(sheetOf(a), sheetOf(b)),
+    reason: b.reason || "", confirmed_at: b.confirmed_at || "", sheet_hash6: String(b.sheet_hash || "").slice(0, 6),
+  };
+}
+
 // 出力履歴を記録する(kind: large_print/xlsx/match_cards等)。呼ぶのは管理画面の明示的な
 // 印刷・出力操作のみ(公開GETでは記録しない=バナーの誤発火防止。外部検証の要修正)。
 function recordPrintLog(tournamentId, event, kind) {
@@ -12149,7 +12165,7 @@ module.exports = {
   sheetHashOf, synthesizeSheetFromMatches, canonicalStructHash, materializeSheet,
   migrateBracketSheets,
   getSheetState, ensureDraftSheet, applySheetOps, undoSheetOp, confirmSheet, markSheetDirty,
-  recordPrintLog, importSheetRows, patchSheet,
+  recordPrintLog, importSheetRows, patchSheet, getSheetDiffBetween,
   setEntrantSeedRound, rebuildSeededBracket,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,

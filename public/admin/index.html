@@ -5803,13 +5803,17 @@ const A = {
            lines.length > 12 ? h("div", { className: "text-xs text-sub" }, "ほか" + (lines.length - 12) + "件") : null)));
      }
      // 再印刷の案内(print_log=出力履歴にすぎない。掲示中の紙が何版かは目視確認が前提)。
+     // 大判の貼り直しが難しい会場向けに「差分掲示票(A4)」=変更のお知らせを横に貼る運用も出せる。
      if (st.confirmed && !st.dirty) {
        const lp = st.last_print;
        if (lp && lp.sheet_rev > 0 && lp.sheet_rev < st.confirmed.rev_no) {
          previewBox.appendChild(h("div", { style: { marginBottom: "8px", padding: "8px 12px", background: "#fef3c7",
            border: "1px solid #fbbf24", borderRadius: "8px", fontSize: "12.5px", color: "#92400e", lineHeight: "1.6" } },
            h("b", {}, "最後に印刷したのは第" + lp.sheet_rev + "版です(現在は第" + st.confirmed.rev_no + "版)。"),
-           " 差し替え用に印刷し直してください。掲示中の紙が第" + st.confirmed.rev_no + "版かは、紙の下部の版スタンプを目視で確認してください。"));
+           " 大判を刷り直すか、下のボタンで「変更のお知らせ(A4)」を出して掲示中の紙の横に貼ってください。",
+           h("div", { style: { marginTop: "6px" } },
+             h("button", { className: "btn btn-sm", style: { background: "#92400e", color: "#fff", fontWeight: 700 },
+               onClick: () => printDiffNotice(lp.sheet_rev, st.confirmed.rev_no) }, "変更のお知らせ(A4)を印刷"))));
        } else if (!lp || !lp.sheet_rev) {
          previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "8px" } },
            "第" + st.confirmed.rev_no + "版はまだ印刷されていません(進行LIVEタブの「印刷・大判」から版スタンプ入りで印刷できます)。"));
@@ -5880,6 +5884,46 @@ const A = {
          h("button", { className: "btn btn-sm btn-ghost", onClick: async () => { sel = null; await render(); } }, "やめる")));
      }
    };
+   // 差分掲示票(A4・P5): 「大判は貼り直さず、変更のお知らせを横に貼る」体育館の掲示運用を紙で支援。
+   // 第from版→第to版の変更を大きめの文字で1枚に。印刷はblob窓(printBracketと同方式・全文字esc済)。
+   const printDiffNotice = async (fromRev, toRev) => {
+     let d;
+     try { d = await api.get(`/api/tournaments/${t.id}/bracket/sheet/diff?event=${encodeURIComponent(event)}&from=${fromRev}&to=${toRev}`); }
+     catch (e) { return toast("通信できません", "err"); }
+     if (!d || d.error) return toast((d && d.error) || "差分を取得できません", "err");
+     const lines = [].concat(
+       d.diff.moves.map(s => "・移動: " + s),
+       d.diff.added.map(s => "・入る: " + s),
+       d.diff.removed.map(s => "・外れる: " + s));
+     if (!lines.length) return toast("この2版に違いはありません", "err");
+     const tName = (O.state && O.state.tournament && O.state.tournament.name) || "";
+     const now = new Date().toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+     const html = '<!doctype html><html lang="ja"><head><meta charset="utf-8">'
+       + '<title>組合せ変更のお知らせ</title>'
+       + '<style>@page{size:A4 portrait;margin:14mm}'
+       + 'body{font-family:"Hiragino Sans","Yu Gothic",system-ui,sans-serif;color:#1c1917;margin:0}'
+       + 'h1{font-size:9mm;margin:0 0 2mm;border-bottom:1mm solid #1c1917;padding-bottom:2mm}'
+       + '.sub{font-size:4.5mm;color:#444;margin-bottom:6mm}'
+       + '.chg{font-size:5.5mm;line-height:2.0}'
+       + '.meta{margin-top:8mm;font-size:3.2mm;color:#666;border-top:0.3mm solid #999;padding-top:2mm}'
+       + '.toolbar{margin-bottom:8px}@media print{.toolbar{display:none}}'
+       + 'button{padding:8px 16px;font-size:14px;cursor:pointer;border:1px solid #ccc;border-radius:6px;background:#fff}'
+       + '</style></head><body>'
+       + '<div class="toolbar"><button onclick="window.print()">印刷する</button></div>'
+       + '<h1>組合せ変更のお知らせ</h1>'
+       + '<div class="sub">' + esc(tName) + '　' + esc(event) + '（第' + fromRev + '版 → 第' + toRev + '版）</div>'
+       + '<div class="chg">' + lines.map(s => esc(s)).join("<br>") + '</div>'
+       + (d.reason ? '<div class="chg" style="margin-top:4mm">理由: ' + esc(d.reason) + '</div>' : "")
+       + '<div class="meta">第' + toRev + '版・照合 ' + esc(d.sheet_hash6 || "") + '｜発行 ' + esc(now)
+       + '｜この紙は掲示中のトーナメント表(第' + fromRev + '版)の横に貼ってください</div>'
+       + '</body></html>';
+     const blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+     const w = window.open(blobUrl, "_blank");
+     if (!w) { URL.revokeObjectURL(blobUrl); return toast("ポップアップがブロックされました。許可してください。", "err"); }
+     setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+     api.post(`/api/tournaments/${t.id}/bracket/print-log`, { event, kind: "diff_notice" }).catch(() => {});
+   };
+
    // Excel取込(P4): dry_runの差分・警告をエディタ内の検収パネルで見せてから下書きへ反映する
    // (ネイティブconfirmは使わない)。反映後の確定は通常フロー(差分バー→確定ボタン)。
    const sheetImportXlsx = () => {
