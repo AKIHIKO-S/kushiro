@@ -647,12 +647,12 @@ app.get("/robots.txt", (req, res) => {
 // ═══ 公開API（閲覧画面用・認証なし） ═══════════════════
 app.get("/api/public/players", publicSearchRateLimit, (req, res) => {
   const { search, gender, category, team, sort } = req.query;
-  res.json(db.getPlayers({ search, gender, category, team, sort }));
+  res.json(db.getPlayers({ search, gender, category, team, sort }).map(publicPlayer));
 });
 app.get("/api/public/players/:id", (req, res) => {
   const player = db.getPlayer(req.params.id);
   if (!player) return res.status(404).json({ error: "選手が見つかりません" });
-  res.json(player);
+  res.json(publicPlayer(player));
 });
 app.get("/api/public/tournaments", (req, res) => { res.json(db.getTournaments().map(sanitizeTournamentPublic)); });
 app.get("/api/public/tournaments/:id", (req, res) => {
@@ -689,6 +689,20 @@ const LIVE_MATCH_OMIT = new Set([
   "live_sets_json", "live_score_rev",
 ]);
 function liveMatch(m) { const o = {}; for (const k in m) if (!LIVE_MATCH_OMIT.has(k)) o[k] = m[k]; return o; }
+// 公開の選手オブジェクトから内部列を落とす(PII保護)。note=運営の内部メモ(連絡事項・怪我情報等が
+// 書かれうる)・rating=Elo(閲覧画面は非公開方針)・merged_into/created_at/updated_at=内部管理列。
+// redirected_from(旧IDで開いた印)は残す(リクエスト者自身が使ったIDで非機密)。
+const PUBLIC_PLAYER_OMIT = new Set(["note", "rating", "merged_into", "created_at", "updated_at"]);
+// 選手詳細の埋込戦績・公開試合検索用の射影: PUBLIC_MATCH_OMIT から tournament_id だけ残す
+// (選手詳細は出場大会数の集計・大会別グループ化に tournament_id を使う)。パース済み sets は残る。
+const PUBLIC_HISTORY_OMIT = new Set([...PUBLIC_MATCH_OMIT].filter(k => k !== "tournament_id"));
+function publicHistoryMatch(m) { const o = {}; for (const k in m) if (!PUBLIC_HISTORY_OMIT.has(k)) o[k] = m[k]; return o; }
+function publicPlayer(p) {
+  const o = {};
+  for (const k in p) if (!PUBLIC_PLAYER_OMIT.has(k)) o[k] = p[k];
+  if (Array.isArray(o.matches)) o.matches = o.matches.map(publicHistoryMatch);
+  return o;
+}
 app.get("/api/public/tournaments/:id/matches", (req, res) => {
   // 進行フィンガープリントを ETag 化(未変化の再取得は304で本体0=ポーリング軽量化)。
   // fingerprint は live_score_rev を含むため、速報の更新でもポーラーが新データを取れる。
@@ -717,7 +731,8 @@ app.get("/api/public/last-updated", (req, res) => { res.json({ t: db.getLastUpda
 
 // ── 試合検索 () ───────────────────────────────
 app.get("/api/public/matches", publicSearchRateLimit, (req, res) => {
-  const matches = db.searchMatches(req.query);
+  // 公開検索も内部列(Elo差分・審判ID・承認待ち・速報生JSON等)を落とす。sets(パース済み)は残る。
+  const matches = db.searchMatches(req.query).map(publicHistoryMatch);
   const total = db.countMatchesForSearch(req.query);
   res.json({ total, count: matches.length, matches });
 });
@@ -918,15 +933,17 @@ app.get("/api/public/search", publicSearchRateLimit, (req, res) => {
   const { q, limit } = req.query;
   if (!q) return res.json([]);
   const players = db.getPlayers({ search: q });
-  res.json(players.slice(0, parseInt(limit) || 20));
+  res.json(players.slice(0, parseInt(limit) || 20).map(publicPlayer));
 });
 
 // ═══ 管理API（選手CRUD） ══════════════════════════════
-app.get("/api/players", (req, res) => {
+// GET も requireAdmin(note=内部メモ・rating 等の生データを返すため。利用元は admin UI のみ。
+// 公開閲覧は /api/public/players 系=サニタイズ済み を使う)。
+app.get("/api/players", requireAdmin, (req, res) => {
   const { search, gender, category, team, sort } = req.query;
   res.json(db.getPlayers({ search, gender, category, team, sort }));
 });
-app.get("/api/players/:id", (req, res) => {
+app.get("/api/players/:id", requireAdmin, (req, res) => {
   const player = db.getPlayer(req.params.id);
   if (!player) return res.status(404).json({ error: "選手が見つかりません" });
   res.json(player);
