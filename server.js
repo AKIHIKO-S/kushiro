@@ -4123,6 +4123,15 @@ app.post("/api/tournaments/:id/bracket/set-slot-from-player", requireAdmin, (req
   if (r && r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
+// 参加者一覧から枠へ「移動」配置(選んだ選手の元位置を空欄に・元の占有者は未配置に)。
+app.post("/api/tournaments/:id/bracket/place-entrant", requireAdmin, (req, res) => {
+  const event = req.body && req.body.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
+  const r = db.placeEntrantInSlot(req.params.id, event, req.body.pos, req.body.slot, req.body.entrant_id);
+  if (r && r.error) return res.status(400).json(r);
+  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
+});
 
 app.put("/api/tournaments/:id/court-layout", requireAdmin, (req, res) => {
   const r = db.setCourtLayout(req.params.id, req.body || {});

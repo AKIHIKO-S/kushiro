@@ -256,3 +256,39 @@ test("renameTeam: 所属名の統一(鳥取中学→鳥取中学校)。完全一
   assert.ok(db.renameTeam("", "x").error, "空はerror");
   assert.ok(db.renameTeam("同じ", "同じ").error, "同名はerror");
 });
+
+test("placeEntrantInSlot: 参加者を枠へ移動(元位置=空欄・元占有者=未配置・entrantは残る)", () => {
+  const t = db.createTournament({ name: "枠移動検証", date: "2028-08-01" });
+  db.updateEntrySettings(t.id, { entries_open: 1, event_config: [{ name: "男子シングルス", type: "singles", fee: 0 }] });
+  const ids = [];
+  for (let i = 1; i <= 8; i++) ids.push(db.createEntrant({ tournament_id: t.id, event: "男子シングルス",
+    name: "枠" + i, team: "T" + i, furigana: "わ" + i, seed: i, status: "confirmed" }).id);
+  db.generateBracket(t.id, "男子シングルス", {});
+  const r1 = () => db.getMatchesByTournament(t.id).filter(m => m.event === "男子シングルス" && m.bracket_round === 1)
+    .sort((a, b) => a.bracket_pos - b.bracket_pos);
+  // 枠3(pos1,slot1)にいる選手Xと、pos0,slot2にいる選手Yを把握
+  const before = r1();
+  const targetPos = 0, targetSlot = 1;             // ここへ移動先(元占有者=Y)
+  const Y_eid = before.find(m => m.bracket_pos === 0).player1_entrant_id;
+  const X_match = before.find(m => m.bracket_pos === 1);
+  const X_eid = X_match.player1_entrant_id;         // Xは pos1,slot1 にいる
+  assert.ok(X_eid && Y_eid && X_eid !== Y_eid);
+  // X を pos0,slot1 へ移動
+  const res = db.placeEntrantInSlot(t.id, "男子シングルス", targetPos, targetSlot, X_eid);
+  assert.ok(res && (res.success || !res.error), JSON.stringify(res).slice(0, 120));
+  const after = r1();
+  const at = (pos, slot) => { const m = after.find(x => x.bracket_pos === pos); return slot === 1 ? m.player1_entrant_id : m.player2_entrant_id; };
+  // 対象枠は X に
+  assert.strictEqual(at(0, 1), X_eid, "対象枠は選んだ選手Xに");
+  // X の元位置(pos1,slot1)は空欄
+  assert.ok(!at(1, 1), "選んだ選手の元位置は空欄");
+  // Y はどの1回戦枠にもいない=未配置
+  const placedEids = new Set();
+  after.forEach(m => { if (m.player1_entrant_id) placedEids.add(m.player1_entrant_id); if (m.player2_entrant_id) placedEids.add(m.player2_entrant_id); });
+  assert.ok(!placedEids.has(Y_eid), "元占有者Yは未配置(トーナメントから落ちる)");
+  // Y は entrant としては残っている
+  assert.ok(db.getEntrant(Y_eid), "Yはentrantとして残る(削除されない)");
+  // 既にその枠にいる選手を同じ枠へ=何もしない(noop)
+  const noop = db.placeEntrantInSlot(t.id, "男子シングルス", 0, 1, X_eid);
+  assert.ok(noop && noop.success, "同じ枠への移動はnoop");
+});

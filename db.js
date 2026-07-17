@@ -9936,6 +9936,40 @@ function setBracketSlotFromPlayer(tournamentId, event, pos, slot, playerId) {
       entrant_id: ent.id, player_id: playerId });
 }
 
+// 参加者一覧から選手を枠へ「移動」する(オーナー要望 2026-07-17)。
+//  - 選んだ選手が既に別の枠にいれば、その【元の枠を空欄にする】(重複配置を作らない)。
+//  - 対象枠に元々いた選手は参照が外れ「未配置」になる(=トーナメントから一旦落とす。entrantは残す)。
+// setBracketSlot を(元位置クリア→対象枠へ設定)の順で呼ぶ。ネストtx不可のため各々が独立tx/op_log
+// (取消は2手=対象枠→元位置クリア の順に戻る)。
+function placeEntrantInSlot(tournamentId, event, pos, slot, entrantId) {
+  if (!event) return { error: "event が必要です" };
+  if (_bracketLocked(tournamentId, event)) return { error: "この種目の表は手動ロック中です。解除してから編集してください。", locked: true };
+  if (!entrantId) return { error: "選手が指定されていません" };
+  const ent = entrantStmts.get.get(entrantId);
+  if (!ent) return { error: "参加者が見つかりません" };
+  const p = parseInt(pos), s = (parseInt(slot) === 2) ? 2 : 1;
+  if (!Number.isInteger(p)) return { error: "位置が不正です" };
+  // 選んだ選手の現在位置(1回戦)を探す
+  const round1 = sqlite.prepare(
+    "SELECT bracket_pos, player1_entrant_id, player2_entrant_id FROM matches WHERE tournament_id=? AND event=? AND bracket_round=1")
+    .all(tournamentId, event);
+  let oldPos = null, oldSlot = null;
+  for (const m of round1) {
+    if (m.player1_entrant_id === entrantId) { oldPos = m.bracket_pos || 0; oldSlot = 1; break; }
+    if (m.player2_entrant_id === entrantId) { oldPos = m.bracket_pos || 0; oldSlot = 2; break; }
+  }
+  if (oldPos === p && oldSlot === s) return { success: true, noop: true };   // 既にその枠
+  // 1) 元位置を空欄に(既に別の枠にいた場合)
+  if (oldPos != null) {
+    const r1 = setBracketSlot(tournamentId, event, oldPos, oldSlot, { mode: "clear" });
+    if (r1 && r1.error) return r1;
+  }
+  // 2) 対象枠へ設定(元の占有者は参照が外れて未配置になる)
+  return setBracketSlot(tournamentId, event, p, s,
+    { mode: "player", name: ent.display_name || ent.name, team: ent.team || "",
+      entrant_id: ent.id, player_id: ent.player_id || null });
+}
+
 // 既存 entrant のメンバー(本人 or 相方)を、選手マスタDBの選手にリンクして上書きする。
 // 枠の編集グリッドのDB検索編集用。氏名・所属・ふりがなをマスタからコピーし player_id を紐付け、
 // 表(matches)の表示名を再同期する。配置・seed は不変(誰がどこ、は変えず「誰か」を差し替え)。
@@ -11374,7 +11408,7 @@ module.exports = {
   updateEntrySettings, getOpenTournaments, getUsedEventsCatalog,
   // ブラケット JSON I/O
   exportBracket, exportAllBrackets, importBracket, swapBracketSlots, setBracketSlot,
-  swapBracketMatches, relinkBracketMatch, setBracketSlotFromPlayer, setEntrantMemberFromPlayer,
+  swapBracketMatches, relinkBracketMatch, setBracketSlotFromPlayer, placeEntrantInSlot, setEntrantMemberFromPlayer,
   setEntrantSeedRound, rebuildSeededBracket,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,

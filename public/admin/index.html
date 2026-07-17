@@ -13314,6 +13314,20 @@ const O = {
      h("button", { className: "btn btn-sm btn-ghost",
        onClick: () => submit({ mode: "clear" }) }, "空きにする"));
 
+   // 参加者一覧から枠へ「移動」配置(オーナー要望 2026-07-17): 選んだ選手の元位置は空欄に、
+   // 元々この枠にいた選手は未配置に(トーナメントから一旦落とす)。
+   const placeSubmit = async (entrantId, nm) => {
+     try {
+       const r = await api.post(`/api/tournaments/${ctx.tournamentId}/bracket/place-entrant`,
+         { event, pos, slot, entrant_id: entrantId, base_rev: ctx.getRev() });
+       if (r && r.conflict) { toast(r.error || "他の端末で更新されました", "err"); ctx.reload(); return; }
+       if (r && r.error) return toast(r.error, "err");
+       if (r && r.bracket_rev) ctx.setRev(r.bracket_rev);
+       toast(`「${nm}」をこの枠に入れました` + (currentName && currentName !== "BYE" ? `（元の「${currentName}」は未配置に）` : ""), "ok");
+       modal.remove();
+       ctx.reload();
+     } catch (e) { toast("更新に失敗しました: " + (e.message || e), "err"); }
+   };
    // 別の選手に置き換え (出場選手リストから選択)
    const searchInput = h("input", { className: "input", placeholder: "氏名・所属・No. で絞り込み…" });
    const listBox = h("div", { style: { maxHeight: "300px", overflow: "auto",
@@ -13341,8 +13355,7 @@ const O = {
        const row = h("div", { className: "es-row",
          style: { display: "flex", alignItems: "center", gap: "8px",
            padding: "8px 10px", borderBottom: "1px solid #f1f5f9", cursor: "pointer" },
-         onClick: () => submit({ mode: "player", name: nm, team: e.team || "",
-           entrant_id: e.id, player_id: e.player_id || null }) },
+         onClick: () => placeSubmit(e.id, nm) },
          e.bracket_number
            ? h("span", { className: "meta-chip", style: { flex: "0 0 auto" } }, "No." + e.bracket_number) : null,
          e.seed
@@ -13392,7 +13405,11 @@ const O = {
      quick,
      promoteBox,
      h("div", { className: "modal-section-title", style: { marginTop: "12px" } },
-       "出場選手から置き換える"),
+       "参加者一覧からこの枠に入れる"),
+     h("div", { className: "text-xs text-sub", style: { marginBottom: "6px", lineHeight: "1.6" } },
+       "選ぶと、その選手をこの枠に入れます。選んだ選手が既に別の枠にいた場合はそこを空欄にし、"
+       + (currentName && currentName !== "BYE" ? "元々この枠にいた「" + currentName + "」" : "元々この枠にいた選手")
+       + "は未配置(トーナメントから一旦外れる)になります。"),
      searchInput,
      listBox,
      eventIsDoubles ? null : h("div", { className: "modal-section-title", style: { marginTop: "12px" } },
