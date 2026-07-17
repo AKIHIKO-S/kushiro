@@ -5820,30 +5820,23 @@ const A = {
        }
      }
      previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "8px", lineHeight: "1.6" } },
-       "枠を1つ選んでから別の枠を押すと入れ替わります。右の「未配置」の選手を選んでから枠を押すとそこに入ります。外した選手は必ず未配置に残ります(消えません)。表とアプリの対戦カードは「確定」した瞬間にこの割当表から作られます。"));
-     // 本体: 左=枠リスト / 右=未配置
+       "枠を押すと、その枠に入れる選手を名簿・選手DBから選べます。外した選手は必ず「未配置」に残ります(消えません)。表とアプリの対戦カードは「確定」した瞬間にこの割当表から作られます。"));
+     // 本体: 左=枠リスト(クリック=選手選択モーダル。オーナー要望 2026-07-18: 2タップ入替から
+     // 「枠を押して選手を選ぶ」方式へ変更) / 右=未配置(表示のみ・状況把握用)
      const seatRow = (s) => {
        const info = s.entrant_id ? entName.get(s.entrant_id) : null;
-       const isSel = sel && sel.kind === "seat" && sel.pos === s.pos;
        const row = h("div", { style: {
          display: "flex", gap: "8px", alignItems: "baseline", padding: "6px 10px",
          borderBottom: "1px solid #f1efec", cursor: "pointer", borderRadius: "6px",
-         background: isSel ? "#fff7e6" : "transparent",
-         outline: isSel ? "2px solid #d97706" : "none",
-       }, onClick: async () => {
-         if (sel && sel.kind === "unplaced") { await send([{ op: "place", pos: s.pos, entrant_id: sel.entrant_id }]); return; }
-         if (sel && sel.kind === "seat") {
-           if (sel.pos === s.pos) { sel = null; await render(); return; }
-           await send([{ op: "swap", a: sel.pos, b: s.pos }]); return;
-         }
-         sel = { kind: "seat", pos: s.pos }; await render();
-       } },
+       }, onClick: () => openSeatPicker(s) },
          h("span", { style: { color: "#9ca3af", fontSize: "11.5px", minWidth: "34px", fontVariantNumeric: "tabular-nums" } }, String(s.pos + 1)),
          info
            ? h("span", { style: { fontWeight: 600, fontSize: "13.5px" } }, info.name,
                info.team ? h("span", { style: { fontWeight: 400, color: "#78716c", fontSize: "11.5px", marginLeft: "6px" } }, info.team) : null)
            : h("span", { style: { color: "#c8c3ba", fontSize: "13px" } }, "(空き)"),
          s.entry_round > 1 ? h("span", { style: { marginLeft: "auto", background: "#fef3c7", color: "#92400e", fontSize: "11px", fontWeight: 700, padding: "1px 8px", borderRadius: "999px" } }, s.entry_round + "回戦から") : null);
+       row.addEventListener("mouseenter", () => row.style.background = "#f3f4f6");
+       row.addEventListener("mouseleave", () => row.style.background = "");
        return row;
      };
      const seatCol = h("div", { style: { flex: "1 1 340px", minWidth: "300px", border: "1px solid #e7e5e4", borderRadius: "10px", padding: "6px", maxHeight: "460px", overflow: "auto", background: "#fff" } },
@@ -5851,38 +5844,119 @@ const A = {
      const unplacedCol = h("div", { style: { flex: "0 1 240px", minWidth: "200px" } },
        h("div", { style: { fontSize: "12px", fontWeight: 700, color: "#78716c", margin: "2px 0 6px" } },
          "未配置(" + st.unplaced.length + "名)"),
-       ...(st.unplaced.length ? st.unplaced.map(u => {
-         const isSel = sel && sel.kind === "unplaced" && sel.entrant_id === u.id;
-         return h("div", { style: { padding: "6px 10px", border: "1px dashed #d6d3ce", borderRadius: "8px", marginBottom: "6px", cursor: "pointer", fontSize: "13px", background: isSel ? "#fff7e6" : "#faf9f7", outline: isSel ? "2px solid #d97706" : "none" },
-           onClick: async () => {
-             if (isSel) { sel = null; await render(); return; }
-             sel = { kind: "unplaced", entrant_id: u.id, name: u.name }; await render();
-           } }, h("b", {}, u.name), u.team ? h("span", { className: "text-xs text-sub", style: { marginLeft: "6px" } }, u.team) : null);
-       }) : [h("div", { className: "text-xs text-sub" }, "全員配置済みです")]));
+       ...(st.unplaced.length ? st.unplaced.map(u =>
+         h("div", { style: { padding: "6px 10px", border: "1px dashed #d6d3ce", borderRadius: "8px", marginBottom: "6px", fontSize: "13px", background: "#faf9f7" } },
+           h("b", {}, u.name), u.team ? h("span", { className: "text-xs text-sub", style: { marginLeft: "6px" } }, u.team) : null)
+       ) : [h("div", { className: "text-xs text-sub" }, "全員配置済みです")]),
+       st.unplaced.length ? h("div", { className: "text-xs text-sub", style: { marginTop: "4px", lineHeight: "1.5" } },
+         "入れたい枠を押して、この選手を選んでください") : null);
      previewBox.appendChild(h("div", { style: { display: "flex", gap: "14px", flexWrap: "wrap", alignItems: "flex-start" } }, seatCol, unplacedCol));
-     // 選択バー(下部): 外す・登場回戦・やめる
-     if (sel && sel.kind === "seat") {
-       const s = draft.seats[sel.pos] || {};
-       const erSel = h("select", { className: "input input-sm", style: { width: "120px" } },
+
+     // 枠の選手選択モーダル(オーナー要望 2026-07-18): 枠クリック→名簿(未配置/配置済み)+選手DBから選ぶ。
+     // 配置は place op=選んだ選手の旧枠は空き・この枠の元の選手は未配置へ(すべて割当表上で見える)。
+     const openSeatPicker = (s) => {
+       const cur = s.entrant_id ? entName.get(s.entrant_id) : null;
+       const searchIn = h("input", { className: "input", placeholder: "氏名・所属・ふりがなで検索" });
+       const listBox = h("div", { style: { maxHeight: "300px", overflow: "auto", border: "1px solid #e2e8f0", borderRadius: "6px", marginTop: "6px", background: "#fff" } });
+       let allEnts = [], dbPlayers = null;
+       const doPlace = async (entrantId, nm) => {
+         const ok = await send([{ op: "place", pos: s.pos, entrant_id: entrantId }]);
+         if (ok !== false) { toast("枠" + (s.pos + 1) + " に「" + nm + "」を入れました", "ok"); modal.remove(); }
+       };
+       const renderList = () => {
+         const q = (searchIn.value || "").trim().toLowerCase();
+         clear(listBox);
+         const hit = (e) => !q || [(e.display_name || e.name || ""), (e.team || ""), (e.furigana || ""), (e.partner_furigana || "")]
+           .join(" ").toLowerCase().includes(q);
+         const placedPos = new Map();
+         draft.seats.forEach(x => { if (x.entrant_id) placedPos.set(x.entrant_id, x.pos); });
+         const mkRow = (label, sub, onClick) => {
+           const row = h("div", { style: { display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px",
+             borderBottom: "1px solid #f1f5f9", cursor: "pointer" }, onClick },
+             h("span", { style: { fontWeight: 600, flex: "1 1 auto", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, label),
+             sub ? h("span", { className: "text-xs text-sub", style: { flex: "0 0 auto" } }, sub) : null);
+           row.addEventListener("mouseenter", () => row.style.background = "#f1f5f9");
+           row.addEventListener("mouseleave", () => row.style.background = "");
+           return row;
+         };
+         const secTitle = (txt) => h("div", { style: { padding: "6px 10px", fontSize: "11px", fontWeight: 700,
+           color: "#78716c", background: "#faf9f7", borderBottom: "1px solid #f1f5f9" } }, txt);
+         // ① 未配置(この種目の名簿)
+         const un = allEnts.filter(e => !e.is_bye && !placedPos.has(e.id) && hit(e));
+         if (un.length) {
+           listBox.appendChild(secTitle("未配置(この種目の名簿)"));
+           un.forEach(e => listBox.appendChild(mkRow(e.display_name || e.name || "(無名)", e.team || "",
+             () => doPlace(e.id, e.display_name || e.name || ""))));
+         }
+         // ② 配置済み(選ぶと移動=元の枠は空きになる)
+         const pl = allEnts.filter(e => placedPos.has(e.id) && e.id !== s.entrant_id && hit(e));
+         if (pl.length) {
+           listBox.appendChild(secTitle("配置済み(選ぶと枠を移動・元の枠は空きに)"));
+           pl.forEach(e => listBox.appendChild(mkRow(e.display_name || e.name || "(無名)",
+             "枠" + (placedPos.get(e.id) + 1) + "から移動" + (e.team ? "・" + e.team : ""),
+             () => doPlace(e.id, e.display_name || e.name || ""))));
+         }
+         // ③ 選手DB(この種目に未エントリー): 選ぶと出場追加してから配置
+         if (q && dbPlayers) {
+           const entPids = new Set(allEnts.map(e => e.player_id).filter(Boolean));
+           const cands = dbPlayers.filter(p => !entPids.has(p.id) &&
+             [(p.name || ""), (p.team || ""), (p.furigana || "")].join(" ").toLowerCase().includes(q)).slice(0, 30);
+           if (cands.length) {
+             listBox.appendChild(secTitle("選手DBから(出場追加してこの枠へ)"));
+             cands.forEach(p => listBox.appendChild(mkRow(p.name || "(無名)", (p.furigana ? p.furigana + "・" : "") + (p.team || ""),
+               async () => {
+                 try {
+                   const ent = await api.post(`/api/tournaments/${t.id}/entrants`,
+                     { event, name: p.name, team: p.team || "", furigana: p.furigana || "",
+                       gender: p.gender || "male", player_id: p.id, status: "confirmed" });
+                   if (!ent || !ent.id) return toast("出場追加に失敗しました", "err");
+                   allEnts.push(ent);
+                   await doPlace(ent.id, p.name || "");
+                   try { await load(); } catch (e) {}
+                 } catch (e) { toast("出場追加に失敗: " + (e.message || e), "err"); }
+               })));
+           }
+         }
+         if (!listBox.children.length) {
+           listBox.appendChild(h("div", { style: { padding: "12px", color: "#94a3b8", fontSize: "13px" } },
+             q ? "該当する選手がいません" + (dbPlayers ? "" : "(選手DBを読込中…)") : "下の一覧から選ぶか、検索してください"));
+         }
+       };
+       searchIn.addEventListener("input", renderList);
+       // 現在の選手の操作(外す・登場回戦)もこのモーダルに集約(旧: 下部の選択バー)
+       const erSel = h("select", { className: "input input-sm", style: { width: "130px" } },
          ...[1, 2, 3, 4, 5, 6].map(rr => h("option", { value: String(rr), selected: rr === (s.entry_round || 1) ? "" : null },
            rr === 1 ? "1回戦(通常)" : rr + "回戦から")));
-       erSel.addEventListener("change", () => send([{ op: "set_entry_round", pos: sel.pos, entry_round: parseInt(erSel.value) }]));
-       previewBox.appendChild(h("div", { style: { position: "sticky", bottom: "8px", marginTop: "10px", background: "#fff",
-         border: "1.5px solid #d97706", borderRadius: "10px", padding: "8px 12px", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", zIndex: 5 } },
-         h("b", { style: { fontSize: "13px" } }, "枠" + (sel.pos + 1) + "を選択中"),
-         h("span", { className: "text-xs text-sub" }, "別の枠を押すと入れ替え / 未配置に移すなら「外す」"),
-         s.entrant_id ? erSel : null,
-         s.entrant_id ? h("button", { className: "btn btn-sm btn-ghost", onClick: () => send([{ op: "clear", pos: sel.pos }]) }, "外す(未配置へ)") : null,
-         h("span", { style: { flex: "1 0 auto" } }),
-         h("button", { className: "btn btn-sm btn-ghost", onClick: async () => { sel = null; await render(); } }, "やめる")));
-     } else if (sel && sel.kind === "unplaced") {
-       previewBox.appendChild(h("div", { style: { position: "sticky", bottom: "8px", marginTop: "10px", background: "#fff",
-         border: "1.5px solid #166534", borderRadius: "10px", padding: "8px 12px", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", zIndex: 5 } },
-         h("b", { style: { fontSize: "13px" } }, "「" + (sel.name || "") + "」を選択中"),
-         h("span", { className: "text-xs text-sub" }, "入れたい枠を押してください(空き枠でも選手のいる枠でも可。いた選手は未配置へ)"),
-         h("span", { style: { flex: "1 0 auto" } }),
-         h("button", { className: "btn btn-sm btn-ghost", onClick: async () => { sel = null; await render(); } }, "やめる")));
-     }
+       erSel.addEventListener("change", async () => {
+         const ok = await send([{ op: "set_entry_round", pos: s.pos, entry_round: parseInt(erSel.value) }]);
+         if (ok !== false) { toast("登場回戦を変更しました", "ok"); modal.remove(); }
+       });
+       const body = h("div", {},
+         h("div", { className: "field" },
+           h("label", { className: "field-label" }, "現在の選手"),
+           cur ? h("div", { style: { fontWeight: 700, fontSize: "15px" } }, cur.name + (cur.team ? "　" + cur.team : ""))
+               : h("div", { className: "text-sub", style: { fontSize: "15px" } }, "(空き)")),
+         s.entrant_id ? h("div", { className: "flex gap-2", style: { flexWrap: "wrap", marginBottom: "8px", alignItems: "center" } },
+           h("button", { className: "btn btn-sm btn-ghost", onClick: async () => {
+             const ok = await send([{ op: "clear", pos: s.pos }]);
+             if (ok !== false) { toast("枠" + (s.pos + 1) + " を空きにしました(選手は未配置へ)", "ok"); modal.remove(); }
+           } }, "外す(未配置へ)"),
+           h("span", { className: "text-xs text-sub" }, "登場回戦:"), erSel) : null,
+         h("div", { className: "modal-section-title" }, "この枠に入れる選手を選ぶ"),
+         h("div", { className: "text-xs text-sub", style: { marginBottom: "6px", lineHeight: "1.6" } },
+           "名簿(未配置・配置済み)と選手DBから選べます。" +
+           (cur ? "選ぶと、いまの「" + cur.name + "」は未配置になります。" : "")),
+         searchIn, listBox);
+       const modal = openModal("枠" + (s.pos + 1) + " の選手", body,
+         h("button", { className: "btn btn-ghost", onClick: () => modal.remove() }, "閉じる"));
+       // 名簿は即時・選手DBは遅延で読込
+       (async () => {
+         try { allEnts = await api.get(`/api/tournaments/${t.id}/entrants?event=` + encodeURIComponent(event)) || []; } catch (e) {}
+         renderList();
+         try { dbPlayers = await api.get("/api/players?sort=furigana") || []; } catch (e) { dbPlayers = []; }
+         renderList();
+       })();
+     };
    };
    // 差分掲示票(A4・P5): 「大判は貼り直さず、変更のお知らせを横に貼る」体育館の掲示運用を紙で支援。
    // 第from版→第to版の変更を大きめの文字で1枚に。印刷はblob窓(printBracketと同方式・全文字esc済)。
