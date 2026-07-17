@@ -2064,6 +2064,10 @@ app.post("/api/tournaments/:id/league/playoff", requireAdmin, (req, res) => {
     force: !!req.body?.force,
   });
   if (r?.error) return res.status(400).json(r);
+  // 生成した決勝T/順位別T(新種目)を割当表の正本に載せる(案B P7)。migrateBracketSheets は
+  // シート未作成の種目だけを冪等に拾い、標準配線なので「第1版(移行)」として即confirmedになる
+  // =進行中の大会でも決勝Tに版スタンプ付き印刷がそのまま使える。
+  try { db.migrateBracketSheets(); } catch (e) {}
   res.json(r);
 });
 // 釧路リーグ: 前回大会の各部順位から今回の部を提案(運営限定)。
@@ -4259,6 +4263,14 @@ app.post("/api/tournaments/:id/bracket/sheet/confirm", requireAdmin, (req, res) 
   const r = db.confirmSheet(req.params.id, b.event, { by: b.by || "", reason: b.reason || "", force: !!b.force });
   if (r && r.needs_force) return res.status(400).json(r);
   if (r && r.error) return res.status(r.ongoing ? 403 : 400).json(r);
+  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, b.event) });
+});
+// 当日の変更(進行中でも可): 2枠入替(両者未開始)/補欠差替(未配置→枠)。理由必須・必ず新版採番。
+app.post("/api/tournaments/:id/bracket/sheet/patch", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (!b.event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.patchSheet(req.params.id, b.event, b);
+  if (r && r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, b.event) });
 });
 

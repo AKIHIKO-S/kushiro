@@ -5730,13 +5730,20 @@ const A = {
    previewOpen = true; previewBox.style.display = "block";
    previewBtn.textContent = "▲ 配置プレビューを閉じる";
    previewBox.innerHTML = '<div class="text-sub" style="padding:10px">読込中…</div>';
-   const mk = await api.post(`/api/tournaments/${t.id}/bracket/sheet/draft`, { event });
-   if (mk && mk.error) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + esc(mk.error) + '</div>'; return; }
+   // 進行中(ongoing)は下書きを作らず「当日修正モード」(入替・補欠差替のみ・理由必須・必ず新版)。
+   const isOngoing = (t.status === "ongoing");
+   if (!isOngoing) {
+     const mk = await api.post(`/api/tournaments/${t.id}/bracket/sheet/draft`, { event });
+     if (mk && mk.error) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + esc(mk.error) + '</div>'; return; }
+   }
    let sel = null;   // {kind:'seat', pos} | {kind:'unplaced', entrant_id, name}
+   let pendingPatch = null;   // 当日修正の確定待ち {type, a_pos,b_pos | pos,entrant_id, label}
    const render = async () => {
      let st;
      try { st = await api.get(`/api/tournaments/${t.id}/bracket/sheet?event=` + encodeURIComponent(event)); }
      catch (e) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + esc(e.message || String(e)) + '</div>'; return; }
+     // 当日修正モード(進行中): 確定版の枠リストを表示し、2枠選択→理由→当日入替 / 未配置→枠→補欠差替。
+     if (isOngoing) { renderPatchMode(st); return; }
      const draft = st.draft;
      if (!draft) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">下書きがありません</div>'; return; }
      const entName = new Map();
@@ -5853,6 +5860,101 @@ const A = {
          h("span", { className: "text-xs text-sub" }, "入れたい枠を押してください(空き枠でも選手のいる枠でも可。いた選手は未配置へ)"),
          h("span", { style: { flex: "1 0 auto" } }),
          h("button", { className: "btn btn-sm btn-ghost", onClick: async () => { sel = null; await render(); } }, "やめる")));
+     }
+   };
+   // 当日修正モード(進行中専用): 表示は確定版。操作は「2枠入替」「補欠差替」の2種だけで、
+   // どちらも理由必須・実行すると必ず新版(第N+1版)になり再印刷案内が出る。
+   const renderPatchMode = async (st) => {
+     clear(previewBox);
+     if (!st.confirmed) {
+       previewBox.appendChild(h("div", { style: { padding: "10px", color: "#b91c1c", fontSize: "13px" } },
+         "確定済みの組合せがありません。進行中の大会では新しい組合せ作成(確定)は種目の初回のみ可能です。"));
+       return;
+     }
+     const conf = st.confirmed;
+     const entName = new Map();
+     try {
+       (await api.get(`/api/tournaments/${t.id}/entrants?event=` + encodeURIComponent(event)))
+         .forEach(e => entName.set(e.id, { name: e.display_name || e.name || "", team: e.team || "" }));
+     } catch (e) {}
+     previewBox.appendChild(h("div", { style: { display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } },
+       h("b", { style: { fontSize: "13.5px" } }, "割当表(当日修正)"),
+       h("span", { style: { background: "#dcfce7", color: "#166534", fontWeight: 700, fontSize: "12px", padding: "3px 10px", borderRadius: "999px" } }, "確定 第" + conf.rev_no + "版")));
+     previewBox.appendChild(h("div", { style: { marginBottom: "8px", padding: "8px 12px", background: "#fff7ed",
+       border: "1px solid #fdba74", borderRadius: "8px", fontSize: "12.5px", color: "#9a3412", lineHeight: "1.6" } },
+       h("b", {}, "進行中のため当日修正のみできます。"),
+       " 2つの枠を続けて押すと入替、右の未配置の選手を選んでから枠を押すと補欠差替。実行には理由が必要で、組合せは新しい版になります(紙の差し替えが必要)。欠場は表を変えず、進行画面の不戦勝処理で対応してください。"));
+     const seatRow = (s) => {
+       const info = s.entrant_id ? entName.get(s.entrant_id) : null;
+       const isSel = sel && sel.kind === "seat" && sel.pos === s.pos;
+       return h("div", { style: { display: "flex", gap: "8px", alignItems: "baseline", padding: "6px 10px",
+         borderBottom: "1px solid #f1efec", cursor: "pointer", borderRadius: "6px",
+         background: isSel ? "#fff7e6" : "transparent", outline: isSel ? "2px solid #d97706" : "none" },
+         onClick: async () => {
+           if (pendingPatch) return;   // 確定待ち中は選択変更しない(下部バーで実行/やめる)
+           if (sel && sel.kind === "unplaced") {
+             pendingPatch = { type: "substitute", pos: s.pos, entrant_id: sel.entrant_id,
+               label: "枠" + (s.pos + 1) + " に「" + (sel.name || "") + "」を補欠として入れる" };
+             sel = null; await renderPatchMode(st); return;
+           }
+           if (sel && sel.kind === "seat") {
+             if (sel.pos === s.pos) { sel = null; await renderPatchMode(st); return; }
+             pendingPatch = { type: "swap", a_pos: sel.pos, b_pos: s.pos,
+               label: "枠" + (sel.pos + 1) + " と 枠" + (s.pos + 1) + " を入れ替える" };
+             sel = null; await renderPatchMode(st); return;
+           }
+           sel = { kind: "seat", pos: s.pos }; await renderPatchMode(st);
+         } },
+         h("span", { style: { color: "#9ca3af", fontSize: "11.5px", minWidth: "34px", fontVariantNumeric: "tabular-nums" } }, String(s.pos + 1)),
+         info
+           ? h("span", { style: { fontWeight: 600, fontSize: "13.5px" } }, info.name,
+               info.team ? h("span", { style: { fontWeight: 400, color: "#78716c", fontSize: "11.5px", marginLeft: "6px" } }, info.team) : null)
+           : h("span", { style: { color: "#c8c3ba", fontSize: "13px" } }, "(空き)"),
+         s.entry_round > 1 ? h("span", { style: { marginLeft: "auto", background: "#fef3c7", color: "#92400e", fontSize: "11px", fontWeight: 700, padding: "1px 8px", borderRadius: "999px" } }, s.entry_round + "回戦から") : null);
+     };
+     const seatCol = h("div", { style: { flex: "1 1 340px", minWidth: "300px", border: "1px solid #e7e5e4", borderRadius: "10px", padding: "6px", maxHeight: "420px", overflow: "auto", background: "#fff" } },
+       ...conf.seats.map(seatRow));
+     const unplacedCol = h("div", { style: { flex: "0 1 240px", minWidth: "200px" } },
+       h("div", { style: { fontSize: "12px", fontWeight: 700, color: "#78716c", margin: "2px 0 6px" } },
+         "未配置(" + st.unplaced.length + "名)——補欠差替の候補"),
+       ...(st.unplaced.length ? st.unplaced.map(u => {
+         const isSel = sel && sel.kind === "unplaced" && sel.entrant_id === u.id;
+         return h("div", { style: { padding: "6px 10px", border: "1px dashed #d6d3ce", borderRadius: "8px", marginBottom: "6px", cursor: "pointer", fontSize: "13px", background: isSel ? "#fff7e6" : "#faf9f7", outline: isSel ? "2px solid #166534" : "none" },
+           onClick: async () => {
+             if (pendingPatch) return;
+             sel = isSel ? null : { kind: "unplaced", entrant_id: u.id, name: u.name };
+             await renderPatchMode(st);
+           } }, h("b", {}, u.name), u.team ? h("span", { className: "text-xs text-sub", style: { marginLeft: "6px" } }, u.team) : null);
+       }) : [h("div", { className: "text-xs text-sub" }, "未配置の選手はいません")]));
+     previewBox.appendChild(h("div", { style: { display: "flex", gap: "14px", flexWrap: "wrap", alignItems: "flex-start" } }, seatCol, unplacedCol));
+     if (pendingPatch) {
+       const reasonSel = h("select", { className: "input input-sm", style: { width: "130px" } },
+         ...["体調不良", "無断欠席", "遅刻", "その他"].map(rr => h("option", { value: rr }, rr)));
+       const noteIn = h("input", { className: "input input-sm", placeholder: "補足(任意)", style: { width: "160px" } });
+       previewBox.appendChild(h("div", { style: { position: "sticky", bottom: "8px", marginTop: "10px", background: "#fff",
+         border: "1.5px solid #9a3412", borderRadius: "10px", padding: "10px 14px", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", zIndex: 5 } },
+         h("b", { style: { fontSize: "13px" } }, pendingPatch.label),
+         h("span", { className: "text-xs" }, "理由:"), reasonSel, noteIn,
+         h("span", { style: { flex: "1 0 auto" } }),
+         h("button", { className: "btn btn-sm", style: { background: "#9a3412", color: "#fff", fontWeight: 700 },
+           onClick: async () => {
+             const reason = reasonSel.value + (noteIn.value.trim() ? "(" + noteIn.value.trim() + ")" : "");
+             const r = await api.post(`/api/tournaments/${t.id}/bracket/sheet/patch`,
+               { event, ...pendingPatch, reason });
+             if (r && r.error) return toast(r.error, "err");
+             toast(r.reprint || ("当日修正を実行しました(第" + r.rev_no + "版)"), "ok");
+             pendingPatch = null; sel = null;
+             try { await load(); } catch (e) {}
+             await render();
+           } }, "実行して新版にする"),
+         h("button", { className: "btn btn-sm btn-ghost", onClick: async () => { pendingPatch = null; await renderPatchMode(st); } }, "やめる")));
+     } else if (sel) {
+       previewBox.appendChild(h("div", { style: { position: "sticky", bottom: "8px", marginTop: "10px", background: "#fff",
+         border: "1.5px solid #d97706", borderRadius: "10px", padding: "8px 12px", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", zIndex: 5 } },
+         h("b", { style: { fontSize: "13px" } }, sel.kind === "seat" ? "枠" + (sel.pos + 1) + "を選択中" : "「" + (sel.name || "") + "」を選択中"),
+         h("span", { className: "text-xs text-sub" }, sel.kind === "seat" ? "入れ替える相手の枠を押してください" : "補欠として入れる枠を押してください"),
+         h("span", { style: { flex: "1 0 auto" } }),
+         h("button", { className: "btn btn-sm btn-ghost", onClick: async () => { sel = null; await renderPatchMode(st); } }, "やめる")));
      }
    };
    await render();

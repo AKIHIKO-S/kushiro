@@ -4333,6 +4333,87 @@ function importSheetRows(tournamentId, rows, opts) {
   return { ok: results.every(r => r.success || r.preview), results, sheet_flow: true };
 }
 
+// 当日の変更(案B P7): 進行中(ongoing)でも許す限定的な組合せ修正。matches(木)と確定シートを
+// 同一トランザクションで同時更新(write-through)し、必ず新版を採番して理由を記録する。
+//  type:'swap'       = 2枠の入替(両方の1回戦試合が未開始のときだけ)
+//  type:'substitute' = 枠の選手を未配置の出場(補欠)に差替(対象枠の試合が未開始のときだけ)
+// 欠場は対象外=不戦勝の結果処理で扱う(表の構造・紙は変えない)。
+function patchSheet(tournamentId, event, args) {
+  args = args || {};
+  const reason = String(args.reason || "").trim();
+  if (!reason) return { error: "理由を選んでください(体調不良・無断欠席・遅刻・その他)" };
+  const conf = sheetStmts.latestConfirmed.get(tournamentId, event);
+  if (!conf) return { error: "確定済みの組合せがありません。確定前は座席表で直接編集してください。" };
+  const size = conf.size;
+  const seats = _canonSeats(size, JSON.parse(conf.seats_json || "[]"));
+  const r1 = sqlite.prepare(
+    `SELECT * FROM matches WHERE tournament_id=? AND event=? AND bracket_round=1`).all(tournamentId, event);
+  const matchOfLeaf = (pos) => r1.find(m => (m.bracket_pos || 0) === Math.floor(pos / 2));
+  // 「未開始」= pending/waiting のみ。試合中・完了(不戦勝含む)は勝ち上がりが動いているため対象外。
+  const notStarted = (m) => m && (m.status === "pending" || m.status === "waiting");
+  const leafToRP = (pos) => ({ pos: Math.floor(pos / 2), slot: (pos % 2) + 1 });
+
+  let apply = null, label = "";
+  if (args.type === "swap") {
+    const a = parseInt(args.a_pos), b = parseInt(args.b_pos);
+    if (![a, b].every(x => Number.isInteger(x) && x >= 0 && x < size)) return { error: "枠番号が不正です" };
+    if (a === b) return { error: "同じ枠です" };
+    const ma = matchOfLeaf(a), mb = matchOfLeaf(b);
+    if (!notStarted(ma) || !notStarted(mb)) {
+      return { error: "試合が始まっている(または不戦勝が確定した)枠は当日入替できません。結果の修正で対応してください。" };
+    }
+    const sa = seats[a], sb = seats[b];
+    if (!sa.entrant_id && !sb.entrant_id) return { error: "両方とも空き枠です" };
+    apply = () => {
+      const r = swapBracketSlots(tournamentId, event, leafToRP(a), leafToRP(b), { force: false });
+      if (r && r.error) throw Object.assign(new Error("patch_abort"), { _result: r });
+      [seats[a].entrant_id, seats[b].entrant_id] = [seats[b].entrant_id, seats[a].entrant_id];
+      [seats[a].entry_round, seats[b].entry_round] = [seats[b].entry_round, seats[a].entry_round];
+    };
+    const nm = (s) => { const e = s.entrant_id && entrantStmts.get.get(s.entrant_id); return e ? (e.display_name || e.name) : "(空き)"; };
+    label = "当日入替: 枠" + (a + 1) + " " + nm(sa) + " ⇄ 枠" + (b + 1) + " " + nm(sb);
+  } else if (args.type === "substitute") {
+    const pos = parseInt(args.pos);
+    if (!Number.isInteger(pos) || pos < 0 || pos >= size) return { error: "枠番号が不正です" };
+    const ent = entrantStmts.get.get(args.entrant_id);
+    if (!ent || ent.tournament_id !== tournamentId || ent.event !== event) return { error: "この種目の出場ではありません" };
+    if (seats.some(s => s.entrant_id === ent.id)) return { error: "その選手は既に別の枠にいます。入替(swap)を使ってください。" };
+    const m = matchOfLeaf(pos);
+    if (!notStarted(m)) return { error: "試合が始まっている枠は当日差替できません。" };
+    apply = () => {
+      const rp = leafToRP(pos);
+      const r = setBracketSlot(tournamentId, event, rp.pos, rp.slot,
+        { mode: "player", name: ent.display_name || ent.name, team: ent.team || "", entrant_id: ent.id, player_id: ent.player_id || null });
+      if (r && r.error) throw Object.assign(new Error("patch_abort"), { _result: r });
+      seats[pos].entrant_id = ent.id;
+      seats[pos].entry_round = Math.max(1, parseInt(ent.entry_round) || 1);
+    };
+    label = "当日差替: 枠" + (pos + 1) + " に " + (ent.display_name || ent.name) + " を配置";
+  } else return { error: "未知の当日修正: " + args.type };
+
+  const revNo = (sheetStmts.maxRev.get(tournamentId, event).r || 0) + 1;
+  const now = new Date().toISOString();
+  const tx = sqlite.transaction(() => {
+    apply();   // matches 側(内部フックで旧confirmedはdirty化するが、直後に新版へ置き換える)
+    sqlite.prepare(`UPDATE bracket_sheets SET status='superseded'
+      WHERE tournament_id=? AND event=? AND status IN ('confirmed','dirty')`).run(tournamentId, event);
+    const canon = _canonSeats(size, seats);
+    sqlite.prepare(`INSERT INTO bracket_sheets (id, tournament_id, event, rev_no, status, size,
+      seats_json, sheet_hash, tree_hash, reason, confirmed_by, source, confirmed_at)
+      VALUES (?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, 'patch', ?)`)
+      .run(crypto.randomUUID(), tournamentId, event, revNo, size,
+        JSON.stringify(canon), sheetHashOf(size, canon), canonicalStructHash(tournamentId, event),
+        reason + "｜" + label, String(args.by || ""), now);
+  });
+  try { tx(); }
+  catch (e) {
+    if (e && e._result) return e._result;
+    throw e;
+  }
+  return { ok: true, rev_no: revNo, label,
+    reprint: "組合せが第" + revNo + "版になりました。掲示中の紙の差し替え(再印刷)が必要です。" };
+}
+
 // 共存フック: 旧経路(木の直接編集API)が matches を書いたら、確定済みシートを dirty に落とす。
 // dirty=「シートと現物の木が食い違っている(要再確定)」。版スタンプ印刷はP5で保留対象になる。
 function markSheetDirty(tournamentId, event) {
@@ -12062,7 +12143,7 @@ module.exports = {
   sheetHashOf, synthesizeSheetFromMatches, canonicalStructHash, materializeSheet,
   migrateBracketSheets,
   getSheetState, ensureDraftSheet, applySheetOps, undoSheetOp, confirmSheet, markSheetDirty,
-  recordPrintLog, importSheetRows,
+  recordPrintLog, importSheetRows, patchSheet,
   setEntrantSeedRound, rebuildSeededBracket,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,
