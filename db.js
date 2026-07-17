@@ -1308,6 +1308,35 @@ function inferPlayerFurigana(opts) {
   return { updated: changes.length, total: all.length, changes };
 }
 
+// 所属名の統一(表記ゆれの一括変更): team=from の選手・参加者・所属履歴を team=to に付け替える。
+// 例「鳥取中学→鳥取中学校」。氏名の完全一致(from)のみ変更=部分一致で別チームを巻き込まない。
+// 過去の試合結果の team 表記(matches.winner_team 等)は当時の記録として残す(選手IDが同一性の正)。
+// opts.dry_run=true で件数プレビュー(DB不変)。
+function renameTeam(from, to, opts) {
+  opts = opts || {};
+  from = String(from == null ? "" : from).trim();
+  to = String(to == null ? "" : to).trim();
+  if (!from || !to) return { error: "変更前・変更後の所属名を入力してください" };
+  if (from === to) return { error: "変更前と変更後が同じです" };
+  const n = (sql, ...a) => { try { return sqlite.prepare(sql).get(...a).n; } catch (e) { return 0; } };
+  const counts = {
+    players: n("SELECT COUNT(*) n FROM players WHERE team=? AND merged_into IS NULL", from),
+    entrants: n("SELECT COUNT(*) n FROM entrants WHERE team=?", from),
+    partners: n("SELECT COUNT(*) n FROM entrants WHERE partner_team=?", from),
+    affiliations: n("SELECT COUNT(*) n FROM affiliations WHERE team=?", from),
+  };
+  const total = counts.players + counts.entrants + counts.partners + counts.affiliations;
+  if (opts.dry_run) return { ok: true, from, to, counts, total };
+  const tx = sqlite.transaction(() => {
+    sqlite.prepare("UPDATE players SET team=?, updated_at=datetime('now','localtime') WHERE team=?").run(to, from);
+    sqlite.prepare("UPDATE entrants SET team=? WHERE team=?").run(to, from);
+    sqlite.prepare("UPDATE entrants SET partner_team=? WHERE partner_team=?").run(to, from);
+    try { sqlite.prepare("UPDATE affiliations SET team=? WHERE team=?").run(to, from); } catch (e) {}
+  });
+  tx();
+  return { ok: true, from, to, counts, total };
+}
+
 // プレビューで人が選んだ行だけを書き込む(推測補完の確定側)。field は branch|furigana のみ許可
 // (文字列連結でSQLに埋めるためホワイトリスト必須)。空欄の選手だけ更新する(その後に誰かが
 // 入力していたら尊重して上書きしない=競合安全)。list=[{id,to},...]。
@@ -11284,7 +11313,7 @@ module.exports = {
   getCoachDashboard, saveCoachSubscription, deleteCoachSubscription, getCoachSubscriptionsForPlayer,
   getAllCoachSubscriptions, createCoachAnnouncement, listCoachAnnouncements, deleteCoachAnnouncement,
   getGlobalMatchAverages, detectSchoolCategory, normalizePlayerCategories, normalizePlayerBranches,
-  inferPlayerBranches, inferPlayerFurigana, applyInferredFill,
+  inferPlayerBranches, inferPlayerFurigana, applyInferredFill, renameTeam,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,
   getTournaments, getTournament, getTournamentMeta, createTournament, updateTournament, deleteTournament,

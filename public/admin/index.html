@@ -1439,6 +1439,7 @@
  <button class="btn btn-sm btn-ghost" onclick="A.cleanupInvalidPlayers()">チーム名混入を削除</button>
  <button class="btn btn-sm btn-ghost" onclick="A.openTidyDialog()" title="所属(学校名)からカテゴリを判定し、支部名を正規化。変更内容をプレビューで確認してから一括適用します">支部・カテゴリを整える</button>
  <button class="btn btn-sm btn-ghost" onclick="A.openInferDialog()" title="空欄の支部を同じ所属の選手から、空欄のふりがなを名字辞書から推測して補完(プレビュー確認あり)">空欄を推測で補完</button>
+ <button class="btn btn-sm btn-ghost" onclick="A.openRenameTeamDialog()" title="所属名の表記ゆれを一括で統一(例: 鳥取中学 → 鳥取中学校)。対象件数を確認してから適用します">所属名を統一</button>
  <button class="btn btn-sm btn-ghost" style="background:#fef3c7;color:#78350f;border-color:#fcd34d" onclick="A.openMergeDialog()" title="氏名・ふりがなが近い重複選手を検出して1人に結合(戦績も統合)">重複の結合</button>
  <button class="btn btn-sm" onclick="A.newPlayer()">+ 新規選手</button>
  </div>
@@ -7268,6 +7269,62 @@ const A = {
  },
 
  newPlayer() { A.editPlayer(null); },
+
+ // 所属名の統一(表記ゆれの一括変更 例: 鳥取中学 → 鳥取中学校)。件数プレビュー→適用。
+ async openRenameTeamDialog() {
+   // 既存の所属名を候補(datalist)に出す。現在の一覧データから収集。
+   let teams = [];
+   try {
+     const list = await api.get("/api/players");
+     const arr = Array.isArray(list) ? list : (list && list.players) || [];
+     teams = [...new Set(arr.map(p => (p.team || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ja"));
+   } catch (e) {}
+   const fromIn = h("input", { className: "input", id: "rtFrom", placeholder: "変更前の所属名", list: "rtTeamList" });
+   const toIn = h("input", { className: "input", id: "rtTo", placeholder: "変更後の所属名(統一先)", list: "rtTeamList" });
+   const preview = h("div", { className: "text-sm", style: { minHeight: "22px", margin: "8px 0", color: "var(--sub)" } });
+   const applyBtn = h("button", { className: "btn", disabled: "" }, "統一する");
+   let lastCounts = null;
+   const doPreview = async () => {
+     const from = fromIn.value.trim(), to = toIn.value.trim();
+     applyBtn.disabled = ""; lastCounts = null;
+     if (!from || !to || from === to) { preview.textContent = from === to && from ? "変更前と変更後が同じです" : "変更前・変更後の所属名を入力してください"; return; }
+     let r;
+     try { r = await api.post("/api/players/rename-team", { from, to, dry_run: true }); }
+     catch (e) { preview.textContent = "確認に失敗: " + e.message; return; }
+     if (!r || r.error) { preview.textContent = (r && r.error) || "確認できません"; return; }
+     lastCounts = r;
+     preview.replaceChildren(
+       h("b", {}, "「" + from + "」→「" + to + "」"),
+       h("span", {}, "　選手 " + r.counts.players + "名 / 参加記録 " + (r.counts.entrants + r.counts.partners) +
+         "件 / 所属履歴 " + r.counts.affiliations + "件 を統一します（計 " + r.total + " 件）"));
+     applyBtn.disabled = r.total ? null : "";
+     if (!r.total) preview.appendChild(h("div", { className: "text-xs", style: { color: "#b45309", marginTop: "4px" } }, "該当する所属がありません"));
+   };
+   fromIn.addEventListener("input", () => { clearTimeout(fromIn._t); fromIn._t = setTimeout(doPreview, 300); });
+   toIn.addEventListener("input", () => { clearTimeout(toIn._t); toIn._t = setTimeout(doPreview, 300); });
+   applyBtn.addEventListener("click", async () => {
+     if (!lastCounts) return;
+     applyBtn.disabled = "";
+     let r;
+     try { r = await api.post("/api/players/rename-team", { from: fromIn.value.trim(), to: toIn.value.trim() }); }
+     catch (e) { return toast("統一に失敗: " + e.message, "err"); }
+     if (!r || r.error) return toast((r && r.error) || "統一に失敗しました", "err");
+     toast(`統一しました: 計${r.total}件（選手${r.counts.players}名ほか）`, "ok");
+     document.querySelector(".modal-bg")?.remove();
+     await A.reload();
+   });
+   const body = h("div", {},
+     h("div", { className: "text-sm text-sub", style: { marginBottom: "10px", lineHeight: "1.6" } },
+       "所属名の表記ゆれを一つに統一します(例: 鳥取中学 → 鳥取中学校)。変更前の所属名と完全一致する選手・参加記録・所属履歴だけを変更します(部分一致で別チームを巻き込みません)。過去の試合結果の表記は当時の記録として残ります。"),
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "変更前の所属名"), fromIn),
+     h("div", { className: "field", style: { marginTop: "8px" } }, h("label", { className: "field-label" }, "変更後の所属名(統一先)"), toIn),
+     h("datalist", { id: "rtTeamList" }, ...teams.map(t => h("option", { value: t }))),
+     preview);
+   openModal("所属名を統一", body,
+     h("div", { className: "flex gap-2", style: { alignItems: "center" } }, applyBtn,
+       h("button", { className: "btn btn-ghost", style: { marginLeft: "auto" },
+         onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる")));
+ },
 
  // 支部のドロップダウン(道内/道外のグループ)。素の地名(釧路・秋田)で統一=normalizeShibuNameと整合。
  // 一覧に無い既存値は保持し、「その他(直接入力)」で新しい支部も入れられる(値の取得は A._branchValue)。

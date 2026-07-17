@@ -1033,6 +1033,13 @@ app.post("/api/players/apply-fill", requireAdmin, (req, res) => {
   if (r.error) return res.status(400).json(r);
   res.json(r);
 });
+// 所属名の統一(表記ゆれの一括変更 例:鳥取中学→鳥取中学校)。dry_run で件数プレビュー。
+app.post("/api/players/rename-team", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const r = db.renameTeam(b.from, b.to, { dry_run: !!b.dry_run });
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
 
 app.delete("/api/players/:id", requireAdmin, (req, res) => {
   const r = db.deletePlayer(req.params.id);
