@@ -5714,8 +5714,29 @@ const A = {
  const editBtn = h("button", { className: "btn btn-sm",
    title: "生成済みのトーナメント表をこの画面で修正(選手を2人タップで入替 / 罫線編集で進出先を組み替え)。編集は即反映",
    onClick: () => renderEditableBracket() }, "生成済みの表を編集");
- // メニュー(生成/編集/プレビュー/一括削除)は最上部に置く(オーナー要望 2026-07-17)。
- const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } }, genBtn, editBtn, previewBtn, bulkDelBtn);
+ // トーナメント表だけ全種目一括削除(名簿=出場者は残す)。オーナー要望 2026-07-17。
+ // 既存の「出場者を一括削除」(名簿ごと消す)とは逆=表だけ消して名簿は生かす。
+ const clearBracketsBtn = h("button", { className: "btn btn-sm btn-ghost",
+   style: { color: "#b91c1c", borderColor: "#fca5a5" },
+   title: "この大会の全種目のトーナメント表・リーグを削除します。出場選手名簿(申込)は残るので、すぐ作り直せます",
+   onClick: async () => {
+     if (!confirm("この大会の全種目のトーナメント表・リーグを削除します。\n出場選手名簿(申込)は残るので、最初から作り直せます。\nよろしいですか？")) return;
+     let r;
+     try { r = await api.del(`/api/tournaments/${t.id}/brackets`); }
+     catch (e) { return toast("削除に失敗: " + e.message, "err"); }
+     if (r && r.needs_force) {
+       if (!confirm((r.error || "結果入力済みの試合があります") + "\n\n結果も消して全削除しますか？")) return;
+       try { r = await api.del(`/api/tournaments/${t.id}/brackets?force=1`); } catch (e) { return toast("削除に失敗: " + e.message, "err"); }
+     }
+     if (r && r.error) return toast(r.error, "err");
+     O._bracketRev = {};
+     previewBox.innerHTML = ""; previewBox.style.display = "none"; previewOpen = false;
+     previewBtn.textContent = "登場回戦の配置をプレビュー";
+     toast(`トーナメント表を全削除しました(${((r && r.events) || []).length}種目・名簿は保持)`, "ok");
+     await load();
+   } }, "表を全削除（名簿は残す）");
+ // メニュー(生成/編集/プレビュー/表削除/出場者削除)は最上部に置く(オーナー要望 2026-07-17)。
+ const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } }, genBtn, editBtn, previewBtn, clearBracketsBtn, bulkDelBtn);
  const body = h("div", {}, summary, compareBar, qualityBar, tabStrip, btnBar, previewBox, filterBar, ssNote, tableWrap);
  if (opts && opts.panel) {
    // 専用ページ(タブ)描画: モーダルを開かず、高さ制限も外して画面全体で見せる
