@@ -827,6 +827,18 @@
     "札幌", "函館", "旭川", "釧路", "十勝", "千歳", "苫小牧", "江別",
     "室蘭", "名寄", "根室", "後志", "滝川", "北見", "岩見沢", "留萌",
     "日高", "稚内", "紋別", "小樽", "深川", "網走", "富良野", "斜里",
+    "釧根",   // 釧路+根室の広域(根釧→釧根 で正規化される値・KTTA実運用の支部)
+  ];
+  // 道外支部(北海道以外の46都府県。県/府/都を付けない素の名前で統一=normalizeShibuNameと整合)。
+  // 道外から参加/転入した選手の支部選択に使う。並びは北から南(全国卓球の一般的な並び)。
+  const DOUKAI_BRANCHES = [
+    "青森", "岩手", "宮城", "秋田", "山形", "福島",
+    "茨城", "栃木", "群馬", "埼玉", "千葉", "東京", "神奈川",
+    "新潟", "富山", "石川", "福井", "山梨", "長野", "岐阜", "静岡", "愛知",
+    "三重", "滋賀", "京都", "大阪", "兵庫", "奈良", "和歌山",
+    "鳥取", "島根", "岡山", "広島", "山口",
+    "徳島", "香川", "愛媛", "高知",
+    "福岡", "佐賀", "長崎", "熊本", "大分", "宮崎", "鹿児島", "沖縄",
   ];
   const GRAY_BRANCH = { bg: "#f1f5f9", fg: "#64748b" };
   // 任意表記 → 公式の地名 (該当なければ null)。
@@ -1260,7 +1272,7 @@
     elapsedMinSince, fmtElapsedClock, startElapsedTicker,
     createPoller, downloadCSV, downloadJSON, openModal,
     logoHTML, statusBadge,
-    HOKKAIDO_BRANCHES, normalizeBranch, officialBranch, branchColor, branchColorMap, branchBadge,
+    HOKKAIDO_BRANCHES, DOUKAI_BRANCHES, normalizeBranch, officialBranch, branchColor, branchColorMap, branchBadge,
     branchGradient, branchHeroBg,
     eventColor, eventBadge, catLabel,
     mountTournamentSelect,

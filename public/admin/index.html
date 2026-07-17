@@ -7258,6 +7258,40 @@ const A = {
 
  newPlayer() { A.editPlayer(null); },
 
+ // 支部のドロップダウン(道内/道外のグループ)。素の地名(釧路・秋田)で統一=normalizeShibuNameと整合。
+ // 一覧に無い既存値は保持し、「その他(直接入力)」で新しい支部も入れられる(値の取得は A._branchValue)。
+ _branchSelectEl(current) {
+   current = (current || "").trim();
+   const hok = TT.HOKKAIDO_BRANCHES || [];
+   const dgai = TT.DOUKAI_BRANCHES || [];
+   const known = new Set([...hok, ...dgai]);
+   const sel = h("select", { className: "input", id: "plBranch" },
+     h("option", { value: "", selected: current ? null : "" }, "（未設定）"),
+     h("optgroup", { label: "北海道の支部" },
+       ...hok.map(b => h("option", { value: b, selected: current === b ? "" : null }, b))),
+     h("optgroup", { label: "道外の支部" },
+       ...dgai.map(b => h("option", { value: b, selected: current === b ? "" : null }, b))),
+     // 一覧に無い既存値(旧「○○支部」表記など)はそのまま選べるよう退避オプションに残す
+     (current && !known.has(current))
+       ? h("optgroup", { label: "現在の値" }, h("option", { value: current, selected: "" }, current)) : null,
+     h("option", { value: "__other__" }, "その他（直接入力）…"));
+   // 「その他」を選ぶと自由入力欄を表示する(支部が一覧に無い特殊ケース用)
+   const other = h("input", { className: "input", id: "plBranchOther", placeholder: "支部名を直接入力",
+     style: { marginTop: "6px", display: "none" } });
+   sel.addEventListener("change", () => {
+     const on = sel.value === "__other__";
+     other.style.display = on ? "block" : "none";
+     if (on) other.focus();
+   });
+   return h("div", {}, sel, other);
+ },
+ // 支部欄の確定値: 「その他」選択時は自由入力欄、それ以外は select の値。
+ _branchValue() {
+   const sel = document.getElementById("plBranch");
+   if (sel && sel.value === "__other__") return (document.getElementById("plBranchOther") || {}).value?.trim() || "";
+   return sel ? sel.value.trim() : "";
+ },
+
  async editPlayer(p) {
  const isNew = !p;
  // 既存選手は入賞歴・戦績込みのフルデータを取得
@@ -7294,12 +7328,8 @@ const A = {
  ),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "支部 (任意)"),
- h("input", { className: "input", id: "plBranch", value: p.branch || "",
-   placeholder: "例: 釧路支部 / 十勝支部",
-   list: "plBranchList" }),
- h("datalist", { id: "plBranchList" },
-   ...(TT.HOKKAIDO_BRANCHES || []).map(b => h("option", { value: b + "支部" })),
- )),
+ A._branchSelectEl(p.branch || ""),
+ ),
  ),
  h("div", { className: "two-col" },
  h("div", { className: "field" },
@@ -7465,7 +7495,7 @@ const A = {
  name: document.getElementById("plName").value.trim(),
  furigana: document.getElementById("plFuri").value.trim(),
  team: document.getElementById("plTeam").value.trim(),
- branch: document.getElementById("plBranch").value.trim(),
+ branch: A._branchValue(),
  gender: document.getElementById("plGender").value,
  category: (document.getElementById("plCategory") || {}).value || "general",
  appearances: parseInt(document.getElementById("plApp").value) || 0,
