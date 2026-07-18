@@ -2087,7 +2087,7 @@ app.post("/api/tournaments/:id/league/playoff", requireAdmin, (req, res) => {
   // 生成した決勝T/順位別T(新種目)を割当表の正本に載せる(案B P7)。migrateBracketSheets は
   // シート未作成の種目だけを冪等に拾い、標準配線なので「第1版(移行)」として即confirmedになる
   // =進行中の大会でも決勝Tに版スタンプ付き印刷がそのまま使える。
-  try { db.migrateBracketSheets(); } catch (e) {}
+  try { db.migrateBracketSheets(req.params.id); } catch (e) {}   // この大会だけ移行(全大会スキャンを避ける・案B 2-5)
   res.json(r);
 });
 // 釧路リーグ: 前回大会の各部順位から今回の部を提案(運営限定)。

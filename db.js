@@ -4003,14 +4003,18 @@ function _isStandardWiring(tournamentId, event) {
 // bracket_sheets 未作成の種目からシートを合成する。標準配線なら「第1版(移行)」として確定済みに、
 // 非標準(relink痕跡)なら legacy_review に(勝手に木を書き換えない)。
 // 終了済み大会は対象外=閲覧専用のまま(外部検証の要修正: 移行範囲の限定)。
-function migrateBracketSheets() {
-  const targets = sqlite.prepare(`
+// tournamentId を渡すとその大会だけを対象にする(案B 2-5)。決勝T生成など特定大会の後処理から
+// 呼ぶ場合に全大会スキャン(過去大会累積で線形増)を避ける。未指定=起動時の全体移行。
+function migrateBracketSheets(tournamentId) {
+  const scope = tournamentId ? " AND m.tournament_id = @tid" : "";
+  const sql = `
     SELECT DISTINCT m.tournament_id, m.event FROM matches m
     JOIN tournaments t ON t.id = m.tournament_id
-    WHERE COALESCE(t.status,'scheduled') IN ('scheduled','ongoing')
+    WHERE COALESCE(t.status,'scheduled') IN ('scheduled','ongoing')${scope}
       AND NOT EXISTS (SELECT 1 FROM bracket_sheets s
                       WHERE s.tournament_id = m.tournament_id AND s.event = m.event)
-  `).all();
+  `;
+  const targets = tournamentId ? sqlite.prepare(sql).all({ tid: tournamentId }) : sqlite.prepare(sql).all();
   let confirmed = 0, review = 0;
   const ins = sqlite.prepare(`
     INSERT INTO bracket_sheets (id, tournament_id, event, rev_no, status, size, seats_json,
@@ -6725,6 +6729,9 @@ function generateLeaguePlayoff(tournamentId, srcEvent, opts = {}) {
       }
       sqlite.prepare("DELETE FROM matches WHERE tournament_id=? AND event=?").run(tournamentId, tg.event);
       sqlite.prepare("DELETE FROM entrants WHERE tournament_id=? AND event=?").run(tournamentId, tg.event);
+      // 決勝Tの作り直しは entrant を新IDで作り直す=既存シートの席が旧IDを指し全BYE化する(案B 2-5)。
+      // 古いシート行を消して、直後の migrateBracketSheets(この大会だけ)が新しい木から作り直せるようにする。
+      sqlite.prepare("DELETE FROM bracket_sheets WHERE tournament_id=? AND event=?").run(tournamentId, tg.event);
       tg.entries.forEach(en => {
         createEntrant({
           tournament_id: tournamentId, event: tg.event, seed: en.seed,
