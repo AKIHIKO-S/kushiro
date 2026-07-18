@@ -1594,7 +1594,7 @@ function createPlayer(data) {
         event: a.event,
         tournament: a.tournament || "",
         place: a.place,
-        type: a.type || "シングルス",
+        type: a.type || "",   // type列は廃止(自由文一本化・2026-07-18)=見せかけの既定値を書かない
         year: a.year || new Date().getFullYear(),
       });
     }
@@ -2204,7 +2204,7 @@ function addAchievement(playerId, data) {
     event: data.event,
     tournament: data.tournament || "",
     place: data.place,
-    type: data.type || "シングルス",
+    type: data.type || "",   // type列は廃止(自由文一本化・2026-07-18)=見せかけの既定値を書かない
     year: data.year || new Date().getFullYear(),
   });
   return { id, ...data };
@@ -2720,7 +2720,7 @@ const importPlayersTxn = sqlite.transaction((players) => {
             event: a.event,
             tournament: a.tournament || "",
             place: a.place,
-            type: a.type || "シングルス",
+            type: a.type || "",   // type列は廃止(自由文一本化・2026-07-18)=見せかけの既定値を書かない
             year: a.year || new Date().getFullYear(),
           });
         }
