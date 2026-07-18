@@ -89,3 +89,23 @@ test("2-4: 結果入力済みで force無し確定が失敗しても entrants.en
   const after = parseInt(db.getEntrants(t.id, EV).find(e => e.id === target.id).entry_round) || 1;
   assert.strictEqual(after, before, "確定失敗時に entry_round が書き換わらない");
 });
+
+test("2-1: 表(matches)削除で確定シートが superseded になる(空の木を確定と誤認しない)", () => {
+  const EV = "男子シングルス";
+  const t = setupConfirmed("削除孤児化", "2027-12-13", EV, 4);
+  assert.ok(db.getSheetState(t.id, EV).confirmed, "確定シートあり");
+  const r = db.deleteEventMatches(t.id, EV, { force: true });
+  assert.ok(r.ok, JSON.stringify(r).slice(0, 120));
+  const st = db.getSheetState(t.id, EV);
+  assert.ok(!st.confirmed, "表削除後は確定シートが無い(孤児化しない)");
+});
+
+test("2-1: 名簿削除で下書きシートも無効化される(死んだ出場IDを指す下書きを残さない)", () => {
+  const EV = "男子シングルス";
+  const t = setupConfirmed("名簿削除孤児化", "2027-12-14", EV, 4);
+  const dr = db.ensureDraftSheet(t.id, EV);
+  assert.ok(dr && !dr.error && db.getSheetState(t.id, EV).draft, "下書きあり");
+  db.deleteRoster(t.id, EV);
+  const st = db.getSheetState(t.id, EV);
+  assert.ok(!st.draft && !st.confirmed, "名簿削除後は下書き・確定とも無い(superseded)");
+});

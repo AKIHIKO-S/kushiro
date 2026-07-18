@@ -8274,11 +8274,29 @@ function getBracket(tournamentId, event) {
 // イベントの全試合を削除（ブラケット再生成用）
 // 2026-07-17: 結果入力済みガードを追加。全種目版(deleteAllBrackets)には needs_force があるのに
 // 種目単位版は confirm 1回で確定結果ごと不可逆に消えていた(保護レベルの逆転)。
+// 表(matches)や名簿の削除で、確定シートが「空の木/消えた出場を指す第N版」として孤児化する
+// (dirty=falseのまま無警告で残る)のを防ぐ後始末(案B 2-1)。対象種目の生きているシート(確定/dirty/
+// 旧配線)を superseded にする(履歴は残す)。event 未指定=大会全種目。includeDraft=名簿削除など出場
+// そのものが消える削除では下書きも無効化する。
+function _supersedeSheetsOnDelete(tournamentId, event, opts) {
+  opts = opts || {};
+  const inStatuses = opts.includeDraft
+    ? "('confirmed','dirty','legacy_review','draft')"
+    : "('confirmed','dirty','legacy_review')";
+  const where = event ? " AND event=?" : "";
+  const args = event ? [tournamentId, event] : [tournamentId];
+  try {
+    sqlite.prepare(`UPDATE bracket_sheets SET status='superseded'
+      WHERE tournament_id=?${where} AND status IN ${inStatuses}`).run(...args);
+  } catch (e) {}
+}
+
 function deleteEventMatches(tournamentId, event, opts) {
   opts = opts || {};
   const g = _destructiveGuard(tournamentId, event, opts.force, "トーナメント表を削除");
   if (g) return g;
   opStmts.deleteEventMatches.run(tournamentId, event);
+  _supersedeSheetsOnDelete(tournamentId, event);   // 確定シートが空の木を指す孤児化を防ぐ
   return { ok: true };
 }
 
@@ -8518,6 +8536,7 @@ function deleteAllBrackets(tournamentId, opts) {
     };
   }
   const deleted = sqlite.prepare("DELETE FROM matches WHERE tournament_id=?").run(tournamentId).changes;
+  _supersedeSheetsOnDelete(tournamentId, null);   // 全種目の確定シートを孤児化させない(案B 2-1)
   return { ok: true, deleted, events: events.map(e => e.event), completed_deleted: done };
 }
 
@@ -8533,6 +8552,8 @@ function deleteRoster(tournamentId, event) {
       m = sqlite.prepare("DELETE FROM matches WHERE tournament_id=?").run(tournamentId).changes;
       e = sqlite.prepare("DELETE FROM entrants WHERE tournament_id=?").run(tournamentId).changes;
     }
+    // 出場そのものが消える=シートの席が死んだIDを指す。下書きも含めて無効化する(案B 2-1)。
+    _supersedeSheetsOnDelete(tournamentId, event || null, { includeDraft: true });
     return { matches: m, entrants: e };
   });
   return { ok: true, ...run() };
