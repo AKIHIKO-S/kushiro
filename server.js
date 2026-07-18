@@ -4251,6 +4251,14 @@ app.post("/api/tournaments/:id/bracket/sheet/undo", requireAdmin, (req, res) => 
   if (r && r.error) return res.status(400).json(r);
   res.json(r);
 });
+// 下書きシートの表プレビュー(統合エディタ用): 「確定するとこうなる」木を書込なしで返す
+app.get("/api/tournaments/:id/bracket/sheet/bracket-preview", requireAdmin, (req, res) => {
+  const event = req.query.event;
+  if (!event) return res.status(400).json({ error: "event が必要です" });
+  const r = db.previewSheetBracket(req.params.id, event);
+  if (r && r.error) return res.status(400).json(r);
+  res.json(r);
+});
 // 版間差分(A4差分掲示票の材料): 第from版→第to版の変更一覧
 app.get("/api/tournaments/:id/bracket/sheet/diff", requireAdmin, (req, res) => {
   const event = req.query.event;

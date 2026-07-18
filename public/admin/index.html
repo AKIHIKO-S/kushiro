@@ -5731,10 +5731,17 @@ const A = {
    previewBtn.textContent = "▲ 配置プレビューを閉じる";
    previewBox.innerHTML = '<div class="text-sub" style="padding:10px">読込中…</div>';
    // 進行中(ongoing)は下書きを作らず「当日修正モード」(入替・補欠差替のみ・理由必須・必ず新版)。
+   // 下書きは必要になった時だけ作る(編集opsが自動生成)=開いただけで無意味な版が増えない。
+   // 表も確定版も無い新規種目だけ、名簿から初期下書きを用意する。
    const isOngoing = (t.status === "ongoing");
    if (!isOngoing) {
-     const mk = await api.post(`/api/tournaments/${t.id}/bracket/sheet/draft`, { event });
-     if (mk && mk.error) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + esc(mk.error) + '</div>'; return; }
+     try {
+       const st0 = await api.get(`/api/tournaments/${t.id}/bracket/sheet?event=` + encodeURIComponent(event));
+       if (st0 && !st0.draft && !st0.confirmed) {
+         const mk = await api.post(`/api/tournaments/${t.id}/bracket/sheet/draft`, { event });
+         if (mk && mk.error) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + esc(mk.error) + '</div>'; return; }
+       }
+     } catch (e) {}
    }
    let sel = null;   // {kind:'seat', pos} | {kind:'unplaced', entrant_id, name}
    let pendingPatch = null;   // 当日修正の確定待ち {type, a_pos,b_pos | pos,entrant_id, label}
@@ -5745,14 +5752,18 @@ const A = {
      // 当日修正モード(進行中): 確定版の枠リストを表示し、2枠選択→理由→当日入替 / 未配置→枠→補欠差替。
      if (isOngoing) { renderPatchMode(st); return; }
      const draft = st.draft;
-     if (!draft) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">下書きがありません</div>'; return; }
+     // 表示の元=下書き(あれば)or 最新確定版。編集opsは下書きを自動生成するので、確定状態から
+     // 氏名をタップして直し始めるとその場で下書きに切り替わる(統合エディタ 2026-07-18)。
+     const curSheet = st.draft || st.confirmed;
+     if (!curSheet) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">割当表がありません(出場者を登録してから開き直してください)</div>'; return; }
      const entName = new Map();
      try {
        (await api.get(`/api/tournaments/${t.id}/entrants?event=` + encodeURIComponent(event)))
          .forEach(e => entName.set(e.id, { name: e.display_name || e.name || "", team: e.team || "" }));
      } catch (e) {}
      const send = async (ops) => {
-       const r = await api.post(`/api/tournaments/${t.id}/bracket/sheet/ops`, { event, base_hash: draft.sheet_hash, ops });
+       const r = await api.post(`/api/tournaments/${t.id}/bracket/sheet/ops`,
+         { event, base_hash: st.draft ? st.draft.sheet_hash : "", ops });
        if (r && r.conflict) { toast(r.error || "他の端末が先に編集しました。読み込み直します", "err"); sel = null; await render(); return false; }
        if (r && r.error) { toast(r.error, "err"); return false; }
        sel = null; await render(); return true;
@@ -5780,7 +5791,11 @@ const A = {
          }
          if (r && r.error) return toast(r.error, "err");
          toast("第" + r.rev_no + "版として確定し、トーナメント表を作りました", "ok");
-         sel = null; try { await load(); } catch (e) {} await render();
+         sel = null;
+         try { await load(); } catch (e) {}
+         // 進行LIVE・観戦の対戦カードにも確実に反映(オーナー要望 2026-07-18)
+         if (O._vbReload) O._vbReload(); if (O.reload) O.reload();
+         await render();
        } }, "この組合せで確定して表を作る");
      // Excel導線(P4): 出力=管理DL(先頭タブが割当表シート)。取込=下書きへ反映(差分パネルで検収)。
      const xlOutB = h("button", { className: "btn btn-sm btn-ghost",
@@ -5788,7 +5803,10 @@ const A = {
        onClick: () => A.downloadAuthedFile(`/api/tournaments/${t.id}/bracket/export.xlsx?event=${encodeURIComponent(event)}`, `トーナメント表_${event}.xlsx`) }, "Excelへ出力");
      const xlInB = h("button", { className: "btn btn-sm btn-ghost", onClick: () => sheetImportXlsx() }, "Excelから取込");
      previewBox.appendChild(h("div", { style: { display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } },
-       h("b", { style: { fontSize: "13.5px" } }, "割当表(座席表)"), badge, h("span", { style: { flex: "1 0 auto" } }), xlOutB, xlInB, undoB, confirmB));
+       h("b", { style: { fontSize: "13.5px" } }, "表の編集"), badge,
+       st.unplaced.length ? h("span", { style: { background: "#fee2e2", color: "#b91c1c", fontWeight: 700, fontSize: "12px", padding: "3px 10px", borderRadius: "999px" } }, "未配置 " + st.unplaced.length + "名") : null,
+       h("span", { style: { flex: "1 0 auto" } }), xlOutB, xlInB,
+       st.draft ? undoB : null, st.draft ? confirmB : null));
      // 確定前の差分バー: 「確定するとこう変わる」を最新確定版との比較で見せる(空なら出さない)。
      const df = st.diff;
      if (df && (df.moves.length + df.added.length + df.removed.length) > 0) {
@@ -5820,37 +5838,42 @@ const A = {
        }
      }
      previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "8px", lineHeight: "1.6" } },
-       "枠を押すと、その枠に入れる選手を名簿・選手DBから選べます。外した選手は必ず「未配置」に残ります(消えません)。表とアプリの対戦カードは「確定」した瞬間にこの割当表から作られます。"));
-     // 本体: 左=枠リスト(クリック=選手選択モーダル。オーナー要望 2026-07-18: 2タップ入替から
-     // 「枠を押して選手を選ぶ」方式へ変更) / 右=未配置(表示のみ・状況把握用)
-     const seatRow = (s) => {
-       const info = s.entrant_id ? entName.get(s.entrant_id) : null;
-       const row = h("div", { style: {
-         display: "flex", gap: "8px", alignItems: "baseline", padding: "6px 10px",
-         borderBottom: "1px solid #f1efec", cursor: "pointer", borderRadius: "6px",
-       }, onClick: () => openSeatPicker(s) },
-         h("span", { style: { color: "#9ca3af", fontSize: "11.5px", minWidth: "34px", fontVariantNumeric: "tabular-nums" } }, String(s.pos + 1)),
-         info
-           ? h("span", { style: { fontWeight: 600, fontSize: "13.5px" } }, info.name,
-               info.team ? h("span", { style: { fontWeight: 400, color: "#78716c", fontSize: "11.5px", marginLeft: "6px" } }, info.team) : null)
-           : h("span", { style: { color: "#c8c3ba", fontSize: "13px" } }, "(空き)"),
-         s.entry_round > 1 ? h("span", { style: { marginLeft: "auto", background: "#fef3c7", color: "#92400e", fontSize: "11px", fontWeight: 700, padding: "1px 8px", borderRadius: "999px" } }, s.entry_round + "回戦から") : null);
-       row.addEventListener("mouseenter", () => row.style.background = "#f3f4f6");
-       row.addEventListener("mouseleave", () => row.style.background = "");
-       return row;
+       st.draft
+         ? "下書きを表示中です。表の氏名(または空き枠)を押すと、その枠に入れる選手を名簿・選手DBから選べます。よければ「確定して表を作る」で反映されます。"
+         : "表の氏名(または空き枠)を押すと、その枠に入れる選手を名簿・選手DBから選べます(直した時点で下書きになり、確定で反映)。罫線編集・シードの大罫線もこの表の上でそのまま使えます。"));
+     // 本体: トーナメント表ビューに統合(オーナー要望 2026-07-18: 旧「生成済みの表を編集」と一本化)。
+     //  - 下書きあり: 「確定するとこうなる」木を書込なしで導出して表示(氏名タップ=選手選択モーダル)
+     //  - 下書きなし: 現物の表を編集モードで表示(罫線編集・シードドラッグも可+氏名タップ=モーダル)
+     const onLeafTap = (lf) => {
+       const pos = 2 * (lf.pos || 0) + ((lf.slot || 1) - 1);
+       const seatObj = (curSheet.seats || []).find(x => x.pos === pos) || { pos, entrant_id: lf.eid || null, entry_round: 1 };
+       openSeatPicker(seatObj);
      };
-     const seatCol = h("div", { style: { flex: "1 1 340px", minWidth: "300px", border: "1px solid #e7e5e4", borderRadius: "10px", padding: "6px", maxHeight: "460px", overflow: "auto", background: "#fff" } },
-       ...draft.seats.map(seatRow));
-     const unplacedCol = h("div", { style: { flex: "0 1 240px", minWidth: "200px" } },
-       h("div", { style: { fontSize: "12px", fontWeight: 700, color: "#78716c", margin: "2px 0 6px" } },
-         "未配置(" + st.unplaced.length + "名)"),
-       ...(st.unplaced.length ? st.unplaced.map(u =>
-         h("div", { style: { padding: "6px 10px", border: "1px dashed #d6d3ce", borderRadius: "8px", marginBottom: "6px", fontSize: "13px", background: "#faf9f7" } },
-           h("b", {}, u.name), u.team ? h("span", { className: "text-xs text-sub", style: { marginLeft: "6px" } }, u.team) : null)
-       ) : [h("div", { className: "text-xs text-sub" }, "全員配置済みです")]),
-       st.unplaced.length ? h("div", { className: "text-xs text-sub", style: { marginTop: "4px", lineHeight: "1.5" } },
-         "入れたい枠を押して、この選手を選んでください") : null);
-     previewBox.appendChild(h("div", { style: { display: "flex", gap: "14px", flexWrap: "wrap", alignItems: "flex-start" } }, seatCol, unplacedCol));
+     let bdata = null;
+     if (st.draft) {
+       try { bdata = await api.get(`/api/tournaments/${t.id}/bracket/sheet/bracket-preview?event=` + encodeURIComponent(event)); }
+       catch (e) {}
+       if (!bdata || bdata.error) {
+         previewBox.appendChild(h("div", { style: { color: "#dc2626", padding: "8px" } }, (bdata && bdata.error) || "プレビューを取得できません"));
+       } else {
+         previewBox.appendChild(O.renderPaperBracket(bdata, { readOnly: true, onLeafTap }));
+       }
+     } else {
+       try { bdata = await api.get(`/api/tournaments/${t.id}/bracket/export?event=` + encodeURIComponent(event) + "&ts=" + Date.now()); }
+       catch (e) {}
+       if (!bdata || bdata.error) {
+         previewBox.appendChild(h("div", { style: { color: "#dc2626", padding: "8px" } }, (bdata && bdata.error) || "トーナメント表を読み込めません"));
+       } else {
+         if (bdata.event) { O._bracketRev = O._bracketRev || {}; O._bracketRev[bdata.event] = bdata.bracket_rev; }
+         const bctx = { tournamentId: t.id, event,
+           getRev: () => (O._bracketRev && O._bracketRev[event]),
+           setRev: (rev) => { O._bracketRev = O._bracketRev || {}; if (rev) O._bracketRev[event] = rev; },
+           // 罫線編集・シード等の後: 申込表+この表+進行LIVEの対戦カードまで確実に反映(オーナー要望)
+           reload: async () => { try { await load(); } catch (e) {}
+             if (O._vbReload) O._vbReload(); if (O.reload) O.reload(); await render(); } };
+         previewBox.appendChild(O.renderPaperBracket(bdata, { editable: true, ctx: bctx, onLeafTap }));
+       }
+     }
 
      // 枠の選手選択モーダル(オーナー要望 2026-07-18): 枠クリック→名簿(未配置/配置済み)+選手DBから選ぶ。
      // 配置は place op=選んだ選手の旧枠は空き・この枠の元の選手は未配置へ(すべて割当表上で見える)。
@@ -5869,7 +5892,7 @@ const A = {
          const hit = (e) => !q || [(e.display_name || e.name || ""), (e.team || ""), (e.furigana || ""), (e.partner_furigana || "")]
            .join(" ").toLowerCase().includes(q);
          const placedPos = new Map();
-         draft.seats.forEach(x => { if (x.entrant_id) placedPos.set(x.entrant_id, x.pos); });
+         (curSheet.seats || []).forEach(x => { if (x.entrant_id) placedPos.set(x.entrant_id, x.pos); });
          const mkRow = (label, sub, onClick) => {
            const row = h("div", { style: { display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px",
              borderBottom: "1px solid #f1f5f9", cursor: "pointer" }, onClick },
@@ -6147,7 +6170,7 @@ const A = {
  const sheetBtn = h("button", { className: "btn btn-sm",
    style: { background: "#1c3a2e", color: "#fff" },
    title: "組合せを「枠番号に誰を置くか」の割当表として編集し、確定した瞬間に表を作ります。外した選手は必ず未配置に残るので消えません",
-   onClick: () => renderSheetEditor() }, "割当表で編集(新)");
+   onClick: () => renderSheetEditor() }, "表を編集");
  // トーナメント表だけ全種目一括削除(名簿=出場者は残す)。オーナー要望 2026-07-17。
  // 既存の「出場者を一括削除」(名簿ごと消す)とは逆=表だけ消して名簿は生かす。
  const clearBracketsBtn = h("button", { className: "btn btn-sm btn-ghost",
@@ -6170,7 +6193,8 @@ const A = {
      await load();
    } }, "表を全削除（名簿は残す）");
  // メニュー(生成/編集/プレビュー/表削除/出場者削除)は最上部に置く(オーナー要望 2026-07-17)。
- const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } }, sheetBtn, genBtn, editBtn, previewBtn, clearBracketsBtn, bulkDelBtn);
+ // 旧「生成済みの表を編集」は統合エディタ(sheetBtn)に一本化(オーナー要望 2026-07-18)。
+ const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } }, sheetBtn, genBtn, previewBtn, clearBracketsBtn, bulkDelBtn);
  const body = h("div", {}, summary, compareBar, qualityBar, tabStrip, btnBar, previewBox, filterBar, ssNote, tableWrap);
  if (opts && opts.panel) {
    // 専用ページ(タブ)描画: モーダルを開かず、高さ制限も外して画面全体で見せる
@@ -12964,14 +12988,17 @@ const O = {
          // 左山は左端・右山は右端(row-reverse により flex-start が右端になる)。
          justifyContent: "flex-start",
          textAlign: isL ? "left" : "right",
-         cursor: editable ? "pointer" : "default",
+         cursor: (editable || (opts && opts.onLeafTap)) ? "pointer" : "default",
          opacity: 1,
          // 白フチ(袋文字)で氏名の下の罫線を消す=「氏名→罫線→接続」の並び(罫線の上に浮かせない)。
          textShadow: "0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff, 0 0 2px #fff",
          paddingBottom: "6px",
          outlineOffset: "-1px", borderRadius: "4px", overflow: "hidden", whiteSpace: "nowrap",
        },
-       onClick: editable ? (() => O._pbTap(ctx, lf, false)) : undefined,
+       // onLeafTap(統合エディタ 2026-07-18): 指定時は従来の2タップ入替ではなく、呼び出し側の
+       // 選手選択モーダルに委ねる(readOnly表示でもタップは有効=プレビュー中も編集できる)。
+       onClick: (opts && opts.onLeafTap) ? (() => opts.onLeafTap(lf))
+         : (editable ? (() => O._pbTap(ctx, lf, false)) : undefined),
        onMouseenter: editable ? ((e) => {
          const d = e.currentTarget;
          if (d.dataset.pbSel !== "1") d.style.background = "#f3f4f6";

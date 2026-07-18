@@ -3702,6 +3702,9 @@ function _previewBracketStructure(matchesByRound, totalRounds, bracketSize, N, e
         status: (aReal && bReal) ? "pending" : "waiting",
         player1_name: aReal ? m._n1 : "", player1_team: aReal ? m._t1 : "",
         player2_name: bReal ? m._n2 : "", player2_team: bReal ? m._t2 : "",
+        // R1のみ entrant_id を載せる(統合エディタの氏名タップ→選手選択モーダルが枠を特定するため)
+        player1_entrant_id: (r === 0 && m.player1 && m.player1.id) ? m.player1.id : null,
+        player2_entrant_id: (r === 0 && m.player2 && m.player2.id) ? m.player2.id : null,
         result: null,
         // グラフベース描画(renderPaperBracket/buildSideLines)が罫線を辿るのに必要。
         // このプレビューは確定前の仮IDだが、matchesByRound内で既にnext_match_id/next_slotが
@@ -4353,6 +4356,30 @@ function importSheetRows(tournamentId, rows, opts) {
     results.push({ event, success: true, placed: seats.length, size, warnings, diff, to_draft: true });
   }
   return { ok: results.every(r => r.success || r.preview), results, sheet_flow: true };
+}
+
+// 下書きシートから「確定するとこうなる」表を書込なしで導出する(統合エディタの表示用)。
+// generateBracket の preview 経路(txn直前return=DB/Elo副作用ゼロ)+fixedLeaves を流用。
+// 下書きが無ければ最新確定版から(=現物と同形)。返り値は exportBracket 同形の {matches:[…]}。
+function previewSheetBracket(tournamentId, event) {
+  const st = getSheetState(tournamentId, event);
+  const sheet = st.draft || st.confirmed;
+  if (!sheet) return { error: "割当表がありません(先に下書きを作成してください)" };
+  const size = sheet.size;
+  const canon = _canonSeats(size, sheet.seats);
+  const leaves = new Array(size).fill(null);
+  for (const s of canon) {
+    if (!s.entrant_id) continue;
+    const ent = entrantStmts.get.get(s.entrant_id);
+    if (ent) leaves[s.pos] = ent;
+  }
+  if (leaves.filter(Boolean).length < 2) return { error: "配置が2名未満です" };
+  const r = generateBracket(tournamentId, event, {
+    regenerate: true, force: true, preview: true, fixedLeaves: leaves,
+  });
+  if (r && r.error) return r;
+  return { ...r, sheet_status: st.draft ? "draft" : "confirmed",
+    sheet_hash: sheet.sheet_hash, rev_no: st.confirmed ? st.confirmed.rev_no : 0 };
 }
 
 // 当日の変更(案B P7): 進行中(ongoing)でも許す限定的な組合せ修正。matches(木)と確定シートを
@@ -12165,7 +12192,7 @@ module.exports = {
   sheetHashOf, synthesizeSheetFromMatches, canonicalStructHash, materializeSheet,
   migrateBracketSheets,
   getSheetState, ensureDraftSheet, applySheetOps, undoSheetOp, confirmSheet, markSheetDirty,
-  recordPrintLog, importSheetRows, patchSheet, getSheetDiffBetween,
+  recordPrintLog, importSheetRows, patchSheet, getSheetDiffBetween, previewSheetBracket,
   setEntrantSeedRound, rebuildSeededBracket,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
   exportPublicSnapshot, applyPublicSnapshot,
