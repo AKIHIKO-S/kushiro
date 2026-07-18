@@ -4127,44 +4127,6 @@ app.post("/api/tournaments/:id/bracket/lock", requireAdmin, (req, res) => {
   if (r.error) return res.status(400).json(r);
   res.json(r);
 });
-app.post("/api/tournaments/:id/bracket/swap", requireAdmin, blockOngoingBracketEdit, (req, res) => {
-  const { event, a, b } = req.body || {};
-  if (!event || !a || !b) return res.status(400).json({ error: "event, a, b が必要です" });
-  if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
-  const r = db.swapBracketSlots(req.params.id, event, a, b, { force: !!req.body?.force });
-  if (r.error) return res.status(400).json(r);
-  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
-});
-
-// 1回戦の1スロットを設定 (BYE化/空き/別選手に置換) — 取込ズレ・シードの手動修正
-app.post("/api/tournaments/:id/bracket/set-slot", requireAdmin, blockOngoingBracketEdit, (req, res) => {
-  const { event, pos, slot } = req.body || {};
-  if (!event || pos == null || slot == null) return res.status(400).json({ error: "event, pos, slot が必要です" });
-  if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
-  const r = db.setBracketSlot(req.params.id, event, pos, slot, req.body || {});
-  if (r.error) return res.status(400).json(r);
-  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
-});
-
-// ⑤ トーナメント表に選手をシードとして追加(上/下に登場回戦Rで合流・既存配置は保持)。
-// body: { event, name|entrant_id, side:'top'|'bottom', entry_round, seed?, team?, force?, base_rev? }
-app.post("/api/tournaments/:id/bracket/add-seed", requireAdmin, blockOngoingBracketEdit, (req, res) => {
-  const event = req.body && req.body.event;
-  if (!event) return res.status(400).json({ error: "event が必要です" });
-  if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
-  const r = db.addBracketSeed(req.params.id, event, req.body || {});
-  if (r && r.error) return res.status(400).json(r);   // needs_force も r に含めて返す(フロントが再確認)
-  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
-});
-// 既存選手をシードに繰り上げ(クリックした枠 pos/slot の選手を登場回戦Rのシードとして再配置)。
-app.post("/api/tournaments/:id/bracket/promote-seed", requireAdmin, blockOngoingBracketEdit, (req, res) => {
-  const b = req.body || {};
-  if (!b.event) return res.status(400).json({ error: "event が必要です" });
-  if (bracketRevStale(req.params.id, b.event, b)) return sendBracketConflict(res, req.params.id, b.event);
-  const r = db.promoteToSeed(req.params.id, b.event, b.pos, b.slot, b);
-  if (r && r.error) return res.status(400).json(r);
-  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, b.event) });
-});
 
 // エクセル風 枠グリッド用データ(トーナメント管理タブ): 1回戦スロット×entrant 結合
 app.get("/api/tournaments/:id/bracket/grid", requireAdmin, (req, res) => {
@@ -4200,54 +4162,6 @@ app.post("/api/tournaments/:id/bracket/swap-doubles-order", requireAdmin, blockO
   if (!event) return res.status(400).json({ error: "event が必要です" });
   if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
   const r = db.swapDoublesOrder(req.params.id, event);
-  if (r && r.error) return res.status(400).json(r);
-  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
-});
-// 紙どおりのシード: 1ペアの登場回戦を設定し再構築。body: { entrant_id, entry_round, base_rev, force }
-app.post("/api/tournaments/:id/bracket/set-seed-round", requireAdmin, blockOngoingBracketEdit, (req, res) => {
-  const b = req.body || {};
-  const e = db.getEntrant(b.entrant_id);
-  if (!e) return res.status(400).json({ error: "エントリーが見つかりません" });
-  if (bracketRevStale(req.params.id, e.event, b)) return sendBracketConflict(res, req.params.id, e.event);
-  const r = db.setEntrantSeedRound(b.entrant_id, b.entry_round, { force: !!b.force });
-  if (r && r.error) return res.status(r.needs_force ? 200 : 400).json(r);
-  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, e.event) });
-});
-// 試合まるごと入替。body: { event, posA, posB, base_rev }
-app.post("/api/tournaments/:id/bracket/swap-match", requireAdmin, blockOngoingBracketEdit, (req, res) => {
-  const event = req.body && req.body.event;
-  if (!event) return res.status(400).json({ error: "event が必要です" });
-  if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
-  const r = db.swapBracketMatches(req.params.id, event, req.body.posA, req.body.posB, { force: !!req.body?.force });
-  if (r && r.error) return res.status(400).json(r);
-  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
-});
-// 罫線の自由配線編集: 試合の進出先を組み替える。body: { event, match_id, target_match_id, target_slot, base_rev, force }
-app.post("/api/tournaments/:id/bracket/relink", requireAdmin, blockOngoingBracketEdit, (req, res) => {
-  const b = req.body || {};
-  if (!b.event) return res.status(400).json({ error: "event が必要です" });
-  if (bracketRevStale(req.params.id, b.event, b)) return sendBracketConflict(res, req.params.id, b.event);
-  const r = db.relinkBracketMatch(req.params.id, b.event, b.match_id, b.target_match_id, b.target_slot, { force: !!b.force });
-  if (r && r.error) return res.status(400).json(r);
-  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, b.event) });
-});
-// 選手マスタDBから枠へ(未エントリーは自動で出場追加)。body: { event, pos, slot, player_id, base_rev }
-app.post("/api/tournaments/:id/bracket/set-slot-from-player", requireAdmin, blockOngoingBracketEdit, (req, res) => {
-  const event = req.body && req.body.event;
-  if (!event) return res.status(400).json({ error: "event が必要です" });
-  if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
-  const r = db.setBracketSlotFromPlayer(req.params.id, event, req.body.pos, req.body.slot, req.body.player_id);
-  if (r && r.error) return res.status(400).json(r);
-  res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
-});
-// 参加者一覧から枠へ「移動」配置(選んだ選手の元位置を空欄に・元の占有者は未配置に)。
-app.post("/api/tournaments/:id/bracket/place-entrant", requireAdmin, blockOngoingBracketEdit, (req, res) => {
-  const event = req.body && req.body.event;
-  if (!event) return res.status(400).json({ error: "event が必要です" });
-  if (bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
-  // mode:"exchange"=双方配置済みなら2枠交換(誰も未配置にならない) / 既定"move"=移動(元占有者は未配置)
-  const r = db.placeEntrantInSlot(req.params.id, event, req.body.pos, req.body.slot, req.body.entrant_id,
-    { mode: req.body.mode || "move", force: !!req.body.force });
   if (r && r.error) return res.status(400).json(r);
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
