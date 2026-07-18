@@ -12564,6 +12564,11 @@ const O = {
    if (!L) return toast("試合データがありません", "err");
    // 版スタンプ(案B P5): 確定済みシートがあれば「第N版・確定日時・照合コード」を全ページに印字し、
    // 出力履歴(print_log)を記録する。未確定・要再確定(dirty)は「見本」透かし=正式な掲示物にできない。
+   // 版スタンプ/見本帯の三分岐(案B P5の回帰修正 2026-07-18):
+   //  ① 確定シートあり&クリーン → 版スタンプ(第N版・照合コード)
+   //  ② 確定シートあり&dirty(旧経路編集でズレ) → 「見本」帯(正式掲示不可の警告)
+   //  ③ 確定シート無し(終了大会・移行対象外・未確定運用) → 素の印刷=帯も版も付けない(P5導入前の挙動)
+   // ②③を区別せず一律 mihon にすると、終了済み過去大会の刷り直しが全部「見本」帯になる回帰があった。
    let stamp = "", mihon = false;
    try {
      const shSt = await api.get(`/api/tournaments/${O.tournamentId}/bracket/sheet?event=` + encodeURIComponent(selectedEv));
@@ -12573,13 +12578,14 @@ const O = {
        stamp = "組合せ 第" + c.rev_no + "版・確定 " + dt + "・照合 " + String(c.sheet_hash || "").slice(0, 6) +
          "｜印刷 " + new Date().toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
        api.post(`/api/tournaments/${O.tournamentId}/bracket/print-log`, { event: selectedEv, kind: "large_print" }).catch(() => {});
-     } else {
-       mihon = true;   // シート未確定 or 旧経路編集でズレあり
+     } else if (shSt && shSt.confirmed && shSt.dirty) {
+       mihon = true;   // 確定版はあるが旧経路編集でズレ=正式掲示不可
      }
-   } catch (e) { mihon = true; }
+     // 確定シートが無い場合は素の印刷(mihonにしない=見本帯の誤爆を防ぐ)
+   } catch (e) { /* 取得失敗時も素の印刷(見本帯を誤爆させない) */ }
    const stampHtml = stamp
      ? '<div class="pb-stamp">' + esc(stamp) + '</div>'
-     : '<div class="pb-mihon">見本（確定前）——正式な掲示物は「割当表で編集(新)」で組合せを確定してから印刷してください</div>';
+     : (mihon ? '<div class="pb-mihon">見本（確定前）——正式な掲示物は「割当表で編集(新)」で組合せを確定してから印刷してください</div>' : '');
    const pages = [];
    L.blocks.forEach((blk, b) => {
      const label = L.nBlocks > 1 ? String.fromCharCode(0xFF21 + b) + "ブロック" : "";

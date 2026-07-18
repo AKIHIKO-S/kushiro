@@ -10866,16 +10866,24 @@ function importBracket(tournamentId, data) {
   // ── シード選手リスト形式 ──
   if (data.format === "tabletennis-seed-list-v1" ||
       (Array.isArray(data.players) && !data.matches)) {
-    return importFromSeedList(tournamentId, data);
+    const r = importFromSeedList(tournamentId, data);
+    if (r && !r.error && data.event) markSheetDirty(tournamentId, data.event);   // 共存フック(案B・下記)
+    return r;
   }
 
   // ── 完全ブラケット形式 ──
   if (data.format === "tabletennis-bracket-v1" || Array.isArray(data.matches)) {
-    return importFromMatches(tournamentId, data);
+    const r = importFromMatches(tournamentId, data);
+    if (r && !r.error && data.event) markSheetDirty(tournamentId, data.event);   // 共存フック(案B・下記)
+    return r;
   }
 
   return { error: "不明な形式です。'format' フィールドが必要です（tabletennis-bracket-v1 / tabletennis-seed-list-v1）" };
 }
+// 共存フック(案B 2026-07-18): Excel/PDF取込は matches を直接書き換える旧経路。確定シートがある種目に
+// 取り込んだら「要再確定(dirty)」に落とし、版スタンプが古い配置を「確定」と印字するのを防ぐ。ここ(db層)で
+// 全取込経路を一元的に塞ぐ(server側の各呼び出しに markSheetDirty を撒く漏れを無くす)。マルチ形式は
+// 再帰の各葉が data.event を持つので個別に dirty 化される。markSheetDirtyは確定シートが無ければ無害なno-op。
 
 // シードリスト → entrant 生成 + standard seeding でブラケット
 // マスタDBへのリンクは「auto_link_to_players: true」指定時のみ
