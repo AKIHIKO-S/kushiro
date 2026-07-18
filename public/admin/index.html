@@ -257,6 +257,8 @@
  .pdb-stat.win { background: #dcfce7; color: #15803d; }
  .pdb-stat.loss { background: #fee2e2; color: #b91c1c; }
  .pdb-stat.medal { background: #fef9c3; color: #854d0e; }
+ /* レート(Elo): 撤去したAI紫(#3730a3)を避け中立スレートで(勝/敗の緑赤に色相を増やさない) */
+ .pdb-stat.rating { background: #e2e8f0; color: #334155; }
  .pdb-winrate-bar {
    height: 4px; border-radius: 2px; margin-top: 5px;
    background: #fee2e2; overflow: hidden;
@@ -1457,6 +1459,7 @@
  <option value="gender">男女別</option>
  <option value="team">所属チーム別</option>
  <option value="category">カテゴリ別</option>
+ <option value="rating">レート順</option>
  <option value="flat">フラット一覧</option>
  </select>
  </div>
@@ -7456,8 +7459,13 @@ const A = {
  (p.branch || "").toLowerCase().includes(q));
  if (g !== "all") list = list.filter(p => p.gender === g);
 
- // ふりがな順で安定ソート
+ // 既定はふりがな順で安定ソート。レート順ビューはレート降順(同点・未算出はふりがな順)。
+ if (view === "rating") {
+ list.sort((a, b) => ((parseInt(b.rating) || 0) - (parseInt(a.rating) || 0)) ||
+   (a.furigana || a.name || "").localeCompare(b.furigana || b.name || "", "ja"));
+ } else {
  list.sort((a, b) => (a.furigana || a.name || "").localeCompare(b.furigana || b.name || "", "ja"));
+ }
 
  if (!list.length) {
  el.appendChild(h("div", { className: "empty-state", style: { padding: "40px 20px" } },
@@ -7490,6 +7498,12 @@ const A = {
  const app = p.appearances || 0;
  // 戦績バッジ群
  const stats = [];
+ // レート(Elo): 対戦成績から自動算出。既定1500から動いた選手(=公式戦の実績あり)だけ表示する
+ // (全員が1500と出ると意味の無いノイズになるため)。バックエンドは ?sort=rating 対応済み。
+ const rating = parseInt(p.rating);
+ if (rating && rating !== 1500) stats.push(h("span", { className: "pdb-stat rating",
+   title: "レーティング(Elo・対戦成績から自動算出)" },
+   h("span", { className: "pdb-stat-lbl" }, "レート"), String(rating)));
  if (app > 0) stats.push(h("span", { className: "pdb-stat app" },
    h("span", { className: "pdb-stat-lbl" }, "出場"), String(app) + "回"));
  if (total > 0) {
@@ -7543,8 +7557,8 @@ const A = {
  acc.appendChild(head); acc.appendChild(body); el.appendChild(acc);
  };
 
- if (view === "flat") {
-   // フラット一覧
+ if (view === "flat" || view === "rating") {
+   // フラット一覧(レート順ビューも同じカードグリッドを、上のソートでレート降順に並べて表示)
    const grid = h("div", { style: {
      display: "grid",
      gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
@@ -8039,11 +8053,13 @@ const A = {
      background: "var(--state-done)" } })),
  )) : null,
 
- // ─── 大会レベル別 戦績 (全道/全国を別記録) ───
+ // ─── 大会レベル別 戦績 (地区・市民/オープンのみ) ───
+ // 全道/全国は選手DBの戦績に出さない(オーナー方針・地区のみ)。データ層 getPlayerLevelStats も
+ // NOT IN ('hokkaido','national') で除外済みのため、national/hokkaido は常に空=描画され得ないデッド
+ // だった。表示側の levels からも撤去してデータ層と一致させる(2026-07-18)。
  (() => {
    const ls = p.level_stats || {};
-   const levels = [["national","全国","#a16207"],["hokkaido","全道","#b91c1c"],
-                   ["district","地区・市民","#2563eb"],["other","オープン","#15803d"]];
+   const levels = [["district","地区・市民","#2563eb"],["other","オープン","#15803d"]];
    const rows = levels.filter(([k]) => ls[k] && (ls[k].wins + ls[k].losses) > 0);
    if (!rows.length) return null;
    return h("div", { className: "field" },

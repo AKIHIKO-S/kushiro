@@ -2685,12 +2685,11 @@ const V = {
  // 対戦相手別戦績 (H2H) — 平易な「○○さんに N勝M敗」表示
  if (p.opponents && p.opponents.length) {
  body.appendChild(h("div", { className: "section-title" }, `対戦相手別の成績 (${p.opponents.length}名)`));
- const list = h("div", { className: "h2h-clean" });
- p.opponents.slice(0, 20).forEach(o => {
+ const mkH2HRow = (o) => {
  const verdict = o.wins > o.losses
    ? { cls: "lead", label: "勝ち越し" }
    : (o.wins < o.losses ? { cls: "behind", label: "負け越し" } : { cls: "even", label: "五分" });
- list.appendChild(h("div", { className: "h2h-c-row",
+ return h("div", { className: "h2h-c-row",
    onClick: () => o.opp_id && V.openPlayer(o.opp_id) },
  h("div", { style: { minWidth: 0 } },
    h("div", { className: "h2h-c-name" }, o.name,
@@ -2702,9 +2701,25 @@ const V = {
    h("span", { className: "l" }, o.losses + "敗"),
    h("span", { className: "h2h-c-verdict " + verdict.cls }, verdict.label),
  ),
- ));
- });
+ );
+ };
+ // 見出しは全件数なのに20件で打ち切っていた不一致を解消。20件超は「もっと見る」で全件展開する。
+ const H2H_CAP = 20;
+ const list = h("div", { className: "h2h-clean" });
+ p.opponents.slice(0, H2H_CAP).forEach(o => list.appendChild(mkH2HRow(o)));
  body.appendChild(list);
+ if (p.opponents.length > H2H_CAP) {
+ const rest = h("div", { className: "h2h-clean", style: { display: "none" } });
+ p.opponents.slice(H2H_CAP).forEach(o => rest.appendChild(mkH2HRow(o)));
+ const moreBtn = h("button", {
+   style: { width: "100%", padding: "9px", marginBottom: "16px", background: "#fff",
+     border: "1px solid #e2e8f0", borderRadius: "8px", color: "var(--sub)",
+     fontSize: "13px", fontWeight: 700, cursor: "pointer" },
+   onClick: () => { rest.style.display = "flex"; moreBtn.remove(); },
+ }, `もっと見る（残り ${p.opponents.length - H2H_CAP} 名）`);
+ body.appendChild(moreBtn);
+ body.appendChild(rest);
+ }
  }
 
  // 戦績
