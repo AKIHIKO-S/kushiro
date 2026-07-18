@@ -2532,18 +2532,18 @@ const V = {
  if (updateHash) location.hash = "player/" + id;
  TT.showLoading();
  try {
+ // 種目別戦績(event-stats)は computePlayerStats の種目別勝率に統合済みで描画は if(false)=死んでいたため、
+ // 無駄なfetchごと撤去した(2026-07-18 デッドコード整理)。
  const reqs = [
  api.get("/api/public/players/" + id),
  api.get("/api/public/players/" + id + "/opponents"),
- api.get("/api/public/players/" + id + "/event-stats"),
  ];
  // 全試合平均 (相対比較用 #243) は一度だけ取得してキャッシュ
  if (!V._matchAvg) reqs.push(api.get("/api/public/stats/match-averages").catch(() => null));
- const [p, opponents, eventStats, avg] = await Promise.all(reqs);
+ const [p, opponents, avg] = await Promise.all(reqs);
  if (avg) V._matchAvg = avg;
  if (p.error) { toast("選手が見つかりません", "err"); return; }
  p.opponents = opponents || [];
- p.event_stats = eventStats || [];
  V.state.currentPlayer = p;
  V.renderPlayerDetail(p);
  V.showTabPanelOnly("player");
@@ -2658,29 +2658,7 @@ const V = {
  // ── 数値で見る成績 (拡充版・閲覧/admin共通描画 #210 / 全体平均比較 #243) ──
  body.appendChild(TT.playerStatsSection(p, { averages: V._matchAvg }));
 
- // 種目別統計 (旧・computePlayerStatsの種目別勝率に統合済のため非表示)
- if (false && p.event_stats && p.event_stats.length) {
- body.appendChild(h("div", { className: "section-title" }, "種目別戦績"));
- const grid = h("div", { className: "event-stats-grid", style: { marginBottom: "16px" } });
- p.event_stats.forEach(s => {
- const total = (s.wins || 0) + (s.losses || 0);
- const rate = total === 0 ? 0 : Math.round((s.wins || 0) / total * 100);
- grid.appendChild(h("div", { className: "event-stat-card" },
- h("div", { className: "event-stat-title" }, s.event),
- h("div", { className: "event-stat-row" },
- h("span", {}, "戦績"),
- h("span", { className: "font-bold",
- style: { fontFamily: "monospace" } }, `${s.wins || 0}勝 ${s.losses || 0}敗`)),
- h("div", { className: "event-stat-row" },
- h("span", {}, "勝率"),
- h("span", { className: "font-bold" }, rate + "%")),
- h("div", { className: "event-stat-row" },
- h("span", {}, "セット"),
- h("span", { style: { fontFamily: "monospace" } }, `${s.sets_won || 0}-${s.sets_lost || 0}`)),
- ));
- });
- body.appendChild(grid);
- }
+ // (種目別統計は computePlayerStats の種目別勝率に統合済み。旧・if(false)の死んだ描画ブロックは撤去した)
 
  // 対戦相手別戦績 (H2H) — 平易な「○○さんに N勝M敗」表示
  if (p.opponents && p.opponents.length) {

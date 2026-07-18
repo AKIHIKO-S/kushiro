@@ -1605,8 +1605,9 @@
 <script src="/shared/tie-order.js"></script>
 <script src="/shared/bracket-layout.js"></script>
 <script>
-const { h, esc, api, toast, ratingBadge, fmtDate, fmtDateShort, clear,
+const { h, esc, api, toast, fmtDate, fmtDateShort, clear,
  parsePaste, downloadCSV, downloadJSON, openModal, EV_TYPES, ROUNDS, CATS } = TT;
+// ※ ratingBadge は選手カードで pdb-stat の自作バッジに置き換えたため import しない(デッドインポート撤去 2026-07-18)
 
 // ─── 互換シム: 古い common.js がキャッシュされていても呼出/結果入力が動くように ───
 // (opSend 未定義だと進行管理の確定ボタンが無反応になる事故を防止)
