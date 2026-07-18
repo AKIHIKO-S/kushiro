@@ -1127,8 +1127,25 @@ function _searchNorm(s) {
     .replace(/[\s　]/g, "");
 }
 
+// 出場回数の自動集計(試合由来): 各選手が対戦した大会の異なり数を一括で返す(2026-07-18)。
+// getPlayers/一覧表示・ソートで手動appearances列の代わりに使う=閲覧の「出場大会」と一致。
+const _appearanceCountStmt = sqlite.prepare(`
+  SELECT pid, COUNT(DISTINCT tournament_id) AS n FROM (
+    SELECT winner_id AS pid, tournament_id FROM matches WHERE winner_id IS NOT NULL
+    UNION ALL
+    SELECT loser_id AS pid, tournament_id FROM matches WHERE loser_id IS NOT NULL
+  ) GROUP BY pid`);
+function _appearanceMap() {
+  const m = new Map();
+  for (const r of _appearanceCountStmt.all()) if (r.pid) m.set(r.pid, r.n);
+  return m;
+}
+
 function getPlayers({ search, gender, category, team, sort } = {}) {
   let rows = stmts.getPlayers.all();
+  // 出場回数は試合データ由来の自動集計に一本化(手動列は表示・ソートに使わない・2026-07-18)。
+  const appMap = _appearanceMap();
+  rows.forEach(r => { r.appearances = appMap.get(r.id) || 0; });
   if (search) {
     const q = _searchNorm(search);
     rows = rows.filter(r =>
@@ -1179,6 +1196,16 @@ function getPlayer(id) {
   player.matches = stmts.getMatchesByPlayer.all(player.id, player.id).map(m => ({
     ...m, sets: JSON.parse(m.sets_json || "[]")
   }));
+  // 出場回数は試合データ由来の自動集計に一本化(オーナー決定 2026-07-18・手動appearances列は表示に使わない)。
+  // = その選手が対戦した(winner/loser)大会の異なり数。閲覧・詳細の「出場大会」と同義になり、カードの
+  //   「出場N回」と食い違わない。統合(merged_into)後はmatchesがsurvivorへ張り替わるので統合先で合算される。
+  {
+    const ts = new Set();
+    for (const m of player.matches) {
+      if ((m.winner_id === player.id || m.loser_id === player.id) && m.tournament_id) ts.add(m.tournament_id);
+    }
+    player.appearances = ts.size;
+  }
   // 大会レベル別の勝敗内訳 (全道/全国の戦績を別記録)
   player.level_stats = getPlayerLevelStats(player.id);
   player.affiliations = listAffiliations(player.id);   // 所属履歴 (#298)

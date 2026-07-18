@@ -8007,9 +8007,10 @@ const A = {
  )),
  ),
  h("div", { className: "field" },
- h("label", { className: "field-label" }, "出場回数 (参考)"),
- h("input", { className: "input", id: "plApp", type: "number",
- value: p.appearances || 0 })),
+ h("label", { className: "field-label" }, "出場回数 (試合データから自動集計)"),
+ h("div", { className: "input", style: { background: "#f8fafc", color: "#57534e" },
+   title: "出場した大会の数(試合データから自動集計)。手動入力は廃止しました。" },
+ (p.appearances || 0) + "回")),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "備考"),
  h("textarea", { id: "plNote", rows: 2 }, p.note || "")),
@@ -8185,7 +8186,7 @@ const A = {
  branch: A._branchValue(),
  gender: document.getElementById("plGender").value,
  category: (document.getElementById("plCategory") || {}).value || "general",
- appearances: parseInt(document.getElementById("plApp").value) || 0,
+ // 出場回数は試合データから自動集計(手動入力は廃止・2026-07-18)=保存では送らない。
  note: document.getElementById("plNote").value.trim(),
  };
  if (!data.name) return toast("氏名は必須です", "err");
