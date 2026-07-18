@@ -605,34 +605,33 @@ test("(u) 名簿取込→POST /bracket が entrant_ids で生成でき、DELETE 
   assert.strictEqual(entsAfter.filter(e => e.event === "男子シングルス").length, 6, "名簿は残る(6名)");
 });
 
-test("(y) 進行中(ongoing)の大会は構造編集APIがサーバ側で403になる(2026-07-17 第0段)", async () => {
-  const t = await adminPost("/api/tournaments", { name: "進行中ゲート", date: "2027-01-01" });
+test("(y) 旧・木の直接編集APIは410(表を編集に統合済み)・存続ルートはongoingで403(案B P8)", async () => {
+  const t = await adminPost("/api/tournaments", { name: "P8ゲート", date: "2027-01-01" });
   await adminPut(`/api/tournaments/${t.id}/entry-settings`, { entries_open: 1, event_config: [{ name: "男子シングルス", type: "singles", fee: 0 }] });
   for (const nm of ["ゲート 一郎", "ゲート 二郎", "ゲート 三郎", "ゲート 四郎"])
     await adminPost(`/api/tournaments/${t.id}/entrants`, { event: "男子シングルス", name: nm, status: "confirmed" });
   await adminPost(`/api/tournaments/${t.id}/bracket`, { event: "男子シングルス", regenerate: true });
-  await adminPut(`/api/tournaments/${t.id}`, { status: "ongoing" });
-  // 代表的な構造編集ルートが全て403+ongoing印になる(UIだけでなくサーバが遮断=別端末・API直叩き対策)
-  const denied = [];
-  const post = (p, b) => fetch(BASE + p, { method: "POST", headers: akhead, body: JSON.stringify(b) });
-  let r = await post(`/api/tournaments/${t.id}/bracket/swap`, { event: "男子シングルス", a: { pos: 0, slot: 1 }, b: { pos: 1, slot: 1 } });
-  denied.push(["swap", r.status, await r.json()]);
-  r = await post(`/api/tournaments/${t.id}/bracket/place-entrant`, { event: "男子シングルス", pos: 0, slot: 1, entrant_id: "x" });
-  denied.push(["place-entrant", r.status, await r.json()]);
-  r = await post(`/api/tournaments/${t.id}/bracket/generate`, { event: "男子シングルス", regenerate: true, force: true });
-  denied.push(["generate", r.status, await r.json()]);
-  r = await post(`/api/tournaments/${t.id}/bracket/set-seed-round`, { event: "男子シングルス", entrant_id: "x", entry_round: 3 });
-  denied.push(["set-seed-round", r.status, await r.json()]);
-  r = await fetch(BASE + `/api/tournaments/${t.id}/bracket?event=` + encodeURIComponent("男子シングルス"), { method: "DELETE", headers: akhead });
-  denied.push(["DELETE bracket", r.status, await r.json()]);
-  for (const [name, status, body] of denied) {
-    assert.strictEqual(status, 403, name + " は403: " + JSON.stringify(body).slice(0, 80));
-    assert.ok(body.ongoing, name + " に ongoing 印がある");
+  // 旧9ルートは状態に関わらず410(Gone)+matchesが変わらない
+  const before = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
+  const goneRoutes = ["swap", "relink", "place-entrant", "set-slot", "set-slot-from-player",
+    "set-seed-round", "swap-match", "add-seed", "promote-seed"];
+  for (const g of goneRoutes) {
+    const r = await fetch(BASE + `/api/tournaments/${t.id}/bracket/` + g,
+      { method: "POST", headers: akhead, body: JSON.stringify({ event: "男子シングルス" }) });
+    assert.strictEqual(r.status, 410, g + " は410: " + r.status);
+    const body = await r.json();
+    assert.ok(body.gone && /表を編集/.test(body.error), g + " の案内文");
   }
-  // 進行を戻す(scheduled)と編集できる
-  await adminPut(`/api/tournaments/${t.id}`, { status: "scheduled" });
-  const ok = await post(`/api/tournaments/${t.id}/bracket/swap`, { event: "男子シングルス", a: { pos: 0, slot: 1 }, b: { pos: 1, slot: 1 } }).then(x => x.json());
-  assert.ok(!ok.error || ok.needs_force, "scheduled に戻すと編集が通る: " + JSON.stringify(ok).slice(0, 100));
+  const after = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
+  assert.strictEqual(JSON.stringify(after), JSON.stringify(before), "410では木が一切変わらない");
+  // 存続ルート(生成・削除)は進行中403のまま
+  await adminPut(`/api/tournaments/${t.id}`, { status: "ongoing" });
+  const gen = await fetch(BASE + `/api/tournaments/${t.id}/bracket/generate`,
+    { method: "POST", headers: akhead, body: JSON.stringify({ event: "男子シングルス", regenerate: true, force: true }) });
+  assert.strictEqual(gen.status, 403, "generateはongoingで403");
+  const del = await fetch(BASE + `/api/tournaments/${t.id}/bracket?event=` + encodeURIComponent("男子シングルス"),
+    { method: "DELETE", headers: akhead });
+  assert.strictEqual(del.status, 403, "DELETEはongoingで403");
 });
 
 test("(z) 割当表API: 下書き→編集→確定→旧経路編集でdirty→再確定 の一巡(案B P3)", async () => {
@@ -656,10 +655,9 @@ test("(z) 割当表API: 下書き→編集→確定→旧経路編集でdirty→
   assert.ok(c.ok && c.rev_no === 1, "確定: " + JSON.stringify(c).slice(0, 120));
   const ms = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
   assert.ok((Array.isArray(ms) ? ms : []).length >= 3, "木が導出された");
-  // 旧経路(swap)で編集→シートが dirty になる
-  const sw = await adminPost(`/api/tournaments/${t.id}/bracket/swap`,
-    { event: EV, a: { pos: 0, slot: 1 }, b: { pos: 1, slot: 1 } });
-  assert.ok(!sw.error, "旧経路swap成功: " + JSON.stringify(sw).slice(0, 80));
+  // 旧経路(生成し直し)で木を書き換える→シートが dirty になる(swap等の編集APIは410化済み)
+  const sw = await adminPost(`/api/tournaments/${t.id}/bracket`, { event: EV, regenerate: true, force: true });
+  assert.ok(!sw.error, "旧経路の再生成成功: " + JSON.stringify(sw).slice(0, 80));
   const st = await fetch(BASE + `/api/tournaments/${t.id}/bracket/sheet?event=` + encodeURIComponent(EV),
     { headers: akhead }).then(r => r.json());
   assert.ok(st.dirty, "旧経路の編集で dirty(共存フック)");

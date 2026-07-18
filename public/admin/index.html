@@ -5688,38 +5688,7 @@ const A = {
      toast(`削除しました: 出場者${r.entrants || 0}名 / 試合${r.matches || 0}件`, "ok");
      await load();
    } }, "出場者を一括削除");
- // ⑤ 生成済みトーナメント表をこの画面で編集(選手入替・罫線の組み替え)。オーナー要望 2026-07-17。
- // 生成済みトーナメント表を編集モードで(再)描画。編集(入替/罫線/移動/シード)の後、
- // ctx.reload からこれを呼ぶことで【編集がすぐに反映】される(申込表の配置状況も load で更新)。
- const renderEditableBracket = async () => {
-   if (activeTab === "all") return toast("種目タブを選んでください", "err");
-   previewOpen = true; previewBox.style.display = "block";
-   previewBtn.textContent = "▲ 配置プレビューを閉じる";
-   previewBox.innerHTML = '<div class="text-sub" style="padding:10px">読込中…</div>';
-   try {
-     const bdata = await api.get(`/api/tournaments/${t.id}/bracket/export?event=` + encodeURIComponent(activeTab) + "&ts=" + Date.now());
-     if (!bdata || bdata.error) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + ((bdata && bdata.error) || "この種目のトーナメント表はまだ生成されていません。先に『トーナメント表を生成/再生成』してください。") + '</div>'; return; }
-     if (bdata.event) { O._bracketRev = O._bracketRev || {}; O._bracketRev[bdata.event] = bdata.bracket_rev; }
-     previewBox.innerHTML = "";
-     const ongoing = !!(bdata.tournament && bdata.tournament.status === "ongoing");
-     previewBox.appendChild(ongoing
-       ? h("div", { style: { marginBottom: "6px", padding: "8px 12px", background: "#fef3c7", border: "1px solid #fbbf24",
-           borderRadius: "8px", fontSize: "12.5px", color: "#92400e", lineHeight: "1.6" } },
-           h("b", {}, "この大会は進行中のため、トーナメント表は編集できません。"),
-           " 構造の変更(入替・罫線・移動・シード)は進行を止めてから行ってください。表示・印刷は可能です。")
-       : h("div", { className: "text-xs text-sub", style: { marginBottom: "6px", lineHeight: "1.6" } },
-           "生成済みのトーナメント表を編集しています。入れ替えたい選手2人をクリックし合うと入れ替わります。『罫線編集』で進出先(次の対戦)を組み替え、選手1人タップ→『シード・登場回戦（大罫線）』でスーパーシードの大罫線を引けます。編集は即座に反映されます。"));
-     const ctx = { tournamentId: t.id, event: activeTab,
-       getRev: () => (O._bracketRev && O._bracketRev[activeTab]),
-       setRev: (rev) => { O._bracketRev = O._bracketRev || {}; if (rev) O._bracketRev[activeTab] = rev; },
-       // 編集後: 申込表(配置状況)を更新し、ブラケットも再描画=すぐ反映。
-       reload: async () => { try { await load(); } catch (e) {} await renderEditableBracket(); } };
-     previewBox.appendChild(O.renderPaperBracket(bdata, { editable: true, ctx }));
-   } catch (e) { previewBox.innerHTML = '<div style="color:#dc2626;padding:10px">' + (e.message || e) + '</div>'; }
- };
- const editBtn = h("button", { className: "btn btn-sm",
-   title: "生成済みのトーナメント表をこの画面で修正(選手を2人タップで入替 / 罫線編集で進出先を組み替え)。編集は即反映",
-   onClick: () => renderEditableBracket() }, "生成済みの表を編集(旧)");
+ // (旧「生成済みの表を編集」はP8で撤去=「表を編集」に統合済み 2026-07-18)
 
  // ── 座席表エディタ(案B「割当表正本」P4)。組合せ=「枠番号1..Nに誰を置くか」の一枚の割当表として
  // 編集し、「確定」した瞬間にトーナメントの木を導出する。外した選手は必ず右の「未配置」に現れる
@@ -5845,7 +5814,7 @@ const A = {
      previewBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "8px", lineHeight: "1.6" } },
        st.draft
          ? "下書きを表示中です。表の氏名(または空き枠)を押すと、その枠に入れる選手を名簿・選手DBから選べます。よければ「確定して表を作る」で反映されます。"
-         : "表の氏名(または空き枠)を押すと、その枠に入れる選手を名簿・選手DBから選べます(直した時点で下書きになり、確定で反映)。罫線編集・シードの大罫線もこの表の上でそのまま使えます。"));
+         : "表の氏名(または空き枠)を押すと、その枠に入れる選手を名簿・選手DBから選べます(直した時点で下書きになり、確定で反映)。シードの大罫線は氏名を押して「登場回戦」で設定します。"));
      // 本体: トーナメント表ビューに統合(オーナー要望 2026-07-18: 旧「生成済みの表を編集」と一本化)。
      //  - 下書きあり: 「確定するとこうなる」木を書込なしで導出して表示(氏名タップ=選手選択モーダル)
      //  - 下書きなし: 現物の表を編集モードで表示(罫線編集・シードドラッグも可+氏名タップ=モーダル)
@@ -5870,13 +5839,9 @@ const A = {
          previewBox.appendChild(h("div", { style: { color: "#dc2626", padding: "8px" } }, (bdata && bdata.error) || "トーナメント表を読み込めません"));
        } else {
          if (bdata.event) { O._bracketRev = O._bracketRev || {}; O._bracketRev[bdata.event] = bdata.bracket_rev; }
-         const bctx = { tournamentId: t.id, event,
-           getRev: () => (O._bracketRev && O._bracketRev[event]),
-           setRev: (rev) => { O._bracketRev = O._bracketRev || {}; if (rev) O._bracketRev[event] = rev; },
-           // 罫線編集・シード等の後: 申込表+この表+進行LIVEの対戦カードまで確実に反映(オーナー要望)
-           reload: async () => { try { await load(); } catch (e) {}
-             if (O._vbReload) O._vbReload(); if (O.reload) O.reload(); await render(); } };
-         previewBox.appendChild(O.renderPaperBracket(bdata, { editable: true, ctx: bctx, onLeafTap }));
+         // 旧編集API(罫線編集・シードドラッグ等)はP8で撤去済み=表示は読み取り+氏名タップのみ。
+         // 登場回戦(大罫線)はモーダルの「登場回戦」から設定する。
+         previewBox.appendChild(O.renderPaperBracket(bdata, { readOnly: true, onLeafTap }));
        }
      }
 
@@ -15164,7 +15129,7 @@ const TMgmt = {
         onClick: () => { TMgmt._tab = key; TMgmt.render(); } }, label);
     main.appendChild(h("div", { className: "tm-tabs" }, mkTab("grid", "枠の編集"), mkTab("bracket", "トーナメント表")));
     if (tab === "bracket") {
-      const editOn = !!TMgmt._treeEdit;
+      const editOn = false;   // 旧編集はP8で撤去(組合せの編集は申込一覧の「表を編集」に一本化)
       // 編集専用ビューであることの明示(呼出・結果入力は進行管理で)。
       main.appendChild(h("div", { className: "tm-editnote" },
         "ここは組み合わせ（配置）の編集専用です。試合の呼出・結果入力・進行は「進行管理(LIVE)」で行います。"));
@@ -15174,9 +15139,8 @@ const TMgmt = {
       if (hasResults) main.appendChild(h("div", { className: "tm-editwarn" },
         "この種目はすでに試合結果があります。配置の変更は確定済みの試合に影響することがあります（確定/試合中の枠は編集できません）。"));
       main.appendChild(h("div", { style: { marginBottom: "8px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" } },
-        h("button", { className: "btn btn-sm" + (editOn ? "" : " btn-ghost"),
-          onClick: () => { TMgmt._treeEdit = !TMgmt._treeEdit; TMgmt.render(); } },
-          editOn ? "編集モード: ON" : "編集モード: OFF"),
+        h("span", { style: { fontSize: "12.5px", color: "#57534e" } },
+          "組合せの編集は 申込一覧 → 種目タブ → 「表を編集」 に統合されました(ここは閲覧のみ)。"),
         // ミス編集対策: 直前の編集をその場で取り消す(進行管理の Undo と同じ op_log を使用)。
         h("button", { className: "btn btn-sm", style: { background: "#fffbeb", color: "#b45309", borderColor: "#fcd34d" },
           title: "直前の編集（枠の設定・選手入替・試合入替など）を1つ取り消します",
@@ -15493,7 +15457,7 @@ const TMgmt = {
         if (bdata && !bdata.error) {
           TMgmt._bracket = bdata;
           const tree = document.querySelector("#tmMain .tm-tree-pane");   // 表タブ表示中のみその場更新(編集タブ時はデータのみ反映)
-          if (tree) { tree.replaceChildren(); tree.appendChild(O.renderPaperBracket(bdata, { editable: !!TMgmt._treeEdit, ctx: TMgmt._treeCtx() })); }
+          if (tree) { tree.replaceChildren(); tree.appendChild(O.renderPaperBracket(bdata, { readOnly: true })); }
         }
       } catch (e) { /* 一時障害は無視 */ }
     }, 400);

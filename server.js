@@ -1860,6 +1860,26 @@ function blockOngoingBracketEdit(req, res, next) {
   next();
 }
 
+// ═══ 旧・木の直接編集API(案B P8で撤去): 410 Gone ═══════════════════════
+// 組合せの正本は割当表(bracket_sheets)に一本化された。木(matches)を直接編集する旧APIは
+// 全て「表を編集」(シートops/confirm/patch)に置換済みのため、ここで一律410を返して封鎖する。
+// Expressは先に登録したルートが勝つ=下方の旧ハンドラ実装には到達しない(実装の完全削除は次の大掃除で)。
+// これにより「matchesの構造書込=シート経由のみ」が経路の数え上げではなく登録順で保証される。
+[
+  "/api/tournaments/:id/bracket/swap",                 // 選手入替 → シートops(place/モーダル)
+  "/api/tournaments/:id/bracket/relink",               // 自由配線 → 廃止(木=割当表の純関数と両立しない)
+  "/api/tournaments/:id/bracket/place-entrant",        // 枠へ配置 → シートops(place)
+  "/api/tournaments/:id/bracket/set-slot",             // 枠の設定 → シートops(place/clear)
+  "/api/tournaments/:id/bracket/set-slot-from-player", // 選手DBから配置 → モーダル(出場追加+place)
+  "/api/tournaments/:id/bracket/set-seed-round",       // 登場回戦 → シートops(set_entry_round)
+  "/api/tournaments/:id/bracket/swap-match",           // 試合まるごと入替 → シートops(swap×2)
+  "/api/tournaments/:id/bracket/add-seed",             // シード追加 → シート(set_size+place+entry_round)
+  "/api/tournaments/:id/bracket/promote-seed",         // シード繰り上げ → 同上
+].forEach(pth => app.post(pth, requireAdmin, (req, res) => res.status(410).json({
+  error: "この操作は「表を編集」(割当表)に統合されました。申込一覧 → 種目タブ → 表を編集 から行ってください。",
+  gone: true,
+})));
+
 // シード配置でトーナメント生成
 // body: { event, regenerate?, entrant_ids? }
 app.post("/api/tournaments/:id/bracket/generate", requireAdmin, blockOngoingBracketEdit, (req, res) => {
