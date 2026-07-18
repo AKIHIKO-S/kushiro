@@ -13712,19 +13712,37 @@ const O = {
        onClick: () => { if (modal) modal.remove(); O._applySeedRound(ctx, entrantId, r); } }, t)));
    modal = openModal("シード（登場回戦）の指定", body, null);
  },
+ // 「線を引っ張ってシードに上げる」(罫線ドラッグ→登場回戦)。旧 set-seed-round は案B P8で410化された
+ // ため、割当表(シート)の set_entry_round op に配線し直す(オーナー要望 2026-07-18「絶対に崩さないで」)。
+ // シート側で区画の隣接枠が自動でBYE(大罫線)になり、押し出された選手は未配置トレイに残る(消えない)。
+ // ctx.sheetDraft=true(統合エディタで下書き編集中)は下書きのまま、それ以外(ライブ木)は即確定して反映。
  async _applySeedRound(ctx, entrantId, entryRound) {
-   const post = (force) => api.post(`/api/tournaments/${ctx.tournamentId}/bracket/set-seed-round`,
-     { entrant_id: entrantId, entry_round: entryRound, force: force || undefined, base_rev: ctx.getRev() });
+   const tid = ctx.tournamentId, event = ctx.event;
    try {
-     let r = await post(false);
-     if (r && r.needs_force) {
-       if (!confirm((r.error || "結果に影響する可能性があります") + "\n\n強制的に再構築しますか？")) return;
-       r = await post(true);
-     }
-     if (r && r.conflict) { toast(r.error || "組合せが他端末で変更されています", "err"); ctx.reload(); return; }
+     const dr = await api.post(`/api/tournaments/${tid}/bracket/sheet/draft`, { event });
+     if (dr && dr.error) { toast(dr.error, "err"); return; }
+     const seats = (dr.draft && dr.draft.seats) || [];
+     const seat = seats.find(s => s.entrant_id === entrantId);
+     if (!seat) { toast("この選手は割当表に配置されていません。先に枠へ入れてください", "err"); return; }
+     const r = await api.post(`/api/tournaments/${tid}/bracket/sheet/ops`,
+       { event, base_hash: (dr.draft && dr.draft.sheet_hash) || "",
+         ops: [{ op: "set_entry_round", pos: seat.pos, entry_round: entryRound }] });
+     if (r && r.conflict) { toast(r.error || "組合せが他の端末で変更されています", "err"); ctx.reload(); return; }
      if (r && r.error) { toast(r.error, "err"); return; }
-     if (r && r.bracket_rev) ctx.setRev(r.bracket_rev);
-     toast(entryRound > 1 ? (entryRound + "回戦からのシードにしました") : "通常（1回戦から）に戻しました", "ok");
+     const disp = (r.displaced && r.displaced.length) ? "（" + r.displaced.join("・") + " を未配置へ）" : "";
+     const seedMsg = entryRound > 1 ? (entryRound + "回戦からのシード(大罫線)にしました") : "通常（1回戦から）に戻しました";
+     if (ctx.sheetDraft) { toast(seedMsg + disp + "。確定で表に反映されます", "ok"); ctx.reload(); return; }
+     // ライブ木(進行管理/トーナメント表): 下書きを即確定して materialize(木に反映)。
+     let c = await api.post(`/api/tournaments/${tid}/bracket/sheet/confirm`,
+       { event, by: "", reason: "登場回戦(シード)の設定" });
+     if (c && c.needs_force) {
+       if (!confirm((c.error || "結果に影響する可能性があります") + "\n\n強制的に作り直しますか？")) { ctx.reload(); return; }
+       c = await api.post(`/api/tournaments/${tid}/bracket/sheet/confirm`,
+         { event, by: "", reason: "登場回戦(シード)の設定", force: true });
+     }
+     if (c && c.error) { toast(c.error, "err"); ctx.reload(); return; }
+     if (c && c.bracket_rev && ctx.setRev) ctx.setRev(c.bracket_rev);
+     toast(seedMsg + disp, "ok");
      ctx.reload();
    } catch (e) { toast("失敗しました: " + (e.message || e), "err"); }
  },

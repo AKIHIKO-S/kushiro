@@ -4151,6 +4151,7 @@ function applySheetOps(tournamentId, event, baseHash, ops, opts) {
   const byPos = new Map(_canonSeats(size, draft.seats).map(s => [s.pos, { ...s }]));
   const posOf = (eid) => { for (const [p, s] of byPos) if (s.entrant_id === eid) return p; return null; };
   const labels = [];
+  const displaced = new Set();   // 大罫線化で区画から押し出された出場ID(=未配置に落ちる)
   for (const op of (ops || [])) {
     if (!op || !op.op) return { error: "不正な操作です" };
     if (op.op === "set_size") {
@@ -4187,9 +4188,31 @@ function applySheetOps(tournamentId, event, baseHash, ops, opts) {
     } else if (op.op === "set_entry_round") {
       const er = Math.max(1, Math.min(8, parseInt(op.entry_round) || 1));
       byPos.get(pos).entry_round = er;
-      labels.push("枠" + (pos + 1) + "の登場回戦を" + er + "に");
+      // 自動で大罫線(オーナー承認 2026-07-18): 登場回戦R>1 の選手は 2^(R-1) 枠の区画を専有する。
+      // 本人の枠を含む「整列した2^(R-1)枠の区画」の残りをBYE(空き)にして、「線を引っ張ってシードに
+      // 上げた」紙の大罫線を作る。materializeSheet(fixedLeaves)は空き枠=BYEとして凍結し、既存の
+      // autoAdvanceByes が多段BYEを自動進行させ、本人がR回戦から登場する(buildSeededLeavesと同じ構造)。
+      // 押し出された選手は席を失う=未配置(displaced)に落ちる(消えない・トレイに現れる)。
+      if (er > 1) {
+        const w = Math.pow(2, er - 1);
+        const blockStart = Math.floor(pos / w) * w;
+        let cleared = 0;
+        for (let q = blockStart; q < blockStart + w && q < size; q++) {
+          if (q === pos) continue;
+          const s = byPos.get(q);
+          if (!s) continue;
+          if (s.entrant_id) { displaced.add(s.entrant_id); s.entrant_id = null; cleared++; }
+          s.entry_round = 1;
+        }
+        labels.push("枠" + (pos + 1) + "を" + er + "回戦からのシード(大罫線)に" + (cleared ? "・区画の" + cleared + "名を未配置へ" : ""));
+      } else {
+        labels.push("枠" + (pos + 1) + "の登場回戦を1(通常)に戻す");
+      }
     } else return { error: "未知の操作: " + op.op };
   }
+  const displacedNames = [...displaced].map(id => {
+    const e = entrantStmts.get.get(id); return e ? (e.display_name || e.name) : null;
+  }).filter(Boolean);
   const canon = _canonSeats(size, [...byPos.values()]);
   const hash = sheetHashOf(size, canon);
   const tx = sqlite.transaction(() => {
@@ -4199,7 +4222,7 @@ function applySheetOps(tournamentId, event, baseHash, ops, opts) {
       .run(size, JSON.stringify(canon), hash, draft.id);
   });
   tx();
-  return { ok: true, sheet: { ...draft, size, seats: canon, sheet_hash: hash }, labels };
+  return { ok: true, sheet: { ...draft, size, seats: canon, sheet_hash: hash }, labels, displaced: displacedNames };
 }
 
 // 下書きの取り消し(直前の全席スナップショットを1枚戻す)。

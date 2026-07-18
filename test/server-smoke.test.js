@@ -669,3 +669,32 @@ test("(z) 割当表API: 下書き→編集→確定→旧経路編集でdirty→
     { headers: akhead }).then(r => r.json());
   assert.ok(!st2.dirty && st2.confirmed && st2.confirmed.rev_no === 2, "dirty解消・第2版が確定版");
 });
+
+test("(aa) 罫線ドラッグ→シード昇格の配線: draft→ops(set_entry_round)→confirm で大罫線・押し出しは未配置(旧set-seed-roundは410)", async () => {
+  const EV = "男子シングルス";
+  const t = await adminPost("/api/tournaments", { name: "シード昇格配線検証", date: "2027-02-02" });
+  await adminPut(`/api/tournaments/${t.id}/entry-settings`, { entries_open: 1, event_config: [{ name: EV, type: "singles", fee: 0 }] });
+  for (const nm of ["昇格 一郎", "昇格 二郎", "昇格 三郎", "昇格 四郎"])
+    await adminPost(`/api/tournaments/${t.id}/entrants`, { event: EV, name: nm, status: "confirmed" });
+  // 旧・木の直接編集APIは410のまま(_applySeedRound は sheet 経路に配線し直した)
+  const gone = await fetch(BASE + `/api/tournaments/${t.id}/bracket/set-seed-round`, { method: "POST", headers: akhead,
+    body: JSON.stringify({ entrant_id: "x", entry_round: 2 }) });
+  assert.strictEqual(gone.status, 410, "旧 set-seed-round は410 Gone");
+  // クライアント(_applySeedRound)が辿るHTTPフロー: draft → ops(set_entry_round=2) → confirm
+  const d = await adminPost(`/api/tournaments/${t.id}/bracket/sheet/draft`, { event: EV });
+  assert.ok(d.ok && d.draft.size === 4, "下書き: " + JSON.stringify(d).slice(0, 100));
+  const pos0 = d.draft.seats.find(s => s.entrant_id)?.pos ?? 0;
+  const ops = await adminPost(`/api/tournaments/${t.id}/bracket/sheet/ops`,
+    { event: EV, base_hash: d.draft.sheet_hash, ops: [{ op: "set_entry_round", pos: pos0, entry_round: 2 }] });
+  assert.ok(ops.ok, JSON.stringify(ops).slice(0, 150));
+  assert.ok(Array.isArray(ops.displaced) && ops.displaced.length === 1, "区画の隣接1名を未配置へ押し出す: " + JSON.stringify(ops.displaced));
+  const c = await adminPost(`/api/tournaments/${t.id}/bracket/sheet/confirm`, { event: EV, by: "検証", reason: "登場回戦(シード)の設定" });
+  assert.ok(c.ok, "確定: " + JSON.stringify(c).slice(0, 120));
+  // 大罫線: 1回戦にBYE相手の試合が生まれる / 未配置に押し出された選手が残る
+  const ms = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
+  const r1 = (Array.isArray(ms) ? ms : []).filter(m => (m.bracket_round || 1) === 1);
+  assert.ok(r1.some(m => m.player1_name === "BYE" || m.player2_name === "BYE"), "1回戦に大罫線(BYE)が生まれる");
+  const st = await fetch(BASE + `/api/tournaments/${t.id}/bracket/sheet?event=` + encodeURIComponent(EV),
+    { headers: akhead }).then(r => r.json());
+  assert.ok((st.unplaced || []).length === 1, "押し出された選手が未配置トレイに残る(消えない)");
+});
