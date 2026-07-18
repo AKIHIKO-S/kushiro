@@ -3958,12 +3958,18 @@ function materializeSheet(tournamentId, event, sheet, opts) {
     leaves[s.pos] = ent;
   }
   if (seen.size < 2) return { error: "配置されている出場が2名未満です" };
-  // 登場回戦はシートが正: entrants.entry_round を先に同期(表示・帳票のキャッシュ)。
-  const erUpd = sqlite.prepare("UPDATE entrants SET entry_round=? WHERE id=?");
-  canon.forEach(s => { if (s.entrant_id) erUpd.run(s.entry_round, s.entrant_id); });
-  return generateBracket(tournamentId, event, {
+  // 木を先に導出する。破壊ガード(結果入力済みでforce無し)で失敗しうるので、entrants(登場回戦・組番号)の
+  // 書き換えは generateBracket が成功してから行う(失敗時に entrants を半端に書き換えない・2026-07-18修正)。
+  const made = generateBracket(tournamentId, event, {
     regenerate: true, force: !!opts.force, fixedLeaves: leaves, no_auto_advance: true,
   });
+  if (made && made.error) return made;
+  // 確定の共通経路で「登場回戦」と「組番号(seed)=枠番号(pos+1)」を同期する。これで確定を通った瞬間に
+  // 提出番号・枠・組番号が必ず一致する(座席編集・当日修正・取込のどの経路でも成立=番号一致保証)。
+  const erUpd = sqlite.prepare("UPDATE entrants SET entry_round=? WHERE id=?");
+  const seedSync = sqlite.prepare("UPDATE entrants SET seed=? WHERE id=?");
+  canon.forEach(s => { if (s.entrant_id) { erUpd.run(s.entry_round, s.entrant_id); seedSync.run(s.pos + 1, s.entrant_id); } });
+  return made;
 }
 
 // 配線が標準二分木(pos p の次戦=次回戦の floor(p/2)・slot=p%2+1)か判定する。
@@ -4391,10 +4397,10 @@ function importSheetRows(tournamentId, rows, opts) {
         .run(draft.id, "Excel割当表を取込", JSON.stringify(draft.seats));
       sqlite.prepare(`UPDATE bracket_sheets SET size=?, seats_json=?, sheet_hash=?, source='excel' WHERE id=?`)
         .run(size, JSON.stringify(canon), sheetHashOf(size, canon), draft.id);
-      // 番号一致保証(オーナー要望 2026-07-18): 組番号(seed)=枠番号 を常に同期する。
-      // 提出名簿の番号・割当表の枠番号・帳票の組番号が全て同じ数字になる。
-      const seedSync = sqlite.prepare("UPDATE entrants SET seed=? WHERE id=?");
-      canon.forEach(s => { if (s.entrant_id) seedSync.run(s.pos + 1, s.entrant_id); });
+      // 番号一致保証の 組番号(seed)=枠番号 同期は「確定時」(materializeSheet)に一本化した(2026-07-18)。
+      // 下書き段階でentrants.seedをグローバルに書き換えると、確定しないまま放置した時に組番号だけ
+      // 動くリークになるため。create_missingの新規出場は作成時にseed=枠番号で作る(下記)ので取込直後の
+      // 表示も番号一致する。既存出場のseedは確定を通した瞬間に枠番号へ揃う。
     });
     tx();
     results.push({ event, success: true, placed: seats.length, size, warnings, diff, new_players: newPlayers, to_draft: true });
@@ -4491,6 +4497,9 @@ function patchSheet(tournamentId, event, args) {
     sqlite.prepare(`UPDATE bracket_sheets SET status='superseded'
       WHERE tournament_id=? AND event=? AND status IN ('confirmed','dirty')`).run(tournamentId, event);
     const canon = _canonSeats(size, seats);
+    // 番号一致保証: 当日入替/差替後も 組番号(seed)=枠番号(pos+1) を同期(materializeSheetと同じ掟)。
+    const seedSync = sqlite.prepare("UPDATE entrants SET seed=? WHERE id=?");
+    canon.forEach(s => { if (s.entrant_id) seedSync.run(s.pos + 1, s.entrant_id); });
     sqlite.prepare(`INSERT INTO bracket_sheets (id, tournament_id, event, rev_no, status, size,
       seats_json, sheet_hash, tree_hash, reason, confirmed_by, source, confirmed_at)
       VALUES (?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, 'patch', ?)`)
