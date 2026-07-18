@@ -2773,11 +2773,22 @@ app.post("/api/tournaments/:id/bracket/import-xlsx", requireAdmin, blockOngoingB
         }
         const hi = aoa2.findIndex(r => (r || [])[0] === "種目");
         if (hi < 0) return res.status(400).json({ error: "割当表(編集用)シートの見出し行が見つかりません。出力し直してください。" });
+        // ヘッダ名ベースで列を引く(通常出力とテンプレ=ふりがな/選手2/支部つき の両形式に対応)
+        const hd = aoa2[hi].map(x => String(x || "").trim());
+        const col = (n) => hd.indexOf(n);
+        const gv = (r, n) => { const i = col(n); return i >= 0 ? r[i] : ""; };
+        // テンプレ形式=名簿に居ない選手を自動出場登録。判定はメタ行5列目のtype(3種テンプレ共通)
+        // またはふりがな列(将来の互換)。通常出力の割当表シートはどちらも無い=従来動作。
+        const isTemplate = !!String((aoa2[0] || [])[4] || "") || col("ふりがな") >= 0;
         const rows2 = aoa2.slice(hi + 1).filter(r => r && r.length).map(r => ({
-          event: r[0], pos: r[1], name: r[2], team: r[3], entrant_id: r[4], entry_round: r[5], rev: r[6],
+          event: gv(r, "種目"), pos: gv(r, "枠番号"),
+          name: gv(r, "選手名") || gv(r, "チーム名"), furigana: gv(r, "ふりがな"),
+          team: gv(r, "所属"), region: gv(r, "支部"),
+          partner_name: gv(r, "選手2氏名"), partner_furigana: gv(r, "選手2ふりがな"), partner_team: gv(r, "選手2所属"),
+          entrant_id: gv(r, "選手ID"), entry_round: gv(r, "登場回戦"), rev: gv(r, "版"),
         }));
         const preview2 = req.query.dry_run === "1" || req.body?.dry_run === "1" || req.body?.dry_run === "true";
-        const r2 = db.importSheetRows(req.params.id, rows2, { preview: preview2 });
+        const r2 = db.importSheetRows(req.params.id, rows2, { preview: preview2, create_missing: isTemplate });
         if (r2.error) return res.status(400).json(r2);
         return res.json(r2);   // 下書きへの反映のみ(matches不変)=dirtyフック不要
       }
@@ -4250,6 +4261,28 @@ app.post("/api/tournaments/:id/bracket/sheet/undo", requireAdmin, (req, res) => 
   const r = db.undoSheetOp(req.params.id, event);
   if (r && r.error) return res.status(400).json(r);
   res.json(r);
+});
+// 取込用テンプレExcel(種目タイプ別・番号一致保証)。type未指定は event_config から自動判定。
+app.get("/api/tournaments/:id/bracket/roster-template.xlsx", requireAdmin, (req, res) => {
+  try {
+    const tournament = db.getTournament(req.params.id);
+    if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
+    const event = req.query.event || "";
+    let type = req.query.type || "";
+    if (!type) {
+      try {
+        const cfg = JSON.parse(tournament.event_config || "[]").find(c => c && c.name === event) || {};
+        type = cfg.type === "team" ? "team" : (/ダブルス/.test(event) || cfg.type === "doubles") ? "doubles" : "singles";
+      } catch (e) { type = "singles"; }
+    }
+    const buf = reports.buildRosterTemplateXlsx(tournament, event, type);
+    const safe = (s) => String(s || "").replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_");
+    const filename = encodeURIComponent(`取込テンプレ_${safe(event) || type}.xlsx`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=UTF-8''${filename}`);
+    res.setHeader("Cache-Control", "no-store");
+    res.send(buf);
+  } catch (e) { res.status(500).json({ error: "テンプレ生成に失敗: " + e.message }); }
 });
 // 下書きシートの表プレビュー(統合エディタ用): 「確定するとこうなる」木を書込なしで返す
 app.get("/api/tournaments/:id/bracket/sheet/bracket-preview", requireAdmin, (req, res) => {

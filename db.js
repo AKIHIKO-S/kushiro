@@ -4316,13 +4316,29 @@ function importSheetRows(tournamentId, rows, opts) {
       } else if (nm) {
         const hit = byName.get(normalizeName(nm));
         if (hit === "DUP") { problems.push("枠" + pos1 + ": 「" + nm + "」は同名が複数いるため選手IDが必要です"); continue; }
-        if (!hit) { problems.push("枠" + pos1 + ": 「" + nm + "」が名簿に見つかりません(先に申込管理で登録)"); continue; }
-        ent = hit;
+        if (hit) ent = hit;
+        else if (opts.create_missing) {
+          // 取込テンプレ経由(オーナー要望 2026-07-18): 名簿に居ない選手はその場で出場登録する。
+          // 番号一致保証のため組番号(seed)=枠番号で作成(preview中は作らず「新規」として差分に載せる)。
+          if (opts.preview) {
+            ent = { id: "__new__" + pos1, display_name: nm, name: nm, _new: true };
+          } else {
+            ent = createEntrant({ tournament_id: tournamentId, event,
+              name: nm, furigana: String(r.furigana || "").trim(), team: String(r.team || "").trim(),
+              partner_name: String(r.partner_name || "").trim() || undefined,
+              partner_furigana: String(r.partner_furigana || "").trim(),
+              partner_team: String(r.partner_team || "").trim(),
+              region: String(r.region || "").trim(), seed: pos1, status: "confirmed" });
+            byId.set(ent.id, ent);
+          }
+        } else {
+          problems.push("枠" + pos1 + ": 「" + nm + "」が名簿に見つかりません(先に申込管理で登録)"); continue;
+        }
       }
       if (ent) {
         if (seenEnt.has(ent.id)) { problems.push("「" + (ent.display_name || ent.name) + "」が複数の枠に指定されています"); continue; }
         seenEnt.add(ent.id);
-        seats.push({ pos: pos1 - 1, entrant_id: ent.id,
+        seats.push({ pos: pos1 - 1, entrant_id: ent.id, _new: !!ent._new, _nm: ent.display_name || ent.name,
           entry_round: Math.max(1, Math.min(8, parseInt(r.entry_round) || 1)) });
       }
     }
@@ -4342,7 +4358,8 @@ function importSheetRows(tournamentId, rows, opts) {
     const st = getSheetState(tournamentId, event);
     const base = st.draft || st.confirmed;
     const diff = _sheetDiff(base ? { size: base.size, seats: base.seats } : null, { size, seats });
-    if (opts.preview) { results.push({ event, preview: true, placed: seats.length, size, warnings, diff }); continue; }
+    const newPlayers = seats.filter(s => s._new).map(s => "枠" + (s.pos + 1) + ": " + s._nm + "(新規に出場登録されます)");
+    if (opts.preview) { results.push({ event, preview: true, placed: seats.length, size, warnings, diff, new_players: newPlayers }); continue; }
     const draft = ensureDraftSheet(tournamentId, event);
     if (draft.error) { results.push({ event, error: draft.error }); continue; }
     const canon = _canonSeats(size, seats);
@@ -4351,9 +4368,13 @@ function importSheetRows(tournamentId, rows, opts) {
         .run(draft.id, "Excel割当表を取込", JSON.stringify(draft.seats));
       sqlite.prepare(`UPDATE bracket_sheets SET size=?, seats_json=?, sheet_hash=?, source='excel' WHERE id=?`)
         .run(size, JSON.stringify(canon), sheetHashOf(size, canon), draft.id);
+      // 番号一致保証(オーナー要望 2026-07-18): 組番号(seed)=枠番号 を常に同期する。
+      // 提出名簿の番号・割当表の枠番号・帳票の組番号が全て同じ数字になる。
+      const seedSync = sqlite.prepare("UPDATE entrants SET seed=? WHERE id=?");
+      canon.forEach(s => { if (s.entrant_id) seedSync.run(s.pos + 1, s.entrant_id); });
     });
     tx();
-    results.push({ event, success: true, placed: seats.length, size, warnings, diff, to_draft: true });
+    results.push({ event, success: true, placed: seats.length, size, warnings, diff, new_players: newPlayers, to_draft: true });
   }
   return { ok: results.every(r => r.success || r.preview), results, sheet_flow: true };
 }

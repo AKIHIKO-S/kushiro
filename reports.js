@@ -1437,6 +1437,53 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
 }
 
 // ═══════════════════════════════════════════════════════
+// 取込用テンプレ (割当表・種目タイプ別) Excel 出力
+// ═══════════════════════════════════════════════════════
+// オーナー要望 2026-07-18: 「選手番号を記載した名簿を提出する。名簿の番号と取込番号は必ず一致」。
+// 記入した「枠番号」がそのままトーナメントの枠・組番号になる(番号一致保証)。シート名と
+// メタ行(__KTTA_SHEET__)は割当表取込(import-xlsx)の既存経路にそのまま乗る。
+function buildRosterTemplateXlsx(tournament, event, type) {
+  const XLSX = require("xlsx");
+  const COLS = {
+    singles: ["種目", "枠番号", "選手名", "ふりがな", "所属", "支部", "登場回戦", "選手ID", "版"],
+    doubles: ["種目", "枠番号", "選手名", "ふりがな", "所属", "選手2氏名", "選手2ふりがな", "選手2所属", "支部", "登場回戦", "選手ID", "版"],
+    team:    ["種目", "枠番号", "チーム名", "支部", "登場回戦", "選手ID", "版"],
+  };
+  const kind = COLS[type] ? type : "singles";
+  const cols = COLS[kind];
+  const meta = [
+    ["__KTTA_SHEET__", "v2", tournament.id || "", new Date().toISOString().slice(0, 16).replace("T", " "), kind],
+    ["記入した「枠番号」が、そのままトーナメントの枠と組番号になります(番号は必ず一致します)。欠番にした枠は空き(シード・不戦勝)になります。"],
+    ["選手IDは空欄でかまいません(名簿に居ない選手は取込時に自動で出場登録されます)。同じ名前の選手が既に居る場合だけIDが必要です。登場回戦は2以上でシード(大罫線)。"],
+    cols,
+  ];
+  // 枠番号だけ先に印字した空行(32枠)。足りなければ行を追記して使える。
+  const body = [];
+  for (let i = 1; i <= 32; i++) {
+    const row = new Array(cols.length).fill("");
+    row[0] = event || "";
+    row[1] = i;
+    body.push(row);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(meta.concat(body));
+  ws["!cols"] = cols.map(c => ({ wch: c === "種目" ? 16 : (/名|ふりがな|所属|チーム/.test(c) ? 14 : 8) }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "割当表(編集用)");
+  // 記入例は別シート(取込対象外)に分離=例文がそのまま取り込まれる事故を防ぐ
+  const exRows = {
+    singles: [["男子シングルス", 1, "山田 太郎", "やまだたろう", "釧路クラブ", "釧路", "", "", ""],
+              ["男子シングルス", 2, "佐藤 次郎", "さとうじろう", "帯広中", "十勝", "", "", ""],
+              ["男子シングルス", 4, "(枠3を欠番にすると枠4の選手は不戦勝スタート)", "", "", "", "", "", ""]],
+    doubles: [["男子ダブルス", 1, "山田 太郎", "やまだたろう", "釧路クラブ", "佐藤 次郎", "さとうじろう", "帯広中", "釧路", "", "", ""]],
+    team:    [["男子団体", 1, "釧路クラブA", "釧路", "", "", ""]],
+  }[kind];
+  const ex = XLSX.utils.aoa_to_sheet([["記入例(このシートは取り込まれません)"], cols].concat(exRows));
+  ex["!cols"] = ws["!cols"];
+  XLSX.utils.book_append_sheet(wb, ex, "記入例");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+}
+
+// ═══════════════════════════════════════════════════════
 // リーグ順位表 (星取マトリクス) Excel 出力
 // ═══════════════════════════════════════════════════════
 // 画面の TT.leagueTableEl(common.js) と同一定義で書く(画面とExcelの不一致を作らない):
@@ -1611,6 +1658,7 @@ module.exports = {
   buildReceiptsList,
   buildMatchCardsXlsx,
   buildBracketXlsx,
+  buildRosterTemplateXlsx,
   buildStandingsXlsx,
   buildPodiumXlsx,
   buildCoachResultsHTML,

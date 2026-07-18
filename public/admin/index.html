@@ -5802,10 +5802,15 @@ const A = {
        title: "先頭タブ「割当表(編集用)」を直して、そのまま取込できます",
        onClick: () => A.downloadAuthedFile(`/api/tournaments/${t.id}/bracket/export.xlsx?event=${encodeURIComponent(event)}`, `トーナメント表_${event}.xlsx`) }, "Excelへ出力");
      const xlInB = h("button", { className: "btn btn-sm btn-ghost", onClick: () => sheetImportXlsx() }, "Excelから取込");
+     // 取込テンプレ(オーナー要望 2026-07-18): 種目タイプ(シングルス/ダブルス/団体)に合った空の
+     // 記入用Excelを配布。記入した枠番号=トーナメンの枠・組番号(番号一致保証)。
+     const tplB = h("button", { className: "btn btn-sm btn-ghost",
+       title: "枠番号・選手名を書いて「Excelから取込」で読み込むと、その番号どおりに表が作れます(名簿に居ない選手は自動で出場登録)",
+       onClick: () => A.downloadAuthedFile(`/api/tournaments/${t.id}/bracket/roster-template.xlsx?event=${encodeURIComponent(event)}`, `取込テンプレ_${event}.xlsx`) }, "取込テンプレ");
      previewBox.appendChild(h("div", { style: { display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", marginBottom: "6px" } },
        h("b", { style: { fontSize: "13.5px" } }, "表の編集"), badge,
        st.unplaced.length ? h("span", { style: { background: "#fee2e2", color: "#b91c1c", fontWeight: 700, fontSize: "12px", padding: "3px 10px", borderRadius: "999px" } }, "未配置 " + st.unplaced.length + "名") : null,
-       h("span", { style: { flex: "1 0 auto" } }), xlOutB, xlInB,
+       h("span", { style: { flex: "1 0 auto" } }), tplB, xlOutB, xlInB,
        st.draft ? undoB : null, st.draft ? confirmB : null));
      // 確定前の差分バー: 「確定するとこう変わる」を最新確定版との比較で見せる(空なら出さない)。
      const df = st.diff;
@@ -6047,6 +6052,7 @@ const A = {
        const d = rs.diff || { moves: [], added: [], removed: [] };
        const lines = [].concat(
          (rs.warnings || []).map(w => "注意: " + w),
+         (rs.new_players || []).map(w => "新規: " + w),
          d.moves.map(s => "移動: " + s), d.added.map(s => "入る: " + s), d.removed.map(s => "外れる: " + s));
        const panel = h("div", { dataset: { xlPanel: "1" }, style: { marginTop: "10px", padding: "10px 14px",
          background: "#fff", border: "1.5px solid #166534", borderRadius: "10px" } },
