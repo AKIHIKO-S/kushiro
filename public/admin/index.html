@@ -5823,6 +5823,16 @@ const A = {
        const seatObj = (curSheet.seats || []).find(x => x.pos === pos) || { pos, entrant_id: lf.eid || null, entry_round: 1 };
        openSeatPicker(seatObj);
      };
+     // 「線を引っ張ってシードに上げる」ドラッグを表を編集にも載せる(オーナー要望 2026-07-18)。
+     // sheetDraft=true で _applySeedRound は下書きにopを積むだけ(確定はユーザーが明示)。押し出された
+     // 選手はこの画面の「未配置」トレイに現れる=消える先が見える一番安全な置き場所。reload=render で
+     // 未配置トレイとプレビューが即更新される。
+     const seedDragCtx = {
+       tournamentId: t.id, event, sheetDraft: true,
+       getRev: () => (O._bracketRev && O._bracketRev[event]),
+       setRev: (rev) => { O._bracketRev = O._bracketRev || {}; if (rev) O._bracketRev[event] = rev; },
+       reload: () => render(),
+     };
      let bdata = null;
      if (st.draft) {
        try { bdata = await api.get(`/api/tournaments/${t.id}/bracket/sheet/bracket-preview?event=` + encodeURIComponent(event)); }
@@ -5830,7 +5840,7 @@ const A = {
        if (!bdata || bdata.error) {
          previewBox.appendChild(h("div", { style: { color: "#dc2626", padding: "8px" } }, (bdata && bdata.error) || "プレビューを取得できません"));
        } else {
-         previewBox.appendChild(O.renderPaperBracket(bdata, { readOnly: true, onLeafTap }));
+         previewBox.appendChild(O.renderPaperBracket(bdata, { readOnly: true, onLeafTap, seedDrag: true, ctx: seedDragCtx }));
        }
      } else {
        try { bdata = await api.get(`/api/tournaments/${t.id}/bracket/export?event=` + encodeURIComponent(event) + "&ts=" + Date.now()); }
@@ -5839,9 +5849,8 @@ const A = {
          previewBox.appendChild(h("div", { style: { color: "#dc2626", padding: "8px" } }, (bdata && bdata.error) || "トーナメント表を読み込めません"));
        } else {
          if (bdata.event) { O._bracketRev = O._bracketRev || {}; O._bracketRev[bdata.event] = bdata.bracket_rev; }
-         // 旧編集API(罫線編集・シードドラッグ等)はP8で撤去済み=表示は読み取り+氏名タップのみ。
-         // 登場回戦(大罫線)はモーダルの「登場回戦」から設定する。
-         previewBox.appendChild(O.renderPaperBracket(bdata, { readOnly: true, onLeafTap }));
+         // 氏名タップ=選手選択モーダル / 罫線の茶丸ドラッグ=シード昇格(下書きへ・未配置トレイに押し出し表示)。
+         previewBox.appendChild(O.renderPaperBracket(bdata, { readOnly: true, onLeafTap, seedDrag: true, ctx: seedDragCtx }));
        }
      }
 
@@ -13025,7 +13034,9 @@ const O = {
    // ── 罫線ドラッグ(スーパーシードの大罫線を直接ひく): 各選手の罫線の内端に丸つまみを置き、
    // 中央方向へドラッグ→ADV_W(1回戦=1列)刻みでスナップ→放すと登場回戦を設定(位置保持で再構築)。
    // relinkMode(進出先の組み替え)中は出さない(操作の衝突回避)。オーナー要望 2026-07-17。
-   if (editable && !state.relinkMode && ADV_W > 0) {
+   // opts.seedDrag: 読取専用ビュー(統合エディタ「表を編集」)でも、シードドラッグのつまみだけは出す。
+   // ドラッグ→登場回戦は _applySeedRound がシート(下書き)に配線され、押し出しは未配置トレイに見える。
+   if ((editable || (opts && opts.seedDrag)) && !state.relinkMode && ADV_W > 0) {
      const maxR = Math.max(1, Math.min(6, blockRounds));   // 登場回戦の上限(このブロックの決勝まで)
      const baseX = (side) => side === "L" ? RAIL_W : W - RAIL_W;
      const endX = (side, R) => side === "L" ? baseX(side) + (R - 1) * ADV_W : baseX(side) - (R - 1) * ADV_W;
