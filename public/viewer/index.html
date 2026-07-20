@@ -1323,6 +1323,34 @@ body{ background:#fbfaf7; }
  .vbt-fin-m .feed{ color:#9ca3af; font-size:12.5px; }
  .vbt-fin-sep{ border-top:1px dashed var(--border); margin:3px 0; }
  .vbt-fin-w{ font-size:11.5px; color:var(--accent); font-weight:700; text-align:right; margin-top:2px; }
+
+ /* ═══════════ V3補遺: 可読性・タップ導線(2026-07・高齢者/初訪問者配慮) ═══════════
+    白磁×丹頂の系統は不変。承認済みトークンの範囲で「値」だけ調整する:
+    ①協会サイトへの常設戻り導線 ②操作系コントロールのタップ標的を44px+へ ③名前級の極小文字の下限底上げ。
+    見出し・主要コンテンツ(選手名18px/大会名15.5px/スコア14px)は既に十分大きいので触らない。 */
+
+ /* --- ① 協会サイトへの戻りリンク(ヒーロー右) --- */
+ .hero-right{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+ .v-home-link{ display:inline-flex; align-items:center; gap:5px; min-height:44px; padding:6px 12px;
+   color:var(--sub); font-size:13px; font-weight:700; letter-spacing:.02em; text-decoration:none;
+   border:1px solid var(--v3-hair); border-radius:6px; background:#fff; white-space:nowrap;
+   transition:color .12s ease, border-color .12s ease, background .12s ease; }
+ .v-home-link svg{ width:16px; height:16px; flex:none; }
+ .v-home-link:hover,.v-home-link:focus-visible{ color:var(--txt); border-color:var(--border-strong);
+   background:var(--v3-soft); }
+ @media(max-width:560px){ .v-home-link span{ font-size:12.5px; } }
+
+ /* --- ② タップ標的を44px+へ(触って押す操作系。min-heightは縦のみ=横スクロール無影響) --- */
+ .pdb-seg-btn{ min-height:44px; display:inline-flex; align-items:center; justify-content:center; }
+ .vbt-tabs button{ min-height:44px; }
+ .vbt-mode button{ min-height:44px; }
+ .rk-toggle{ min-height:44px; }
+ /* 上部ナビ(PC)の.tabには触れない: 同じ.tabクラスを持つ下部ナビ(.v-bnav-btnの縦積み)を後勝ちで壊すため。
+    タッチ面である下部ナビ54px・モバイルメニュー46px・観戦タブ44pxは既に充足済み。 */
+
+ /* --- ③ 名前級の極小文字の下限を底上げ(級数ジャンプは保ちつつ判読性を確保) --- */
+ .vbt-nm .vtm{ font-size:11.5px; }   /* 選手下の所属名(旧10px)。ellipsis truncateありで横溢れなし */
+ .rk-head{ font-size:11px; }         /* ランキング列見出し(V3で10pxに落ちていたのを11pxへ戻す) */
 </style>
 </head>
 <body>
@@ -1337,8 +1365,17 @@ body{ background:#fbfaf7; }
      <span class="ktta-logo-tag">KUSHIRO · TABLE TENNIS · ASSOCIATION</span>
    </span>
  </a>
+ <div class="hero-right">
+ <!-- 協会サイト(www.kushirotta.jp・正規URL。素のkushirotta.jpはwwwへ301)への戻り導線。
+      Platformは大会結果・記録の専用アプリで協会トップは別サイトのため、
+      どのタブからでも協会サイトへ戻れるよう常設する(高齢者・初訪問者の迷子防止)。 -->
+ <a class="v-home-link" href="https://www.kushirotta.jp/">
+   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+   <span>協会サイト</span>
+ </a>
  <div class="live-indicator" id="liveIndicator" style="display:none">
    <span class="live-dot"></span> LIVE
+ </div>
  </div>
  </div>
 </div>
