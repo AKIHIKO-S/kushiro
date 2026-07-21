@@ -1273,6 +1273,63 @@ function getGlobalMatchAverages() {
   return _gmaCache;
 }
 
+// 全体統計ダッシュボード用の横断集計 (viewer 統計タブ)。母集団は選手DB統計と同じ
+// 地区大会・BYE不戦勝除外。データが薄い指標は「n」を返し、呼び出し側(viewer)が母数ガードで
+// 「集計中」表示にする(空カード・n過小の誤誘導を防ぐ)。60秒キャッシュ。
+let _breakdownCache = null, _breakdownAt = 0;
+function getPublicBreakdowns() {
+  const now = Date.now();
+  if (_breakdownCache && now - _breakdownAt < 60000) return _breakdownCache;
+  const all = (s) => sqlite.prepare(s).all();
+  const get = (s) => sqlite.prepare(s).get();
+  // 活動量系の母集団: 結果が記録された実試合(勝者名あり・BYE不戦勝除外・地区大会)。
+  // winner_id ではなく winner_name で判定する(取込データは選手マスタ未リンクで winner_id が
+  // 空でも「試合は行われた」ため。id 必須にすると種目別・年度別が大幅に欠落する)。
+  const MJOIN = `FROM matches m JOIN tournaments t ON t.id = m.tournament_id
+    WHERE COALESCE(m.is_walkover,0)=0 AND m.winner_name<>'' AND m.winner_name<>'BYE' AND m.loser_name<>'BYE'
+      AND COALESCE(t.level,'district') NOT IN ('hokkaido','national')`;
+
+  // 選手構成 (players。試合と独立)
+  const categoryDist = all(`SELECT COALESCE(NULLIF(category,''),'general') AS k, COUNT(*) AS c
+    FROM players WHERE merged_into IS NULL GROUP BY k ORDER BY c DESC`);
+  const genderDist = all(`SELECT COALESCE(NULLIF(gender,''),'unknown') AS k, COUNT(*) AS c
+    FROM players WHERE merged_into IS NULL GROUP BY k ORDER BY c DESC`);
+  const branchPlayerDist = all(`SELECT branch AS k, COUNT(*) AS c
+    FROM players WHERE merged_into IS NULL AND branch<>'' GROUP BY branch ORDER BY c DESC LIMIT 12`);
+
+  // 試合の活動量 (種目別・年度別・月別)
+  const eventCounts = all(`SELECT m.event AS k, COUNT(*) AS c ${MJOIN} AND m.event<>'' GROUP BY m.event ORDER BY c DESC LIMIT 12`);
+  const byYear = all(`SELECT substr(t.date,1,4) AS k, COUNT(*) AS c ${MJOIN} AND t.date<>'' GROUP BY k ORDER BY k`);
+  const byMonth = all(`SELECT substr(t.date,1,7) AS k, COUNT(*) AS c ${MJOIN} AND t.date<>'' GROUP BY k ORDER BY k`);
+
+  // 試合の中身 (スコアが入った試合=winner_sets>0 のみ。母数が少なければ呼び出し側で「集計中」)
+  const g = get(`SELECT COUNT(*) AS n,
+      AVG(m.winner_sets + m.loser_sets) AS avgg,
+      SUM(CASE WHEN m.winner_sets>0 AND m.loser_sets=m.winner_sets-1 THEN 1 ELSE 0 END) AS fullset,
+      SUM(CASE WHEN m.loser_sets=0 THEN 1 ELSE 0 END) AS shut
+    ${MJOIN} AND m.winner_sets>0`);
+  const gn = (g && g.n) || 0;
+  const gameStats = {
+    n: gn,
+    avgGames: gn ? Math.round((g.avgg || 0) * 10) / 10 : null,
+    fullSetPct: gn ? Math.round(((g.fullset || 0) / gn) * 100) : null,
+    shutoutPct: gn ? Math.round(((g.shut || 0) / gn) * 100) : null,
+  };
+
+  // 規模
+  const venueCount = (get(`SELECT COUNT(DISTINCT venue) AS c FROM tournaments WHERE venue<>''`) || {}).c || 0;
+  const activeMatches = (get(`SELECT COUNT(*) AS c ${MJOIN}`) || {}).c || 0;
+  const branchCount = (get(`SELECT COUNT(DISTINCT branch) AS c FROM players WHERE merged_into IS NULL AND branch<>''`) || {}).c || 0;
+
+  _breakdownCache = {
+    categoryDist, genderDist, branchPlayerDist,
+    eventCounts, byYear, byMonth, gameStats,
+    venueCount, activeMatches, branchCount,
+  };
+  _breakdownAt = now;
+  return _breakdownCache;
+}
+
 // 所属(または現カテゴリ文字列)から学年カテゴリを推定。該当なし=null。(#247)
 // 所属名(学校名)から学種カテゴリを判定する。オーナー要望(2026-07-17)で判定を強めに:
 // 正式名称(中学/高校/大学/小学…)に加え、末尾の略字(○○中/○○高/○○大/○○小)も拾う。
@@ -12258,7 +12315,7 @@ module.exports = {
   createPlayerRequest, getCoachRequests, listPlayerRequests, resolvePlayerRequest, cancelPlayerRequest, countPendingRequests,
   getCoachDashboard, saveCoachSubscription, deleteCoachSubscription, getCoachSubscriptionsForPlayer,
   getAllCoachSubscriptions, createCoachAnnouncement, listCoachAnnouncements, deleteCoachAnnouncement,
-  getGlobalMatchAverages, detectSchoolCategory, normalizePlayerCategories, normalizePlayerBranches,
+  getGlobalMatchAverages, getPublicBreakdowns, detectSchoolCategory, normalizePlayerCategories, normalizePlayerBranches,
   inferPlayerBranches, inferPlayerFurigana, applyInferredFill, renameTeam,
   findPlayerByName, looksLikeValidPlayerName, cleanupInvalidPlayers,
   addAchievement, deleteAchievement,

@@ -1351,6 +1351,21 @@ body{ background:#fbfaf7; }
  /* --- ③ 名前級の極小文字の下限を底上げ(級数ジャンプは保ちつつ判読性を確保) --- */
  .vbt-nm .vtm{ font-size:11.5px; }   /* 選手下の所属名(旧10px)。ellipsis truncateありで横溢れなし */
  .rk-head{ font-size:11px; }         /* ランキング列見出し(V3で10pxに落ちていたのを11pxへ戻す) */
+
+ /* --- ④ 全体統計ダッシュボード(統計タブ・データが増えるほど満ちる器) --- */
+ .st-sub-h{ flex-wrap:wrap; }   /* 注記が長い時は折り返す(狭幅で見切れさせない) */
+ /* 注記は見出しの右隣に添える。右寄せ(margin-left:auto)にすると狭幅で見切れるので使わない。
+    入り切らなければ flex-wrap で次行へ回り込む。 */
+ .st-sub-h .st-sub-note{ font-size:11.5px; font-weight:600; color:var(--sub); letter-spacing:0; min-width:0; align-self:baseline; }
+ .st-block-lbl{ font-size:11.5px; font-weight:700; color:var(--sub); letter-spacing:.02em; margin:12px 2px 2px; }
+ .st-bars{ margin:2px 0 6px; }
+ .sbar2{ padding:7px 2px; border-bottom:1px solid var(--v3-hair); }
+ .sbar2:last-child{ border-bottom:none; }
+ .sbar2-top{ display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:5px; }
+ .sbar2-lbl{ font-size:12.5px; font-weight:700; color:var(--txt); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+ .sbar2-val{ font-size:13px; font-weight:800; color:var(--txt); font-variant-numeric:tabular-nums; flex:none; }
+ .sbar2-track{ height:7px; background:var(--v3-soft); border-radius:2px; overflow:hidden; }
+ .sbar2-fill{ height:100%; background:var(--v3-rule); border-radius:2px; min-width:2px; }
 </style>
 </head>
 <body>
@@ -2881,21 +2896,44 @@ const V = {
  const main = document.getElementById("statsMain");
  if (!main) return;
  main.innerHTML = '<div class="empty-state">読み込み中…</div>';
- let stats, avg;
+ let stats, avg, bd;
  try {
-   [stats, avg] = await Promise.all([
+   // breakdowns(横断集計)は任意扱い: 失敗しても既存のタイル・勝利数上位まで巻き込んで
+   //   タブ全体を落とさない(空オブジェクトへフォールバック→各セクションは母数ガードで自動非表示)。
+   [stats, avg, bd] = await Promise.all([
      api.get("/api/public/stats"),
      api.get("/api/public/stats/match-averages"),
+     api.get("/api/public/stats/breakdowns").catch(() => ({})),
    ]);
    // 勝利数 上位は選手データ(勝利数順)から取る(stats.topPlayers は大会成績ベースで match_wins を持たないため)。
    if (!V._rankPlayers) { try { V._rankPlayers = await api.get("/api/public/players?sort=wins") || []; } catch (e) {} }
- } catch (e) { main.innerHTML = '<div class="empty-state">統計を取得できませんでした。時間をおいて再度お試しください。</div>'; return; }
- stats = stats || {}; avg = avg || {};
+ } catch (e) { clear(main); main.appendChild(h("div", { className: "empty-state" }, "統計を取得できませんでした。時間をおいて再度お試しください。")); return; }
+ stats = stats || {}; avg = avg || {}; bd = bd || {};
  clear(main);
+
+ const fmt = (n) => (n == null ? "0" : Number(n).toLocaleString("ja-JP"));
+ const catLabel = { general: "一般", middle: "中学", high: "高校", university: "大学", elementary: "小学", senior: "シニア", unknown: "未設定" };
+ const genderLabel = { male: "男子", female: "女子", unknown: "その他" };
+ // ラベル+値+横棒(2段組=長い種目名でも崩れない)。墨のバー(丹頂赤は機能色限定なので装飾には使わない)。
+ const barBlock = (rows, labelFn) => {
+   const max = Math.max(1, ...rows.map(r => r.c || 0));
+   const wrap = h("div", { className: "st-bars" });
+   rows.forEach(r => {
+     const lbl = labelFn ? labelFn(r.k) : String(r.k);
+     wrap.appendChild(h("div", { className: "sbar2" },
+       h("div", { className: "sbar2-top" },
+         h("div", { className: "sbar2-lbl", title: lbl }, lbl),
+         h("div", { className: "sbar2-val" }, fmt(r.c))),
+       h("div", { className: "sbar2-track" }, h("div", { className: "sbar2-fill", style: { width: Math.round((r.c || 0) / max * 100) + "%" } }))));
+   });
+   return wrap;
+ };
+ const subHead = (title, note) => h("div", { className: "st-sub-h" },
+   h("span", {}, title), note ? h("span", { className: "st-sub-note" }, note) : null);
 
  main.appendChild(h("div", { className: "rk-title-bar" }, h("h2", {}, "統計")));
 
- const fmt = (n) => (n == null ? "0" : Number(n).toLocaleString("ja-JP"));
+ // ── 規模サマリ(4タイル) ──
  const tiles = h("div", { className: "st-tiles" },
    h("div", { className: "st-tile accent" }, h("div", { className: "v" }, fmt(stats.playerCount)), h("div", { className: "k" }, "登録選手数")),
    h("div", { className: "st-tile" }, h("div", { className: "v" }, fmt(stats.teamCount)), h("div", { className: "k" }, "所属団体数")),
@@ -2903,21 +2941,61 @@ const V = {
    h("div", { className: "st-tile" }, h("div", { className: "v" }, fmt(stats.tournamentCount)), h("div", { className: "k" }, "大会数")));
  main.appendChild(tiles);
 
- // フルセット率・平均試合時間(用語に平易な補足)
+ // ── 登録選手の構成(学年区分・男女) ──
+ if ((bd.categoryDist || []).length) {
+   main.appendChild(subHead("登録選手の構成", "学年区分ごとの人数"));
+   main.appendChild(barBlock(bd.categoryDist, k => catLabel[k] || k));
+   const gd = (bd.genderDist || []).filter(r => r.k !== "unknown" && r.c > 0);
+   if (gd.length >= 2) {   // 男女が両方登録されているときだけ(片寄っている間は出さない=誤誘導防止)
+     main.appendChild(subHead("男女別", null));
+     main.appendChild(barBlock(gd, k => genderLabel[k] || k));
+   }
+ }
+
+ // ── 大会・試合の活動量(年度別・種目別) ──
+ const byYear = (bd.byYear || []).filter(r => r.k);
+ const events = (bd.eventCounts || []).filter(r => r.k);
+ if (byYear.length >= 2 || events.length) {
+   // 注記は会場数のみ(「試合数」は累計タイル=全試合と母集団が異なり紛らわしいので並べない。
+   //  種目別バー自体が「結果が記録された試合」の分布を示す)。
+   const note = bd.venueCount ? bd.venueCount + "会場" : null;
+   main.appendChild(subHead("大会・試合の活動量", note));
+   if (byYear.length >= 2) {   // 2年分以上あるときだけ推移を出す
+     main.appendChild(h("div", { className: "st-block-lbl" }, "年度別 試合数"));
+     main.appendChild(barBlock(byYear, k => k + "年"));
+   }
+   if (events.length) {
+     main.appendChild(h("div", { className: "st-block-lbl" }, "種目別 試合数"));
+     main.appendChild(barBlock(events, null));
+   }
+ }
+
+ // ── 試合の中身(接戦の傾向)。結果が入力された試合が10件以上で数値化、未満は「集計中」 ──
+ const gs = bd.gameStats || {};
+ const gGuard = (gs.n || 0) >= 10;
+ const dGuard = (avg.durationSamples || 0) >= 10;
  const durSec = avg.avgDurationSec || 0;
  const durTxt = durSec ? (Math.floor(durSec / 60) + "分" + String(durSec % 60).padStart(2, "0") + "秒") : "集計中";
- const duo = h("div", { className: "st-duo" },
-   h("div", { className: "st-card" },
-     h("div", { className: "big" }, (avg.fullSetFreqPct != null ? avg.fullSetFreqPct + "%" : "集計中")),
-     h("div", { className: "lbl" }, "フルセット率"),
-     h("div", { className: "sub" }, "最終ゲームまでもつれた試合の割合（接戦の多さの目安）")),
-   h("div", { className: "st-card" },
-     h("div", { className: "big" }, durTxt),
-     h("div", { className: "lbl" }, "平均試合時間"),
-     h("div", { className: "sub" }, "1試合あたりの平均所要時間")));
- main.appendChild(duo);
+ if ((gs.n || 0) > 0 || (avg.matches || 0) > 0) {
+   main.appendChild(subHead("試合の中身", "地区大会・結果入力済み"));
+   const card = (big, lbl, sub) => h("div", { className: "st-card" },
+     h("div", { className: "big" }, big), h("div", { className: "lbl" }, lbl), h("div", { className: "sub" }, sub));
+   main.appendChild(h("div", { className: "st-duo" },
+     card(gGuard ? gs.fullSetPct + "%" : "集計中", "フルセット率", "最終ゲームまでもつれた試合の割合（接戦の多さ）"),
+     card(gGuard ? gs.avgGames : "集計中", "平均ゲーム数", "1試合あたりの平均ゲーム数")));
+   main.appendChild(h("div", { className: "st-duo" },
+     card(gGuard ? gs.shutoutPct + "%" : "集計中", "ストレート率", "1ゲームも落とさず勝った試合の割合"),
+     card(dGuard ? durTxt : "集計中", "平均試合時間", "呼び出しから結果入力までの平均")));
+ }
 
- // 勝利数 上位(ランキングへの導線)。対戦実績のある選手を勝利数順で上位5名。
+ // ── 支部別 登録選手(2支部以上のときだけ) ──
+ const bp = (bd.branchPlayerDist || []).filter(r => r.k);
+ if (bp.length >= 2) {
+   main.appendChild(subHead("支部別 登録選手", (bd.branchCount || bp.length) + "支部"));
+   main.appendChild(barBlock(bp, null));
+ }
+
+ // ── 勝利数 上位(ランキングへの導線)。対戦実績のある選手を勝利数順で上位5名。 ──
  const top = (V._rankPlayers || [])
    .filter(p => (p.match_wins || 0) + (p.match_losses || 0) > 0)
    .sort((a, b) => (b.match_wins || 0) - (a.match_wins || 0))

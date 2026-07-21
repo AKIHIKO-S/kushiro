@@ -727,6 +727,11 @@ app.get("/api/public/stats/match-averages", (req, res) => {
   try { res.set("Cache-Control", "public, max-age=60").json(db.getGlobalMatchAverages()); }
   catch (e) { res.status(500).json({ error: "averages failed" }); }
 });
+// 全体統計ダッシュボード用の横断集計 (種目別/カテゴリ別/年度別/ゲーム統計 等)。60秒キャッシュ。
+app.get("/api/public/stats/breakdowns", (req, res) => {
+  try { res.set("Cache-Control", "public, max-age=60").json(db.getPublicBreakdowns()); }
+  catch (e) { res.status(500).json({ error: "breakdowns failed" }); }
+});
 app.get("/api/public/last-updated", (req, res) => { res.json({ t: db.getLastUpdated() }); });
 
 // ── 試合検索 () ───────────────────────────────
