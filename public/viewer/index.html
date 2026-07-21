@@ -2954,15 +2954,21 @@ const V = {
 
  // ── 大会・試合の活動量(年度別・種目別) ──
  const byYear = (bd.byYear || []).filter(r => r.k);
+ const byMonth = (bd.byMonth || []).filter(r => r.k).slice(-12);   // 直近12か月
  const events = (bd.eventCounts || []).filter(r => r.k);
- if (byYear.length >= 2 || events.length) {
+ // "2027-09" → "9月"。年度が1年ぶんのときの月別ラベル。
+ const monthLbl = (k) => { const m = String(k).match(/^\d{4}-(\d{2})$/); return m ? (m[1].replace(/^0/, "") + "月") : String(k); };
+ if (byYear.length >= 2 || byMonth.length >= 2 || events.length) {
    // 注記は会場数のみ(「試合数」は累計タイル=全試合と母集団が異なり紛らわしいので並べない。
    //  種目別バー自体が「結果が記録された試合」の分布を示す)。
    const note = bd.venueCount ? bd.venueCount + "会場" : null;
    main.appendChild(subHead("大会・試合の活動量", note));
-   if (byYear.length >= 2) {   // 2年分以上あるときだけ推移を出す
+   if (byYear.length >= 2) {   // 2年分以上あれば年度別の推移
      main.appendChild(h("div", { className: "st-block-lbl" }, "年度別 試合数"));
      main.appendChild(barBlock(byYear, k => k + "年"));
+   } else if (byMonth.length >= 2) {   // 1年分しか無いときは月別で時系列を見せる(空欄回避)
+     main.appendChild(h("div", { className: "st-block-lbl" }, "月別 試合数（直近12か月）"));
+     main.appendChild(barBlock(byMonth, monthLbl));
    }
    if (events.length) {
      main.appendChild(h("div", { className: "st-block-lbl" }, "種目別 試合数"));
