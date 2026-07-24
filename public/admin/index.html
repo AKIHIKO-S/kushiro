@@ -1369,7 +1369,10 @@
  <div class="card">
  <div class="card-head">
  <div class="card-title">大会一覧</div>
+ <div class="flex gap-2">
+ <button class="btn btn-sm btn-ghost" onclick="A.blankBracketModal()" title="人数を入れるだけで罫線だけの空トーナメント表(Excel)を出力">白紙トーナメント表</button>
  <button class="btn btn-sm" onclick="A.newTournament()">+ 新規大会</button>
+ </div>
  </div>
  <div id="tournamentList"></div>
  </div>
@@ -2504,6 +2507,40 @@ const A = {
    ),
  ));
  });
+ },
+
+ // 白紙トーナメント表: 人数を入れるだけで罫線だけの空ブラケット(Excel)を出力(大会非依存)。
+ // 抽選会場での手書き記入・掲示のたたき台用。描画は実大会の表と同じ紙面(buildBracketXlsx)。
+ blankBracketModal() {
+ const fld = (label, el) => h("div", { className: "field" },
+   h("label", { className: "field-label" }, label), el);
+ const inSize = h("input", { className: "input", type: "number", min: "2", max: "1024", value: "16" });
+ const inEvent = h("input", { className: "input", placeholder: "例: 男子シングルス (空欄可)" });
+ const inTitle = h("input", { className: "input", placeholder: "例: 第30回釧路オープン (空欄可)" });
+ const inDate = h("input", { className: "input", type: "date" });
+ const inVenue = h("input", { className: "input", placeholder: "例: 湿原の風アリーナ (空欄可)" });
+ let bg = null;
+ const body = h("div", {},
+   h("div", { className: "text-xs text-sub", style: { marginBottom: "8px" } },
+     "人数(BYEを除いた実出場数)を入れると、標準配置のBYE(長い罫線)込みの空トーナメント表をExcelで出力します。氏名・所属は空欄=手書き記入用です。"),
+   fld("人数 (2〜1024) 必須", inSize),
+   fld("種目名", inEvent),
+   fld("大会名", inTitle),
+   fld("開催日", inDate),
+   fld("会場", inVenue));
+ const foot = h("div", { className: "flex gap-2", style: { justifyContent: "flex-end" } },
+   h("button", { className: "btn btn-ghost", onClick: () => { if (bg) bg.remove(); } }, "閉じる"),
+   h("button", { className: "btn", onClick: () => {
+     const n = Number(inSize.value);
+     if (!Number.isInteger(n) || n < 2 || n > 1024) { toast("人数は 2〜1024 の整数で指定してください", "err"); return; }
+     const q = new URLSearchParams({ size: String(n) });
+     if (inEvent.value.trim()) q.set("event", inEvent.value.trim());
+     if (inTitle.value.trim()) q.set("title", inTitle.value.trim());
+     if (inDate.value) q.set("date", inDate.value);
+     if (inVenue.value.trim()) q.set("venue", inVenue.value.trim());
+     A.downloadAuthedFile(`/api/blank-bracket.xlsx?${q.toString()}`, `白紙トーナメント表_${n}名.xlsx`);
+   } }, "Excelを出力"));
+ bg = openModal("白紙トーナメント表(罫線のみ)", body, foot);
  },
 
  async newTournament() {

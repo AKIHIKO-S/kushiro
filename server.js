@@ -4223,6 +4223,28 @@ app.get("/api/tournaments/:id/bracket/roster-template.xlsx", requireAdmin, (req,
     res.send(buf);
   } catch (e) { res.status(500).json({ error: "テンプレ生成に失敗: " + e.message }); }
 });
+// 白紙トーナメント表(罫線のみ・大会非依存)。人数を入れるだけで手書き記入用の空ブラケットを出す。
+app.get("/api/blank-bracket.xlsx", requireAdmin, (req, res) => {
+  try {
+    const size = Number(req.query.size);   // parseInt だと 16.5 が黙って 16 になるため Number で厳格化
+    if (!Number.isInteger(size) || size < 2 || size > 1024) {
+      return res.status(400).json({ error: "size は 2〜1024 の整数で指定してください" });
+    }
+    const buf = reports.buildBlankBracketXlsx({
+      size,
+      title: String(req.query.title || "").slice(0, 100),
+      event: String(req.query.event || "").slice(0, 50),
+      date: String(req.query.date || "").slice(0, 20),
+      venue: String(req.query.venue || "").slice(0, 100),
+      positionsFn: db.bracketPositions,
+    });
+    const filename = encodeURIComponent(`白紙トーナメント表_${size}名.xlsx`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=UTF-8''${filename}`);
+    res.setHeader("Cache-Control", "no-store");
+    res.send(buf);
+  } catch (e) { res.status(500).json({ error: "白紙トーナメント表の生成に失敗: " + e.message }); }
+});
 // 下書きシートの表プレビュー(統合エディタ用): 「確定するとこうなる」木を書込なしで返す
 app.get("/api/tournaments/:id/bracket/sheet/bracket-preview", requireAdmin, (req, res) => {
   const event = req.query.event;

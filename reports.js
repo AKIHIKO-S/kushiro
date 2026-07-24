@@ -1394,7 +1394,9 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
       : (S <= 16 ? 92 : S <= 32 ? 78 : S <= 64 ? 62 : S <= 128 ? 46 : 36);
     ws["!pageSetup"] = { orientation: "landscape", paperSize, scale, fitToHeight: 0 };
     ws["!margins"] = { left: 0.3, right: 0.3, top: 0.45, bottom: 0.4, header: 0.2, footer: 0.2 };
-    XLSX.utils.book_append_sheet(wb, ws, (eventName || "表").slice(0, 30));
+    // シート名: Excel禁止文字(: \ / ? * [ ])を全角中黒へ置換。xlsx-js-style はコロンを検査で
+    // 取りこぼし破損xlsxを黙って書き出すため、ここで確実に無害化する(種目名は自由入力)。
+    XLSX.utils.book_append_sheet(wb, ws, (eventName || "表").replace(/[:\\/?*[\]]/g, "・").slice(0, 30));
   });
 
   // 割当表(編集用)シート: 人が直す面と機械が読む面を同一にする(案B P6。従来は視覚シートを
@@ -1419,7 +1421,8 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
 
   // ラウンドトリップ取込用シート(_import): 手修正後に再取込して『位置だけ』差分更新するための
   // 機械可読データ。視覚チャート(各種目シート)は人間用に残す。編集は禁止(編集はチャート側で)。
-  if (importRows.length) {
+  // 白紙トーナメント表(buildBlankBracketXlsx)は取込対象外のため no_import_sheet で省く。
+  if (importRows.length && !opts.no_import_sheet) {
     const imp = [
       ["__KTTA_BRACKET_IMPORT__", "v1", "このシートは取込用データです。編集しないでください(組合せの手修正はトーナメント表シートで)。"],
       ["event", "bracket_pos", "slot", "entrant_id", "seed", "name", "team", "bye"],
@@ -1434,6 +1437,59 @@ function buildBracketXlsx(tournament, matches, entrants, opts) {
     XLSX.utils.book_append_sheet(wb, ws, "トーナメント表");
   }
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
+}
+
+// ═══════════════════════════════════════════════════════
+// 白紙トーナメント表 (罫線のみ) Excel 出力
+// ═══════════════════════════════════════════════════════
+// for_mac.xls(HYOUGUMI)の後継: 人数を入れるだけで、標準配置のBYE(長い罫線)込みの空の
+// トーナメント表を出す。氏名・所属は手書き用に空欄、枠番号は紙の作法どおり上から 1..N。
+// 描画は buildBracketXlsx をそのまま使う=実大会の表と同一の紙面(承認済みデザインの範囲内)。
+// positionsFn には db.bracketPositions を注入する(reports.js を DB 非依存に保つため)。
+function buildBlankBracketXlsx(opts) {
+  opts = opts || {};
+  if (typeof opts.positionsFn !== "function") throw new Error("positionsFn (db.bracketPositions) が必要です");
+  const N = Number(opts.size);   // parseInt だと 16.5 が 16 に黙って丸まるため Number で厳格化
+  if (!Number.isInteger(N) || N < 2 || N > 1024) throw new Error("人数は 2〜1024 で指定してください");
+  const S = Math.pow(2, Math.ceil(Math.log2(N)));
+  const positions = opts.positionsFn(S);   // positions[slot] = 標準シードランク。rank > N の枠が BYE
+  const totalRounds = Math.max(1, Math.round(Math.log2(S)));
+  const eventName = String(opts.event || "").trim() || "白紙";
+
+  // 枠番号: BYE を除いた実枠へ、物理順(上から) 1..N を振る
+  const entrants = [];
+  const leafEid = new Array(S).fill(null);
+  let num = 0;
+  for (let slot = 0; slot < S; slot++) {
+    if (positions[slot] <= N) {
+      num += 1;
+      leafEid[slot] = num;
+      entrants.push({ id: num, bracket_number: num });
+    }
+  }
+
+  // 全ラウンドの試合を標準配線(pos p → 次戦 floor(p/2)・slot p%2+1)で合成する。
+  // リーフ名は全角スペース=「実選手として行を確保しつつ空欄に見せる」ための値
+  // (buildBracketXlsx は空文字を BYE 扱いして行ごと消すため)。
+  const BLANK = "　";
+  const idOf = (r, p) => "blank_" + r + "_" + p;
+  const matches = [];
+  for (let r = 1; r <= totalRounds; r++) {
+    const cnt = S / Math.pow(2, r);
+    for (let p = 0; p < cnt; p++) {
+      const m = { id: idOf(r, p), event: eventName, bracket_round: r, bracket_pos: p, status: "pending" };
+      if (r < totalRounds) { m.next_match_id = idOf(r + 1, Math.floor(p / 2)); m.next_slot = (p % 2) + 1; }
+      if (r === 1) {
+        const e1 = leafEid[2 * p], e2 = leafEid[2 * p + 1];
+        m.player1_name = e1 ? BLANK : ""; m.player1_team = ""; m.player1_entrant_id = e1;
+        m.player2_name = e2 ? BLANK : ""; m.player2_team = ""; m.player2_entrant_id = e2;
+      }
+      matches.push(m);
+    }
+  }
+
+  const tournament = { name: opts.title || "", date: opts.date || "", venue: opts.venue || "", event_config: "[]" };
+  return buildBracketXlsx(tournament, matches, entrants, { event: eventName, no_import_sheet: true });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1658,6 +1714,7 @@ module.exports = {
   buildReceiptsList,
   buildMatchCardsXlsx,
   buildBracketXlsx,
+  buildBlankBracketXlsx,
   buildRosterTemplateXlsx,
   buildStandingsXlsx,
   buildPodiumXlsx,
