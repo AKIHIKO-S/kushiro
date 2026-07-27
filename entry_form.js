@@ -839,6 +839,31 @@ function renderCustomClient(c, name) {
   return '<input type="text" name="' + name + '" placeholder="' + escapeHtml(label) + (req ? " (必須)" : "") + '"' +
     (req ? " required" : "") + whenAttr + helpAttr + textAttrs + ' />';
 }
+// 記入されていない選手行の必須を外す。
+// gatherFormData は氏名(団体はチーム名/メンバー)が空の行を送信対象から外すので、必須検証も
+// 同じ規則に揃える。揃えないと「追加したが使わなかった予備行」や「申し込まない種目の初期行」の
+// ふりがな等が HTML5 検証に引っかかり、送信ボタンを押しても何も起きない(閉じている種目の行だと
+// ブラウザがフォーカスできずエラー表示すら出ない)という詰みが起きる(2026-07-27 修正)。
+function ttRowIsUsed(row) {
+  var hit = false;
+  row.querySelectorAll('input[name$="_name"], input[name$="_n1"], input[name$="_n2"], input[name*="_m"]')
+    .forEach(function (el) { if (String(el.value || "").trim()) hit = true; });
+  return hit;
+}
+function ttSyncRowRequired() {
+  document.querySelectorAll(".entry-row").forEach(function (row) {
+    if (!row.getAttribute("data-req-scanned")) {
+      row.querySelectorAll("[required]").forEach(function (el) { el.setAttribute("data-req-orig", "1"); });
+      row.setAttribute("data-req-scanned", "1");
+    }
+    var used = ttRowIsUsed(row);
+    row.querySelectorAll('[data-req-orig="1"]').forEach(function (el) {
+      if (used) el.setAttribute("required", "");
+      else el.removeAttribute("required");
+    });
+  });
+}
+
 // 表示条件(data-wk/data-wv)の一括評価。参照先の値は「同じ選手行の回答」→「申込単位の回答」の順で
 // 解決する(サーバ側 _customVisible と同じ規則)。非表示中は disabled にして送信・必須検証から外す。
 function ttWhenSync() {
@@ -863,8 +888,11 @@ function ttWhenSync() {
 // prefix は input 名の接頭辞(行スコープで一意)。所属(player_team)は addEntry 側で扱う。
 // 生年月日(YYYY-MM-DD)から基準日時点の満年齢を返す(サーバ ageAtDate と同一ロジック)。
 function ttAgeAt(birth, asOf) {
-  const bm = String(birth || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
-  const am = String(asOf || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  // ここはテンプレートリテラル内に埋め込まれるクライアントJS。数字クラスは \\d と二重に
+  // 書かないと、テンプレート評価時にバックスラッシュが食われて「リテラルの文字 d」に化け、
+  // 生年月日が永遠にマッチせず「満N歳」ヒントが一切出なくなる(2026-07-27 修正)。
+  const bm = String(birth || "").match(/^(\\d{4})-(\\d{2})-(\\d{2})/);
+  const am = String(asOf || "").match(/^(\\d{4})-(\\d{2})-(\\d{2})/);
   if (!bm || !am) return null;
   let age = (+am[1]) - (+bm[1]);
   if ((+am[2]) < (+bm[2]) || ((+am[2]) === (+bm[2]) && (+am[3]) < (+bm[3]))) age--;
@@ -1091,12 +1119,13 @@ function addEntry(eventIdx) {
   html += divSeg;
   row.innerHTML = html;
   container.appendChild(row);
-  ttWhenSync();   // 追加行の表示条件つき項目を初期状態(非表示なら disabled)に揃える
+  ttFormSync();   // 追加行の表示条件と必須状態(未記入なので必須は外れる)を初期化
   recalcTotal();
 }
 
 function removeEntry(btn, eventIdx) {
   btn.closest(".entry-row").remove();
+  ttFormSync();   // 残った行の必須・表示条件を評価し直す
   recalcTotal();
 }
 
@@ -1546,15 +1575,16 @@ window.addEventListener("resize", ttPostHeight);
 // レイアウト/フォント確定後の取りこぼし対策に数回だけ遅延送信
 [120, 500, 1200].forEach(function (ms) { setTimeout(ttPostHeight, ms); });
 
-// 表示条件つき項目の連動(入力のたびに全条件を評価し直す。件数は高々数十なので全走査で足りる)
-document.getElementById("entryForm").addEventListener("input", ttWhenSync);
-document.getElementById("entryForm").addEventListener("change", ttWhenSync);
+// 表示条件つき項目の連動 + 未記入行の必須解除(入力のたびに評価し直す。件数は高々数十なので全走査で足りる)
+function ttFormSync() { ttWhenSync(); ttSyncRowRequired(); }
+document.getElementById("entryForm").addEventListener("input", ttFormSync);
+document.getElementById("entryForm").addEventListener("change", ttFormSync);
 
 // 初期化 (失敗しても安全網が案内を表示)
 try {
   renderEvents();
   recalcTotal();
-  ttWhenSync();
+  ttFormSync();
   ttPostHeight();
 } catch (e) {
   if (window.__ttShowFatal) window.__ttShowFatal(e && e.message);

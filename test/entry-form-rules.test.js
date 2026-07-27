@@ -190,6 +190,56 @@ test("フォームHTML: 入力制限・説明文・条件属性・連動スク�
   assert.ok(html.includes("fld-help"), "説明文のスタイルが定義される");
 });
 
+// ── 埋め込みJSのエスケープ健全性(テンプレートリテラルで \ が食われる事故の再発防止) ──
+// 事故の内容: entry_form.js のクライアントJSはテンプレートリテラル内にあるため、\d と書くと
+// テンプレート評価時にバックスラッシュが食われて /^(d{4})…/ (リテラルの文字d)になる。
+// 生年月日が永遠にマッチせず「満N歳」ヒントが本番で一度も出ていなかった(2026-07-27 発見)。
+test("年齢ヒント(ttAgeAt)の正規表現が生成後も壊れていない", () => {
+  const t = openTournament();
+  const html = entryForm.buildEntryFormHTML(t,
+    [{ name: "シニア", type: "singles", fee: 0, age_check: { mode: "birthdate" } }],
+    { field_config: db.resolveFieldConfig(t) });
+  const src = html.match(/function ttAgeAt[\s\S]*?\n\}/);
+  assert.ok(src, "ttAgeAt が埋め込まれていること");
+  assert.ok(src[0].includes("\\d{4}") && src[0].includes("\\d{2}"),
+    "数字クラス \\d が生成後も保たれていること: " + (src[0].match(/match\([^)]*\)/) || [""])[0]);
+});
+
+test("埋め込みJSにバックスラッシュ落ちの正規表現が無い", () => {
+  const t = openTournament();
+  const html = entryForm.buildEntryFormHTML(t,
+    [{ name: "男子シングルス", type: "singles", fee: 1000 }],
+    { field_config: db.resolveFieldConfig(t) });
+  // /^(d{4})/ のような「\ が食われた」パターンを機械的に検出する
+  const broken = html.match(/\/\^?\([a-z]\{\d+\}\)/g);
+  assert.strictEqual(broken, null, "壊れた正規表現が埋め込まれていない: " + JSON.stringify(broken));
+});
+
+// ── 未記入行の必須解除(送信ボタンが無反応になる事故の再発防止) ──────────
+// 事故の内容: ふりがな等を必須にした大会では、使わなかった予備行や申し込まない種目の初期行の
+// 必須欄がHTML5検証に引っかかり、送信を押しても何も起きない(閉じた種目の行はブラウザが
+// フォーカスできずエラー表示すら出ない)。実測で 記入1行・送信対象1件でも invalid 5件だった。
+test("未記入行の必須を外す仕組みがフォームに組み込まれている", () => {
+  const t = openTournament();
+  const html = entryForm.buildEntryFormHTML(t,
+    [{ name: "男子シングルス", type: "singles", fee: 1000 }],
+    { field_config: db.resolveFieldConfig(t) });
+  assert.ok(html.includes("function ttSyncRowRequired"), "必須同期関数が埋め込まれている");
+  assert.ok(html.includes("function ttRowIsUsed"), "行の使用判定が埋め込まれている");
+  assert.ok(html.includes("data-req-orig"), "本来必須だった欄を記録する印がある");
+  // 入力・行追加・行削除の3経路すべてから同期が呼ばれること
+  assert.ok(/addEventListener\("input", ttFormSync\)/.test(html), "入力時に同期");
+  assert.ok(/addEventListener\("change", ttFormSync\)/.test(html), "変更時に同期");
+  // 関数本体は「次の関数定義まで」で切り出す(最短マッチだと内側のブロックで切れる)
+  const bodyOf = (name, next) => {
+    const s = html.indexOf("function " + name), e = html.indexOf("function " + next);
+    assert.ok(s >= 0 && e > s, name + " が見つかる");
+    return html.slice(s, e);
+  };
+  assert.ok(bodyOf("addEntry", "removeEntry").includes("ttFormSync()"), "行追加時に同期");
+  assert.ok(bodyOf("removeEntry", "rowDivision").includes("ttFormSync()"), "行削除時に同期");
+});
+
 // ── 列スキーマとの整合 ─────────────────────────────────────
 test("条件つき項目も集計シートの列になる(未回答は空欄で埋まるだけ)", () => {
   const t = openTournament();
