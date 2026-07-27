@@ -9662,19 +9662,34 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
         ? (parseInt(c.fee_student) || 0) : null,
       // 大会が定義した参加区分(自己申告)。区分ごとに料金 fee_override を持てる。
       categories: Array.isArray(c.entry_categories) && c.entry_categories.length ? c.entry_categories : null,
+      // 料金の単位。"person"=1人あたり(人数を掛ける) / 既定は1申込あたり。
+      // 実例: まりもオープンの団体戦は「1人1,000円」(4人チームなら4,000円)、
+      // 中学選抜やくしろリーグの団体戦は「1チーム2,000円」。要項によって単位が違う。
+      fee_unit: c.fee_unit === "person" ? "person" : "entry",
     };
   });
-  const resolveFee = (evName, division, fallback) => {
+  // 1申込が何人分の請求になるか。fee_unit="person" のときだけ効く。
+  // 団体は記入されたメンバーの人数、ダブルス/混合は2、シングルスは1。
+  const feeQtyOf = (ent, type) => {
+    if (type === "team") {
+      const ms = Array.isArray(ent.members) ? ent.members.filter(m => String(m || "").trim()) : [];
+      return Math.max(1, ms.length);
+    }
+    if (type === "doubles" || type === "mixed") return 2;
+    return 1;
+  };
+  const resolveFee = (evName, division, fallback, qty) => {
     const cfg = feeMap[evName];
     if (!cfg) return parseInt(fallback) || 0;
-    // entry_categories がある種目は、選択区分(value)の fee_override を優先(無ければ一般料金)。
+    const mul = (u) => cfg.fee_unit === "person" ? u * Math.max(1, parseInt(qty) || 1) : u;
     if (cfg.categories) {
-      const cat = cfg.categories.find(x => x && String(x.value || x.label) === String(division));
-      if (cat && cat.fee_override != null && cat.fee_override !== "") return parseInt(cat.fee_override) || 0;
-      return cfg.fee;
+      const cat0 = cfg.categories.find(x => x && String(x.value || x.label) === String(division));
+      if (cat0 && cat0.fee_override != null && cat0.fee_override !== "") return mul(parseInt(cat0.fee_override) || 0);
+      return mul(cfg.fee);
     }
+    // 中高生料金(fee_student)は「一般以外の区分」に適用する
     const isStudent = division && division !== "general";
-    return (isStudent && cfg.fee_student != null) ? cfg.fee_student : cfg.fee;
+    return mul((isStudent && cfg.fee_student != null) ? cfg.fee_student : cfg.fee);
   };
 
   // 申込原本(entry_submissions)の id を先に採番し、作成する entrant 全てに紐づける。
@@ -9727,7 +9742,8 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
       else if (division === "middle") gc.category = "middle";
       else if (division === "high") gc.category = "high";
       else if (division === "student") { if (gc.category === "general") gc.category = "high"; }
-      const fee = resolveFee(evName, division || gc.category, ent.fee);
+      // 「1人あたり料金」の種目では申込の人数を掛ける(団体=記入メンバー数 / ダブルス=2)
+      const fee = resolveFee(evName, division || gc.category, ent.fee, feeQtyOf(ent, type));
       // 区分の表示ラベル(entry_categories の short/label)を age_group に保存(名簿・集計の区分表示用)。
       const divLabel = String(ent.division_label || "").slice(0, 60);
 

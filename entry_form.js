@@ -110,6 +110,8 @@ function buildEntryFormHTML(tournament, events, opts) {
     type: e.type || "singles",
     note: e.note || "",
     per_team: e.per_team || 6,
+    // 料金の単位("person"=1人あたり。団体戦で人数分を請求する大会がある)
+    fee_unit: e.fee_unit === "person" ? "person" : undefined,
     // 大会が定義した参加区分(自己申告)。value/label/short/fee_override/min_age/max_age/combined を使う。
     entry_categories: Array.isArray(e.entry_categories) ? e.entry_categories : undefined,
     // 年齢自動判定(生年月日入力→基準日時点の満年齢で資格判定)。mode:"birthdate" で有効。
@@ -1292,9 +1294,22 @@ function rowDivLabel(row) {
 }
 // 行の料金は選択区分の data-fee から読む(区分ごと料金 fee_override / 中高生別料金の両対応)。
 function rowFee(ev, row) {
+  let unit = ev.fee || 0;
   const r = row.querySelector(".div-seg input:checked");
-  if (r) { const f = r.getAttribute("data-fee"); if (f != null && f !== "") return parseInt(f) || 0; }
-  return ev.fee || 0;
+  if (r) { const f = r.getAttribute("data-fee"); if (f != null && f !== "") unit = parseInt(f) || 0; }
+  if (ev.fee_unit !== "person") return unit;
+  // 「1人あたり」の種目は人数を掛ける(団体=記入済みメンバー数 / ダブルス=2)。
+  // 実例: まりもオープンの団体戦は1人1,000円なので、4人チームなら4,000円。
+  let n = 1;
+  if (ev.type === "team") {
+    n = 0;
+    row.querySelectorAll('input[name*="_m"]').forEach(function (inp) {
+      if (/_m\\d+$/.test(inp.name || "") && String(inp.value || "").trim()) n++;
+    });
+  } else if (ev.type === "doubles") {
+    n = 2;
+  }
+  return unit * Math.max(1, n);
 }
 // 区分の表示ラベル (一般は空文字 = 表示しない)。
 function ttDivLabel(d) {

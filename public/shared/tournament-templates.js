@@ -393,7 +393,9 @@
       description: "阿寒湖温泉での2日間開催のラージボール大会。1日目団体戦、2日目個人戦。",
       eligibility: "ラージボール愛好者。先着100名。",
       events: [
-        { name: "団体戦 (男女混合)", type: "team", per_team: 4, fee: 1000, category: "large", format: "D×3、4ブロック24チーム" },
+        // 要項は「1人 1,000円」(1チーム4人・ダブルス3試合)。1チームいくらではなく人数分を請求する
+        { name: "団体戦 (男女混合)", type: "team", per_team: 4, fee: 1000, fee_unit: "person", capacity: 24,
+          category: "large", format: "D×3、4ブロック24チーム", note: "1人1,000円・1チーム4人" },
         { name: "男子ダブルス",     gender: "male",   type: "doubles", fee: 1000, category: "large" },
         { name: "女子ダブルス",     gender: "female", type: "doubles", fee: 1000, category: "large" },
         { name: "男子シングルス",   gender: "male",   type: "singles", fee: 700,  category: "large" },

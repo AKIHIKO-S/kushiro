@@ -69,6 +69,8 @@ function eventFeeMap(tournament) {
     map[String(c.name).trim()] = {
       fee: f, fee_student: (fs >= 0 ? fs : null),
       categories: Array.isArray(c.entry_categories) && c.entry_categories.length ? c.entry_categories : null,
+      // 料金の単位("person"=1人あたり。団体戦で人数分を請求する大会がある)
+      fee_unit: c.fee_unit === "person" ? "person" : "entry",
     };
   });
   return map;
@@ -81,18 +83,30 @@ function eventFeeMap(tournament) {
 function authoritativeFees(tournament, entries) {
   const map = eventFeeMap(tournament);
   let total = 0;
+  // 「1人あたり料金」の種目では申込の人数を掛ける(db.js の feeQtyOf と同じ規則)
+  const qtyOf = (e) => {
+    const t = e.type || "singles";
+    if (t === "team") {
+      const ms = Array.isArray(e.members) ? e.members.filter(m => String(m || "").trim()) : [];
+      return Math.max(1, ms.length);
+    }
+    if (t === "doubles" || t === "mixed") return 2;
+    return 1;
+  };
   const list = (entries || []).map(e => {
     const cfg = map[String(e.event || "").trim()];
     let fee;
     if (cfg) {
+      let unit;
       if (cfg.categories) {
         // entry_categories がある種目は選択区分の fee_override を優先(無ければ一般料金)。
         const cat = cfg.categories.find(x => x && String(x.value || x.label) === String(e.division));
-        fee = (cat && cat.fee_override != null && cat.fee_override !== "") ? (parseInt(cat.fee_override, 10) || 0) : cfg.fee;
+        unit = (cat && cat.fee_override != null && cat.fee_override !== "") ? (parseInt(cat.fee_override, 10) || 0) : cfg.fee;
       } else {
         const isStudent = e.division && e.division !== "general";   // 中学生/高校生(旧 student 含む)
-        fee = (isStudent && cfg.fee_student != null) ? cfg.fee_student : cfg.fee;
+        unit = (isStudent && cfg.fee_student != null) ? cfg.fee_student : cfg.fee;
       }
+      fee = cfg.fee_unit === "person" ? unit * qtyOf(e) : unit;
     } else {
       fee = parseInt(e.fee, 10) || 0;
     }
