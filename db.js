@@ -7877,18 +7877,30 @@ function parseTeamMembers(note) {
 // 大会の団体戦チームと所属選手の一覧 (メンバー名のみ・PIIなし)
 function getTeamRosters(tournamentId) {
   const rows = sqlite.prepare(
-    `SELECT id, event, name, team, team_members, note FROM entrants WHERE tournament_id = ?`
+    `SELECT id, event, name, team, team_members, note, extra_json FROM entrants WHERE tournament_id = ?`
   ).all(tournamentId);
   const out = [];
   for (const r of rows) {
     // Phase4: 構造化列(team_members)優先、無ければ旧note解析へフォールバック。
     const members = entrantMembers(r);
     if (!members.length) continue; // メンバー情報の無いエントリーは対象外
+    // メンバーごとの申告(ふりがな・学年・性別・自由回答)。種目別設定でそれらを表示した
+    // 団体種目のみ入る。氏名で突き合わせて members と同じ並びに整える。
+    let detail = null;
+    try {
+      const ex = r.extra_json ? JSON.parse(r.extra_json) : null;
+      if (ex && Array.isArray(ex.members) && ex.members.length) {
+        const byName = {};
+        ex.members.forEach(m => { if (m && m.name) byName[String(m.name).trim()] = m; });
+        detail = members.map(nm => byName[String(nm).trim()] || { name: nm });
+      }
+    } catch (_) { detail = null; }
     out.push({
       entrant_id: r.id,
       event: r.event || "",
       team_name: r.team || r.name || "",
       members,
+      members_detail: detail,   // 無ければ null(従来の団体申込)
     });
   }
   return out;
@@ -9496,7 +9508,15 @@ function _enforceRequiredFields(t, formData, entries) {
       const filled = String(ent.team_name || "").trim() ||
         (Array.isArray(ent.members) && ent.members.some(m => String(m).trim()));
       if (!filled) continue;
-      // 団体は選手個別の必須は課さない(名簿主体)。
+      // メンバーごとの項目を表示している種目でだけ、記入済みメンバーの必須を検証する。
+      // 項目を出していない種目(既定)では members_detail が来ないので従来どおり素通し。
+      const md = Array.isArray(ent.members_detail) ? ent.members_detail : [];
+      for (let i = 0; i < md.length; i++) {
+        const m = md[i];
+        if (!m || !String(m.name || "").trim()) continue;
+        const msg = checkSlot(evName, { furigana: m.furigana, grade: m.grade, answers: m.answers });
+        if (msg) return msg.replace(evName + ":", `${evName}: メンバー${i + 1}`);
+      }
     } else if (type === "doubles" || type === "mixed") {
       const n1 = String(ent.name1 || "").trim(), n2 = String(ent.name2 || "").trim();
       if (!n1 && !n2) continue;
@@ -9728,6 +9748,12 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
         const tn = String(ent.team_name || formData.team_name || "").trim();
         const members = Array.isArray(ent.members) ? ent.members.filter(Boolean) : [];
         if (!tn && members.length === 0) continue;
+        // メンバーごとの申告(ふりがな・学年・性別・自由回答)。種目別設定でそれらを表示した
+        // ときだけフォームが送ってくる。team_members(氏名の配列)は形を変えず、詳細は
+        // extra_json.members に持つ(既存の名簿表示・集計を壊さないため)。
+        const memberDetail = Array.isArray(ent.members_detail)
+          ? ent.members_detail.filter(m => m && String(m.name || "").trim()).slice(0, 30)
+          : null;
         data = {
           ...common,
           name: tn || (members[0] || ""),
@@ -9735,6 +9761,9 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
           team_members: members,
           note: [`[団体] メンバー: ${members.join("、")}`, noteBase].filter(Boolean).join(" | "),
         };
+        if (memberDetail && memberDetail.length) {
+          data.extra_json = Object.assign({}, common.extra_json || {}, { members: memberDetail });
+        }
         emailItem = { type: "team", event: evName, team_name: tn, members, fee, division_label: divLabel };
         // 団体名が空のときは name=members[0] になり、別チームでも先頭選手が同名だと衝突するので
         // 重複判定をしない(正当な別チームを誤って捨てない / Phase4 review #11)。

@@ -3621,6 +3621,54 @@ const A = {
          onInput: (e) => { metaOf(key).help = e.target.value; refreshCode(); } })));
    });
    fieldCfgBox.appendChild(metaDetails);
+
+   // 種目ごとの上書き。選手行に関わる項目だけを対象にする(連絡先は大会に1つなので対象外)。
+   // 「既定」を選ぶと上書きを消し、上の大会レベル設定に従う。
+   const PER_EVENT_FIELDS = [
+     ["furigana", "ふりがな"], ["player_team", "所属"],
+     ["grade", "学年"], ["player_gender", "性別"],
+   ];
+   const evNames = events.map(e => e && e.name).filter(Boolean);
+   const ovDetails = h("details", { style: { margin: "4px 0 10px" } },
+     h("summary", { style: { fontSize: "12px", cursor: "pointer", color: "var(--muted)" } },
+       "種目ごとに変える（中学生の種目だけ学年を必須にする、など）"));
+   if (!evNames.length) {
+     ovDetails.appendChild(h("div", { className: "text-xs text-sub", style: { padding: "6px 0" } },
+       "先に種目を追加してください"));
+   } else {
+     const ovTable = h("table", { className: "tbl", style: { fontSize: "12px", marginTop: "6px" } });
+     ovTable.appendChild(h("thead", {}, h("tr", {},
+       h("th", { style: { minWidth: "150px" } }, "種目"),
+       ...PER_EVENT_FIELDS.map(([, label]) => h("th", { style: { width: "104px" } }, label)))));
+     const ovBody = h("tbody", {});
+     evNames.forEach((evName) => {
+       const ov = fieldCfg.event_overrides[evName] || {};
+       ovBody.appendChild(h("tr", {},
+         h("td", { style: { fontSize: "12px" } }, evName),
+         ...PER_EVENT_FIELDS.map(([key]) => {
+           const cur = ov[key] || "";
+           return h("td", {}, h("select", { className: "input",
+             style: { width: "100%", padding: "4px", fontSize: "11.5px" },
+             onChange: (e) => {
+               const v = e.target.value;
+               const bag = fieldCfg.event_overrides[evName] || (fieldCfg.event_overrides[evName] = {});
+               if (v) bag[key] = v; else delete bag[key];
+               if (!Object.keys(bag).length) delete fieldCfg.event_overrides[evName];
+               refreshCode();
+             } },
+             h("option", { value: "", selected: !cur ? "" : null }, "既定"),
+             h("option", { value: "required", selected: cur === "required" ? "" : null }, "必須"),
+             h("option", { value: "optional", selected: cur === "optional" ? "" : null }, "任意"),
+             h("option", { value: "hidden", selected: cur === "hidden" ? "" : null }, "非表示")));
+         })));
+     });
+     ovTable.appendChild(ovBody);
+     ovDetails.appendChild(ovTable);
+     ovDetails.appendChild(h("div", { className: "text-xs text-sub", style: { marginTop: "6px" } },
+       "「既定」は上の設定に従います。集計シートの列は、どれか1種目でも表示される項目に作られます"));
+   }
+   fieldCfgBox.appendChild(ovDetails);
+
    fieldCfgBox.appendChild(h("div", { className: "text-sm font-bold", style: { margin: "8px 0 4px" } }, "自由項目 (主催者定義)"));
    fieldCfg.custom.forEach((c, ci) => {
      const box = h("div", { style: { marginBottom: "6px", padding: "6px", background: "var(--bg)", borderRadius: "6px" } });

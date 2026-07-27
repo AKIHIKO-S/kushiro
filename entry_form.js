@@ -485,6 +485,21 @@ function buildEntryFormHTML(tournament, events, opts) {
   }
   .opt-qty input:focus { outline: none; border-color: var(--red); box-shadow: 0 0 0 3px rgba(192,21,38,.13); }
   .opt-unit { font-size: 13px; color: var(--ink-2); }
+  /* 団体戦: メンバーごとに項目がある場合の区切り */
+  .member-block {
+    position: relative;
+    padding: 10px 12px 10px 34px; margin-bottom: 8px;
+    background: var(--card-2); border: 1px solid var(--line-2); border-radius: 8px;
+  }
+  .member-block .member-no {
+    position: absolute; left: 10px; top: 12px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--line); color: var(--ink-2);
+    font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .member-block:focus-within { border-color: var(--red); background: #fff; }
+  .member-block:focus-within .member-no { background: var(--red); color: #fff; }
 
   /* ── 追加ボタン / カウント ── */
   .btn-add {
@@ -1204,11 +1219,27 @@ function addEntry(eventIdx) {
   if (isTeam) {
     html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_name" placeholder="チーム名" aria-label="チーム名" oninput="recalcTotal()" style="margin-bottom:9px;" />';
     const per = ev.per_team || 6;
-    html += '<div class="entry-grid">';
-    for (let i = 0; i < per; i++) {
-      html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_m' + i + '" placeholder="メンバー' + (i + 1) + ' 氏名" aria-label="メンバー' + (i + 1) + ' 氏名" oninput="recalcTotal()" />';
+    // メンバーごとの可変項目(ふりがな・学年・性別・選手スコープの自由項目)。
+    // 種目別設定で1つでも表示される項目があるときだけメンバーを枠で囲む
+    // (何も無ければ従来どおり氏名だけのフラットな並び=既存の見た目を変えない)。
+    const memberFields = playerFieldsHtml('ev' + eventIdx + '_team' + idx + '_mx', ev);
+    if (memberFields) {
+      for (let i = 0; i < per; i++) {
+        const pre = 'ev' + eventIdx + '_team' + idx + '_m' + i;
+        html += '<div class="member-block">' +
+          '<div class="member-no">' + (i + 1) + '</div>' +
+          '<div class="entry-grid">' +
+          '<input type="text" name="' + pre + '" placeholder="メンバー' + (i + 1) + ' 氏名" aria-label="メンバー' + (i + 1) + ' 氏名" oninput="recalcTotal()" />' +
+          playerFieldsHtml(pre + '_x', ev) +
+          '</div></div>';
+      }
+    } else {
+      html += '<div class="entry-grid">';
+      for (let i = 0; i < per; i++) {
+        html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_m' + i + '" placeholder="メンバー' + (i + 1) + ' 氏名" aria-label="メンバー' + (i + 1) + ' 氏名" oninput="recalcTotal()" />';
+      }
+      html += '</div>';
     }
-    html += '</div>';
   } else if (isDoubles) {
     // 所属(player_team)の状態で 所属入力の要否を切替(hidden=省略 / required=必須)。
     const ptm = fstFor(ev.name, "player_team");
@@ -1379,9 +1410,27 @@ function gatherFormData() {
       if (ev.type === "team") {
         obj.team_name = val('input[name*="_team"][name$="_name"]');
         obj.members = [];
-        row.querySelectorAll('input[name*="_m"]').forEach((inp) => {
-          const v = (inp.value || "").trim(); if (v) obj.members.push(v);
+        // メンバー氏名は「_m<数字>」で終わる入力だけを拾う(可変項目 _m0_x_furi 等と混ざらないように)。
+        // 数字クラスは \\d と二重に書く(テンプレートリテラル内なので、単一だと文字dに化ける)。
+        const memberInputs = Array.from(row.querySelectorAll('input[name*="_m"]'))
+          .filter((inp) => /_m\\d+$/.test(inp.name || ""));
+        const detail = [];
+        memberInputs.forEach((inp) => {
+          const v = (inp.value || "").trim();
+          if (v) obj.members.push(v);
+          // メンバーごとの可変項目(ふりがな・学年・性別・自由回答)。項目を出していない
+          // 種目では readSlot が空を返すので detail も空のままになる。
+          const s = readSlot(row, inp.name.replace(/^.*?(_m\\d+)$/, "$1") + "_x");
+          if (v) {
+            const m = { name: v };
+            if (s.furigana) m.furigana = s.furigana;
+            if (s.gender) m.gender = s.gender;
+            if (s.extra) Object.assign(m, s.extra);
+            detail.push(m);
+          }
         });
+        // 可変項目を1つでも集めたときだけ members_detail を送る(従来の申込は形を変えない)。
+        if (detail.some((m) => Object.keys(m).length > 1)) obj.members_detail = detail;
         if (!obj.team_name && obj.members.length === 0) return;
       } else if (ev.type === "doubles") {
         obj.name1 = val('input[name$="_n1"]');

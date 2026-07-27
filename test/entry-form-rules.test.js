@@ -10,6 +10,7 @@ process.env.DB_PATH = "/tmp/ktta_formrules_" + process.pid + ".db";
 const { test, after } = require("node:test");
 const assert = require("node:assert");
 const fs = require("fs");
+const path = require("node:path");
 const db = require("../db");
 const entryForm = require("../entry_form.js");
 
@@ -203,6 +204,36 @@ test("年齢ヒント(ttAgeAt)の正規表現が生成後も壊れていない",
   assert.ok(src, "ttAgeAt が埋め込まれていること");
   assert.ok(src[0].includes("\\d{4}") && src[0].includes("\\d{2}"),
     "数字クラス \\d が生成後も保たれていること: " + (src[0].match(/match\([^)]*\)/) || [""])[0]);
+});
+
+// ソース側の検査。生成後を見るだけでは「\d が d に化けた」ことに気づけない場合がある
+// (実際 /_m\d+$/ → /_md+$/ の破損を生成後の検査は通してしまい、団体メンバーの氏名が
+//  1件も収集されない不具合を見逃した)。テンプレートリテラル内で単一バックスラッシュの
+// 正規表現エスケープを書いていないかを、ソースを直接読んで機械的に検出する。
+test("クライアントJSのテンプレート内に単一バックスラッシュのエスケープが無い", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "entry_form.js"), "utf8");
+  // buildEntryFormHTML / buildApplicantStatusHTML が返す巨大テンプレートの範囲を取る
+  const zones = [];
+  for (const fn of ["function buildEntryFormHTML", "function buildApplicantStatusHTML"]) {
+    const s = src.indexOf(fn);
+    if (s < 0) continue;
+    const open = src.indexOf("return `", s);
+    if (open < 0) continue;
+    // テンプレートの終わりは行頭の「`;」(この2関数はいずれもその形で閉じている)
+    const close = src.indexOf("\n`;", open);
+    zones.push(src.slice(open, close > 0 ? close : src.length));
+  }
+  assert.ok(zones.length, "テンプレート範囲を特定できること");
+  const bad = [];
+  for (const zone of zones) {
+    // \\d のように二重化されていない \d \s \w \b を拾う
+    for (const m of zone.matchAll(/(^|[^\\])\\([dswbDSWB])/g)) {
+      const line = zone.slice(Math.max(0, m.index - 60), m.index + 40).split("\n").pop();
+      bad.push("\\" + m[2] + " → " + line.trim());
+    }
+  }
+  assert.deepStrictEqual(bad, [],
+    "テンプレート内では \\\\d のように二重化する(単一だと評価時に文字へ化ける)");
 });
 
 test("埋め込みJSにバックスラッシュ落ちの正規表現が無い", () => {
