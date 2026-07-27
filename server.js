@@ -925,6 +925,52 @@ app.get("/api/public/applicants/:token", applicantLookupRateLimit, (req, res) =>
   res.json(r);
 });
 
+// ── 申込後の選手変更(申込者本人が申込番号で行う) ────────────────────────
+// 想定は「締切前に出場選手が変わった/出られなくなった」。締切後・組合せ作成後は db 側で拒否し、
+// 本部への連絡を案内する。閲覧と同じレート制限を掛け、更新後の申込内容をそのまま返す。
+app.post("/api/public/applicants/:token/entrants/:id/replace", applicantLookupRateLimit, async (req, res) => {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const token = String(req.params.token || "");
+  const b = req.body || {};
+  const r = db.applicantReplaceEntrant(token, String(req.params.id || ""), {
+    slot: b.slot, name: b.name, furigana: b.furigana, team: b.team,
+    grade: b.grade, birth_date: b.birth_date, answers: b.answers, reason: b.reason,
+  });
+  if (r.error) return res.status(400).json({ error: r.error });
+  // 主催者へ通知(best-effort。失敗しても変更自体は成立させる)
+  try {
+    if (mailer.isEnabled() && r.tournament) {
+      await mailer.sendEntryChangeNotification({
+        tournament: r.tournament, kind: "replace", before: r.before, after: r.after,
+        reason: b.reason || "", adminUrl: `${appOriginOf(req)}/admin#tournament/${r.tournament.id}`,
+      });
+    }
+  } catch (e) { recordError(e, req, res, 0); }
+  res.json(db.getSubmissionByToken(token));
+});
+
+app.post("/api/public/applicants/:token/entrants/:id/cancel", applicantLookupRateLimit, async (req, res) => {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const token = String(req.params.token || "");
+  const reason = String((req.body || {}).reason || "");
+  const r = db.applicantCancelEntrant(token, String(req.params.id || ""), reason);
+  if (r.error) return res.status(400).json({ error: r.error });
+  try {
+    if (mailer.isEnabled() && r.tournament) {
+      await mailer.sendEntryChangeNotification({
+        tournament: r.tournament, kind: "cancel", before: r.before, after: null,
+        reason, adminUrl: `${appOriginOf(req)}/admin#tournament/${r.tournament.id}`,
+      });
+    }
+  } catch (e) { recordError(e, req, res, 0); }
+  res.json(db.getSubmissionByToken(token));
+});
+
+// 変更履歴(管理画面の申込管理で表示)
+app.get("/api/tournaments/:id/entry-changes", requireAdmin, (req, res) => {
+  res.json({ items: db.listEntryChanges(req.params.id, req.query.limit) });
+});
+
 // SMTP 設定状態を返す + テスト送信エンドポイント (admin専用)
 app.get("/api/mail/status", requireAdmin, (req, res) => {
   res.json({

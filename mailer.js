@@ -383,10 +383,55 @@ async function sendTestEmail(to) {
   });
 }
 
+// 申込後の変更(選手の差し替え・出場の取消)を主催者へ知らせる。
+// 申込者は操作直後に画面で結果を確認できるので、本人への控えは送らない。
+async function sendEntryChangeNotification(opts) {
+  opts = opts || {};
+  if (!isEnabled()) return { skipped: "smtp_not_configured" };
+  const to = ADMIN_EMAIL || SMTP_USER;
+  if (!to) return { skipped: "no_admin_email" };
+  const t = opts.tournament || {};
+  const b = opts.before || {};
+  const a = opts.after || null;
+  const isCancel = opts.kind === "cancel";
+  const title = isCancel ? "出場の取消" : "出場選手の変更";
+  const detail = isCancel
+    ? `${b.event || ""}: ${b.name || ""}${b.team ? "（" + b.team + "）" : ""} が取り消されました`
+    : `${b.event || ""}: ${b.target || b.name || ""} → ${(a && (a.target || a.name)) || ""}`;
+  const subject = `【${t.name || "大会"}】${title}がありました`;
+  const text = [
+    `申込者による${title}がありました。`,
+    ``,
+    `■ 大会: ${t.name || ""}${t.date ? "（" + t.date + "）" : ""}`,
+    `■ 内容: ${detail}`,
+    opts.reason ? `■ 理由: ${opts.reason}` : "",
+    ``,
+    `この変更は申込締切前・組合せ作成前にのみ受け付けています。`,
+    opts.adminUrl ? `管理画面: ${opts.adminUrl}` : "",
+    ``,
+    `釧路卓球協会 申込システム`,
+  ].filter(s => s !== undefined && s !== null).join("\n");
+  const html = `
+<div style="font-family:'Hiragino Sans','Yu Gothic UI',system-ui,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#1c1917;">
+  <div style="border-top:4px solid ${isCancel ? "#b45309" : "#b91c1c"};padding-top:14px;">
+    <h1 style="font-size:18px;margin:4px 0 14px;">${esc(title)}がありました</h1>
+  </div>
+  <table style="width:100%;border-collapse:collapse;font-size:14px;">
+    <tr><td style="padding:8px;background:#faf9f7;width:90px;">大会</td><td style="padding:8px;">${esc(t.name || "")}${t.date ? "（" + esc(t.date) + "）" : ""}</td></tr>
+    <tr><td style="padding:8px;background:#faf9f7;">内容</td><td style="padding:8px;font-weight:bold;">${esc(detail)}</td></tr>
+    ${opts.reason ? `<tr><td style="padding:8px;background:#faf9f7;">理由</td><td style="padding:8px;">${esc(opts.reason)}</td></tr>` : ""}
+  </table>
+  <p style="font-size:12.5px;color:#57534e;margin-top:14px;">この変更は申込締切前・組合せ作成前にのみ受け付けています。</p>
+  ${opts.adminUrl ? `<p style="margin-top:12px;"><a href="${esc(opts.adminUrl)}" style="display:inline-block;padding:9px 16px;background:#211d18;color:#fff;border-radius:4px;text-decoration:none;font-size:13px;">管理画面で確認する</a></p>` : ""}
+</div>`;
+  return getTransporter().sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text, html });
+}
+
 module.exports = {
   isEnabled,
   sendConfirmationEmail,
   sendAdminNotification,
+  sendEntryChangeNotification,
   sendTestEmail,
   authoritativeFees,   // テスト用に公開 (#26)
   eventFeeMap,

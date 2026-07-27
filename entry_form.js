@@ -1840,6 +1840,35 @@ function buildApplicantStatusHTML() {
   th{font-size:11px;letter-spacing:.08em;color:var(--ink-2);text-transform:uppercase;}
   td.num{text-align:right;font-variant-numeric:tabular-nums;}
   .badge{display:inline-block;padding:2px 9px;border-radius:10px;font-size:11px;font-weight:800;}
+  /* 申込後の変更(選手の差し替え・取消) */
+  .act-row td{padding-top:0!important;border-top:none!important;}
+  .mini{padding:7px 12px;margin:0 6px 6px 0;font-size:12.5px;font-weight:700;font-family:inherit;
+    background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:7px;cursor:pointer;
+    min-height:34px;}
+  .mini:hover{background:#faf7f2;border-color:var(--ink-2);}
+  .mini.danger{color:var(--red);border-color:#e8c9cc;}
+  .mini.danger:hover{background:#fdf3f4;}
+  .mbg{position:fixed;inset:0;background:rgba(33,27,21,.45);display:flex;align-items:center;
+    justify-content:center;padding:18px;z-index:100;}
+  .mbox{background:var(--card);border-radius:12px;padding:22px;max-width:460px;width:100%;
+    max-height:88vh;overflow:auto;box-shadow:0 24px 60px -20px rgba(33,27,21,.6);}
+  .mbox h3{font-size:17px;font-weight:800;margin-bottom:14px;}
+  .mbox .fld{margin-bottom:12px;}
+  .mbox .fld label{display:block;font-size:12.5px;font-weight:700;color:var(--ink-2);margin-bottom:5px;}
+  .mbox .fld input{width:100%;padding:11px 12px;border:1.5px solid var(--line);border-radius:8px;
+    font-size:16px;font-family:inherit;box-sizing:border-box;}
+  .mbox .fld input:focus{outline:none;border-color:var(--red);box-shadow:0 0 0 3px rgba(192,21,38,.12);}
+  .mbox .note{font-size:12.5px;color:var(--ink-2);background:#faf7f2;padding:10px 12px;
+    border-radius:8px;line-height:1.7;margin-bottom:12px;}
+  .merr{color:var(--err);font-size:13px;margin:8px 0 0;line-height:1.6;}
+  .mfoot{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;}
+  .btn.ghost{background:#fff;color:var(--ink);border:1.5px solid var(--line);}
+  .btn.ghost:hover{background:#faf7f2;}
+  .btn.danger{background:var(--red);}
+  @media(max-width:480px){
+    .mfoot{flex-direction:column-reverse;}
+    .mfoot .btn{width:100%;}
+  }
   .b-ok{background:var(--ok-bg);color:var(--ok);}
   .b-warn{background:var(--warn-bg);color:var(--warn);}
   .b-err{background:var(--err-bg);color:var(--err);}
@@ -1930,21 +1959,120 @@ function buildApplicantStatusHTML() {
     document.getElementById("rTeam").textContent=d.team_name||"未登録";
     document.getElementById("rContact").textContent=d.contact_name||"未登録";
     document.getElementById("rDate").textContent=d.created_at||"";
-    var rows=(d.entries||[]).map(function(e){
+    LAST=d;
+    var rows=(d.entries||[]).map(function(e,i){
       var who=esc(e.name||"");
       if(e.is_doubles&&e.partner_name)who+=" / "+esc(e.partner_name);
       if(e.team_members&&e.team_members.length)who+='<br><span style="font-size:12px;color:#6c6153">'+esc(e.team_members.join("、"))+'</span>';
-      return '<tr><td>'+esc(e.event)+'</td><td>'+who+'</td><td>'+esc(divLabel(e))+
-        '</td><td class="num">'+yen(e.fee)+'</td><td>'+statusBadge(e.status)+'</td></tr>';
+      // 締切前・組合せ作成前だけ操作を出す。できないときは理由を小さく添える。
+      var act="";
+      if(e.cancelled){
+        act='<span style="font-size:12px;color:#6c6153">取消済み</span>';
+      }else if(e.editable){
+        if(e.is_doubles){
+          act='<button type="button" class="mini" onclick="openEdit('+i+',1)">選手1を変更</button>'+
+              '<button type="button" class="mini" onclick="openEdit('+i+',2)">選手2を変更</button>';
+        }else{
+          act='<button type="button" class="mini" onclick="openEdit('+i+',1)">選手を変更</button>';
+        }
+        act+='<button type="button" class="mini danger" onclick="openCancel('+i+')">取り消す</button>';
+      }else if(e.lock_reason){
+        act='<span style="font-size:11.5px;color:#6c6153">'+esc(e.lock_reason)+'</span>';
+      }
+      var tr='<tr'+(e.cancelled?' style="opacity:.55"':'')+'><td>'+esc(e.event)+'</td><td>'+who+'</td><td>'+esc(divLabel(e))+
+        '</td><td class="num">'+(e.cancelled?"—":yen(e.fee))+'</td><td>'+(e.cancelled?'<span class="badge">取消</span>':statusBadge(e.status))+'</td></tr>';
+      if(act)tr+='<tr class="act-row"><td colspan="5">'+act+'</td></tr>';
+      return tr;
     }).join("");
     document.getElementById("rRows").innerHTML=rows||'<tr><td colspan="5" style="color:#6c6153">エントリーがありません</td></tr>';
     document.getElementById("rTotal").textContent=yen(d.total_amount);
     show("result",true);
   }
 
+  // ── 申込後の選手変更(締切前・組合せ作成前のみ) ──────────────────
+  var LAST=null, TOKEN="";
+  function openEdit(idx,slot){
+    var e=(LAST&&LAST.entries||[])[idx]; if(!e)return;
+    var cur = slot===2 ? (e.name2||e.partner_name||"") : (e.name1||e.name||"");
+    var curFuri = slot===2 ? (e.furigana2||"") : (e.furigana||"");
+    var curTeam = slot===2 ? (e.team2||"") : (e.team||"");
+    modal("選手を変更",
+      '<div class="fld"><label>新しい選手の氏名</label>'+
+      '<input id="mName" type="text" value="'+esc(cur)+'" placeholder="例: 鈴木 三郎"></div>'+
+      '<div class="fld"><label>ふりがな</label>'+
+      '<input id="mFuri" type="text" value="'+esc(curFuri)+'" placeholder="例: すずき さぶろう"></div>'+
+      '<div class="fld"><label>所属</label>'+
+      '<input id="mTeam" type="text" value="'+esc(curTeam)+'" placeholder="例: 釧路湖陵"></div>'+
+      '<div class="fld"><label>変更の理由（任意）</label>'+
+      '<input id="mReason" type="text" placeholder="例: ケガのため"></div>'+
+      '<div class="note">変更前: '+esc(e.event)+' / '+esc(cur||"(未記入)")+'</div>',
+      "この内容で変更する",
+      function(){
+        return send("/entrants/"+encodeURIComponent(e.entrant_id)+"/replace",{
+          slot:slot,
+          name:val("mName"), furigana:val("mFuri"), team:val("mTeam"), reason:val("mReason"),
+        });
+      });
+  }
+  function openCancel(idx){
+    var e=(LAST&&LAST.entries||[])[idx]; if(!e)return;
+    modal("出場を取り消す",
+      '<div class="note">'+esc(e.event)+' / '+esc(e.name||"")+' の出場を取り消します。<br>'+
+      'この操作の後、同じ内容で申し込み直すことはできません（再度お申し込みください）。</div>'+
+      '<div class="fld"><label>取消の理由（任意）</label>'+
+      '<input id="mReason" type="text" placeholder="例: 部活の都合により"></div>',
+      "取り消す",
+      function(){
+        return send("/entrants/"+encodeURIComponent(e.entrant_id)+"/cancel",{ reason:val("mReason") });
+      }, true);
+  }
+  function val(id){var el=document.getElementById(id);return el?String(el.value||"").trim():"";}
+  function send(path,body){
+    return fetch("/api/public/applicants/"+encodeURIComponent(TOKEN)+path,{
+      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
+    }).then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+      .then(function(x){
+        if(!x.ok||x.j.error){ return { error: x.j.error||"変更できませんでした" }; }
+        render(x.j);
+        return { ok:true };
+      })
+      .catch(function(){ return { error:"通信エラーが発生しました。時間をおいて再度お試しください。" }; });
+  }
+  // 簡易モーダル(この画面だけで使う。外部ライブラリ不要)
+  function modal(title, bodyHtml, okLabel, onOk, danger){
+    var bg=document.createElement("div");
+    bg.className="mbg";
+    bg.innerHTML='<div class="mbox" role="dialog" aria-modal="true">'+
+      '<h3>'+esc(title)+'</h3>'+
+      '<div class="mbody">'+bodyHtml+'</div>'+
+      '<div class="merr" id="mErr"></div>'+
+      '<div class="mfoot">'+
+      '<button type="button" class="btn ghost" id="mCancel">やめる</button>'+
+      '<button type="button" class="btn'+(danger?" danger":"")+'" id="mOk">'+esc(okLabel)+'</button>'+
+      '</div></div>';
+    document.body.appendChild(bg);
+    var close=function(){ if(bg.parentNode)bg.parentNode.removeChild(bg); };
+    bg.querySelector("#mCancel").addEventListener("click",close);
+    bg.addEventListener("click",function(ev){ if(ev.target===bg)close(); });
+    var ok=bg.querySelector("#mOk");
+    ok.addEventListener("click",function(){
+      ok.disabled=true; ok.textContent="送信中…";
+      Promise.resolve(onOk()).then(function(r){
+        if(r&&r.error){
+          bg.querySelector("#mErr").textContent=r.error;
+          ok.disabled=false; ok.textContent=okLabel;
+          return;
+        }
+        close();
+      });
+    });
+    var first=bg.querySelector("input"); if(first)first.focus();
+  }
+
   function lookup(token){
     token=String(token||"").trim();
     if(!token){setMsg("申込番号を入力してください。");return;}
+    TOKEN=token.toUpperCase();
     show("result",false);
     setMsg("");
     fetch("/api/public/applicants/"+encodeURIComponent(token))
@@ -1955,6 +2083,10 @@ function buildApplicantStatusHTML() {
       })
       .catch(function(){setMsg("通信エラーが発生しました。時間をおいて再度お試しください。");});
   }
+
+  // 表の中のボタン(onclick)から呼べるように公開する。この画面は即席のIIFEで包まれているため。
+  window.openEdit=openEdit;
+  window.openCancel=openCancel;
 
   document.getElementById("lookupForm").addEventListener("submit",function(e){
     e.preventDefault();lookup(document.getElementById("tokenInput").value);

@@ -265,6 +265,25 @@ sqlite.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_submission_tokens_sub ON submission_tokens(submission_id);
 
+  -- 申込後の変更履歴。「誰がいつ何を変えたか」を残し、後から辿れるようにする
+  -- (選手の差し替え・出場の取消)。申込者が申込番号で行った操作も、本部が行った操作も同じ台帳に載せる。
+  -- before_json/after_json は氏名・所属など変更前後の要点のみ(連絡先などのPIIは載せない)。
+  CREATE TABLE IF NOT EXISTS entry_changes (
+    id TEXT PRIMARY KEY,
+    tournament_id TEXT NOT NULL,
+    submission_id TEXT DEFAULT '',
+    entrant_id TEXT DEFAULT '',
+    event TEXT DEFAULT '',
+    kind TEXT NOT NULL,              -- 'replace'(選手の差し替え) | 'cancel'(出場の取消)
+    before_json TEXT DEFAULT '',
+    after_json TEXT DEFAULT '',
+    reason TEXT DEFAULT '',
+    actor TEXT DEFAULT 'applicant',  -- 'applicant'(申込者本人) | 'admin'(本部)
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_entry_changes_t ON entry_changes(tournament_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_entry_changes_sub ON entry_changes(submission_id);
+
   CREATE INDEX IF NOT EXISTS idx_entrants_tournament ON entrants(tournament_id);
   CREATE INDEX IF NOT EXISTS idx_entrants_event ON entrants(tournament_id, event);
   CREATE INDEX IF NOT EXISTS idx_entrants_name ON entrants(name);
@@ -9063,6 +9082,15 @@ function getSubmissionByToken(token) {
     let ids = []; try { ids = JSON.parse(sub.entrant_ids || "[]"); } catch (_) {}
     return ids.map(id => entrantStmts.get.get(id)).filter(Boolean);
   })();
+  // 種目ごとの変更可否は同じ判定を何度も走らせないよう1回だけ引いて使い回す。
+  const _tForLock = stmts.getTournament.get(sub.tournament_id);
+  const _lockCache = {};
+  const lockOf = (ev) => {
+    if (!_tForLock) return "";
+    const k = String(ev || "");
+    if (!(k in _lockCache)) _lockCache[k] = _entryEditLock(_tForLock, k);
+    return _lockCache[k];
+  };
   const entries = rows.map(e => {
     // 選手行スコープの自由回答/学年を確認ページで表示できるよう parse(生年月日は表示しない=PII最小)。
     let ex = null; try { ex = e.extra_json ? JSON.parse(e.extra_json) : null; } catch (_) { ex = null; }
@@ -9076,8 +9104,17 @@ function getSubmissionByToken(token) {
       if (Object.keys(merged).length) answers = merged;
     }
     return {
+      // 申込者が「この出場を変更する」と指せるように id も返す(操作対象の特定に使う)。
+      // 推測できない値ではないが、操作にはトークンと所有チェックが要るので単体では意味を持たない。
+      entrant_id: e.id,
       name: e.display_name || e.name,
+      // ダブルスの差し替えUIで選手1/2を個別に指せるように、氏名を分けて返す
+      name1: e.is_doubles ? (e.name || "") : "",
+      name2: e.is_doubles ? (e.partner_name || "") : "",
+      furigana: e.furigana || "",
+      furigana2: e.partner_furigana || "",
       team: e.team || "",
+      team2: e.partner_team || "",
       event: e.event || "",
       division: e.division || "",
       category: e.category || "general",
@@ -9086,6 +9123,12 @@ function getSubmissionByToken(token) {
       team_members: entrantMembers(e),
       fee: e.fee || 0,
       status: e.status || "confirmed",
+      cancelled: (e.status || "confirmed") === "cancelled",
+      // 申込者が今この出場を変更できるか(締切前・組合せ作成前)。できない場合は理由を添える。
+      // 団体戦のメンバー変更は本部対応にしているため、ここでは変更不可にする。
+      editable: !lockOf(e.event) && (e.status || "confirmed") !== "cancelled" && !entrantMembers(e).length,
+      lock_reason: lockOf(e.event) ||
+        (entrantMembers(e).length ? "団体戦のメンバー変更は大会本部までご連絡ください" : ""),
       grade: grade,
       answers: answers,
     };
@@ -9095,7 +9138,10 @@ function getSubmissionByToken(token) {
   try { optionItems = sub.options_json ? (JSON.parse(sub.options_json) || []) : []; } catch (_) { optionItems = []; }
   const optionTotal = optionItems.reduce((s, o) => s + (parseInt(o.amount) || 0), 0);
   // 参加料の合計はentrantから引き直す(重複除去後の実体に合わせる)。オプションは明細の合計を足す。
-  const total = rows.reduce((s, e) => s + (e.fee || 0), 0) + optionTotal;
+  // 取り消した出場(cancelled)と却下(rejected)は請求から外す。
+  const total = rows
+    .filter(e => ["cancelled", "rejected"].indexOf(e.status || "confirmed") < 0)
+    .reduce((s, e) => s + (e.fee || 0), 0) + optionTotal;
   const t = stmts.getTournament.get(sub.tournament_id);
   // 申込単位スコープの構造化データ(引率者/顧問/コーチ + 自由回答)。生の生年月日は含まない。
   let subExtra = null; try { subExtra = sub.extra_json ? JSON.parse(sub.extra_json) : null; } catch (_) { subExtra = null; }
@@ -9110,6 +9156,218 @@ function getSubmissionByToken(token) {
     options: optionItems,   // 申込者の確認ページに出す(何をいくつ頼んだか)
     extra: subExtra || null,
   };
+}
+
+// ── 申込後の選手変更(申込者が申込番号で自分で行う) ─────────────────────
+// 対応する場面は「締切前に出場選手が変わった/出られなくなった」。
+// 締切後〜組合せ作成前は本部が名簿を編集し、組合せ確定後は当日修正(patchSheet)で扱う。
+
+// その種目が今も申込者側から変更できるかを判定する。変更できないなら理由(日本語)、できるなら ""。
+// 締切・受付フラグは大会単位、組合せの有無は種目単位で見る。
+function _entryEditLock(t, event) {
+  const closed = _entryClosedReason(t);
+  if (closed) return closed + "。変更が必要な場合は大会本部までご連絡ください";
+  const made = sqlite.prepare(
+    `SELECT COUNT(*) c FROM matches WHERE tournament_id=? AND event=?`).get(t.id, event).c;
+  if (made > 0) return "組合せの作成後は変更できません。大会本部までご連絡ください";
+  if (sheetStmts.latestConfirmed.get(t.id, event)) {
+    return "組合せの確定後は変更できません。大会本部までご連絡ください";
+  }
+  return "";
+}
+
+// 変更を受け付けてよいかを判定する。OKなら {ok, sub, ent, t}、ダメなら {error}。
+// 順に検査し、最初に引っかかった理由を日本語で返す。
+function _checkApplicantEditable(token, entrantId) {
+  const sub = _submissionByToken(token);
+  if (!sub) return { error: "申込が見つかりません。申込番号をご確認ください" };
+  const ent = entrantStmts.get.get(String(entrantId || ""));
+  if (!ent) return { error: "対象の申込が見つかりません" };
+  // 他人の申込を触れないこと。submission_id が一致するか、原本の entrant_ids に含まれること。
+  let owned = ent.submission_id && ent.submission_id === sub.id;
+  if (!owned) {
+    let ids = []; try { ids = JSON.parse(sub.entrant_ids || "[]") || []; } catch (_) { ids = []; }
+    owned = ids.indexOf(ent.id) >= 0;
+  }
+  if (!owned) return { error: "この申込番号では変更できません" };
+  if ((ent.status || "confirmed") === "cancelled") return { error: "この出場は既に取り消されています" };
+
+  const t = stmts.getTournament.get(ent.tournament_id);
+  if (!t) return { error: "大会が見つかりません" };
+  // 締切・受付フラグ・組合せの有無(種目単位)。申込者ページの表示判定と同じ規則を使う。
+  const lock = _entryEditLock(t, ent.event);
+  if (lock) return { error: lock };
+  return { ok: true, sub, ent, t };
+}
+
+// 変更履歴を1件記録する。
+function _recordEntryChange(row) {
+  try {
+    sqlite.prepare(`INSERT INTO entry_changes
+      (id, tournament_id, submission_id, entrant_id, event, kind, before_json, after_json, reason, actor)
+      VALUES (@id, @tournament_id, @submission_id, @entrant_id, @event, @kind, @before_json, @after_json, @reason, @actor)`)
+      .run({
+        id: uid(),
+        tournament_id: row.tournament_id, submission_id: row.submission_id || "",
+        entrant_id: row.entrant_id || "", event: row.event || "", kind: row.kind,
+        before_json: row.before ? JSON.stringify(row.before) : "",
+        after_json: row.after ? JSON.stringify(row.after) : "",
+        reason: String(row.reason || "").slice(0, 200),
+        actor: row.actor === "admin" ? "admin" : "applicant",
+      });
+  } catch (e) { console.error("entry_changes insert error:", e.message); }
+}
+
+// 申込原本の合計金額を、生きている entrant + 有料オプションから計算し直す。
+function _recalcSubmissionTotal(submissionId) {
+  const sub = submissionStmts.getById.get(submissionId);
+  if (!sub) return 0;
+  const rows = sqlite.prepare(
+    `SELECT fee, status FROM entrants WHERE submission_id=?`).all(submissionId);
+  const fees = rows
+    .filter(r => (r.status || "confirmed") !== "cancelled" && (r.status || "confirmed") !== "rejected")
+    .reduce((s, r) => s + (parseInt(r.fee) || 0), 0);
+  let optTotal = 0;
+  try {
+    const items = sub.options_json ? (JSON.parse(sub.options_json) || []) : [];
+    optTotal = items.reduce((s, o) => s + (parseInt(o.amount) || 0), 0);
+  } catch (_) { optTotal = 0; }
+  const total = fees + optTotal;
+  sqlite.prepare(`UPDATE entry_submissions SET total_amount=? WHERE id=?`).run(total, submissionId);
+  return total;
+}
+
+// 申込者が出場選手を差し替える。氏名(ダブルスは選手1/2のどちらか)と付随項目を入れ替える。
+// args: { slot:1|2(ダブルスのみ), name, furigana?, team?, grade?, answers?, reason? }
+function applicantReplaceEntrant(token, entrantId, args) {
+  args = args || {};
+  const chk = _checkApplicantEditable(token, entrantId);
+  if (chk.error) return chk;
+  const { sub, ent, t } = chk;
+  const name = String(args.name || "").trim();
+  if (!name) return { error: "新しい選手の氏名を入力してください" };
+  if (ent.team_members) {
+    return { error: "団体戦のメンバー変更は大会本部までご連絡ください" };
+  }
+  const isPair = !!(parseInt(ent.is_doubles) || 0);
+  const slot = isPair ? (parseInt(args.slot) === 2 ? 2 : 1) : 1;
+
+  // 変更前の姿(履歴・通知用)
+  const before = {
+    event: ent.event, name: ent.display_name || ent.name,
+    slot: isPair ? slot : undefined,
+    target: isPair ? (slot === 2 ? ent.partner_name : ent.name) : ent.name,
+    team: isPair ? (slot === 2 ? ent.partner_team : ent.team) : ent.team,
+  };
+
+  // 差し替え後の値を組む。選手DBへのリンクは別人になるので必ず外す。
+  // 姓・名(surname/given_name)は undefined を明示して既存値を消す。残すと buildEntrantNames が
+  // 「姓名があればそちらを優先」して古い氏名に復元してしまい、新しい氏名が反映されない。
+  const patch = {};
+  if (isPair && slot === 2) {
+    patch.partner_name = name;
+    patch.partner_surname = undefined;
+    patch.partner_given_name = undefined;
+    if (args.furigana !== undefined) patch.partner_furigana = String(args.furigana || "").trim();
+    if (args.team !== undefined) patch.partner_team = String(args.team || "").trim();
+    patch.partner_player_id = null;
+  } else {
+    patch.name = name;
+    patch.surname = undefined;
+    patch.given_name = undefined;
+    if (args.furigana !== undefined) patch.furigana = String(args.furigana || "").trim();
+    if (args.team !== undefined) patch.team = String(args.team || "").trim();
+    patch.player_id = null;
+  }
+  // 学年・自由回答などの申告(extra_json)。ダブルスは players[slot-1] を差し替える。
+  if (args.grade !== undefined || args.answers !== undefined || args.birth_date !== undefined) {
+    let ex = {};
+    try { ex = ent.extra_json ? (JSON.parse(ent.extra_json) || {}) : {}; } catch (_) { ex = {}; }
+    const slotEx = {};
+    if (args.grade !== undefined) slotEx.grade = String(args.grade || "").trim();
+    if (args.birth_date !== undefined) slotEx.birth_date = String(args.birth_date || "").trim();
+    if (args.answers && typeof args.answers === "object") slotEx.answers = args.answers;
+    if (isPair) {
+      const players = Array.isArray(ex.players) ? ex.players.slice() : [];
+      players[slot - 1] = { ...(players[slot - 1] || {}), ...slotEx };
+      ex.players = players;
+    } else {
+      Object.assign(ex, slotEx);
+    }
+    patch.extra_json = ex;
+  }
+
+  // 差し替え後の内容で、必須項目と年齢資格をもう一度検証する(空欄のまま差し替えられないように)。
+  {
+    const merged = { ...ent, ...patch };
+    const exj = (patch.extra_json && typeof patch.extra_json === "object") ? patch.extra_json
+      : (() => { try { return ent.extra_json ? JSON.parse(ent.extra_json) : {}; } catch (_) { return {}; } })();
+    const probe = isPair
+      ? {
+        event: ent.event, type: "doubles",
+        name1: merged.name, name2: merged.partner_name,
+        team1: merged.team, team2: merged.partner_team,
+        furigana1: merged.furigana, furigana2: merged.partner_furigana,
+        extra_json: exj,
+      }
+      : {
+        event: ent.event, type: "singles", name: merged.name, team: merged.team,
+        furigana: merged.furigana, extra_json: exj,
+      };
+    // 検証するのは「選手行の項目」だけ。団体名・顧問・通信欄などの申込全体の項目は
+    // 受付時に検証済みで今回変わらないため、一時的に任意扱いにして対象から外す。
+    const base = resolveFieldConfig(t);
+    const rowOnly = {
+      ...base,
+      fields: { ...base.fields, team_name: "optional", supervisor: "optional", advisor: "optional", coach: "optional", note: "optional" },
+      custom: (base.custom || []).filter(c => c && c.scope === "player"),
+    };
+    const tRowOnly = { ...t, field_config: JSON.stringify(rowOnly) };
+    const vmsg = _enforceRequiredFields(tRowOnly, { contact_name: "x", contact_tel: "x", contact_email: "x" }, [probe]);
+    if (vmsg) return { error: vmsg, validation: true };
+    const amsg = _enforceAgeEligibility(t, {}, [{ ...probe, division: ent.division || "" }]);
+    if (amsg) return { error: amsg, validation: true };
+  }
+
+  const updated = updateEntrant(ent.id, patch);
+  if (!updated) return { error: "変更に失敗しました" };
+  const after = {
+    event: ent.event, name: updated.display_name || updated.name,
+    slot: isPair ? slot : undefined,
+    target: name, team: patch.team !== undefined ? patch.team : (patch.partner_team !== undefined ? patch.partner_team : before.team),
+  };
+  _recordEntryChange({
+    tournament_id: ent.tournament_id, submission_id: sub.id, entrant_id: ent.id, event: ent.event,
+    kind: "replace", before, after, reason: args.reason, actor: "applicant",
+  });
+  return { ok: true, entrant_id: ent.id, before, after, tournament: t };
+}
+
+// 申込者が出場を取り消す。物理削除せず status='cancelled' にし、枠と金額を戻す。
+function applicantCancelEntrant(token, entrantId, reason) {
+  const chk = _checkApplicantEditable(token, entrantId);
+  if (chk.error) return chk;
+  const { sub, ent, t } = chk;
+  const before = { event: ent.event, name: ent.display_name || ent.name, team: ent.team || "", fee: ent.fee || 0 };
+  const updated = updateEntrant(ent.id, { status: "cancelled" });
+  if (!updated) return { error: "取消に失敗しました" };
+  const total = _recalcSubmissionTotal(sub.id);
+  _recordEntryChange({
+    tournament_id: ent.tournament_id, submission_id: sub.id, entrant_id: ent.id, event: ent.event,
+    kind: "cancel", before, after: null, reason, actor: "applicant",
+  });
+  return { ok: true, entrant_id: ent.id, before, total_amount: total, tournament: t };
+}
+
+// 大会の変更履歴(新しい順)。管理画面の申込管理で表示する。
+function listEntryChanges(tournamentId, limit) {
+  const n = Math.max(1, Math.min(500, parseInt(limit) || 200));
+  return sqlite.prepare(
+    `SELECT * FROM entry_changes WHERE tournament_id=? ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+    .all(tournamentId, n).map(r => {
+      const parse = (s) => { try { return s ? JSON.parse(s) : null; } catch (_) { return null; } };
+      return { ...r, before: parse(r.before_json), after: parse(r.after_json) };
+    });
 }
 
 function createEntry(tournamentId, data) {
@@ -9327,12 +9585,13 @@ function entryDeadlineLabel(t) {
 
 // 種目ごと・大会全体の受付状況(受付済み枠数・上限・残り)を返す。
 // 枠の数え方は「entrant 1件=1枠」(ダブルスは1ペア、団体は1チームで1枠)。
-// 却下(rejected)は数えない。承認待ち(pending)は枠を押さえる扱いにする
+// 却下(rejected)と申込者が取り消したもの(cancelled)は数えない=枠が空く。
+// 承認待ち(pending)は枠を押さえる扱いにする
 // (自動承認の運用では差は出ないが、手動承認に切り替えたとき二重取りを防ぐため)。
 // BYEは entrant を作らない設計(generateBracket が null として扱う)ので除外条件は不要。
 const _capCountStmt = () => sqlite.prepare(`
   SELECT event, COUNT(*) c FROM entrants
-   WHERE tournament_id = ? AND COALESCE(status,'confirmed') <> 'rejected'
+   WHERE tournament_id = ? AND COALESCE(status,'confirmed') NOT IN ('rejected','cancelled')
    GROUP BY event`);
 function getEntryCapacityState(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
@@ -12754,6 +13013,7 @@ module.exports = {
   getSubmissionByToken, deleteSubmissionPII, purgeOldSubmissionPII,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel,
+  applicantReplaceEntrant, applicantCancelEntrant, listEntryChanges,
   resolveEntryOptions, sanitizeEntryOptions, priceEntryOptions,
   findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,
   updateEntrySettings, getOpenTournaments, getUsedEventsCatalog,
