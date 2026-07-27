@@ -74,6 +74,30 @@ function buildEntryFormHTML(tournament, events, opts) {
       "<div class=\"closed-why\">お問い合わせは大会本部までお願いします。</div></div>"
     : "";
 
+  // 有料オプション(弁当・懇親会など)。主催者が定義したものだけを出す。
+  // 単価はここでは表示だけに使い、請求額は受付時にサーバが定義から計算し直す。
+  const entryOptions = Array.isArray(opts.entry_options) ? opts.entry_options : [];
+  const optionsSection = entryOptions.length ? `
+<div class="form-section">
+  <h2>オプション</h2>
+  <div class="opt-list">
+    ${entryOptions.map(o => `<div class="opt-row">
+      <div class="opt-info">
+        <div class="opt-label">${escapeHtml(o.label)}</div>
+        <div class="opt-price">1${escapeHtml(o.unit)} ¥${(o.price || 0).toLocaleString("ja-JP")}${o.max ? " ・上限" + o.max + escapeHtml(o.unit) : ""}</div>
+        ${o.note ? '<div class="fld-help">' + escapeHtml(o.note) + "</div>" : ""}
+      </div>
+      <div class="opt-qty">
+        <input type="number" inputmode="numeric" min="0"${o.max ? ' max="' + o.max + '"' : ""}
+          name="opt_${escapeHtml(o.key)}" value="" placeholder="0"
+          aria-label="${escapeHtml(o.label)}の数量" oninput="recalcTotal()">
+        <span class="opt-unit">${escapeHtml(o.unit)}</span>
+      </div>
+    </div>`).join("")}
+  </div>
+</div>` : "";
+  const optionsJson = jsonForScript(entryOptions.map(o => ({ key: o.key, label: o.label, price: o.price, unit: o.unit, max: o.max })));
+
   const eventsJson = jsonForScript(events.map(e => ({
     name: e.name,
     fee: e.fee || 0,
@@ -443,6 +467,24 @@ function buildEntryFormHTML(tournament, events, opts) {
     font-size: 15px; font-weight: 800; line-height: 1.7;
   }
   .closed-banner .closed-why { font-size: 13px; font-weight: 500; margin-top: 4px; color: #8a4a4a; }
+  /* 有料オプション(弁当・懇親会など) */
+  .opt-list { display: flex; flex-direction: column; gap: 10px; }
+  .opt-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 12px 14px; background: var(--card-2);
+    border: 1.5px solid var(--line-2); border-radius: 9px;
+  }
+  .opt-row:focus-within { border-color: var(--red); background: #fff; }
+  .opt-label { font-weight: 700; font-size: 14.5px; }
+  .opt-price { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
+  .opt-qty { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .opt-qty input {
+    width: 76px; padding: 10px 8px; text-align: right;
+    border: 1.5px solid var(--line); border-radius: 8px;
+    font-family: inherit; font-size: 16px; background: #fff; color: var(--ink);
+  }
+  .opt-qty input:focus { outline: none; border-color: var(--red); box-shadow: 0 0 0 3px rgba(192,21,38,.13); }
+  .opt-unit { font-size: 13px; color: var(--ink-2); }
 
   /* ── 追加ボタン / カウント ── */
   .btn-add {
@@ -806,6 +848,8 @@ ${closedNotice}
   ${notes ? '<div class="notice">' + escapeHtml(notes) + '</div>' : ''}
 </div>
 
+${optionsSection}
+
 ${fst('note') !== 'hidden' ? `<div class="form-section">
   <h2>通信欄${fst('note') === 'required' ? ' ' + reqSpan : ''}</h2>
   <div class="form-row full">
@@ -840,6 +884,33 @@ const TOURNAMENT_NAME = ${escapeJs(tournament.name || "")};
 const SUBMIT_URL = ${escapeJs(gasUrl)};  // 送信先。原則 同一オリジン(自サーバー)。サーバーが必要に応じGASへ中継。
 const EVENTS = ${eventsJson};
 const FIELD_CFG = ${fieldCfgJson};
+const ENTRY_OPTIONS = ${optionsJson};
+// オプションの数量を読み、上限を超えていれば入力欄ごと丸めてから小計を返す。
+function optionsTotal() {
+  let sum = 0;
+  (ENTRY_OPTIONS || []).forEach(function (o) {
+    const el = document.querySelector('[name="opt_' + o.key + '"]');
+    if (!el) return;
+    let n = parseInt(el.value) || 0;
+    if (n < 0) n = 0;
+    if (o.max && n > o.max) n = o.max;
+    if (String(n) !== String(el.value || "") && el.value !== "") el.value = n ? String(n) : "";
+    sum += (o.price || 0) * n;
+  });
+  return sum;
+}
+// 申込に含めるオプションの数量 {key: qty}(0は載せない)。
+function gatherOptions() {
+  const out = {};
+  (ENTRY_OPTIONS || []).forEach(function (o) {
+    const el = document.querySelector('[name="opt_' + o.key + '"]');
+    if (!el) return;
+    let n = parseInt(el.value) || 0;
+    if (o.max && n > o.max) n = o.max;
+    if (n > 0) out[o.key] = n;
+  });
+  return out;
+}
 const AGE_ASOF = ${escapeJs(AGE_ASOF)};   // 年齢基準日(大会年度の4/1)。空なら年齢判定は無効。
 
 // 種目単位の項目状態を解決(event_overrides > 大会レベル fields > hidden)。"required|optional|hidden"。
@@ -1224,6 +1295,9 @@ function recalcTotal() {
       if (hasContent) { filled++; total += rowFee(ev, row); }   // 区分別料金で加算
     });
   });
+  // 有料オプション(弁当等)。単価は定義から取り、上限を超える入力はその場で丸める
+  // (最終的な請求額はサーバが同じ定義で計算し直すので、ここは案内の表示)。
+  total += optionsTotal();
   document.getElementById("totalAmount").textContent = total.toLocaleString("ja-JP");
   // ★ 種目ごとのカウント表示も更新 (記入済みのみ)
   updateCounts();
@@ -1265,6 +1339,9 @@ function gatherFormData() {
     if (v !== "" && v !== false) subAnswers[c.key] = v;
   });
   if (Object.keys(subAnswers).length) data.extra = subAnswers;
+  // 有料オプションの数量。金額はサーバが定義から計算するので、ここでは数量だけを送る。
+  const optQty = gatherOptions();
+  if (Object.keys(optQty).length) data.options = optQty;
 
   EVENTS.forEach((ev, idx) => {
     const container = document.getElementById("members_" + idx);
@@ -1334,6 +1411,7 @@ function gatherFormData() {
       data.total_amount += obj.fee;
     });
   });
+  data.total_amount += optionsTotal();   // 有料オプション分(確認画面の表示用。請求額はサーバが再計算)
 
   return data;
 }
@@ -1364,6 +1442,13 @@ function buildSummaryText(data) {
       lines.push("・" + e.event + ": " + (e.name || "") + " (" + (e.team || "") + ")");
       lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP") + (ttDivLabel(e.division) ? "（" + ttDivLabel(e.division) + "）" : ""));
     }
+  });
+  // 有料オプション(弁当等)の明細
+  (ENTRY_OPTIONS || []).forEach(function (o) {
+    const n = (data.options || {})[o.key] || 0;
+    if (!n) return;
+    lines.push("・" + o.label + ": " + n + o.unit +
+      "  ¥" + ((o.price || 0) * n).toLocaleString("ja-JP"));
   });
   lines.push("━━━━━━━━━━━━━━━━━━");
   lines.push("合計: ¥" + (data.total_amount || 0).toLocaleString("ja-JP"));

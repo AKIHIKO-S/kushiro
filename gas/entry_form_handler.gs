@@ -169,7 +169,7 @@ function ensureAllSheets(ss) {
 var _colMapCache = {};
 function ensureColumns(sh, headers) {
   const name = (typeof sh.getSheetName === "function") ? sh.getSheetName() : "";
-  const ck = name + " " + (headers || []).join("");
+  const ck = name + "\n#\n" + (headers || []).join("\n|\n");
   if (name && _colMapCache[ck]) return _colMapCache[ck];
 
   const lastCol = Math.max(1, sh.getLastColumn());
@@ -348,10 +348,19 @@ function doPost(e) {
       totalEntries, totalPeople, data.total_amount || 0,
       data.note || "", data.tournament_id || "",
     ];
-    const ledgerCols = uniqueLabels(LEDGER_HEADERS, schemaColumns(data, "ledger"));
+    // 有料オプション(弁当・懇親会など)。主催者が定義した項目ごとに列を作り、数量を書く。
+    // 金額は KTTA Platform が受付時に確定した値(option_items)をそのまま使う。
+    const optItems = Array.isArray(data.option_items) ? data.option_items : [];
+    const optCols = uniqueLabels(LEDGER_HEADERS, optItems.map(function (o) {
+      return { key: "__opt__" + o.key, label: String(o.label || o.key) + "(" + String(o.unit || "") + ")" };
+    }));
+    const ledgerCols = uniqueLabels(
+      LEDGER_HEADERS.concat(optCols.map(function (c) { return c.label; })),
+      schemaColumns(data, "ledger"));
     const ledgerObj = {};
+    optCols.forEach(function (c, i) { ledgerObj[c.label] = optItems[i] ? optItems[i].qty : ""; });
     ledgerCols.forEach(function (c) { ledgerObj[c.label] = submissionValue(data, c.key); });
-    appendRowWithExtras(ledgerSh, LEDGER_HEADERS, ledgerRow, ledgerCols, ledgerObj);
+    appendRowWithExtras(ledgerSh, LEDGER_HEADERS, ledgerRow, optCols.concat(ledgerCols), ledgerObj);
     const ledgerRowNum = ledgerSh.getLastRow();
 
     // ─── 2. 各シートに振り分け ───

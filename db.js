@@ -533,6 +533,9 @@ try {
   addTCol("entry_deadline_time", "TEXT DEFAULT ''");
   // 大会全体の受付上限(申込枠の数。0=無制限)。種目ごとの上限は event_config[].capacity。
   addTCol("entry_capacity", "INTEGER DEFAULT 0");
+  // 有料オプション(弁当・懇親会など)の定義。JSON配列
+  // [{key,label,price,unit,max,note}]。申込者は数量を入れ、合計に加算される。
+  addTCol("entry_options", "TEXT DEFAULT ''");
   addTCol("entry_events", "TEXT DEFAULT ''"); // JSON配列: ["男子シングルス","女子シングルス",...]
   addTCol("event_config", "TEXT DEFAULT ''"); // JSON配列: 詳細 [{name, fee, type, per_team, note}]
   addTCol("entry_gas_url", "TEXT DEFAULT ''"); // GAS Web App URL (申込先 スプレッドシート)
@@ -706,6 +709,12 @@ try {
     // 単文DDLは better-sqlite3 の prepare().run() で実行(静的SQL・注入なし)。
     if (scols.length && !scols.find(c => c.name === "extra_json")) {
       sqlite.prepare("ALTER TABLE entry_submissions ADD COLUMN extra_json TEXT DEFAULT ''").run();
+    }
+    // 有料オプション(弁当・懇親会など)の確定明細。受付時にサーバが権威計算した結果を
+    // [{key,label,qty,price,amount}] で保存する。メール・帳票・集計はこれを読むだけにして、
+    // 同じ計算を何箇所にも書かない(金額の食い違いを構造的に防ぐ)。
+    if (scols.length && !scols.find(c => c.name === "options_json")) {
+      sqlite.prepare("ALTER TABLE entry_submissions ADD COLUMN options_json TEXT DEFAULT ''").run();
     }
     if (scols.length) {
       sqlite.exec("CREATE INDEX IF NOT EXISTS idx_submissions_opid ON entry_submissions(tournament_id, op_id)");
@@ -8890,10 +8899,12 @@ const submissionStmts = {
   insert: sqlite.prepare(`
     INSERT INTO entry_submissions (
       id, tournament_id, token_hash, op_id, contact_name, contact_email, contact_tel,
-      team_name, total_amount, entrant_ids, payload_json, source, screened_count, extra_json
+      team_name, total_amount, entrant_ids, payload_json, source, screened_count, extra_json,
+      options_json
     ) VALUES (
       @id, @tournament_id, @token_hash, @op_id, @contact_name, @contact_email, @contact_tel,
-      @team_name, @total_amount, @entrant_ids, @payload_json, @source, @screened_count, @extra_json
+      @team_name, @total_amount, @entrant_ids, @payload_json, @source, @screened_count, @extra_json,
+      @options_json
     )
   `),
   getByTokenHash: sqlite.prepare(`SELECT * FROM entry_submissions WHERE token_hash = ?`),
@@ -9067,7 +9078,12 @@ function getSubmissionByToken(token) {
       answers: answers,
     };
   });
-  const total = rows.reduce((s, e) => s + (e.fee || 0), 0);
+  // 有料オプション(弁当等)の確定明細。受付時にサーバが計算した結果をそのまま読む。
+  let optionItems = [];
+  try { optionItems = sub.options_json ? (JSON.parse(sub.options_json) || []) : []; } catch (_) { optionItems = []; }
+  const optionTotal = optionItems.reduce((s, o) => s + (parseInt(o.amount) || 0), 0);
+  // 参加料の合計はentrantから引き直す(重複除去後の実体に合わせる)。オプションは明細の合計を足す。
+  const total = rows.reduce((s, e) => s + (e.fee || 0), 0) + optionTotal;
   const t = stmts.getTournament.get(sub.tournament_id);
   // 申込単位スコープの構造化データ(引率者/顧問/コーチ + 自由回答)。生の生年月日は含まない。
   let subExtra = null; try { subExtra = sub.extra_json ? JSON.parse(sub.extra_json) : null; } catch (_) { subExtra = null; }
@@ -9079,6 +9095,7 @@ function getSubmissionByToken(token) {
     total_amount: total || sub.total_amount || 0,
     created_at: sub.created_at,
     entries,
+    options: optionItems,   // 申込者の確認ページに出す(何をいくつ頼んだか)
     extra: subExtra || null,
   };
 }
@@ -9226,6 +9243,54 @@ function inferGenderCategory(eventName, g, c) {
     else if (/ラージ/.test(n)) category = "large";
   }
   return { gender: gender || "male", category: category || "general" };
+}
+
+// ── 有料オプション(P4): 弁当・懇親会など ───────────────────────────
+// 主催者の定義を無害化する。key は英数字_のみ(フォームの input 名になるため)。
+function sanitizeEntryOptions(raw) {
+  if (typeof raw === "string") { try { raw = raw ? JSON.parse(raw) : []; } catch { raw = []; } }
+  if (!Array.isArray(raw)) return [];
+  const KEY_RE = /^[A-Za-z0-9_]{1,40}$/;
+  const seen = new Set();
+  return raw.map(o => {
+    if (!o || typeof o !== "object") return null;
+    const key = String(o.key || "");
+    if (!KEY_RE.test(key) || seen.has(key)) return null;
+    seen.add(key);
+    return {
+      key,
+      label: String(o.label || key).slice(0, 60),
+      price: Math.max(0, Math.min(9999999, parseInt(o.price) || 0)),
+      unit: String(o.unit || "個").slice(0, 10),
+      max: Math.max(0, Math.min(9999, parseInt(o.max) || 0)),   // 0 = 上限なし
+      note: String(o.note || "").slice(0, 200),
+    };
+  }).filter(Boolean).slice(0, 20);
+}
+// 大会のオプション定義を返す(空なら [])。
+function resolveEntryOptions(tournament) {
+  return sanitizeEntryOptions(tournament && tournament.entry_options);
+}
+// 申込のオプション数量から、確定明細と合計を権威計算する。
+// 単価も上限も定義側(サーバ)の値だけを使い、クライアントが送ってきた金額は一切見ない。
+// 返り値: { items:[{key,label,qty,price,amount}], total, error }
+function priceEntryOptions(tournament, rawQty) {
+  const defs = resolveEntryOptions(tournament);
+  if (!defs.length) return { items: [], total: 0 };
+  const q = (rawQty && typeof rawQty === "object") ? rawQty : {};
+  const items = [];
+  let total = 0;
+  for (const d of defs) {
+    const n = Math.max(0, parseInt(q[d.key]) || 0);
+    if (!n) continue;
+    if (d.max && n > d.max) {
+      return { items: [], total: 0, error: `「${d.label}」は${d.max}${d.unit}までです` };
+    }
+    const amount = d.price * n;
+    items.push({ key: d.key, label: d.label, qty: n, unit: d.unit, price: d.price, amount });
+    total += amount;
+  }
+  return { items, total };
 }
 
 // ── 受付の制御(P3): 締切日時・定員 ─────────────────────────────────
@@ -9533,6 +9598,11 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
   // 公開フォーム経路(server.js の submit-team-entry)だけが enforce:true を渡す。admin/GAS/import/
   // テスト等の内部・信頼済み経路は検証しない(部分データを正当に投入するため)。
   // 不完全なら validation:true 付き error を返し、呼び出し側は GAS/シートへも中継しない(F1)。
+  // 有料オプション(弁当等)の権威計算。単価・上限は大会の定義だけを使い、クライアントが
+  // 送ってきた金額は見ない。数量が上限を超えていれば申込を受け付けない。
+  const optionPricing = priceEntryOptions(t, formData.options);
+  if (optionPricing.error) return { error: optionPricing.error, validation: true };
+
   if (opts.enforce) {
     const cmsg = _enforceCapacity(t, entries);
     if (cmsg) return { error: cmsg, validation: true, full: true };
@@ -9736,7 +9806,8 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
       } catch (_) { /* ignore duplicate-key races */ }
     }
 
-    computedTotal = createdEntrants.reduce((s, e) => s + (e.fee || 0), 0);
+    // 参加料 + 有料オプション(弁当等)。オプションは受付時にサーバが権威計算した明細を使う。
+    computedTotal = createdEntrants.reduce((s, e) => s + (e.fee || 0), 0) + optionPricing.total;
 
     // 既存申込への併合: 一部が重複で既存原本(existingSubId)に属し、かつ新規作成もある場合、
     // 新規 entrant をその既存原本へ張り替える。原本の集計を更新し、新トークンも同原本へ対応付ける
@@ -9799,6 +9870,7 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
         source: formData.source === "gas" ? "gas" : (formData.source === "admin" ? "admin" : "form"),
         screened_count: spamSkipped,
         extra_json: subExtraStr,
+        options_json: optionPricing.items.length ? JSON.stringify(optionPricing.items) : "",
       });
       submissionStmts.addToken.run(_hashToken(token), submissionId);     // トークン→原本
     }
@@ -9816,6 +9888,8 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
     total_amount: computedTotal,
     entrant_ids: createdEntrants.map(e => e.id),
     created_entries: pricedEntries,   // 確認メール用(作成分のみ・権威料金)
+    options: optionPricing.items,     // 有料オプションの確定明細(確認メール・控えで使う)
+    options_total: optionPricing.total,
     submission_id: mergedInto || (createdEntrants.length ? submissionId : ""),
     applicant_token: token,   // 申込番号(平文)。DBには SHA-256 ハッシュのみ保持。
     contact,
@@ -10440,6 +10514,7 @@ function updateEntrySettings(tournamentId, settings) {
       entry_deadline = ?,
       entry_deadline_time = ?,
       entry_capacity = ?,
+      entry_options = ?,
       entry_events = ?,
       event_config = ?,
       field_config = ?,
@@ -10457,6 +10532,10 @@ function updateEntrySettings(tournamentId, settings) {
     settings.entry_capacity !== undefined
       ? Math.max(0, Math.min(99999, parseInt(settings.entry_capacity) || 0))
       : (t.entry_capacity || 0),
+    // 有料オプションは field_config と同じ「明示指定時のみ更新」流儀(未指定なら既存値を維持)
+    settings.entry_options !== undefined
+      ? JSON.stringify(sanitizeEntryOptions(settings.entry_options))
+      : (t.entry_options || ""),
     JSON.stringify(settings.entry_events || []),
     typeof evCfg === "string" ? evCfg : JSON.stringify(evCfg || []),
     fldCfg,
@@ -12630,6 +12709,7 @@ module.exports = {
   getSubmissionByToken, deleteSubmissionPII, purgeOldSubmissionPII,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel,
+  resolveEntryOptions, sanitizeEntryOptions, priceEntryOptions,
   findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,
   updateEntrySettings, getOpenTournaments, getUsedEventsCatalog,
   // ブラケット JSON I/O

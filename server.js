@@ -868,8 +868,14 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
         // form_schema(申込フォームの項目定義から導出した必要列)も同梱する。GAS はこれに従って
         // 不足列を作る=「フォームに項目を足したのにシートに列が無い」が構造的に起きない。
         // 旧バージョンの GAS は未知キーを無視するだけなので、この同梱は後方互換。
+        // 金額はサーバが確定した値だけを送る。クライアントが送ってきた total_amount で
+        // シートを書くと、フォームの計算違いや改造がそのまま台帳に載るため。
         const relayPayload = { ...payload, form_schema: db.buildFormSchema(tournament) };
         if (opId) relayPayload.op_id = opId;
+        if (r && !r.error) {
+          if (r.total_amount != null) relayPayload.total_amount = r.total_amount;
+          if (Array.isArray(r.options)) relayPayload.option_items = r.options;
+        }
         gasRelay = await relayEntryToGas(tournament.entry_gas_url, relayPayload);
       }
 
@@ -3171,6 +3177,7 @@ app.get("/api/tournaments/:id/entry-form-config", (req, res) => {
     entry_deadline_time: tournament.entry_deadline_time || "",
     entry_capacity: tournament.entry_capacity || 0,
     capacity: db.getEntryCapacityState(tournament.id),
+    entry_options: db.resolveEntryOptions(tournament),
     suggested_gas_url: "https://script.google.com/macros/s/AKfycb.../exec",
   });
 });
@@ -4737,6 +4744,7 @@ app.get("/entry/:id", (req, res) => {
       turnstile_sitekey: process.env.TURNSTILE_SITEKEY || "",
       field_config: db.resolveFieldConfig(tournament),   // 必須項目設定(空なら既定=現行フォーム相当)
       capacity: db.getEntryCapacityState(tournament.id), // 定員・残り枠(満員種目は選べなくする)
+      entry_options: db.resolveEntryOptions(tournament),  // 有料オプション(弁当・懇親会など)
     });
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");

@@ -178,6 +178,9 @@ async function sendConfirmationEmail(opts) {
     feeEntries = feeCalc.entries;
     total = feeCalc.total;
   }
+  // 有料オプションの明細。受付時にサーバが権威計算した結果(result.options)だけを使い、
+  // ここで金額を計算し直さない(計算箇所を増やすと台帳とメールがズレる)。
+  const optionItems = (result && Array.isArray(result.options)) ? result.options : [];
   const note = formData.note || "";
   // Phase4: 申込番号(トークン) + 本人確認ページのURL。本人が後から申込内容を閲覧できる。
   const token = (result && result.applicant_token) || "";
@@ -219,6 +222,9 @@ async function sendConfirmationEmail(opts) {
       }
       return `  ・${e.event} : ${e.name || ""} (${e.team || ""}) - ${formatYen(e.fee)}`;
     })),
+    // 有料オプション(弁当・懇親会など)。金額はサーバが受付時に確定した明細をそのまま出す。
+    ...(optionItems.length ? [``, `■ オプション`] : []),
+    ...optionItems.map(o => `  ・${o.label} : ${o.qty}${o.unit || ""} - ${formatYen(o.amount)}`),
     ``,
     `  合計: ${formatYen(total)}`,
     note ? `\n■ 通信欄\n  ${note}` : "",
@@ -273,6 +279,15 @@ async function sendConfirmationEmail(opts) {
 
   <h2 style="font-size:14px;border-left:4px solid #b91c1c;padding-left:8px;margin:24px 0 12px;">申込内容</h2>
   ${entriesTable(feeEntries)}
+  ${optionItems.length ? `
+  <h2 style="font-size:14px;border-left:4px solid #b91c1c;padding-left:8px;margin:24px 0 12px;">オプション</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:13px;">
+    ${optionItems.map(o => `<tr>
+      <td style="padding:7px 8px;border-bottom:1px solid #e7e5e4;">${esc(o.label)}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #e7e5e4;text-align:right;white-space:nowrap;">${o.qty}${esc(o.unit || "")}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #e7e5e4;text-align:right;white-space:nowrap;">${formatYen(o.amount)}</td>
+    </tr>`).join("")}
+  </table>` : ""}
   <div style="text-align:right;margin-top:8px;font-size:16px;font-weight:bold;color:#7c2d12;">
     合計: ${formatYen(total)}
   </div>
