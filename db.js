@@ -2524,15 +2524,23 @@ function createTournament(data) {
     const evCfg = (Array.isArray(data.event_config) ? data.event_config : [])
       .filter(e => e && nameStr(e.name).trim());
     const open = (data.entries_open === true || data.entries_open === 1);   // 文字列"false"等の truthy 事故を殺す
+    // 申込プリセット(テンプレート由来)。大会の性格ごとに「聞くこと」が決まっているので、
+    // 作った時点でフォームが整うようにする。個別指定(field_config 等)があればそちらが勝つ。
+    const preset = (data.entry_preset && typeof data.entry_preset === "object") ? data.entry_preset : {};
+    const presetFields = (preset.field_config && typeof preset.field_config === "object") ? preset.field_config : null;
     updateEntrySettings(id, {
+      entry_deadline_time: data.entry_deadline_time !== undefined ? data.entry_deadline_time : preset.entry_deadline_time,
+      entry_capacity: data.entry_capacity !== undefined ? data.entry_capacity : preset.entry_capacity,
+      entry_max_events: data.entry_max_events !== undefined ? data.entry_max_events : preset.entry_max_events,
+      entry_options: data.entry_options !== undefined ? data.entry_options : preset.entry_options,
       entries_open: open && evCfg.length > 0,   // 種目ゼロで受付ONは作らない(DB層の不変条件)
       entry_deadline: data.entry_deadline,
       entry_events: (Array.isArray(data.entry_events) && data.entry_events.length)
         ? data.entry_events.map(n => nameStr(n).trim()).filter(Boolean)
         : evCfg.map(e => nameStr(e.name).trim()).filter(Boolean),
       event_config: evCfg,
-      // 必須項目設定。admin がオブジェクトで送った時だけ保存(未指定は既定=現行挙動)。
-      field_config: data.field_config,
+      // 必須項目設定。admin がオブジェクトで送った時だけ保存(未指定はプリセット→既定の順)。
+      field_config: data.field_config || presetFields,
       organizer: data.organizer,
       category: data.category,
     });
@@ -9176,6 +9184,96 @@ function getSubmissionByToken(token) {
   };
 }
 
+// ── 申込設定のコピー(去年の同じ大会の設定をそのまま使う) ────────────────
+// 毎年ある大会は申込の決まりもほぼ同じなので、前回の設定を引き写せるようにする。
+// コピーするのは「大会をまたいで意味が同じもの」だけ。日付・受付フラグ・GAS連携先や
+// 実際の申込データは引き継がない(取り違えると事故になる)。
+function copyEntrySettings(targetId, sourceId, opts) {
+  opts = opts || {};
+  const dst = stmts.getTournament.get(targetId);
+  if (!dst) return { error: "コピー先の大会が見つかりません" };
+  const src = stmts.getTournament.get(sourceId);
+  if (!src) return { error: "コピー元の大会が見つかりません" };
+  if (targetId === sourceId) return { error: "同じ大会は選べません" };
+
+  const settings = {
+    // 受付フラグは引き継がない(コピーした瞬間に受付が開くのを避ける)。現状を維持する。
+    entries_open: dst.entries_open ? 1 : 0,
+    // 締切「日」は大会ごとに違うので引き継がない。時刻(17:00 等)は運用が同じなので引き継ぐ。
+    entry_deadline: dst.entry_deadline || "",
+    entry_deadline_time: src.entry_deadline_time || "",
+    entry_capacity: src.entry_capacity || 0,
+    entry_max_events: src.entry_max_events || 0,
+    field_config: resolveFieldConfig(src),
+    entry_options: resolveEntryOptions(src),
+    entry_events: (() => { try { return JSON.parse(dst.entry_events || "[]"); } catch (_) { return []; } })(),
+  };
+  // 種目(料金・定員・人数の決まりを含む)も引き継ぐかは選べる。
+  // 既に申込が入っている大会では、種目名が変わると申込が宙に浮くため既定では触らない。
+  const copyEvents = !!opts.with_events;
+  if (copyEvents) {
+    // 申込が1件でも入っていたら種目の差し替えは拒否する。
+    // 種目名は entrants.event と文字列で結ばれているだけなので、名前が変われば
+    // その申込はどの種目にも属さない宙ぶらりんの行になり、名簿にも表に出てこなくなる。
+    const n = sqlite.prepare(
+      "SELECT COUNT(*) c FROM entrants WHERE tournament_id=? AND COALESCE(status,'confirmed') NOT IN ('cancelled','rejected')"
+    ).get(targetId).c;
+    if (n > 0) {
+      return { error: `この大会には既に${n}件の申込が入っているため、種目ごとのコピーはできません。`
+        + "（種目名が変わると、その申込がどの種目にも属さなくなります）"
+        + "「種目も一緒に」のチェックを外すと、項目設定・オプション・定員だけをコピーできます。" };
+    }
+  }
+  if (copyEvents) {
+    let evs = [];
+    try { evs = typeof src.event_config === "string" ? JSON.parse(src.event_config || "[]") : (src.event_config || []); }
+    catch (_) { evs = []; }
+    if (Array.isArray(evs) && evs.length) {
+      settings.event_config = evs;
+      settings.entry_events = evs.map(e => e && e.name).filter(Boolean);
+    }
+  }
+  const updated = updateEntrySettings(targetId, settings);
+  if (!updated) return { error: "コピーに失敗しました" };
+  return {
+    ok: true,
+    from: { id: src.id, name: src.name, date: src.date },
+    copied: {
+      項目設定: true,
+      有料オプション: (settings.entry_options || []).length,
+      締切時刻: settings.entry_deadline_time || "(なし)",
+      定員: settings.entry_capacity || 0,
+      種目数上限: settings.entry_max_events || 0,
+      種目: copyEvents ? (settings.event_config || []).length : 0,
+    },
+  };
+}
+
+// 申込設定のコピー元候補(申込の決まりが入っている大会を新しい順に)。
+function listEntrySettingSources(excludeId, limit) {
+  const n = Math.max(1, Math.min(100, parseInt(limit) || 30));
+  const rows = sqlite.prepare(
+    `SELECT id, name, date, field_config, entry_options, entry_capacity, entry_max_events,
+            entry_deadline_time, event_config
+       FROM tournaments
+      WHERE id <> ? AND COALESCE(status,'') <> 'cancelled'
+      ORDER BY date DESC LIMIT ?`).all(String(excludeId || ""), n);
+  return rows.map(r => {
+    let evN = 0;
+    try { evN = (JSON.parse(r.event_config || "[]") || []).length; } catch (_) { evN = 0; }
+    let optN = 0;
+    try { optN = (JSON.parse(r.entry_options || "[]") || []).length; } catch (_) { optN = 0; }
+    return {
+      id: r.id, name: r.name, date: r.date,
+      has_field_config: !!(r.field_config && r.field_config !== ""),
+      options: optN, events: evN,
+      capacity: r.entry_capacity || 0,
+      max_events: r.entry_max_events || 0,
+      deadline_time: r.entry_deadline_time || "",
+    };
+  });
+}
+
 // ── 申込後の選手変更(申込者が申込番号で自分で行う) ─────────────────────
 // 対応する場面は「締切前に出場選手が変わった/出られなくなった」。
 // 締切後〜組合せ作成前は本部が名簿を編集し、組合せ確定後は当日修正(patchSheet)で扱う。
@@ -13123,6 +13221,7 @@ module.exports = {
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel,
   applicantReplaceEntrant, applicantCancelEntrant, listEntryChanges,
+  copyEntrySettings, listEntrySettingSources,
   resolveEntryOptions, sanitizeEntryOptions, priceEntryOptions,
   findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,
   updateEntrySettings, getOpenTournaments, getUsedEventsCatalog,

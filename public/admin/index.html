@@ -2729,11 +2729,15 @@ const A = {
  entry_events: cleanEvents.map(e => e.name),
  entries_open: wantOpen,
  entry_deadline: dlEl ? dlEl.value : "",
+ // テンプレートの申込プリセット(この大会で何を聞くか)。作成と同時にフォームが整う。
+ entry_preset: tpl?._entry_preset || null,
+ entry_max_events: tpl?.entry_max_events || 0,
  });
  if (created && created.error) return toast("作成失敗: " + created.error, "err");
  document.querySelector(".modal-bg")?.remove();
  const evMsg = cleanEvents.length ? `${cleanEvents.length}種目` : "種目なし";
- toast(`大会を作成しました (${evMsg}, ${wantOpen ? "受付中" : "受付前"})`, "ok");
+ const presetMsg = tpl?._entry_preset ? ", 申込項目も設定済み" : "";
+ toast(`大会を作成しました (${evMsg}, ${wantOpen ? "受付中" : "受付前"}${presetMsg})`, "ok");
  // 作成後は詳細画面を開く → 「公開申込フォーム」カードで発行済みURLを確認・コピーできる
  if (created && created.id) await A.openTournament(created.id);
  else await A.reload();
@@ -3962,7 +3966,53 @@ const A = {
  }
  };
 
+ // ── 他の大会から設定をコピー(毎年の大会は申込の決まりもほぼ同じ) ──
+ const copyBox = h("div", { style: { padding: "12px 14px", background: "#f8fafc",
+   border: "1px solid #cbd5e1", borderRadius: "8px", marginBottom: "14px" } });
+ const buildCopyBox = async () => {
+   clear(copyBox);
+   copyBox.appendChild(h("div", { className: "font-bold", style: { fontSize: "12px", marginBottom: "6px" } },
+     "同じような大会が過去にあれば、その申込設定をそのまま引き写せます"));
+   const sel = h("select", { className: "input", style: { flex: "1 1 260px", padding: "6px 8px", fontSize: "12px" } },
+     h("option", { value: "" }, "コピー元の大会を選ぶ…"));
+   const withEv = h("input", { type: "checkbox", id: "efgCopyEvents" });
+   const res = await api.get(`/api/tournaments/${t.id}/entry-settings/sources`).catch(() => ({ items: [] }));
+   (res.items || []).forEach(s => {
+     const marks = [];
+     if (s.has_field_config) marks.push("項目設定あり");
+     if (s.events) marks.push(s.events + "種目");
+     if (s.options) marks.push("オプション" + s.options + "件");
+     sel.appendChild(h("option", { value: s.id },
+       `${s.date || "日付未定"}  ${s.name}` + (marks.length ? "  (" + marks.join("・") + ")" : "")));
+   });
+   copyBox.appendChild(h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } },
+     sel,
+     h("label", { className: "text-xs", style: { display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" },
+       title: "種目名・参加料・定員も丸ごと引き写します。既に申込が入っている大会では種目名が変わると申込が宙に浮くので注意してください" },
+       withEv, "種目も一緒に"),
+     h("button", { className: "btn btn-sm", onClick: async (e) => {
+       const from = sel.value;
+       if (!from) return toast("コピー元の大会を選んでください", "err");
+       const label = sel.options[sel.selectedIndex].textContent;
+       if (!confirm(`「${label}」の申込設定を、この大会に引き写します。\n\n現在の項目設定・オプション・定員などは上書きされます。\n(締切日・受付の開閉・申込データは引き継ぎません)\n\nよろしいですか？`)) return;
+       e.target.disabled = true;
+       const r = await api.post(`/api/tournaments/${t.id}/entry-settings/copy`, { from, with_events: withEv.checked });
+       e.target.disabled = false;
+       if (r.error) return toast(r.error, "err");
+       toast("申込設定をコピーしました。画面を開き直します", "ok");
+       document.querySelector(".modal-bg")?.remove();
+       const fresh = await api.get(`/api/tournaments/${t.id}`);
+       A.openEntryFormGenerator(fresh && !fresh.error ? fresh : t);
+     } }, "この設定をコピー")));
+   copyBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginTop: "6px", lineHeight: "1.6" } },
+     "引き写すもの: 入力してもらう項目・有料オプション・締切時刻・定員・1人あたりの種目数上限",
+     h("br"),
+     "引き写さないもの: 締切日・受付の開閉・申込データ(取り違えを防ぐため)"));
+ };
+ buildCopyBox();
+
  const body = h("div", {},
+ copyBox,
  // ★ 受付ステータス + 締切日 (最重要設定を先頭に)
  h("div", { style: { padding: "16px 18px", background: "#fefce8",
    border: "2px solid #fbbf24", borderRadius: "8px", marginBottom: "16px" } },

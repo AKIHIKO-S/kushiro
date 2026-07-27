@@ -36,9 +36,35 @@
     enforce_referee_rule: true,
   };
 
+  // ── 申込プリセット(大会の性格ごとに「聞くこと」が決まっている) ──
+  // 大会を作った時点で申込フォームの項目まで決まるようにする。
+  // 生年月日は種目側の age_check(年代別クラスの資格判定)で出すため、ここには入れない。
+  // 締切時刻17:00は要項の慣例。定員は会場ごとに違うので既定を置かない(0=上限なし)。
+  const ENTRY_STUDENT = {          // 中学・高校・小学生の大会
+    field_config: { fields: { furigana: "required", grade: "required", player_team: "required", supervisor: "optional", advisor: "optional" } },
+    entry_deadline_time: "17:00",
+  };
+  const ENTRY_GENERAL = {          // 一般・オープン(学生が一般の部に出ることがある)
+    field_config: { fields: { furigana: "required", grade: "optional", player_team: "required" } },
+    entry_deadline_time: "17:00",
+  };
+  const ENTRY_AGE_CLASS = {        // ラージボール等の年代別(生年月日は種目のage_checkで聞く)
+    field_config: { fields: { furigana: "required", grade: "hidden", player_team: "required" } },
+    entry_deadline_time: "17:00",
+  };
+  const ENTRY_TEAM = {             // 団体戦(申込は監督・責任者が代表して出す)
+    field_config: { fields: { furigana: "required", player_team: "optional", supervisor: "required", coach: "optional" } },
+    entry_deadline_time: "17:00",
+  };
+  const ENTRY_TEAM_STUDENT = {     // 中学の団体戦(学年が出場資格に効くので必ず聞く)
+    field_config: { fields: { furigana: "required", grade: "required", player_team: "optional", supervisor: "required", advisor: "optional" } },
+    entry_deadline_time: "17:00",
+  };
+
   const TEMPLATES = [
     {
       id: "kaicho_hai",
+      entry_preset: ENTRY_GENERAL,
       name: "会長杯 / 高校釧根支部オープン",
       season: "春",
       reference_date: "05-03",
@@ -65,6 +91,7 @@
     },
     {
       id: "kokutai_youth",
+      entry_preset: ENTRY_STUDENT,
       name: "国スポ (少年の部) 釧路地区予選",
       season: "春",
       reference_date: "05-06",
@@ -81,6 +108,7 @@
     },
     {
       id: "yasaka_hai",
+      entry_preset: ENTRY_GENERAL,
       name: "ヤサカ杯",
       season: "春",
       reference_date: "06-01",
@@ -109,6 +137,7 @@
     },
     {
       id: "kushiro_league_summer",
+      entry_preset: ENTRY_TEAM,
       name: "くしろリーグ団体選手権",
       season: "夏季",
       reference_date: "07-19",
@@ -126,6 +155,7 @@
     },
     {
       id: "team_only",
+      entry_preset: ENTRY_TEAM,
       name: "団体戦専用大会",
       season: "通年",
       reference_date: "10-10",
@@ -147,6 +177,7 @@
     },
     {
       id: "kushiro_senshuken",
+      entry_preset: ENTRY_GENERAL,
       name: "釧路選手権 (Nittaku杯)",
       season: "夏",
       reference_date: "07-26",
@@ -167,6 +198,7 @@
     },
     {
       id: "cadet_yosen",
+      entry_preset: ENTRY_STUDENT,
       name: "北海道選手権 カデットの部 地区予選",
       season: "夏",
       reference_date: "07-28",
@@ -187,6 +219,7 @@
     },
     {
       id: "junior_senshuken",
+      entry_preset: ENTRY_STUDENT,
       name: "釧路ジュニア選手権",
       season: "夏",
       reference_date: "08-09",
@@ -203,6 +236,7 @@
     },
     {
       id: "nagoyakatei_kushiro_open",
+      entry_preset: ENTRY_GENERAL,
       name: "なごやか亭杯 くしろオープン",
       season: "秋",
       reference_date: "09-27",
@@ -228,6 +262,7 @@
     },
     {
       id: "tancho_open_large",
+      entry_preset: ENTRY_AGE_CLASS,
       name: "Nittaku杯タンチョウオープン (ラージボール)",
       season: "秋",
       reference_date: "10-18",
@@ -263,6 +298,7 @@
     },
     {
       id: "chugaku_senbatsu_dantai",
+      entry_preset: ENTRY_TEAM_STUDENT,
       name: "道新杯 北海道中学選抜卓球大会 (団体戦) 地区予選",
       season: "秋",
       reference_date: "11-01",
@@ -279,6 +315,7 @@
     },
     {
       id: "chugaku_shinjin",
+      entry_preset: ENTRY_STUDENT,
       name: "釧路地区中学卓球新人戦",
       season: "秋",
       reference_date: "11-24",
@@ -295,6 +332,7 @@
     },
     {
       id: "kushiro_league_winter",
+      entry_preset: ENTRY_TEAM,
       name: "くしろリーグ団体選手権",
       season: "冬季",
       reference_date: "01-12",
@@ -311,6 +349,7 @@
     },
     {
       id: "shitsugen_no_kaze",
+      entry_preset: ENTRY_GENERAL,
       name: "VICTAS杯 湿原の風オープン選手権",
       season: "冬",
       reference_date: "02-11",
@@ -336,6 +375,7 @@
     },
     {
       id: "butterfly_doubles_cup",
+      entry_preset: ENTRY_GENERAL,
       name: "バタフライ ダブルスチームカップ (タマス杯)",
       season: "春",
       reference_date: "03-20",
@@ -364,6 +404,7 @@
     },
     {
       id: "hopes_cub_bambi",
+      entry_preset: ENTRY_STUDENT,
       name: "ホープス・カブ・バンビ地区予選",
       season: "春",
       reference_date: "03-29",
@@ -386,6 +427,7 @@
     },
     {
       id: "marimo_open_akan",
+      entry_preset: ENTRY_AGE_CLASS,
       name: "まりもオープン in Akan (ラージボール)",
       season: "春",
       reference_date: "04-05",
@@ -448,6 +490,8 @@
       enforce_referee_rule: tpl.rules?.enforce_referee_rule !== false ? 1 : 0,
       // 要項の「一人最大N種目」。申込設定に引き継ぐ(0/未設定なら制限なし)。
       entry_max_events: tpl.entry_max_events || 0,
+      // 申込プリセット(この大会で聞くこと)。大会作成時にそのまま申込設定へ流す。
+      _entry_preset: tpl.entry_preset || null,
       _events: tpl.events,
       _rules: tpl.rules,
       _sponsors: tpl.sponsors,

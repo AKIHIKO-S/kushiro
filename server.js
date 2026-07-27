@@ -971,6 +971,19 @@ app.get("/api/tournaments/:id/entry-changes", requireAdmin, (req, res) => {
   res.json({ items: db.listEntryChanges(req.params.id, req.query.limit) });
 });
 
+// 申込設定のコピー元候補(去年の同じ大会などを選ぶ)
+app.get("/api/tournaments/:id/entry-settings/sources", requireAdmin, (req, res) => {
+  res.json({ items: db.listEntrySettingSources(req.params.id, req.query.limit) });
+});
+// 申込設定を他の大会からコピー(締切日・受付フラグ・申込データは引き継がない)
+app.post("/api/tournaments/:id/entry-settings/copy", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (!b.from) return res.status(400).json({ error: "コピー元の大会(from)が必要です" });
+  const r = db.copyEntrySettings(req.params.id, String(b.from), { with_events: !!b.with_events });
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
+
 // SMTP 設定状態を返す + テスト送信エンドポイント (admin専用)
 app.get("/api/mail/status", requireAdmin, (req, res) => {
   res.json({
