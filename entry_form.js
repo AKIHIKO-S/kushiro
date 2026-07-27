@@ -110,6 +110,9 @@ function buildEntryFormHTML(tournament, events, opts) {
     type: e.type || "singles",
     note: e.note || "",
     per_team: e.per_team || 6,
+    // 種目の対象区分(elementary/middle/high/junior/youth/general/senior/large)。
+    // 学年欄を学生の種目だけに出すために使う。
+    category: e.category || "",
     // 団体戦の成立に必要な最少人数(要項の「4人以上」「3〜4人」等)。0/未設定なら下限なし。
     per_team_min: Math.max(0, parseInt(e.per_team_min) || 0),
     // 料金の単位("person"=1人あたり。団体戦で人数分を請求する大会がある)
@@ -811,6 +814,234 @@ function buildEntryFormHTML(tournament, events, opts) {
     .total-box .amount { font-size: 30px; }
     .div-seg .seg span { font-size: 12.5px; }
   }
+  /* ══════════════════════════════════════════════════════════
+     承認デザイン「白磁×墨罫」(2026-07-27 オーナー承認・見本案2)
+     サイト/viewer の正典に合わせる。ここは既存定義への後勝ち上書きなので、
+     上の既存CSSは消さずにこのブロックだけを直す。
+     ══════════════════════════════════════════════════════════ */
+  :root {
+    --paper: #fbfaf7;
+    --card: #ffffff;
+    --card-2: #ffffff;
+    --line: #d9d2c4;
+    --line-2: #d9d2c4;
+    --ink: #211d18;
+    --shadow: none;
+    --radius: 0px;
+  }
+  body {
+    background-color: var(--paper);
+    background-image: none;
+    padding-top: 0;
+  }
+  body::before { display: none; }   /* 紙の粒状感オーバーレイを廃止(白磁はフラット) */
+
+  /* ── マストヘッド: 白地+墨の太罫(新聞様式)。暗色バナー・金グラデを廃止 ── */
+  .form-header {
+    background: #fff;
+    color: var(--ink);
+    border-top: none;
+    border-bottom: 2.5px solid #211d18;
+    border-radius: 0;
+    padding: 26px 30px 20px;
+    animation: none;
+  }
+  .form-header::after { display: none; }
+  .form-header-art { opacity: .5; filter: none; }
+  .form-header h1 {
+    font-family: var(--gothic);
+    font-weight: 800;
+    font-size: 27px;
+    letter-spacing: .01em;
+  }
+  .form-header .seal {
+    box-shadow: none;
+    border-radius: 3px;
+  }
+  .form-header .meta { color: #52525b; }
+  /* モバイル: 印(大会申込)を行から独立させ、題字の途中折れ(「釧」で改行)を防ぐ */
+  @media (max-width: 480px) {
+    .form-header { padding: 20px 18px 16px; }
+    .form-header h1 { font-size: 21.5px; line-height: 1.35; }
+    .form-header .seal { display: block; width: fit-content; margin: 0 0 10px; }
+  }
+
+  /* ── セクション: 白地+細罫。影で浮かせない ── */
+  .form-section {
+    border-color: var(--line);
+    animation: none;
+  }
+  .form-section:last-of-type { box-shadow: none; border-radius: 0; }
+  .form-section h2 {
+    font-family: var(--gothic);
+    font-size: 17.5px;
+    font-weight: 800;
+    letter-spacing: .02em;
+    padding-bottom: 9px;
+    border-bottom: 1.5px solid #211d18;   /* 新聞の小見出し=中罫 */
+  }
+  .form-section h2::before { display: none; }   /* 左の赤バー(左縁アクセント)を廃止 */
+
+  /* ── 入力欄: 白地+細罫。フォーカスは丹頂(機能色) ── */
+  .form-row input[type="text"], .form-row input[type="email"], .form-row input[type="tel"],
+  .form-row input[type="number"], .form-row input[type="date"],
+  .form-row select, .form-row textarea,
+  .entry-row input[type="text"], .entry-row input[type="date"], .entry-row select {
+    background: #fff;
+    border-color: var(--line);
+    border-radius: 3px;
+  }
+  .form-row input::placeholder, .form-row textarea::placeholder,
+  .entry-row input::placeholder { color: #8e8a80; }
+
+  /* いま入力している欄=墨のリング。丹頂は「必須・未入力・エラー」に温存する
+     (現在地とエラーが同じ赤だと、書いている欄が間違えた欄に見える) */
+  .form-row input:focus, .form-row select:focus, .form-row textarea:focus,
+  .entry-row input:focus, .entry-row select:focus {
+    border-color: #211d18 !important;
+    box-shadow: 0 0 0 3px rgba(33, 29, 24, .14) !important;
+  }
+  input:user-invalid { border-color: var(--red); background: #fffafa; }
+
+  /* ── 行(選手)・種目ブロック: 罫線で構造を作る ── */
+  .entry-row { background: #fff; border-radius: 3px; animation: none; }
+  .event-block { border-radius: 3px; }
+  .event-block summary { border-radius: 3px; }
+
+  /* 追加ボタン: 琥珀(意味=呼出間近)をやめ、白地+墨罫のゴシックに */
+  .btn-add {
+    background: #fff; color: var(--ink);
+    border: 1.5px solid #211d18;
+    border-radius: 3px; box-shadow: none;
+  }
+  .btn-add:hover { background: rgba(72, 58, 46, .07); }
+
+  /* 参加区分セグメント: 生成り地をやめ、白磁のヘアライン枠+選択=墨の白抜き(首位セルと同じ文法) */
+  .div-seg {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 3px;
+  }
+  .div-seg .seg span { border-radius: 2px; box-shadow: none; }
+  .div-seg .seg span small { color: #8e8a80; }
+  .div-seg .seg input:checked + span {
+    background: #211d18; color: #fff;
+    box-shadow: none;
+  }
+  .div-seg .seg input:checked + span small { color: #e8e4dc; }
+
+  /* ── 注意書き: 左縁の色付きアクセント線(最頻の禁止則)を廃止し、上下ヘアラインの帯に ── */
+  .notice {
+    background: #fff;
+    border: none;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    color: #52525b;
+  }
+
+  /* ── 合計: 琥珀の枠・グラデ地・赤グローを廃止。墨罫の勘定書きにする ── */
+  .total-box {
+    background: #fff;
+    border: 1.5px solid #211d18;
+    border-radius: 3px;
+    box-shadow: none;
+  }
+  .total-box::before, .total-box::after { display: none !important; }
+  .total-box .label { font-family: var(--gothic); font-weight: 700; color: #52525b; }
+  .total-box .amount {
+    font-family: var(--gothic);
+    font-weight: 800;
+    color: var(--ink);                 /* 金額は情報。丹頂(機能色)を装飾に使わない */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── 種目ブロックの開閉チップ・行番号バッジ: 赤グラデ+影 → 墨のフラット ── */
+  .event-block summary::before,
+  .entry-row .row-head .num {
+    background: #211d18 !important;
+    box-shadow: none !important;
+  }
+  /* 料金・人数のピル: 琥珀/緑の常時色を白地+細罫の文字チップへ(色は状態にだけ使う) */
+  .fee-tag, .count-badge {
+    background: #fff !important;
+    border: 1px solid var(--line) !important;
+    color: #52525b !important;
+    box-shadow: none !important;
+    border-radius: 2px !important;
+  }
+
+  /* ── 送信ボタン: 丹頂は機能色として維持。グラデとグローだけ外す ── */
+  .submit-btn {
+    background: var(--red);
+    box-shadow: none;
+    border-radius: 3px;
+  }
+  .submit-btn:hover { background: var(--red-2, #9c0f1c); transform: none; }
+
+  /* ── 確認・完了・エラーも同じ紙面に揃える(承認後に「見本と違う画面」を出さない) ── */
+  .confirm-modal { border-radius: 3px; border-top-color: #211d18; }
+  .confirm-modal h3, .success-card h3, .form-footer .org, .total b {
+    font-family: var(--gothic);
+    font-weight: 800;
+  }
+  .confirm-inline, .success-card { animation: none; }
+  .success-card { background: #fff; border: 1.5px solid #211d18; border-radius: 3px; box-shadow: none; }
+  .ticket { border-radius: 3px; }
+  .message { border-radius: 3px; }
+
+  /* チェックボックス・ラジオの既定青を白磁パレットへ */
+  input[type="checkbox"], input[type="radio"] { accent-color: #211d18; }
+
+  /* 動きの規範(業務UI): transition:all を捨て、色と枠だけを200ms以内で動かす */
+  .btn-add, .div-seg .seg span, .submit-btn {
+    transition: background-color .15s ease-out, border-color .15s ease-out, color .15s ease-out;
+  }
+
+  /* ══ 道しるべ(見本案2): いま何を書いていて、あと何が要るかを常に示す ══ */
+  #ttRail {
+    position: sticky; top: 0; z-index: 50;
+    background: #fbfaf7;
+    border-bottom: 1.5px solid #211d18;
+    padding: 0 8px;
+    display: flex; align-items: stretch; gap: 2px;
+    font-family: var(--gothic);
+  }
+  /* 埋込(iframeで高さ自動)ではページ自体がスクロールしないため sticky が効かない。
+     その場合は貼り付けをやめ、フォーム冒頭の案内板として置く(情報は同じ)。 */
+  body.tt-embedded #ttRail { position: static; }
+  #ttRail .step {
+    position: relative; flex: 1; text-align: center;
+    padding: 10px 2px 12px;
+    font-size: 12.5px; letter-spacing: .04em; color: var(--ink-2);
+    cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+    background: none; border: none; font-family: inherit;
+  }
+  #ttRail .step .st { font-size: 10.5px; display: block; margin-top: 2px; color: #8a7a64; }
+  #ttRail .step.done .st { color: var(--green); }
+  #ttRail .step.cur { color: var(--ink); font-weight: 700; }
+  #ttRail .bar {
+    position: absolute; left: 0; bottom: -1.5px; height: 3px;
+    background: var(--red); transform: translateX(0);
+    transition: transform .18s ease-out; pointer-events: none;
+  }
+  /* 残り必須の常設チップ。埋込では画面外に出るので、送信ボタンの手前に置き換える */
+  #ttRemain {
+    position: fixed; right: 14px; bottom: 14px; z-index: 60;
+    background: #fff; border: 1.5px solid var(--line); border-radius: 999px;
+    padding: 9px 16px; font-family: var(--gothic); font-size: 13px; color: var(--ink);
+    box-shadow: 0 10px 26px -14px rgba(48, 32, 16, .4);
+  }
+  #ttRemain.ok { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+  body.tt-embedded #ttRemain {
+    position: static; display: block; margin: 0 0 10px; text-align: center;
+    box-shadow: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #ttRail .bar { transition-duration: .01ms; }
+  }
+
 </style>
 ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : ''}
 </head>
@@ -934,6 +1165,35 @@ function gatherOptions() {
 }
 const AGE_ASOF = ${escapeJs(AGE_ASOF)};   // 年齢基準日(大会年度の4/1)。空なら年齢判定は無効。
 
+// その種目が学生対象か。学年を聞く意味があるのは小中高・ジュニアの種目だけで、
+// 一般・シニア・ラージボールの年代別には学年が無い。
+// category(種目設定)を第一に見て、未設定なら種目名から推定する。
+function isStudentEvent(ev) {
+  const c = String((ev && ev.category) || "");
+  if (["elementary", "middle", "high", "junior", "youth", "student"].indexOf(c) >= 0) return true;
+  if (["general", "senior", "large"].indexOf(c) >= 0) return false;
+  return /小学|中学|高校|中高|高中|ジュニア|カデット|ホープス|カブ|バンビ|学生/.test(String((ev && ev.name) || ""));
+}
+// その種目に明示的な項目指定(event_overrides)があるか。あれば主催者の判断を優先する。
+function hasEventOverride(evName, key) {
+  const ov = FIELD_CFG.event_overrides && FIELD_CFG.event_overrides[evName];
+  return !!(ov && ov[key]);
+}
+// 学年欄をどう出すか。
+//  ・種目ごとの明示指定があればそれに従う(主催者の判断が最優先)
+//  ・シニア/ラージボールの年代別 … 学年の概念が無いので出さない
+//  ・学生の種目 … 大会レベルの設定どおり(学年別の部があるため必要)
+//  ・一般の種目 … 任意で出す。「中3・高3は一般の部へ」「小6・管外の中学生も一般の部へ
+//    出場できる」(バタフライ杯)のように、一般の部に学生が出場する場合に記入してもらう
+function gradeStateFor(ev, evName) {
+  const st = fstFor(evName, "grade");
+  if (hasEventOverride(evName, "grade")) return st;
+  if (st === "hidden") return "hidden";
+  const c = String((ev && ev.category) || "");
+  if (c === "senior" || c === "large") return "hidden";
+  if (isStudentEvent(ev)) return st;
+  return "optional";
+}
 // 種目単位の項目状態を解決(event_overrides > 大会レベル fields > hidden)。"required|optional|hidden"。
 function fstFor(evName, key) {
   const ov = FIELD_CFG.event_overrides && FIELD_CFG.event_overrides[evName];
@@ -1051,7 +1311,9 @@ function playerFieldsHtml(prefix, ev) {
       'oninput="ttUpdateAge(this)" style="color:#555;" />' +
       '<span class="age-hint" style="font-size:12px;color:var(--ink-2);align-self:center;"></span>';
   }
-  const grade = fstFor(evName, "grade");
+  // 学年の扱い(gradeStateFor): 学生の種目は設定どおり、一般の部は任意で出す
+  // (一般の部に学生が出場する場合に記入してもらう)、シニア・ラージの年代別は出さない。
+  const grade = gradeStateFor(ev, evName);
   if (grade !== "hidden") {
     const lb = escapeHtml(flabel("grade", "学年"));
     h += '<input type="text" name="' + prefix + '_grade" placeholder="' + lb + (grade === "required" ? " (必須)" : "") +
@@ -1784,15 +2046,143 @@ window.addEventListener("resize", ttPostHeight);
 // レイアウト/フォント確定後の取りこぼし対策に数回だけ遅延送信
 [120, 500, 1200].forEach(function (ms) { setTimeout(ttPostHeight, ms); });
 
+// ══ 道しるべ(見本案2・2026-07-27 承認): 行程レールと残り必須の表示 ══
+// 目的は「いま何を書いていて、あと何が要るか」を常に見せること。
+// 埋込(iframe自動高さ)ではページがスクロールしないため sticky/fixed が効かない。
+// その環境では貼り付けをやめ、レールをフォーム冒頭に、残数を送信ボタンの手前に置く。
+var TT_RAIL = null;
+function ttBuildRail() {
+  var form = document.getElementById("entryForm");
+  if (!form || document.getElementById("ttRail")) return;
+  var secs = Array.prototype.slice.call(form.querySelectorAll(".form-section"));
+  if (secs.length < 2) return;
+  var submitBtn = document.getElementById("submitBtn");
+  var submitSec = submitBtn && submitBtn.closest(".form-section");
+  var groups = [
+    { label: "連絡先", secs: [secs[0]] },
+    { label: "種目・選手", secs: secs.filter(function (s) { return s.querySelector("#eventsContainer"); }) },
+    { label: "確認事項", secs: secs.filter(function (s, i) { return i > 0 && !s.querySelector("#eventsContainer") && s !== submitSec; }) },
+    { label: "送信", secs: submitSec ? [submitSec] : (submitBtn ? [submitBtn] : []), isSubmit: true },
+  ].filter(function (g) { return g.secs.length; });
+  if (groups.length < 2) return;
+
+  var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var rail = document.createElement("div");
+  rail.id = "ttRail";
+  rail.setAttribute("role", "navigation");
+  rail.setAttribute("aria-label", "入力の進み具合");
+  groups.forEach(function (g) {
+    var el = document.createElement("button");
+    el.type = "button";
+    el.className = "step";
+    el.appendChild(document.createTextNode(g.label));
+    var st = document.createElement("span");
+    st.className = "st";
+    st.textContent = "未入力";
+    el.appendChild(st);
+    el.addEventListener("click", function () {
+      g.secs[0].scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+    });
+    g.el = el; g.stEl = st;
+    rail.appendChild(el);
+  });
+  var bar = document.createElement("div");
+  bar.className = "bar";
+  bar.style.width = (100 / groups.length) + "%";
+  rail.appendChild(bar);
+  form.parentNode.insertBefore(rail, form);
+
+  var remain = document.createElement("div");
+  remain.id = "ttRemain";
+  // 埋込では送信ボタンの手前に置く(画面外に固定しても見えないため)
+  if (document.body.classList.contains("tt-embedded") && submitBtn && submitBtn.parentNode) {
+    submitBtn.parentNode.insertBefore(remain, submitBtn);
+  } else {
+    document.body.appendChild(remain);
+  }
+
+  var current = -1;
+  function setCurrent(i) {
+    if (current === i) return;
+    current = i;
+    groups.forEach(function (g, j) { g.el.classList.toggle("cur", j === i); });
+    bar.style.transform = "translateX(" + (i * 100) + "%)";
+  }
+  // 現在地の追従は IntersectionObserver で行う(scrollイベントは使わない)。
+  // 送信ボタンは画面下端に来ても判定帯に入らないことがあるため、最下部到達で最終工程に送る。
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      groups.forEach(function (g, i) { if (g.secs.indexOf(e.target) >= 0) setCurrent(i); });
+    });
+  }, { rootMargin: "-35% 0px -55% 0px" });
+  groups.forEach(function (g) { g.secs.forEach(function (s) { io.observe(s); }); });
+  setCurrent(0);
+
+  TT_RAIL = { groups: groups, remain: remain, setCurrent: setCurrent };
+  ttRailUpdate();
+}
+// 表示中の必須欄だけを数える(表示条件で隠れた欄・未記入行の解除済み必須は数えない)。
+function ttRailReqs(root) {
+  return Array.prototype.slice.call(root.querySelectorAll("[required]")).filter(function (el) {
+    return !el.disabled && el.offsetParent !== null;
+  });
+}
+function ttRailFilled(el) {
+  if (el.type === "checkbox") return el.checked;
+  return String(el.value || "").trim() !== "";
+}
+function ttRailUpdate() {
+  if (!TT_RAIL) return;
+  var left = 0;
+  // 出場種目は「1種目以上」が送信の条件。必須欄の数では表せないので件数で見る
+  // (未記入の行は必須が外れているため、そのままでは「任意」に見えてしまう)。
+  var picked = 0;
+  try { picked = gatherFormData().entries.length; } catch (e) { picked = 0; }
+  TT_RAIL.groups.forEach(function (g) {
+    if (g.isSubmit) return;
+    var reqs = [];
+    g.secs.forEach(function (s) { reqs = reqs.concat(ttRailReqs(s)); });
+    var n = reqs.filter(function (el) { return !ttRailFilled(el); }).length;
+    left += n;
+    var isEvents = g.secs.some(function (s) { return s.querySelector && s.querySelector("#eventsContainer"); });
+    if (isEvents) {
+      if (picked === 0) { g.stEl.textContent = "未選択"; g.el.classList.remove("done"); left += 1; }
+      else if (n === 0) { g.stEl.textContent = picked + "件 済"; g.el.classList.add("done"); }
+      else { g.stEl.textContent = "あと" + n; g.el.classList.remove("done"); }
+      return;
+    }
+    if (!reqs.length) { g.stEl.textContent = "任意"; g.el.classList.remove("done"); }
+    else if (n === 0) { g.stEl.textContent = "済"; g.el.classList.add("done"); }
+    else { g.stEl.textContent = "あと" + n; g.el.classList.remove("done"); }
+  });
+  TT_RAIL.groups.forEach(function (g) {
+    if (!g.isSubmit) return;
+    g.stEl.textContent = left === 0 ? "できます" : "準備中";
+    g.el.classList.toggle("done", left === 0);
+  });
+  TT_RAIL.remain.className = left === 0 ? "ok" : "";
+  TT_RAIL.remain.textContent = left === 0
+    ? "送信できます"
+    : (picked === 0 && left === 1 ? "出場種目を選んでください" : "必須があと" + left + "項目");
+}
+
 // 表示条件つき項目の連動 + 未記入行の必須解除(入力のたびに評価し直す。件数は高々数十なので全走査で足りる)
-function ttFormSync() { ttWhenSync(); ttSyncRowRequired(); }
+function ttFormSync() { ttWhenSync(); ttSyncRowRequired(); ttRailUpdate(); }
 document.getElementById("entryForm").addEventListener("input", ttFormSync);
 document.getElementById("entryForm").addEventListener("change", ttFormSync);
+
+// 埋込(iframeで高さを親に渡す運用)かどうか。ページ自体がスクロールしないため
+// sticky/fixed が効かず、道しるべの置き場所を変える必要がある。
+try {
+  if (window.self !== window.top) document.body.classList.add("tt-embedded");
+} catch (e) { document.body.classList.add("tt-embedded"); }
 
 // 初期化 (失敗しても安全網が案内を表示)
 try {
   renderEvents();
   recalcTotal();
+  ttBuildRail();
   ttFormSync();
   ttPostHeight();
 } catch (e) {

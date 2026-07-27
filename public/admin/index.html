@@ -3814,8 +3814,10 @@ const A = {
  const renderOptions = () => {
    clear(optBox);
    if (!entryOptions.length) {
-     optBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "6px" } },
-       "弁当・懇親会など、参加料とは別に数量で申し込むものを定義できます（未設定ならフォームに出ません）"));
+     optBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginBottom: "6px", lineHeight: "1.7" } },
+       "通常は設定不要です（未設定ならフォームに何も出ません）。",
+       h("br"),
+       "弁当や懇親会など、参加料とは別に数量で申し込むものがある大会だけ追加してください。"));
    }
    entryOptions.forEach((o, oi) => {
      optBox.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginBottom: "5px", padding: "6px", background: "var(--bg)", borderRadius: "6px" } },
@@ -3840,7 +3842,8 @@ const A = {
    });
    optBox.appendChild(h("button", { className: "btn btn-sm btn-ghost", style: { marginTop: "4px" },
      onClick: () => {
-       entryOptions.push({ key: "opt" + Math.random().toString(36).slice(2, 7), label: "お弁当", price: 800, unit: "個", max: 0, note: "" });
+       // 既定は空欄。特定の品目を初期値にすると「毎回それが要る」と誤解されるため。
+       entryOptions.push({ key: "opt" + Math.random().toString(36).slice(2, 7), label: "", price: 0, unit: "個", max: 0, note: "" });
        renderOptions(); refreshCode();
      } }, "+ オプションを追加"));
  };

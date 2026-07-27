@@ -9786,10 +9786,35 @@ function _enforceRequiredFields(t, formData, entries) {
   const fc = resolveFieldConfig(t);
   const F = fc.fields || {};
   const miss = (v) => !(v != null && String(v).trim());
+  // 種目の設定(category・名前)。学年を学生の種目だけに限るために使う。
+  let _evCfgList = [];
+  try {
+    _evCfgList = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []);
+  } catch (_) { _evCfgList = []; }
+  const _evOf = {};
+  (Array.isArray(_evCfgList) ? _evCfgList : []).forEach(c => { if (c && c.name) _evOf[String(c.name)] = c; });
+  // 学生対象の種目か(フォーム側 isStudentEvent と同じ規則)。
+  const _isStudentEvent = (evName) => {
+    const ev = _evOf[evName] || { name: evName };
+    const c = String(ev.category || "");
+    if (["elementary", "middle", "high", "junior", "youth", "student"].indexOf(c) >= 0) return true;
+    if (["general", "senior", "large"].indexOf(c) >= 0) return false;
+    return /小学|中学|高校|中高|高中|ジュニア|カデット|ホープス|カブ|バンビ|学生/.test(String(ev.name || evName));
+  };
   const stFor = (evName, key) => {
     const ov = fc.event_overrides && fc.event_overrides[evName];
     if (ov && ov[key]) return ov[key];
-    return F[key] || "hidden";
+    const base = F[key] || "hidden";
+    // 学年の扱い(フォーム側 gradeStateFor と同じ規則):
+    //  シニア/ラージの年代別は出さない / 学生の種目は設定どおり /
+    //  一般の種目は任意(一般の部に学生が出場する場合に記入してもらうため必須にはしない)
+    if (key === "grade" && base !== "hidden") {
+      const ev = _evOf[evName] || { name: evName };
+      const c = String(ev.category || "");
+      if (c === "senior" || c === "large") return "hidden";
+      if (!_isStudentEvent(evName)) return "optional";
+    }
+    return base;
   };
   // 連絡先は常に必須(責任者名・電話・メール)
   if (miss(formData.contact_name)) return "申込責任者名を入力してください";
