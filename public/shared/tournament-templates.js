@@ -48,9 +48,9 @@
       description: "会長杯 / 高校釧根支部オープン。一般・高校・中学の団体戦＋一般・高校・中学・小学のシングルス。",
       eligibility: "釧路卓球協会の登録会員 (準会員含む)。高校の部は釧根オープン。",
       events: [
-        { name: "一般 団体戦", category: "general", type: "team", per_team: 4, fee: 3000, note: "1複4単 (4人以上)", tie_format: "D,S,S,S,S" },
+        { name: "一般 団体戦", category: "general", type: "team", per_team: 4, per_team_min: 4, fee: 3000, note: "1複4単 (4人以上)", tie_format: "D,S,S,S,S" },
         { name: "高校 団体戦", category: "high",    type: "team", per_team: 4, fee: 2000, tie_format: "D,S,S,S,S" },
-        { name: "中学 団体戦", category: "middle",  type: "team", per_team: 6, fee: 2000, note: "6〜8人", tie_format: "S,S,D,S,S" },
+        { name: "中学 団体戦", category: "middle",  type: "team", per_team: 8, per_team_min: 6, fee: 2000, note: "6〜8人", tie_format: "S,S,D,S,S" },
         { name: "男子シングルス 一般",    category: "general",   gender: "male",   type: "singles", fee: 700 },
         { name: "女子シングルス 一般",    category: "general",   gender: "female", type: "singles", fee: 700 },
         { name: "男子シングルス 高校",    category: "high",      gender: "male",   type: "singles", fee: 500 },
@@ -118,8 +118,8 @@
       description: "くしろリーグ団体選手権 (夏季開催)。5チームずつの部別リーグ戦。",
       eligibility: "釧路卓球協会登録団体。1団体何チームでも参加可能。",
       events: [
-        { name: "団体戦 小学・中学・高校", category: "youth", type: "team", per_team: 4, fee: 3000, format: "league" },
-        { name: "団体戦 一般",           category: "general",type: "team", per_team: 4, fee: 4000, format: "league" },
+        { name: "団体戦 小学・中学・高校", category: "youth", type: "team", per_team: 4, per_team_min: 4, fee: 3000, format: "league" },
+        { name: "団体戦 一般",           category: "general",type: "team", per_team: 4, per_team_min: 4, fee: 4000, format: "league" },
       ],
       rules: { ...RULE_TEAM_LEAGUE, structure: "1部/2部/3部 別 5チームリーグ" },
       court: DEFAULT_COURT,
@@ -236,6 +236,8 @@
       sponsors: ["日本卓球株式会社 (ニッタク)", "株式会社三ッ星レストランシステム", "北海まりも製菓", "温泉民宿山口"],
       description: "全国オープン ラージボール大会。年代別。",
       eligibility: "ラージボールを楽しめる方。日本卓球協会登録の有無は問わない。",
+      // 要項「一人最大3種目(混合ダブルス、ダブルス、シングルス)にエントリーできます」
+      entry_max_events: 3,
       events: [
         { name: "混合ダブルス 一般",  gender: "mixed",  type: "doubles", fee: 2000, age_group: "U120", category: "large" },
         { name: "混合ダブルス 120才代", gender: "mixed",  type: "doubles", fee: 2000, age_group: "120s", category: "large" },
@@ -269,8 +271,8 @@
       description: "中学団体戦の地区予選。4単1複の5試合制。",
       eligibility: "中1〜中2 (3年生は不可)。チーム編成は学校単位。",
       events: [
-        { name: "男子団体", gender: "male",   category: "middle", type: "team", per_team: 6, fee: 2000, format: "4S+1D, 5試合", reps_seats: 2 },
-        { name: "女子団体", gender: "female", category: "middle", type: "team", per_team: 6, fee: 2000, format: "4S+1D, 5試合", reps_seats: 2 },
+        { name: "男子団体", gender: "male",   category: "middle", type: "team", per_team: 8, per_team_min: 6, fee: 2000, format: "4S+1D, 5試合", reps_seats: 2 },
+        { name: "女子団体", gender: "female", category: "middle", type: "team", per_team: 8, per_team_min: 6, fee: 2000, format: "4S+1D, 5試合", reps_seats: 2 },
       ],
       rules: { ...RULE_STD, referee_rule: "mutual", note: "予選L+決勝T (7チーム以下は決勝Lのみ)" },
       court: SUB_COURT,
@@ -301,8 +303,8 @@
       description: "くしろリーグ団体選手権 (冬季開催)。5チームずつの部別リーグ戦。",
       eligibility: "釧路卓球協会登録団体。",
       events: [
-        { name: "団体戦 小学・中学・高校", category: "youth",  type: "team", per_team: 4, fee: 3000, format: "league" },
-        { name: "団体戦 一般",          category: "general",type: "team", per_team: 4, fee: 4000, format: "league" },
+        { name: "団体戦 小学・中学・高校", category: "youth",  type: "team", per_team: 4, per_team_min: 4, fee: 3000, format: "league" },
+        { name: "団体戦 一般",          category: "general",type: "team", per_team: 4, per_team_min: 4, fee: 4000, format: "league" },
       ],
       rules: { ...RULE_TEAM_LEAGUE },
       court: DEFAULT_COURT,
@@ -343,7 +345,7 @@
       description: "オープン大会。ダブルスチーム戦 (D×3) + 年代別シングルス。",
       eligibility: "オープン。",
       events: [
-        { name: "ダブルスチームカップ (D×3)", type: "team", per_team: 5, fee: 2000, format: "D×3 2点先取" },
+        { name: "ダブルスチームカップ (D×3)", type: "team", per_team: 6, per_team_min: 4, fee: 2000, format: "D×3 2点先取" },
         { name: "男子シングルス 一般",  gender: "male",   category: "general",   type: "singles", fee: 700, age_group: "U30" },
         { name: "女子シングルス 一般",  gender: "female", category: "general",   type: "singles", fee: 700, age_group: "U30" },
         { name: "男子シングルス 高2",   gender: "male",   category: "high",      type: "singles", fee: 500, age_group: "high-2" },
@@ -376,8 +378,8 @@
         { name: "カブ 女子シングルス",    gender: "female", category: "elementary", type: "singles", fee: 500, age_group: "cub" },
         { name: "バンビ 男子シングルス",  gender: "male",   category: "elementary", type: "singles", fee: 500, age_group: "bambi" },
         { name: "バンビ 女子シングルス",  gender: "female", category: "elementary", type: "singles", fee: 500, age_group: "bambi" },
-        { name: "ホープス男子団体", gender: "male",   category: "elementary", type: "team", per_team: 3, fee: 2000, age_group: "hopes" },
-        { name: "ホープス女子団体", gender: "female", category: "elementary", type: "team", per_team: 3, fee: 2000, age_group: "hopes" },
+        { name: "ホープス男子団体", gender: "male",   category: "elementary", type: "team", per_team: 4, per_team_min: 3, fee: 2000, age_group: "hopes" },
+        { name: "ホープス女子団体", gender: "female", category: "elementary", type: "team", per_team: 4, per_team_min: 3, fee: 2000, age_group: "hopes" },
       ],
       rules: { ...RULE_STD, note: "団体相互審判、個人敗者審判 (リーグは相互)" },
       court: SMALL_COURT,
@@ -394,7 +396,7 @@
       eligibility: "ラージボール愛好者。先着100名。",
       events: [
         // 要項は「1人 1,000円」(1チーム4人・ダブルス3試合)。1チームいくらではなく人数分を請求する
-        { name: "団体戦 (男女混合)", type: "team", per_team: 4, fee: 1000, fee_unit: "person", capacity: 24,
+        { name: "団体戦 (男女混合)", type: "team", per_team: 4, per_team_min: 4, fee: 1000, fee_unit: "person", capacity: 24,
           category: "large", format: "D×3、4ブロック24チーム", note: "1人1,000円・1チーム4人" },
         { name: "男子ダブルス",     gender: "male",   type: "doubles", fee: 1000, category: "large" },
         { name: "女子ダブルス",     gender: "female", type: "doubles", fee: 1000, category: "large" },
@@ -444,6 +446,8 @@
       hq_position: tpl.court?.hq_position || "bottom",
       numbering_origin: tpl.court?.numbering_origin || "bottom-right",
       enforce_referee_rule: tpl.rules?.enforce_referee_rule !== false ? 1 : 0,
+      // 要項の「一人最大N種目」。申込設定に引き継ぐ(0/未設定なら制限なし)。
+      entry_max_events: tpl.entry_max_events || 0,
       _events: tpl.events,
       _rules: tpl.rules,
       _sponsors: tpl.sponsors,

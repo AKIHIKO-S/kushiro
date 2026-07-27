@@ -110,6 +110,8 @@ function buildEntryFormHTML(tournament, events, opts) {
     type: e.type || "singles",
     note: e.note || "",
     per_team: e.per_team || 6,
+    // 団体戦の成立に必要な最少人数(要項の「4人以上」「3〜4人」等)。0/未設定なら下限なし。
+    per_team_min: Math.max(0, parseInt(e.per_team_min) || 0),
     // 料金の単位("person"=1人あたり。団体戦で人数分を請求する大会がある)
     fee_unit: e.fee_unit === "person" ? "person" : undefined,
     // 大会が定義した参加区分(自己申告)。value/label/short/fee_override/min_age/max_age/combined を使う。
@@ -458,6 +460,8 @@ function buildEntryFormHTML(tournament, events, opts) {
     background: var(--amber-bg); color: var(--amber);
   }
   .cap-tag.cap-full { background: #fdecee; color: var(--red); }
+  /* 団体戦の人数の決まり(要項の「4人以上」「3〜4人」) */
+  .cap-tag.size { background: var(--card-2); color: var(--ink-2); border: 1px solid var(--line); }
   .cap-closed {
     padding: 14px 16px; font-size: 13.5px; color: var(--ink-2);
     background: var(--card-2); border-top: 1px solid var(--line);
@@ -1099,6 +1103,12 @@ function renderEvents() {
     const feeTagHtml = hasStuFee
       ? '一般 ¥' + fee.toLocaleString("ja-JP") + ' ／ 中高生 ¥' + feeStu.toLocaleString("ja-JP") + unitSfx
       : '参加料 ¥' + fee.toLocaleString("ja-JP") + unitSfx;
+    // 団体戦の人数の決まり(要項の「4人以上」「3〜4人」)を見出しに添える
+    const minN = isTeam ? (ev.per_team_min || 0) : 0;
+    const maxN = isTeam ? (ev.per_team || 0) : 0;
+    const sizeTag = !isTeam ? "" :
+      (minN && maxN && minN !== maxN) ? '<span class="cap-tag size">' + minN + '〜' + maxN + '人</span>'
+      : (minN ? '<span class="cap-tag size">' + minN + '人以上</span>' : "");
     // 定員: 満員なら申込欄を出さず「受付終了」、残りわずかなら残り枠を添える
     const isFull = !!ev.full;
     const remain = (ev.remaining == null) ? null : ev.remaining;
@@ -1110,6 +1120,7 @@ function renderEvents() {
     det.innerHTML = '<summary>' +
       escapeHtml(ev.name) +
       '<span class="fee-tag">' + feeTagHtml + '</span>' +
+      sizeTag +
       capTag +
       (isFull ? "" : '<span class="count-badge" id="count_' + idx + '">0 ' + unit + '</span>') +
       '</summary>' +

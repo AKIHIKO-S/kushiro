@@ -555,6 +555,9 @@ try {
   // 有料オプション(弁当・懇親会など)の定義。JSON配列
   // [{key,label,price,unit,max,note}]。申込者は数量を入れ、合計に加算される。
   addTCol("entry_options", "TEXT DEFAULT ''");
+  // 1人が申し込める種目数の上限(0=無制限)。要項の「一人最大3種目にエントリーできます」
+  // (タンチョウオープン等)を機械的に守るため。同一申込内で氏名が一致する選手を数える。
+  addTCol("entry_max_events", "INTEGER DEFAULT 0");
   addTCol("entry_events", "TEXT DEFAULT ''"); // JSON配列: ["男子シングルス","女子シングルス",...]
   addTCol("event_config", "TEXT DEFAULT ''"); // JSON配列: 詳細 [{name, fee, type, per_team, note}]
   addTCol("entry_gas_url", "TEXT DEFAULT ''"); // GAS Web App URL (申込先 スプレッドシート)
@@ -9679,6 +9682,66 @@ function _enforceCapacity(t, entries) {
   return null;
 }
 
+// 要項の人数・種目数の決まりを検証する。満たさなければ日本語エラー、満たせば null。
+//  ・団体戦の最少人数: 要項は「1チーム4人以上」「3〜4人」「6〜8人」のように幅がある。
+//    event_config[].per_team が入力欄の数(=最大)、per_team_min が成立に必要な最少人数。
+//  ・1人あたりの種目数上限: 「一人最大3種目にエントリーできます」(タンチョウオープン等)。
+//    同一申込の中で氏名が一致する選手を数える(ダブルスは2人ともそれぞれ1種目と数える)。
+function _enforceEntryLimits(t, entries) {
+  let evCfg = [];
+  try { evCfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []); }
+  catch (_) { evCfg = []; }
+  const cfgOf = {};
+  (Array.isArray(evCfg) ? evCfg : []).forEach(c => { if (c && c.name) cfgOf[String(c.name)] = c; });
+
+  const perPerson = {};   // 正規化氏名 → 出場した種目数
+  const countPerson = (nm) => {
+    const k = normalizeName(String(nm || ""));
+    if (!k) return;
+    perPerson[k] = (perPerson[k] || 0) + 1;
+  };
+
+  for (const ent of (entries || [])) {
+    const evName = String(ent.event || "").trim();
+    if (!evName) continue;
+    const type = ent.type || "singles";
+    const cfg = cfgOf[evName] || {};
+    if (type === "team") {
+      const members = Array.isArray(ent.members) ? ent.members.filter(m => String(m || "").trim()) : [];
+      const filled = String(ent.team_name || "").trim() || members.length;
+      if (!filled) continue;
+      const min = Math.max(0, parseInt(cfg.per_team_min) || 0);
+      if (min && members.length < min) {
+        return `${evName}: メンバーは${min}人以上必要です（現在${members.length}人）`;
+      }
+      const max = Math.max(0, parseInt(cfg.per_team) || 0);
+      if (max && members.length > max) {
+        return `${evName}: メンバーは${max}人までです（現在${members.length}人）`;
+      }
+      members.forEach(countPerson);
+    } else if (type === "doubles" || type === "mixed") {
+      const n1 = String(ent.name1 || "").trim(), n2 = String(ent.name2 || "").trim();
+      if (!n1 && !n2) continue;
+      if (n1) countPerson(n1);
+      if (n2) countPerson(n2);
+    } else {
+      const nm = String(ent.name || "").trim();
+      if (!nm) continue;
+      countPerson(nm);
+    }
+  }
+
+  const maxEvents = Math.max(0, parseInt(t.entry_max_events) || 0);
+  if (maxEvents) {
+    for (const k of Object.keys(perPerson)) {
+      if (perPerson[k] > maxEvents) {
+        return `1人が申し込めるのは${maxEvents}種目までです（${perPerson[k]}種目の申込があります）`;
+      }
+    }
+  }
+  return null;
+}
+
 // 受付が閉じている理由(日本語)。開いていれば null。
 function _entryClosedReason(t) {
   if (!t) return "大会が見つかりません";
@@ -9898,6 +9961,8 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
   if (optionPricing.error) return { error: optionPricing.error, validation: true };
 
   if (opts.enforce) {
+    const lmsg = _enforceEntryLimits(t, entries);
+    if (lmsg) return { error: lmsg, validation: true };
     const cmsg = _enforceCapacity(t, entries);
     if (cmsg) return { error: cmsg, validation: true, full: true };
     const vmsg = _enforceRequiredFields(t, formData, entries);
@@ -10834,6 +10899,7 @@ function updateEntrySettings(tournamentId, settings) {
       entry_deadline_time = ?,
       entry_capacity = ?,
       entry_options = ?,
+      entry_max_events = ?,
       entry_events = ?,
       event_config = ?,
       field_config = ?,
@@ -10855,6 +10921,9 @@ function updateEntrySettings(tournamentId, settings) {
     settings.entry_options !== undefined
       ? JSON.stringify(sanitizeEntryOptions(settings.entry_options))
       : (t.entry_options || ""),
+    settings.entry_max_events !== undefined
+      ? Math.max(0, Math.min(99, parseInt(settings.entry_max_events) || 0))
+      : (t.entry_max_events || 0),
     JSON.stringify(settings.entry_events || []),
     typeof evCfg === "string" ? evCfg : JSON.stringify(evCfg || []),
     fldCfg,
