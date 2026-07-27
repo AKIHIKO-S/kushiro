@@ -1,6 +1,7 @@
 // 取込用テンプレ(オーナー要望 2026-07-18)の回帰:
 //  - 3種(シングルス/ダブルス/団体)のテンプレ生成(割当表シート互換・記入例は別シート)
-//  - 記入→取込で「枠番号=トーナメンの枠=組番号(seed)」が必ず一致(番号一致保証)
+//  - 記入→取込で「テンプレの枠番号=トーナメント表の枠」が必ず一致する
+//    (枠の位置は割当表 bracket_sheets が正本。seed はシード順位なので枠番号を入れない)
 //  - 名簿に居ない選手は自動で出場登録(create_missing)。欠番=空き枠(不戦勝)
 // 実行: node --test test/roster-template.test.js
 process.env.DB_PATH = "/tmp/ktta_rtmpl_" + process.pid + ".db";
@@ -44,7 +45,7 @@ const rowsOf = (tpl, fill) => fill.map(f => {
   };
 });
 
-test("シングルス: テンプレ記入→取込→確定で 提出番号=枠=組番号 が一致・欠番は不戦勝", () => {
+test("シングルス: テンプレ記入→取込→確定で 提出番号=枠 が一致・欠番は不戦勝", () => {
   const EV = "男子シングルス";
   const t = db.createTournament({ name: "テンプレ検証S", date: "2027-12-01" });
   const tpl = parseTemplate(reports.buildRosterTemplateXlsx(t, EV, "singles"));
@@ -65,11 +66,15 @@ test("シングルス: テンプレ記入→取込→確定で 提出番号=枠=
   // 下書き→確定
   const c = db.confirmSheet(t.id, EV, {});
   assert.ok(c.ok, JSON.stringify(c).slice(0, 150));
-  // 番号一致保証: 枠(2*pos+slot) と 組番号(seed) が提出番号と一致
+  // 番号一致保証: テンプレの枠番号どおりの位置に入る(位置の正本は割当表)
   const ents = db.getEntrants(t.id, EV);
   const byName = new Map(ents.map(e => [e.name, e]));
-  assert.strictEqual(byName.get("提出 一郎").seed, 1);
-  assert.strictEqual(byName.get("提出 五郎").seed, 5, "欠番があっても提出番号=組番号");
+  const seats = db.synthesizeSheetFromMatches(t.id, EV).seats;
+  const posOf = (nm) => (seats.find(s => s.entrant_id === byName.get(nm).id) || {}).pos;
+  assert.strictEqual(posOf("提出 一郎"), 0, "提出番号1 → 枠1");
+  assert.strictEqual(posOf("提出 五郎"), 4, "欠番があっても提出番号5 → 枠5");
+  // seed(シード順位)は取込では付けない(付けると以後その種目の抽選が全員シード扱いになる)
+  assert.strictEqual(byName.get("提出 一郎").seed, 0);
   const r1 = db.getMatchesByTournament(t.id).filter(m => m.event === EV && m.bracket_round === 1)
     .sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0));
   assert.strictEqual(r1.length, 4, "8枠(番号5まで→2累乗8)");
@@ -92,7 +97,7 @@ test("ダブルス: 選手2列つきテンプレ→ペアとして出場登録�
   assert.ok(ap.ok, JSON.stringify(ap).slice(0, 200));
   const ents = db.getEntrants(t.id, EV);
   assert.strictEqual(ents.length, 2);
-  const e1 = ents.find(e => e.seed === 1);
+  const e1 = ents.find(e => /組 太郎|組太郎/.test(e.name || ""));
   assert.strictEqual(e1.is_doubles, 1, "ダブルスとして登録");
   assert.ok(/組 太郎.*組 次郎|組太郎.*組次郎/.test(e1.display_name), "ペア表示: " + e1.display_name);
   assert.ok(db.confirmSheet(t.id, EV, {}).ok, "確定できる");
@@ -112,6 +117,9 @@ test("団体: チーム名列テンプレ→1チーム=1枠で登録", () => {
   assert.ok(ap.ok, JSON.stringify(ap).slice(0, 200));
   const ents = db.getEntrants(t.id, EV);
   assert.strictEqual(ents.length, 2);
-  assert.strictEqual(ents.find(e => e.seed === 1).name, "釧路クラブA");
   assert.ok(db.confirmSheet(t.id, EV, {}).ok);
+  const seats = db.synthesizeSheetFromMatches(t.id, EV).seats;
+  const at0 = seats.find(s => s.pos === 0);
+  assert.ok(at0 && at0.entrant_id, "枠1に出場がいる");
+  assert.strictEqual(ents.find(e => e.id === at0.entrant_id).name, "釧路クラブA", "枠番号1 → 枠1");
 });

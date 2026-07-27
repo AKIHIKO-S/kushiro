@@ -1,6 +1,9 @@
-// 案B Phase2 データ整合(2026-07-18):
-//  2-2: 組番号(seed)=枠番号(pos+1) が「確定を通った瞬間」に全経路で成立する(座席編集swap/当日修正patch/取込)。
-//       確定の共通経路 materializeSheet で同期するので、提出番号・枠・組番号が必ず一致する(番号一致保証)。
+// 案B Phase2 データ整合(2026-07-18 / 2026-07-27 改訂):
+//  2-2: 座席編集・当日修正の結果が「紙の通し番号(bracket_number)」に正しく反映される。
+//       当初は entrants.seed に枠番号を同期していたが、seed は抽選・標準配置が読む
+//       「シード順位」であり、書き換えると確定済み種目の抽選が全員シード扱いになって
+//       機能しなくなる回帰を生んだ(実測)。番号一致は bracket_number が担う。
+//       seed を書き換えないことの回帰は test/sheet-seed-drawable.test.js。
 //  2-4: 結果入力済み種目で force無し確定が破壊ガードで失敗しても、entrants.entry_round を書き換えない
 //       (materializeSheet は generateBracket 成功後にだけ entrants を更新する)。
 // 実行: node --test test/sheet-data-integrity.test.js
@@ -27,7 +30,7 @@ function setupConfirmed(name, date, event, n) {
 }
 const entMap = (tid, ev) => new Map(db.getEntrants(tid, ev).map(e => [e.id, e]));
 
-test("2-2: 座席編集(swap)→確定で 組番号(seed)=枠番号 が全席で一致(番号一致保証)", () => {
+test("2-2: 座席編集(swap)→確定で 紙の通し番号が枠の並びどおりになる", () => {
   const EV = "男子シングルス";
   const t = setupConfirmed("seed全経路同期", "2027-12-10", EV, 4);
   // 確定直後: 枠1..4 の seed=1..4
@@ -40,28 +43,45 @@ test("2-2: 座席編集(swap)→確定で 組番号(seed)=枠番号 が全席で
   assert.ok(db.applySheetOps(t.id, EV, "", [{ op: "swap", a: 0, b: 3 }]).ok);
   assert.ok(db.confirmSheet(t.id, EV, {}).ok, "入替後の再確定");
 
-  // 全席で seed=pos+1 が成立
+  // 入替が実際に効いている(元・枠4の選手が枠1へ)
   const synth = db.synthesizeSheetFromMatches(t.id, EV);
+  const pos0After = (synth.seats.find(s => s.pos === 0) || {}).entrant_id;
+  assert.strictEqual(pos0After, pos3Before, "元・枠4の選手が枠1に来ている");
+
+  // 紙の通し番号は枠の並びどおりに振り直される(BYEを除く左山1..k/右山k+1..N)
+  const roster = db.buildRosterData(t.id).events.find(e => e.name === EV);
+  const byId = new Map(roster.entrants.map(e => [e.id, e]));
+  assert.strictEqual(byId.get(pos0After).no, 1, "枠1に来た選手の通し番号は1");
+  const nums = roster.entrants.filter(e => e.no_assigned).map(e => e.no).sort((a, b) => a - b);
+  assert.deepStrictEqual(nums, [1, 2, 3, 4], "欠番や重複がない");
+
+  // seed(シード順位)は確定で書き換えない(抽選の入力を壊さない)
   const ent = entMap(t.id, EV);
   synth.seats.forEach(s => {
-    if (s.entrant_id) assert.strictEqual(ent.get(s.entrant_id).seed, s.pos + 1, "枠" + (s.pos + 1) + "の組番号");
+    if (s.entrant_id) assert.strictEqual(ent.get(s.entrant_id).seed, 0, "seed は 0 のまま");
   });
-  // 入替が実際に効いている(元・枠4の選手が枠1へ)
-  const pos0After = (synth.seats.find(s => s.pos === 0) || {}).entrant_id;
-  assert.strictEqual(pos0After, pos3Before, "元・枠4の選手が枠1に来て、その組番号は1");
-  assert.strictEqual(ent.get(pos0After).seed, 1);
 });
 
-test("2-2: 当日修正(patch swap)後も 組番号=枠番号 が同期される", () => {
+test("2-2: 当日修正(patch swap)後も紙の通し番号が枠の並びに追随する", () => {
   const EV = "男子シングルス";
   const t = setupConfirmed("patch seed同期", "2027-12-12", EV, 4);
   // 進行前の当日入替(両枠とも未開始)。枠1と枠2を入替。
   const r = db.patchSheet(t.id, EV, { type: "swap", a_pos: 0, b_pos: 1, reason: "その他", by: "検証" });
   assert.ok(r.ok, JSON.stringify(r).slice(0, 150));
   const synth = db.synthesizeSheetFromMatches(t.id, EV);
+  const roster = db.buildRosterData(t.id).events.find(e => e.name === EV);
+  const byId = new Map(roster.entrants.map(e => [e.id, e]));
+  synth.seats.forEach(s => {
+    if (!s.entrant_id) return;
+    const row = byId.get(s.entrant_id);
+    assert.ok(row && row.no_assigned, "patch後も通し番号が付いている(枠" + (s.pos + 1) + ")");
+  });
+  const nums = roster.entrants.filter(e => e.no_assigned).map(e => e.no).sort((a, b) => a - b);
+  assert.deepStrictEqual(nums, [1, 2, 3, 4], "欠番や重複がない");
+  // seed は当日修正でも書き換えない
   const ent = entMap(t.id, EV);
   synth.seats.forEach(s => {
-    if (s.entrant_id) assert.strictEqual(ent.get(s.entrant_id).seed, s.pos + 1, "patch後 枠" + (s.pos + 1) + "の組番号");
+    if (s.entrant_id) assert.strictEqual(ent.get(s.entrant_id).seed, 0, "patch後も seed は 0 のまま");
   });
 });
 
@@ -74,8 +94,9 @@ test("2-4: 結果入力済みで force無し確定が失敗しても entrants.en
   assert.ok(real.length, "実対戦がある");
   db.finishMatchOp(real[0].id, { winner_slot: 1, sets: [[11, 5], [11, 5], [11, 5]] });
 
-  const target = db.getEntrants(t.id, EV).find(e => e.seed === 5);
-  assert.ok(target, "枠5の選手");
+  // seed は枠番号ではなくシード順位なので、枠の特定には使わない(取込時の氏名 P5 で引く)
+  const target = db.getEntrants(t.id, EV).find(e => e.name === "P5");
+  assert.ok(target, "枠5の選手(P5)");
   const before = parseInt(target.entry_round) || 1;
 
   // 下書きで枠5の登場回戦を2に(自動で大罫線)→ force無し確定

@@ -4081,11 +4081,17 @@ function materializeSheet(tournamentId, event, sheet, opts) {
     regenerate: true, force: !!opts.force, fixedLeaves: leaves, no_auto_advance: true,
   });
   if (made && made.error) return made;
-  // 確定の共通経路で「登場回戦」と「組番号(seed)=枠番号(pos+1)」を同期する。これで確定を通った瞬間に
-  // 提出番号・枠・組番号が必ず一致する(座席編集・当日修正・取込のどの経路でも成立=番号一致保証)。
+  // 確定の共通経路で「登場回戦」を entrants へ書き戻す(座席表の値を正とする)。
+  //
+  // ここで seed(組番号) には触らない。seed は「シード順位」であり、抽選(computeDrawLeaves)と
+  // 標準配置(buildSeededLeaves)が「seed>=1 ならシード選手」として読む入力だからである。
+  // 以前は番号一致保証のつもりで seed=枠番号(1..N) を全員に書いていたが、その結果
+  // 「確定した種目は全員がシード扱いになり、抽選し直しても抽選種を変えても配置が変わらない」
+  // (同所属の1回戦対戦も分離できず悪化する)という回帰を起こしていた。実測で確認済み。
+  // 紙に出る通し番号は generateBracket 内の numberTxn が bracket_number へ採番しており
+  // (BYEを除く左山1..k/右山k+1..N)、番号一致はそちらで既に成立している。
   const erUpd = sqlite.prepare("UPDATE entrants SET entry_round=? WHERE id=?");
-  const seedSync = sqlite.prepare("UPDATE entrants SET seed=? WHERE id=?");
-  canon.forEach(s => { if (s.entrant_id) { erUpd.run(s.entry_round, s.entrant_id); seedSync.run(s.pos + 1, s.entrant_id); } });
+  canon.forEach(s => { if (s.entrant_id) erUpd.run(s.entry_round, s.entrant_id); });
   return made;
 }
 
@@ -4478,7 +4484,10 @@ function importSheetRows(tournamentId, rows, opts) {
               partner_name: String(r.partner_name || "").trim() || undefined,
               partner_furigana: String(r.partner_furigana || "").trim(),
               partner_team: String(r.partner_team || "").trim(),
-              region: String(r.region || "").trim(), seed: pos1, status: "confirmed" });
+              // seed(シード順位)は入れない。枠の位置は seats_json が持ち、紙の通し番号は
+              // 確定時に bracket_number へ採番される。ここで seed に枠番号を入れると
+              // 「取込で作った選手が全員シード扱い」になり、その種目の抽選が機能しなくなる。
+              region: String(r.region || "").trim(), seed: 0, status: "confirmed" });
             byId.set(ent.id, ent);
           }
         } else {
@@ -4606,7 +4615,13 @@ function patchSheet(tournamentId, event, args) {
         { mode: "player", name: ent.display_name || ent.name, team: ent.team || "", entrant_id: ent.id, player_id: ent.player_id || null });
       if (r && r.error) throw Object.assign(new Error("patch_abort"), { _result: r });
       seats[pos].entrant_id = ent.id;
-      seats[pos].entry_round = Math.max(1, parseInt(ent.entry_round) || 1);
+      // 登場回戦は「枠の属性」であって人の属性ではない。3回戦から始まる大罫線の枠に補欠を
+      // 入れたら、その補欠も3回戦から登場する。ここで入ってくる人の entry_round を書くと、
+      // 木は大罫線のままなのに正本(シート)だけ通常配置に戻り、次の版で大罫線が消えていた。
+      // 枠の既存値をそのまま保つ(seats[pos].entry_round は触らない)。
+      // 差し替わった本人の entrants.entry_round も枠に合わせておく(表示・再導出の整合)。
+      sqlite.prepare("UPDATE entrants SET entry_round=? WHERE id=?")
+        .run(Math.max(1, parseInt(seats[pos].entry_round) || 1), ent.id);
     };
     label = "当日差替: 枠" + (pos + 1) + " に " + (ent.display_name || ent.name) + " を配置";
   } else return { error: "未知の当日修正: " + args.type };
@@ -4618,9 +4633,9 @@ function patchSheet(tournamentId, event, args) {
     sqlite.prepare(`UPDATE bracket_sheets SET status='superseded'
       WHERE tournament_id=? AND event=? AND status IN ('confirmed','dirty')`).run(tournamentId, event);
     const canon = _canonSeats(size, seats);
-    // 番号一致保証: 当日入替/差替後も 組番号(seed)=枠番号(pos+1) を同期(materializeSheetと同じ掟)。
-    const seedSync = sqlite.prepare("UPDATE entrants SET seed=? WHERE id=?");
-    canon.forEach(s => { if (s.entrant_id) seedSync.run(s.pos + 1, s.entrant_id); });
+    // seed(シード順位)は書き換えない。理由は materializeSheet のコメントを参照
+    // (書き換えると以後その種目の抽選が全員シード扱いになり機能しなくなる)。
+    // 紙の通し番号は bracket_number 側で採番済み。
     sqlite.prepare(`INSERT INTO bracket_sheets (id, tournament_id, event, rev_no, status, size,
       seats_json, sheet_hash, tree_hash, reason, confirmed_by, source, confirmed_at)
       VALUES (?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, 'patch', ?)`)
