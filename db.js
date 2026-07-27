@@ -9974,8 +9974,15 @@ function bulkFixEntrantInference(tournamentId, opts) {
 // 申込フォームの必須項目設定の既定値。field_config 列が空('')の既存大会にこれを適用すると
 // 現行フォームと完全一致する(後方互換の要)。連絡先(責任者名/メール/電話)は常に必須固定で載せない。
 // 値は "required"|"optional"|"hidden" の3値。
+// 項目キー → 既定の日本語ラベル(フォーム・スプレッドシート列の共通名)。主催者が field_meta.label で
+// 上書きできる。ここが「項目名の単一の出どころ」= フォームの見出しとシート列名が必ず一致する。
+const FIELD_LABELS = {
+  team_name: "団体名", furigana: "ふりがな", player_team: "所属", grade: "学年",
+  player_gender: "性別", birth_date: "生年月日", supervisor: "引率顧問", advisor: "顧問",
+  coach: "コーチ", note: "備考",
+};
 const DEFAULT_FIELD_CONFIG = {
-  version: 1,
+  version: 2,
   fields: {
     team_name: "required",     // 団体名(責任者セクション)= 現行は必須
     furigana: "hidden",        // ふりがな(選手行)= 現行は未収集
@@ -9989,6 +9996,10 @@ const DEFAULT_FIELD_CONFIG = {
   },
   custom: [],                  // 主催者定義の自由項目
   event_overrides: {},         // 種目名 → {key:"required|optional|hidden"} の上書き
+  // 項目ごとの付加設定(v2で新設)。fields は "required|optional|hidden" の文字列のまま据え置き、
+  // 表示名・説明文・並び順などはここに分離する(既存の fst()/fstFor() を一切壊さないための構造)。
+  // { key: { label?, help?, order? } }
+  field_meta: {},
 };
 
 // 大会の field_config(JSON文字列 or object)を解決し DEFAULT_FIELD_CONFIG と浅くマージして返す。
@@ -9999,13 +10010,71 @@ function resolveFieldConfig(tournament) {
   let cfg = null;
   try { cfg = typeof raw === "string" ? (raw ? JSON.parse(raw) : null) : (raw || null); } catch { cfg = null; }
   if (!cfg || typeof cfg !== "object") {
-    return { version: 1, fields: { ...DEFAULT_FIELD_CONFIG.fields }, custom: [], event_overrides: {} };
+    return { version: 2, fields: { ...DEFAULT_FIELD_CONFIG.fields }, custom: [], event_overrides: {}, field_meta: {} };
   }
   return {
     version: cfg.version || 1,
     fields: { ...DEFAULT_FIELD_CONFIG.fields, ...(cfg.fields || {}) },
     custom: Array.isArray(cfg.custom) ? cfg.custom : [],
     event_overrides: (cfg.event_overrides && typeof cfg.event_overrides === "object") ? cfg.event_overrides : {},
+    field_meta: (cfg.field_meta && typeof cfg.field_meta === "object") ? cfg.field_meta : {},
+  };
+}
+
+// 項目キーの表示名を解決する(field_meta.label > 既定の日本語ラベル > キー名)。
+// フォームの見出しとスプレッドシートの列名は必ずこの関数を通す=両者がズレない。
+function fieldLabelOf(cfg, key) {
+  const meta = (cfg && cfg.field_meta && cfg.field_meta[key]) || null;
+  const lbl = meta && typeof meta.label === "string" ? meta.label.trim() : "";
+  return lbl || FIELD_LABELS[key] || String(key);
+}
+
+// フォーム定義から「集計シートに必要な列」を導出する(案: 定義が正本・列は導出)。
+// 主催者がフォームに項目を足す/可視化すると、この関数の出力が変わり、GAS 側がその通りに列を作る。
+// 返り値の columns.* は [{key, label}] で、key は値の取り出し口:
+//   素のキー(furigana/grade/player_gender/advisor…) = 構造項目 / "cust:xxx" = 自由項目
+// 種目ごとに可視状態が違う場合は「1種目でも hidden でなければ列を作る」(union)。
+// シートは全種目共通の1枚なので、union にしないと一部種目の回答が落ちる。
+function buildFormSchema(tournament) {
+  const cfg = resolveFieldConfig(tournament);
+  let evCfg = [];
+  try {
+    const raw = tournament && tournament.event_config;
+    evCfg = typeof raw === "string" ? JSON.parse(raw || "[]") : (raw || []);
+  } catch (_) { evCfg = []; }
+  if (!Array.isArray(evCfg)) evCfg = [];
+  const evNames = evCfg.map(c => c && c.name).filter(Boolean);
+  // 「どこか1種目でも表示される」= 列を作る対象
+  const visibleAnywhere = (key) => {
+    const base = cfg.fields[key] || "hidden";
+    if (base !== "hidden") return true;
+    return evNames.some(ev => {
+      const ov = cfg.event_overrides[ev];
+      return ov && ov[key] && ov[key] !== "hidden";
+    });
+  };
+  const col = (key) => ({ key, label: fieldLabelOf(cfg, key) });
+  const customOf = (scope) => (cfg.custom || [])
+    .filter(c => c && c.key && (c.scope === "player" ? "player" : "submission") === scope)
+    .map(c => ({ key: "cust:" + c.key, label: String(c.label || c.key) }));
+
+  // 申込台帳(1申込=1行)に足す列。受付日時/団体名/責任者/連絡先/引率顧問/コーチ/備考は
+  // 既存の固定列で出ているため、ここでは「固定列に無いのに収集している項目」だけを足す。
+  const ledger = [];
+  if (visibleAnywhere("advisor")) ledger.push(col("advisor"));
+  ledger.push(...customOf("submission"));
+
+  // 選手行シート(シングルス/団体/ダブルス/ミックス)に足す列。氏名・年齢・チーム名・区分は固定列。
+  // 生年月日は「年齢」列で用が足り、かつ個人情報を集計表に増やさないため既定では列にしない。
+  const player = [];
+  ["furigana", "grade", "player_gender"].forEach(k => { if (visibleAnywhere(k)) player.push(col(k)); });
+  player.push(...customOf("player"));
+
+  return {
+    version: 2,
+    generated_at: new Date().toISOString(),
+    tournament_id: (tournament && tournament.id) || "",
+    columns: { ledger, player },
   };
 }
 
@@ -10036,7 +10105,9 @@ function sanitizeFieldConfig(raw) {
     const out = { key, label: String(c.label || key).slice(0, 60), type, required: !!c.required, scope };
     if (type === "select") out.options = (Array.isArray(c.options) ? c.options : []).map(o => String(o).slice(0, 60)).slice(0, 30);
     return out;
-  }).filter(Boolean);
+    // 自由項目の個数上限。1項目が集計シートの1列(ダブルスは2列)になるため、無制限に増やせると
+    // 誤操作でシートが列だらけになる。実運用で足りる数として50に制限する。
+  }).filter(Boolean).slice(0, 50);
   const overrides = {};
   if (raw.event_overrides && typeof raw.event_overrides === "object") {
     for (const ev of Object.keys(raw.event_overrides)) {
@@ -10044,7 +10115,21 @@ function sanitizeFieldConfig(raw) {
       if (Object.keys(st).length) overrides[String(ev).slice(0, 100)] = st;
     }
   }
-  return { version: 1, fields: cleanStates(raw.fields), custom, event_overrides: overrides };
+  // 項目ごとの付加設定(v2)。既知キーのみ・長さ制限つきで受ける(任意JSON流入の遮断)。
+  const meta = {};
+  if (raw.field_meta && typeof raw.field_meta === "object") {
+    for (const k of Object.keys(raw.field_meta)) {
+      if (!KEY_RE.test(k)) continue;
+      const m = raw.field_meta[k];
+      if (!m || typeof m !== "object") continue;
+      const o = {};
+      if (typeof m.label === "string" && m.label.trim()) o.label = m.label.trim().slice(0, 60);
+      if (typeof m.help === "string" && m.help.trim()) o.help = m.help.trim().slice(0, 200);
+      if (m.order != null && Number.isFinite(parseInt(m.order))) o.order = Math.max(0, Math.min(999, parseInt(m.order)));
+      if (Object.keys(o).length) meta[k] = o;
+    }
+  }
+  return { version: 2, fields: cleanStates(raw.fields), custom, event_overrides: overrides, field_meta: meta };
 }
 
 // 生年月日(YYYY-MM-DD)から基準日(asOf, YYYY-MM-DD)時点の満年齢を返す。不正・範囲外は null。
@@ -12355,7 +12440,7 @@ module.exports = {
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
   getSubmissionByToken, deleteSubmissionPII, purgeOldSubmissionPII,
-  resolveFieldConfig, DEFAULT_FIELD_CONFIG,
+  resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
   findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,
   updateEntrySettings, getOpenTournaments, getUsedEventsCatalog,
   // ブラケット JSON I/O

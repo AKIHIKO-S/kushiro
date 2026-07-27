@@ -107,7 +107,14 @@ function buildEntryFormHTML(tournament, events, opts) {
   const fcFields = fc.fields || {};
   const fcCustom = Array.isArray(fc.custom) ? fc.custom : [];
   const fcOverrides = (fc.event_overrides && typeof fc.event_overrides === "object") ? fc.event_overrides : {};
+  const fcMeta = (fc.field_meta && typeof fc.field_meta === "object") ? fc.field_meta : {};
   const fst = (k) => fcFields[k] || "hidden";   // 大会レベルの項目状態 "required|optional|hidden"
+  // 項目の表示名(主催者が field_meta.label で変更可能)。集計スプレッドシートの列名も同じ定義から
+  // 作られるため、フォームの見出しとシートの列名が必ず一致する。
+  const fcLabel = (k, def) => {
+    const l = fcMeta[k] && typeof fcMeta[k].label === "string" ? fcMeta[k].label.trim() : "";
+    return l || def;
+  };
   const reqSpan = '<span class="required">必須</span>';
   // 連絡先セクションの標準テキスト項目を状態に応じて出す。hidden=DOMごと省略 / optional=required属性なし。
   const stdTextField = (key, label, name, type, placeholder) => {
@@ -141,7 +148,8 @@ function buildEntryFormHTML(tournament, events, opts) {
   const submissionCustomHtml = fcCustom.filter(c => c && c.scope === "submission")
     .map(c => renderCustomFieldHtml(c, "cust_" + c.key)).join("");
   // FIELD_CFG をクライアントへ埋込(選手行の可変項目 addEntry / gatherFormData が参照)。
-  const fieldCfgJson = jsonForScript({ fields: fcFields, custom: fcCustom, event_overrides: fcOverrides });
+  const fieldCfgJson = jsonForScript({ fields: fcFields, custom: fcCustom, event_overrides: fcOverrides,
+    field_meta: fcMeta });
 
   // タンチョウ+卓球 イラスト (インラインSVG・HTTPS依存なし)
   const TANCHO_SVG = `<svg viewBox="0 0 200 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -725,9 +733,9 @@ ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v
     </div>
   </div>
   ${(fst('supervisor') !== 'hidden' || fst('advisor') !== 'hidden' || fst('coach') !== 'hidden')
-    ? '<div class="form-row">' + stdTextField('supervisor', '引率顧問', 'supervisor')
-        + stdTextField('advisor', '顧問', 'advisor')
-        + stdTextField('coach', 'コーチ', 'coach') + '</div>'
+    ? '<div class="form-row">' + stdTextField('supervisor', fcLabel('supervisor', '引率顧問'), 'supervisor')
+        + stdTextField('advisor', fcLabel('advisor', '顧問'), 'advisor')
+        + stdTextField('coach', fcLabel('coach', 'コーチ'), 'coach') + '</div>'
     : ''}
   ${submissionCustomHtml ? '<div class="form-row full">' + submissionCustomHtml + '</div>' : ''}
 </div>
@@ -820,13 +828,21 @@ function ttAgeAt(birth, asOf) {
   if ((+am[2]) < (+bm[2]) || ((+am[2]) === (+bm[2]) && (+am[3]) < (+bm[3]))) age--;
   return (age >= 0 && age < 150) ? age : null;
 }
+// 項目の表示名(主催者が field_meta.label で変更できる。未指定なら標準の日本語名)。
+// 集計スプレッドシートの列名も同じ定義から作られるため、フォームの見出しと列名が必ず一致する。
+function flabel(key, def) {
+  const m = FIELD_CFG.field_meta && FIELD_CFG.field_meta[key];
+  const l = m && typeof m.label === "string" ? m.label.trim() : "";
+  return l || def;
+}
 function playerFieldsHtml(prefix, ev) {
   const evName = ev.name;
   let h = "";
   const furi = fstFor(evName, "furigana");
   if (furi !== "hidden") {
-    h += '<input type="text" name="' + prefix + '_furi" placeholder="ふりがな' + (furi === "required" ? " (必須)" : "") +
-      '" aria-label="ふりがな"' + (furi === "required" ? " required" : "") + ' oninput="recalcTotal()" />';
+    const lb = escapeHtml(flabel("furigana", "ふりがな"));
+    h += '<input type="text" name="' + prefix + '_furi" placeholder="' + lb + (furi === "required" ? " (必須)" : "") +
+      '" aria-label="' + lb + '"' + (furi === "required" ? " required" : "") + ' oninput="recalcTotal()" />';
   }
   // 年齢自動判定が有効な種目は生年月日を入力(基準日=年度4/1 時点の満年齢で資格判定)。
   if (ev.age_check && ev.age_check.mode === "birthdate" && AGE_ASOF) {
@@ -837,13 +853,15 @@ function playerFieldsHtml(prefix, ev) {
   }
   const grade = fstFor(evName, "grade");
   if (grade !== "hidden") {
-    h += '<input type="text" name="' + prefix + '_grade" placeholder="学年' + (grade === "required" ? " (必須)" : "") +
-      '" aria-label="学年"' + (grade === "required" ? " required" : "") + ' />';
+    const lb = escapeHtml(flabel("grade", "学年"));
+    h += '<input type="text" name="' + prefix + '_grade" placeholder="' + lb + (grade === "required" ? " (必須)" : "") +
+      '" aria-label="' + lb + '"' + (grade === "required" ? " required" : "") + ' />';
   }
   const pg = fstFor(evName, "player_gender");
   if (pg !== "hidden") {
-    h += '<select name="' + prefix + '_pgender" aria-label="性別"' + (pg === "required" ? " required" : "") +
-      '><option value="">性別</option><option value="male">男</option><option value="female">女</option></select>';
+    const lb = escapeHtml(flabel("player_gender", "性別"));
+    h += '<select name="' + prefix + '_pgender" aria-label="' + lb + '"' + (pg === "required" ? " required" : "") +
+      '><option value="">' + lb + '</option><option value="male">男</option><option value="female">女</option></select>';
   }
   (FIELD_CFG.custom || []).filter(function (c) { return c && c.scope === "player"; }).forEach(function (c) {
     h += renderCustomClient(c, prefix + "_cust_" + c.key);

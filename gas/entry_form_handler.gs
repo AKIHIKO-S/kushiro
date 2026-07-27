@@ -25,6 +25,13 @@
  *   ⑤ デプロイ → 新しいデプロイ → ウェブアプリ
  *        - アクセス: 全員 / 実行ユーザー: 自分
  *   ⑥ デプロイ URL を KTTA Platform の申込フォーム設定に登録
+ *
+ * 列の自動追随:
+ *   申込フォームの項目設定(ふりがな・学年・性別・主催者定義の自由項目)が正本で、
+ *   シートの列はそこから導かれる。KTTA Platform が送信データに form_schema(必要な列の一覧)を
+ *   同梱し、この GAS が足りない列だけをシートの右端に追記する。既存列は消さず・並べ替えない。
+ *   → 主催者がフォームに項目を足すだけで、次の申込からシートに列が増える。
+ *   更新手順は OPERATIONS.md「9.5 申込フォームに項目を足したとき」を参照。
  */
 
 const SHEETS = {
@@ -146,6 +153,146 @@ function ensureAllSheets(ss) {
 }
 
 // ════════════════════════════════════════════
+// 列の自動追随 (フォーム定義 → シート列)
+// ════════════════════════════════════════════
+// 設計: 「申込フォームの項目定義が正本、シートの列はその導出」。
+// KTTA Platform が送信データに form_schema(必要な列の一覧)を同梱し、この GAS はそれに従って
+// 足りない列を作る。主催者がフォームに項目を足す/可視化すると、次の申込から列が自動で増える。
+//
+// 鉄則: 既存列の位置・順序は絶対に変えない(消さない・並べ替えない・間に挿さない)。
+//   集計用シートや種目別リストは「先頭N列」を固定位置で読んでいるため、位置を動かすと壊れる。
+//   新しい列は必ず右端に追記する。主催者が手で足した列も同じ理由で保持する。
+
+// ヘッダ行に不足列を右端へ追記し、{ヘッダ名: 列番号(1始まり)} を返す。
+// 1回の受信処理の中では同じシート+同じ列構成なら結果を使い回す(申込1件に選手が数十人いると
+// 行ごとに読み直すことになり、GAS の API 呼び出し回数が人数分ふくらむため)。
+var _colMapCache = {};
+function ensureColumns(sh, headers) {
+  const name = (typeof sh.getSheetName === "function") ? sh.getSheetName() : "";
+  const ck = name + " " + (headers || []).join("");
+  if (name && _colMapCache[ck]) return _colMapCache[ck];
+
+  const lastCol = Math.max(1, sh.getLastColumn());
+  const cur = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(function (v) { return String(v == null ? "" : v).trim(); });
+  const map = {};
+  cur.forEach(function (h, i) { if (h && map[h] == null) map[h] = i + 1; });
+  const missing = [];
+  (headers || []).forEach(function (h) {
+    const k = String(h == null ? "" : h).trim();
+    if (k && map[k] == null && missing.indexOf(k) < 0) missing.push(k);
+  });
+  if (missing.length) {
+    const start = cur.length + 1;
+    // シートの物理的な列数(既定26列)を超える場合は先に列を足す。足さずに書くと範囲外エラーで
+    // 申込1件がまるごと記録されない。
+    if (typeof sh.getMaxColumns === "function" && typeof sh.insertColumnsAfter === "function") {
+      const maxC = sh.getMaxColumns();
+      const need = start + missing.length - 1;
+      if (need > maxC) sh.insertColumnsAfter(maxC, need - maxC);
+    }
+    sh.getRange(1, start, 1, missing.length).setValues([missing]);
+    sh.getRange(1, start, 1, missing.length).setFontWeight("bold").setBackground("#f1f5f9");
+    missing.forEach(function (h, i) { map[h] = start + i; });
+  }
+  if (name) _colMapCache[ck] = map;
+  return map;
+}
+
+// 1行を「固定列は位置で・追加列は名前で」書き込む。
+//  - 固定列(baseValues)は従来の appendRow と完全に同じ並びで書く。既存シートの集計式や
+//    種目別リストが先頭N列を位置で読んでいるため、ここを名前解決に変えると壊れる。
+//    またダブルスの固定ヘッダは「年齢」が2つあり、名前では選手1/2を区別できない。
+//  - 追加列(extraCols)はヘッダ名で位置を解決する。右端のどこに増えても正しい列に入る。
+function appendRowWithExtras(sh, baseHeaders, baseValues, extraCols, extraObj) {
+  const headers = baseHeaders.concat(extraCols.map(function (c) { return c.label; }));
+  const map = ensureColumns(sh, headers);
+  const width = Math.max(sh.getLastColumn(), baseValues.length, 1);
+  const row = new Array(width).fill("");
+  baseValues.forEach(function (v, i) { if (i < width) row[i] = v; });
+  extraCols.forEach(function (c) {
+    const col = map[c.label];
+    if (col && col <= width) row[col - 1] = extraObj[c.label];
+  });
+  sh.appendRow(row);
+}
+
+// 送信データに同梱された列定義を取り出す(which: "ledger" | "player")。
+// 旧バージョンのプラットフォームからの送信(form_schema なし)では空配列=従来どおりの固定列。
+function schemaColumns(data, which) {
+  const s = data && data.form_schema;
+  const c = s && s.columns && s.columns[which];
+  return Array.isArray(c) ? c.filter(function (x) { return x && x.key && x.label; }) : [];
+}
+
+// 追加列のラベルが固定列と衝突したら連番を付けて避ける(自由項目に「備考」等を付けられても
+// 固定列を上書きしないため)。返り値は [{key, label}] で label は一意。
+function uniqueLabels(baseHeaders, cols) {
+  const used = {};
+  (baseHeaders || []).forEach(function (h) { used[String(h).trim()] = true; });
+  return (cols || []).map(function (c) {
+    let l = String(c.label == null ? "" : c.label).trim() || String(c.key);
+    if (used[l]) {
+      let n = 2;
+      while (used[l + "(" + n + ")"]) n++;
+      l = l + "(" + n + ")";
+    }
+    used[l] = true;
+    return { key: c.key, label: l };
+  });
+}
+
+// 値の正規化(チェックボックスの true/false をシート表示用に)。
+// 申込者が自由記述できる欄なので、"=" 等で始まる文字列がスプレッドシートの数式として
+// 実行されないように先頭にアポストロフィを付けてテキスト化する(表示上は見えない)。
+function cellValue(v) {
+  if (v === true) return "○";
+  if (v === false || v == null) return "";
+  if (typeof v === "string" && /^[=+\-@]/.test(v)) return "'" + v;
+  return v;
+}
+
+// 申込単位の値を取り出す。key が "cust:xxx" なら主催者定義の自由項目(data.extra)。
+function submissionValue(data, key) {
+  if (String(key).indexOf("cust:") === 0) {
+    const ex = (data && data.extra) || {};
+    return cellValue(ex[String(key).slice(5)]);
+  }
+  return cellValue(data ? data[key] : "");
+}
+
+// 選手単位の値を取り出す。slot: シングルス/団体=null、ペア=0(選手1)/1(選手2)。
+// ふりがな・性別は entry 直下、学年・生年月日・自由回答は extra_json 配下という
+// フォーム側の格納構造(entry_form.js の readSlot)に対応する。
+function playerValue(en, slot, key) {
+  const ex = (en && en.extra_json) || {};
+  const p = (slot == null) ? ex : ((ex.players && ex.players[slot]) || {});
+  const k = String(key);
+  if (k.indexOf("cust:") === 0) {
+    const ans = (p && p.answers) || {};
+    return cellValue(ans[k.slice(5)]);
+  }
+  if (k === "furigana") {
+    if (slot == null) return cellValue(en.furigana);
+    return cellValue(slot === 0 ? en.furigana1 : en.furigana2);
+  }
+  if (k === "player_gender") {
+    if (slot == null) return cellValue(en.gender);
+    return cellValue(slot === 0 ? en.gender : en.partner_gender);
+  }
+  return cellValue(p ? p[k] : "");   // grade / birth_date など extra_json 直下の項目
+}
+
+// 団体メンバー1名分の値。members_detail(将来の拡張)があればそこから、無ければ空。
+function memberValue(m, key) {
+  const k = String(key);
+  if (k.indexOf("cust:") === 0) {
+    const ans = (m && m.answers) || {};
+    return cellValue(ans[k.slice(5)]);
+  }
+  return cellValue(m ? m[k] : "");
+}
+
+// ════════════════════════════════════════════
 // POST 受信
 // ════════════════════════════════════════════
 
@@ -193,6 +340,7 @@ function doPost(e) {
       if (en.type === "doubles" || en.type === "mixed") return s + 2;
       return s + 1;
     }, 0);
+    // 固定列は従来どおりの並び + フォーム定義から導出した追加列(顧問・申込単位の自由項目)。
     const ledgerRow = [
       ts, data.tournament_name, data.team_name, data.contact_name,
       data.contact_tel, data.contact_email,
@@ -200,7 +348,10 @@ function doPost(e) {
       totalEntries, totalPeople, data.total_amount || 0,
       data.note || "", data.tournament_id || "",
     ];
-    ledgerSh.appendRow(ledgerRow);
+    const ledgerCols = uniqueLabels(LEDGER_HEADERS, schemaColumns(data, "ledger"));
+    const ledgerObj = {};
+    ledgerCols.forEach(function (c) { ledgerObj[c.label] = submissionValue(data, c.key); });
+    appendRowWithExtras(ledgerSh, LEDGER_HEADERS, ledgerRow, ledgerCols, ledgerObj);
     const ledgerRowNum = ledgerSh.getLastRow();
 
     // ─── 2. 各シートに振り分け ───
@@ -258,6 +409,19 @@ function distributeEntries(ss, data) {
   const sglSh = ss.getSheetByName(SHEETS.SINGLES);
   const bentoSh = ss.getSheetByName(SHEETS.BENTO);
 
+  // 選手単位の追加列(ふりがな・学年・性別・選手ごとの自由項目)をフォーム定義から取得する。
+  // 固定列の顔ぶれがシートごとに違うため、ラベルの衝突解決はシート別に行う。
+  const pCols = schemaColumns(data, "player");
+  const teamCols = uniqueLabels(TEAM_HEADERS, pCols);
+  const sglCols = uniqueLabels(SINGLES_HEADERS, pCols);
+  const mixCols = uniqueLabels(MIXED_HEADERS, pCols);
+  // ダブルスは1行にペア2名が入るので、選手1の列 → 選手2の列 の順で並べる。
+  const dblCols1 = uniqueLabels(DOUBLES_HEADERS,
+    pCols.map(function (c) { return { key: c.key, label: c.label + "1" }; }));
+  const dblCols2 = uniqueLabels(
+    DOUBLES_HEADERS.concat(dblCols1.map(function (c) { return c.label; })),
+    pCols.map(function (c) { return { key: c.key, label: c.label + "2" }; }));
+
   data.entries.forEach(en => {
     const kind = classifyEntry(en);
     const division = deriveDivision(en.event);
@@ -271,17 +435,22 @@ function distributeEntries(ss, data) {
       const list = members.length ? members : fallback;
       list.forEach(m => {
         if (!m.name) return;
-        teamSh.appendRow([
+        const obj = {};
+        teamCols.forEach(function (c) { obj[c.label] = memberValue(m, c.key); });
+        appendRowWithExtras(teamSh, TEAM_HEADERS, [
           en.event || "",
           division || "一般",
           m.name,
           m.age || "",
           m.team || teamName,
-        ]);
+        ], teamCols, obj);
       });
     } else if (kind === "doubles") {
       // ダブルス: 1 ペア = 1 行
-      dblSh.appendRow([
+      const obj = {};
+      dblCols1.forEach(function (c) { obj[c.label] = playerValue(en, 0, c.key); });
+      dblCols2.forEach(function (c) { obj[c.label] = playerValue(en, 1, c.key); });
+      appendRowWithExtras(dblSh, DOUBLES_HEADERS, [
         en.event || "",
         division,
         en.name1 || "",
@@ -290,25 +459,33 @@ function distributeEntries(ss, data) {
         en.age2 || "",
         en.team1 || en.team || teamName,
         en.team2 || en.team || teamName,
-      ]);
+      ], dblCols1.concat(dblCols2), obj);
     } else if (kind === "mixed") {
       // ミックス: ペアの 2 名をそれぞれ別行に展開
       if (en.name1) {
-        mixSh.appendRow([en.event || "", "男子", en.name1, en.age1 || "", en.team1 || en.team || teamName]);
+        const o1 = {};
+        mixCols.forEach(function (c) { o1[c.label] = playerValue(en, 0, c.key); });
+        appendRowWithExtras(mixSh, MIXED_HEADERS,
+          [en.event || "", "男子", en.name1, en.age1 || "", en.team1 || en.team || teamName], mixCols, o1);
       }
       if (en.name2) {
-        mixSh.appendRow([en.event || "", "女子", en.name2, en.age2 || "", en.team2 || en.team || teamName]);
+        const o2 = {};
+        mixCols.forEach(function (c) { o2[c.label] = playerValue(en, 1, c.key); });
+        appendRowWithExtras(mixSh, MIXED_HEADERS,
+          [en.event || "", "女子", en.name2, en.age2 || "", en.team2 || en.team || teamName], mixCols, o2);
       }
     } else if (kind === "singles") {
       // シングルス: 専用シートに記録
       if (en.name) {
-        sglSh.appendRow([
+        const obj = {};
+        sglCols.forEach(function (c) { obj[c.label] = playerValue(en, null, c.key); });
+        appendRowWithExtras(sglSh, SINGLES_HEADERS, [
           en.event || "",
           division,
           en.name,
           en.age || "",
           en.team || teamName,
-        ]);
+        ], sglCols, obj);
       }
     } else if (kind === "bento") {
       // 弁当: 個数 = en.count、または 1

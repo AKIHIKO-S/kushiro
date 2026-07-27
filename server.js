@@ -865,7 +865,12 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
           && /^https:\/\/script\.google\.com\//.test(tournament.entry_gas_url)) {
         // op_id を body に載せて中継する(op_id は X-Op-Id ヘッダ由来で payload に無いため、
         // これを渡さないと GAS 側の op_id 冪等が発火しない=再送でシート重複)。
-        gasRelay = await relayEntryToGas(tournament.entry_gas_url, opId ? { ...payload, op_id: opId } : payload);
+        // form_schema(申込フォームの項目定義から導出した必要列)も同梱する。GAS はこれに従って
+        // 不足列を作る=「フォームに項目を足したのにシートに列が無い」が構造的に起きない。
+        // 旧バージョンの GAS は未知キーを無視するだけなので、この同梱は後方互換。
+        const relayPayload = { ...payload, form_schema: db.buildFormSchema(tournament) };
+        if (opId) relayPayload.op_id = opId;
+        gasRelay = await relayEntryToGas(tournament.entry_gas_url, relayPayload);
       }
 
       // 受付成立 = 自サーバー保存 または GAS中継 の少なくとも一方が成功。

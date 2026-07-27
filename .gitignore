@@ -43,3 +43,6 @@ venv/
 
 # Claude Code (ローカル開発設定)
 .claude/
+
+# 作業用の一時ファイル(モック・実験スクリプト・検証用スクショ)
+scratchpad/
