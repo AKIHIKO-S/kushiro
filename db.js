@@ -528,6 +528,11 @@ try {
   // 申込管理用カラム
   addTCol("entries_open", "INTEGER DEFAULT 0");
   addTCol("entry_deadline", "TEXT DEFAULT ''");
+  // 締切の時刻("HH:MM")。空なら締切日の終日(23:59)まで受け付ける=従来どおり。
+  // 日付列を分けたままにするのは、既存の日付比較SQL(開催予定の抽出など)を壊さないため。
+  addTCol("entry_deadline_time", "TEXT DEFAULT ''");
+  // 大会全体の受付上限(申込枠の数。0=無制限)。種目ごとの上限は event_config[].capacity。
+  addTCol("entry_capacity", "INTEGER DEFAULT 0");
   addTCol("entry_events", "TEXT DEFAULT ''"); // JSON配列: ["男子シングルス","女子シングルス",...]
   addTCol("event_config", "TEXT DEFAULT ''"); // JSON配列: 詳細 [{name, fee, type, per_team, note}]
   addTCol("entry_gas_url", "TEXT DEFAULT ''"); // GAS Web App URL (申込先 スプレッドシート)
@@ -9081,14 +9086,9 @@ function getSubmissionByToken(token) {
 function createEntry(tournamentId, data) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
-  // 申込締切チェック（オプション）
-  if (!t.entries_open) return { error: "現在この大会は申込を受け付けていません" };
-  if (t.entry_deadline) {
-    const today = _todayJST();   // JST基準 (UTC比較だと締切日付近で誤判定 / #JST締切)
-    if (today > t.entry_deadline) {
-      return { error: `申込締切（${t.entry_deadline}）を過ぎています` };
-    }
-  }
+  // 申込締切チェック(受付フラグ + 締切日時。時刻はJST基準)
+  const closed = _entryClosedReason(t);
+  if (closed) return { error: closed };
 
   if (!data.name || !data.name.trim()) return { error: "氏名は必須です" };
   // events は文字列の配列を期待。オブジェクト等が混入しても SQLite バインドエラー(500)に
@@ -9226,6 +9226,117 @@ function inferGenderCategory(eventName, g, c) {
     else if (/ラージ/.test(n)) category = "large";
   }
   return { gender: gender || "male", category: category || "general" };
+}
+
+// ── 受付の制御(P3): 締切日時・定員 ─────────────────────────────────
+// JST の「今」を "YYYY-MM-DD HH:MM" で返す(締切の時刻比較用。文字列辞書順=時系列順)。
+function _nowJST() {
+  return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
+}
+// 締切の締め切り時刻を "YYYY-MM-DD HH:MM" で返す。時刻未設定なら締切日の終日(23:59)。
+function entryDeadlineAt(t) {
+  const d = String((t && t.entry_deadline) || "").trim();
+  if (!d) return "";
+  const tm = String((t && t.entry_deadline_time) || "").trim();
+  return d + " " + (/^\d{1,2}:\d{2}$/.test(tm) ? (tm.length === 4 ? "0" + tm : tm) : "23:59");
+}
+// 締切の人間向け表記("2026-08-31 17:00" / 時刻未設定なら "2026-08-31")。
+function entryDeadlineLabel(t) {
+  const d = String((t && t.entry_deadline) || "").trim();
+  if (!d) return "";
+  const tm = String((t && t.entry_deadline_time) || "").trim();
+  return /^\d{1,2}:\d{2}$/.test(tm) ? d + " " + tm : d;
+}
+
+// 種目ごと・大会全体の受付状況(受付済み枠数・上限・残り)を返す。
+// 枠の数え方は「entrant 1件=1枠」(ダブルスは1ペア、団体は1チームで1枠)。
+// 却下(rejected)は数えない。承認待ち(pending)は枠を押さえる扱いにする
+// (自動承認の運用では差は出ないが、手動承認に切り替えたとき二重取りを防ぐため)。
+// BYEは entrant を作らない設計(generateBracket が null として扱う)ので除外条件は不要。
+const _capCountStmt = () => sqlite.prepare(`
+  SELECT event, COUNT(*) c FROM entrants
+   WHERE tournament_id = ? AND COALESCE(status,'confirmed') <> 'rejected'
+   GROUP BY event`);
+function getEntryCapacityState(tournamentId) {
+  const t = stmts.getTournament.get(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  let evCfg = [];
+  try {
+    evCfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []);
+  } catch (_) { evCfg = []; }
+  if (!Array.isArray(evCfg)) evCfg = [];
+  const counts = {};
+  let total = 0;
+  _capCountStmt().all(tournamentId).forEach(r => { counts[r.event] = r.c; total += r.c; });
+  const capTotal = Math.max(0, parseInt(t.entry_capacity) || 0);
+  const events = evCfg.filter(c => c && c.name).map(c => {
+    const name = String(c.name);
+    const cap = Math.max(0, parseInt(c.capacity) || 0);
+    const used = counts[name] || 0;
+    return {
+      event: name, used, capacity: cap,
+      remaining: cap > 0 ? Math.max(0, cap - used) : null,   // null = 無制限
+      full: cap > 0 && used >= cap,
+    };
+  });
+  return {
+    events, total_used: total, total_capacity: capTotal,
+    total_remaining: capTotal > 0 ? Math.max(0, capTotal - total) : null,
+    total_full: capTotal > 0 && total >= capTotal,
+    deadline_at: entryDeadlineAt(t),
+    deadline_label: entryDeadlineLabel(t),
+    closed: !!_entryClosedReason(t),
+    closed_reason: _entryClosedReason(t) || "",
+  };
+}
+
+// 定員の検証。この申込を受けたら上限を超える種目があれば日本語エラー、無ければ null。
+// 申込1件に複数種目が入るので、種目ごとに「今回の申込分」を足してから判定する。
+// 満員の種目はフォーム側で選べないようにしてあるため、ここに来るのは
+// 「フォームを開いたまま時間が経ち、その間に埋まった」場合。何が満員かを明示して知らせる。
+function _enforceCapacity(t, entries) {
+  const st = getEntryCapacityState(t.id);
+  if (!st || st.error) return null;
+  const byEvent = {};
+  (entries || []).forEach(e => {
+    const ev = String((e && e.event) || "").trim();
+    if (!ev) return;
+    // 記入のない行は申込にならないので数えない(gatherFormData と同じ規則)
+    const filled = String(e.name || "").trim() || String(e.name1 || "").trim() || String(e.name2 || "").trim()
+      || String(e.team_name || "").trim() || (Array.isArray(e.members) && e.members.some(m => String(m).trim()));
+    if (!filled) return;
+    byEvent[ev] = (byEvent[ev] || 0) + 1;
+  });
+  const adding = Object.values(byEvent).reduce((s, n) => s + n, 0);
+  if (!adding) return null;
+  for (const ev of Object.keys(byEvent)) {
+    const row = st.events.find(x => x.event === ev);
+    if (!row || !row.capacity) continue;
+    if (row.used + byEvent[ev] > row.capacity) {
+      const left = Math.max(0, row.capacity - row.used);
+      return left === 0
+        ? `「${ev}」は定員（${row.capacity}）に達したため受け付けられません`
+        : `「${ev}」は残り${left}枠です（${byEvent[ev]}件の申込は受け付けられません）`;
+    }
+  }
+  if (st.total_capacity && st.total_used + adding > st.total_capacity) {
+    const left = Math.max(0, st.total_capacity - st.total_used);
+    return left === 0
+      ? `この大会は定員（${st.total_capacity}）に達したため受け付けられません`
+      : `この大会は残り${left}枠です（${adding}件の申込は受け付けられません）`;
+  }
+  return null;
+}
+
+// 受付が閉じている理由(日本語)。開いていれば null。
+function _entryClosedReason(t) {
+  if (!t) return "大会が見つかりません";
+  if (!t.entries_open) return "現在この大会は申込を受け付けていません";
+  const limit = entryDeadlineAt(t);
+  if (limit && _nowJST() > limit) {
+    return `申込締切（${entryDeadlineLabel(t)}）を過ぎています`;
+  }
+  return null;
 }
 
 // 自由項目の表示条件を評価する。when 未設定=常に表示。equals 指定=その値のとき表示、
@@ -9373,13 +9484,10 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
     }
   }
 
-  // 申込受付チェック
-  if (!t.entries_open) return { error: "現在この大会は申込を受け付けていません" };
-  if (t.entry_deadline) {
-    const today = _todayJST();   // JST基準 (UTC比較だと締切日付近で誤判定 / #JST締切)
-    if (today > t.entry_deadline) {
-      return { error: `申込締切（${t.entry_deadline}）を過ぎています` };
-    }
+  // 申込受付チェック(受付フラグ + 締切日時。時刻はJST基準)
+  {
+    const closed = _entryClosedReason(t);
+    if (closed) return { error: closed };
   }
 
   const entries = Array.isArray(formData.entries) ? formData.entries : [];
@@ -9426,6 +9534,8 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
   // テスト等の内部・信頼済み経路は検証しない(部分データを正当に投入するため)。
   // 不完全なら validation:true 付き error を返し、呼び出し側は GAS/シートへも中継しない(F1)。
   if (opts.enforce) {
+    const cmsg = _enforceCapacity(t, entries);
+    if (cmsg) return { error: cmsg, validation: true, full: true };
     const vmsg = _enforceRequiredFields(t, formData, entries);
     if (vmsg) return { error: vmsg, validation: true };
     const amsg = _enforceAgeEligibility(t, formData, entries);
@@ -10328,6 +10438,8 @@ function updateEntrySettings(tournamentId, settings) {
     UPDATE tournaments SET
       entries_open = ?,
       entry_deadline = ?,
+      entry_deadline_time = ?,
+      entry_capacity = ?,
       entry_events = ?,
       event_config = ?,
       field_config = ?,
@@ -10339,6 +10451,12 @@ function updateEntrySettings(tournamentId, settings) {
   `).run(
     _openFlag,
     settings.entry_deadline || "",
+    // 締切時刻は "HH:MM" のみ受ける(不正値は空=終日扱いに落とす)
+    /^\d{1,2}:\d{2}$/.test(String(settings.entry_deadline_time || "").trim())
+      ? String(settings.entry_deadline_time).trim() : "",
+    settings.entry_capacity !== undefined
+      ? Math.max(0, Math.min(99999, parseInt(settings.entry_capacity) || 0))
+      : (t.entry_capacity || 0),
     JSON.stringify(settings.entry_events || []),
     typeof evCfg === "string" ? evCfg : JSON.stringify(evCfg || []),
     fldCfg,
@@ -12511,6 +12629,7 @@ module.exports = {
   // Phase4: 申込者本人の閲覧トークン + データ品質
   getSubmissionByToken, deleteSubmissionPII, purgeOldSubmissionPII,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
+  getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel,
   findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,
   updateEntrySettings, getOpenTournaments, getUsedEventsCatalog,
   // ブラケット JSON I/O

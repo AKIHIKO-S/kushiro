@@ -58,9 +58,28 @@ function buildEntryFormHTML(tournament, events, opts) {
   const doublesEvents = events.filter(e => e.type === "doubles");
 
   // 各種目を JS データとして埋込 (インラインscript安全化: </script>等のブレイクアウト防止)
+  // 受付状況(定員・残り枠)。server が db.getEntryCapacityState を渡す。
+  // 種目名 → {remaining(null=無制限), full} に畳んでフォームへ埋め込む。
+  const capState = (opts.capacity && Array.isArray(opts.capacity.events)) ? opts.capacity : null;
+  const capByEvent = {};
+  if (capState) capState.events.forEach(c => { capByEvent[c.event] = { remaining: c.remaining, full: !!c.full }; });
+  // 受付が閉じている(締切超過 / 受付OFF / 大会全体が満員)ときは、フォームより先に理由を告げ、
+  // 送信を止める。理由を出さずに送信時エラーだけ返すと、全部入力してから弾かれることになる。
+  const closedReason = capState
+    ? (capState.closed_reason || (capState.total_full ? "この大会は定員に達したため、申込を締め切りました。" : ""))
+    : "";
+  const closedNotice = closedReason
+    ? '<div class="closed-banner"><strong>申込は締め切りました</strong>' +
+      '<div class="closed-why">' + escapeHtml(closedReason) + "</div>" +
+      "<div class=\"closed-why\">お問い合わせは大会本部までお願いします。</div></div>"
+    : "";
+
   const eventsJson = jsonForScript(events.map(e => ({
     name: e.name,
     fee: e.fee || 0,
+    // 残り枠(null=無制限)と満員フラグ。満員種目は行を追加できないようにする。
+    remaining: capByEvent[e.name] ? capByEvent[e.name].remaining : null,
+    full: capByEvent[e.name] ? capByEvent[e.name].full : false,
     // 中高校生料金 (空/未設定なら一般と同額)。数値化し、未設定は null にして「一般と同じ」と判定。
     fee_student: (e.fee_student != null && e.fee_student !== "" && !isNaN(parseInt(e.fee_student)))
       ? (parseInt(e.fee_student) || 0) : null,
@@ -406,6 +425,24 @@ function buildEntryFormHTML(tournament, events, opts) {
   input:user-invalid { border-color: var(--red); background: #fff7f7; }
   /* 項目の説明文(主催者が設定)。ラベルより一段小さく、入力欄の直下に添える */
   .fld-help { font-size: 12px; color: var(--ink-2); margin-top: 5px; line-height: 1.6; }
+  /* 定員の表示。残りわずか=琥珀、受付終了=丹頂(いずれも状態を示す機能色) */
+  .cap-tag {
+    display: inline-block; font-size: 11.5px; font-weight: 700;
+    padding: 3px 9px; border-radius: 3px; margin-left: 8px;
+    background: var(--amber-bg); color: var(--amber);
+  }
+  .cap-tag.cap-full { background: #fdecee; color: var(--red); }
+  .cap-closed {
+    padding: 14px 16px; font-size: 13.5px; color: var(--ink-2);
+    background: var(--card-2); border-top: 1px solid var(--line);
+  }
+  /* 受付終了バナー(締切超過・受付OFF・大会全体が満員) */
+  .closed-banner {
+    background: #fdecee; border-top: 3px solid var(--red);
+    padding: 18px 22px; color: #7f1d1d;
+    font-size: 15px; font-weight: 800; line-height: 1.7;
+  }
+  .closed-banner .closed-why { font-size: 13px; font-weight: 500; margin-top: 4px; color: #8a4a4a; }
 
   /* ── 追加ボタン / カウント ── */
   .btn-add {
@@ -723,6 +760,7 @@ ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v
     ${deadline ? "　·　締切 " + escapeHtml(deadline) : ""}
   </div>
 </div>
+${closedNotice}
 
 <form id="entryForm" onsubmit="return submitForm(event)">
 
@@ -786,7 +824,7 @@ ${_consentAge != null ? `<div class="form-section" style="padding:16px 18px;">
   </label>
 </div>` : ''}
 ${turnstileSitekey ? '<div class="cf-turnstile" data-sitekey="' + escapeHtml(turnstileSitekey) + '" style="margin:14px 0"></div>' : ''}
-<button type="submit" class="submit-btn" id="submitBtn">申込内容を送信</button>
+<button type="submit" class="submit-btn" id="submitBtn"${closedReason ? " disabled" : ""}>${closedReason ? "受付は終了しました" : "申込内容を送信"}</button>
 <div id="messageBox"></div>
 
 </form>
@@ -973,22 +1011,33 @@ function renderEvents() {
     const feeTagHtml = hasStuFee
       ? '一般 ¥' + fee.toLocaleString("ja-JP") + ' ／ 中高生 ¥' + feeStu.toLocaleString("ja-JP") + unitSfx
       : '参加料 ¥' + fee.toLocaleString("ja-JP") + unitSfx;
+    // 定員: 満員なら申込欄を出さず「受付終了」、残りわずかなら残り枠を添える
+    const isFull = !!ev.full;
+    const remain = (ev.remaining == null) ? null : ev.remaining;
+    const capTag = isFull
+      ? '<span class="cap-tag cap-full">受付終了（定員に達しました）</span>'
+      : (remain != null && remain <= 5
+          ? '<span class="cap-tag">残り' + remain + unit + '</span>'
+          : "");
     det.innerHTML = '<summary>' +
       escapeHtml(ev.name) +
       '<span class="fee-tag">' + feeTagHtml + '</span>' +
-      '<span class="count-badge" id="count_' + idx + '">0 ' + unit + '</span>' +
+      capTag +
+      (isFull ? "" : '<span class="count-badge" id="count_' + idx + '">0 ' + unit + '</span>') +
       '</summary>' +
-      '<div class="members" id="members_' + idx + '"></div>' +
-      '<div class="add-buttons">' +
-        '<button type="button" class="btn-add" onclick="addEntry(' + idx + ')">' +
-          '+ ' + unit + 'を1つ追加</button>' +
-        (isTeam ? '' :
-          '<button type="button" class="btn-add btn-add-bulk" onclick="addEntryBulk(' + idx + ', 5)">' +
-          '+ 5' + unit + 'を一括追加</button>') +
-      '</div>';
+      (isFull
+        ? '<div class="cap-closed">この種目は定員に達したため、申込を締め切りました。</div>'
+        : '<div class="members" id="members_' + idx + '"></div>' +
+          '<div class="add-buttons">' +
+            '<button type="button" class="btn-add" onclick="addEntry(' + idx + ')">' +
+              '+ ' + unit + 'を1つ追加</button>' +
+            (isTeam ? '' :
+              '<button type="button" class="btn-add btn-add-bulk" onclick="addEntryBulk(' + idx + ', 5)">' +
+              '+ 5' + unit + 'を一括追加</button>') +
+          '</div>');
     c.appendChild(det);
-    // ★ 初期1行をプリ表示 (空行で何をすればいいか分かりやすく)
-    addEntry(idx);
+    // ★ 初期1行をプリ表示 (空行で何をすればいいか分かりやすく)。満員種目には行を出さない。
+    if (!isFull) addEntry(idx);
   });
 }
 

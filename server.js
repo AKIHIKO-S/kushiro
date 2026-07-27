@@ -3166,6 +3166,11 @@ app.get("/api/tournaments/:id/entry-form-config", (req, res) => {
                   venue: tournament.venue, status: tournament.status },
     events,
     field_config: db.resolveFieldConfig(tournament),   // 必須項目設定(空なら既定=現行フォーム相当)
+    // 受付の制御(P3): 締切日時・定員の現在値と、種目ごとの受付済み枠数
+    entry_deadline: tournament.entry_deadline || "",
+    entry_deadline_time: tournament.entry_deadline_time || "",
+    entry_capacity: tournament.entry_capacity || 0,
+    capacity: db.getEntryCapacityState(tournament.id),
     suggested_gas_url: "https://script.google.com/macros/s/AKfycb.../exec",
   });
 });
@@ -4726,11 +4731,12 @@ app.get("/entry/:id", (req, res) => {
     const html = entryForm.buildEntryFormHTML(tournament, events, {
       gas_url: postUrl,
       admin_email: req.query.admin_email || "",
-      deadline: tournament.entry_deadline || req.query.deadline || "",
+      deadline: db.entryDeadlineLabel(tournament) || req.query.deadline || "",
       payment_note: req.query.payment_note || "",
       notes: req.query.notes || "",
       turnstile_sitekey: process.env.TURNSTILE_SITEKEY || "",
       field_config: db.resolveFieldConfig(tournament),   // 必須項目設定(空なら既定=現行フォーム相当)
+      capacity: db.getEntryCapacityState(tournament.id), // 定員・残り枠(満員種目は選べなくする)
     });
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
