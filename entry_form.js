@@ -117,32 +117,43 @@ function buildEntryFormHTML(tournament, events, opts) {
   };
   const reqSpan = '<span class="required">必須</span>';
   // 連絡先セクションの標準テキスト項目を状態に応じて出す。hidden=DOMごと省略 / optional=required属性なし。
+  // field_meta.help があれば入力欄の下に説明文を出す(項目名と同じく主催者が設定できる)。
   const stdTextField = (key, label, name, type, placeholder) => {
     const st = fst(key);
     if (st === "hidden") return "";
     const req = st === "required";
+    const helpTxt = fcMeta[key] && typeof fcMeta[key].help === "string" ? fcMeta[key].help.trim() : "";
     return '<div><label>' + label + (req ? " " + reqSpan : "") + "</label>" +
       '<input type="' + (type || "text") + '" name="' + name + '"' + (req ? " required" : "") +
-      (placeholder ? ' placeholder="' + escapeHtml(placeholder) + '"' : "") + "></div>";
+      (placeholder ? ' placeholder="' + escapeHtml(placeholder) + '"' : "") + ">" +
+      (helpTxt ? '<div class="fld-help">' + escapeHtml(helpTxt) + "</div>" : "") + "</div>";
   };
   // 自由項目1つ分のHTMLを生成(text/select/checkbox)。name はフォーム送信キー。
+  // 説明文(help)・入力制限(input/maxlen)・表示条件(when → data-wk/data-wv、ttWhenSync が制御)に対応。
   const renderCustomFieldHtml = (c, name) => {
     if (!c || !c.key) return "";
     const req = !!c.required;
     const label = escapeHtml(c.label || c.key) + (req ? " " + reqSpan : "");
+    const helpHtml = c.help ? '<div class="fld-help">' + escapeHtml(String(c.help)) + "</div>" : "";
+    const whenAttr = (c.when && c.when.key)
+      ? ' data-wk="' + escapeHtml(String(c.when.key)) + '" data-wv="' + escapeHtml(c.when.equals != null ? String(c.when.equals) : "") + '"'
+      : "";
+    const textAttrs = (c.input === "number" ? ' inputmode="numeric" pattern="[0-9]*"'
+      : c.input === "tel" ? ' inputmode="tel"' : "") +
+      (c.maxlen ? ' maxlength="' + parseInt(c.maxlen) + '"' : "");
     if (c.type === "checkbox") {
-      return '<div class="cust-field"><label class="cust-check"><input type="checkbox" name="' + name + '" value="1"' +
-        (req ? " required" : "") + "> " + label + "</label></div>";
+      return '<div class="cust-field"' + whenAttr + '><label class="cust-check"><input type="checkbox" name="' + name + '" value="1"' +
+        (req ? " required" : "") + "> " + label + "</label>" + helpHtml + "</div>";
     }
     if (c.type === "select") {
       const optsHtml = (Array.isArray(c.options) ? c.options : []).map(o =>
         '<option value="' + escapeHtml(String(o)) + '">' + escapeHtml(String(o)) + "</option>").join("");
-      return '<div class="cust-field"><label>' + label + "</label>" +
+      return '<div class="cust-field"' + whenAttr + '><label>' + label + "</label>" +
         '<select name="' + name + '"' + (req ? " required" : "") +
-        '><option value="">選択してください</option>' + optsHtml + "</select></div>";
+        '><option value="">選択してください</option>' + optsHtml + "</select>" + helpHtml + "</div>";
     }
-    return '<div class="cust-field"><label>' + label + "</label>" +
-      '<input type="text" name="' + name + '"' + (req ? " required" : "") + "></div>";
+    return '<div class="cust-field"' + whenAttr + '><label>' + label + "</label>" +
+      '<input type="text" name="' + name + '"' + (req ? " required" : "") + textAttrs + ">" + helpHtml + "</div>";
   };
   // 申込単位スコープの自由項目(scope=submission)を連絡先セクション末尾に出す。
   const submissionCustomHtml = fcCustom.filter(c => c && c.scope === "submission")
@@ -393,6 +404,8 @@ function buildEntryFormHTML(tournament, events, opts) {
   }
   .form-row input::placeholder, .form-row textarea::placeholder { color: #8a7a64; }
   input:user-invalid { border-color: var(--red); background: #fff7f7; }
+  /* 項目の説明文(主催者が設定)。ラベルより一段小さく、入力欄の直下に添える */
+  .fld-help { font-size: 12px; color: var(--ink-2); margin-top: 5px; line-height: 1.6; }
 
   /* ── 追加ボタン / カウント ── */
   .btn-add {
@@ -798,12 +811,21 @@ function fstFor(evName, key) {
   return (FIELD_CFG.fields && FIELD_CFG.fields[key]) || "hidden";
 }
 // クライアント側の自由項目レンダラ(text/select/checkbox)。name はフォーム送信キー。
+// 説明文は選手行(グリッド密集地帯)では title 属性で出す。入力制限(input/maxlen)・
+// 表示条件(when → data-wk/data-wv)はサーバ側レンダラと同じ挙動にする。
 function renderCustomClient(c, name) {
   if (!c || !c.key) return "";
   const req = !!c.required;
   const label = c.label || c.key;
+  const helpAttr = c.help ? ' title="' + escapeHtml(String(c.help)) + '"' : "";
+  const whenAttr = (c.when && c.when.key)
+    ? ' data-wk="' + escapeHtml(String(c.when.key)) + '" data-wv="' + escapeHtml(c.when.equals != null ? String(c.when.equals) : "") + '"'
+    : "";
+  const textAttrs = (c.input === "number" ? ' inputmode="numeric" pattern="[0-9]*"'
+    : c.input === "tel" ? ' inputmode="tel"' : "") +
+    (c.maxlen ? ' maxlength="' + parseInt(c.maxlen) + '"' : "");
   if (c.type === "checkbox") {
-    return '<label class="cust-check" style="grid-column:1/-1;display:flex;align-items:center;gap:6px;font-size:13px;">' +
+    return '<label class="cust-check"' + whenAttr + helpAttr + ' style="grid-column:1/-1;display:flex;align-items:center;gap:6px;font-size:13px;">' +
       '<input type="checkbox" name="' + name + '" value="1"' + (req ? " required" : "") + '> ' +
       escapeHtml(label) + (req ? " (必須)" : "") + '</label>';
   }
@@ -811,11 +833,31 @@ function renderCustomClient(c, name) {
     const opts = (c.options || []).map(function (o) {
       return '<option value="' + escapeHtml(String(o)) + '">' + escapeHtml(String(o)) + '</option>';
     }).join("");
-    return '<select name="' + name + '"' + (req ? " required" : "") + '>' +
+    return '<select name="' + name + '"' + (req ? " required" : "") + whenAttr + helpAttr + '>' +
       '<option value="">' + escapeHtml(label) + (req ? " (必須)" : "") + '</option>' + opts + '</select>';
   }
   return '<input type="text" name="' + name + '" placeholder="' + escapeHtml(label) + (req ? " (必須)" : "") + '"' +
-    (req ? " required" : "") + ' />';
+    (req ? " required" : "") + whenAttr + helpAttr + textAttrs + ' />';
+}
+// 表示条件(data-wk/data-wv)の一括評価。参照先の値は「同じ選手行の回答」→「申込単位の回答」の順で
+// 解決する(サーバ側 _customVisible と同じ規則)。非表示中は disabled にして送信・必須検証から外す。
+function ttWhenSync() {
+  const nodes = document.querySelectorAll('[data-wk]');
+  nodes.forEach(function (el) {
+    const key = el.getAttribute('data-wk');
+    const want = el.getAttribute('data-wv') || "";
+    // 参照先: 同じ選手行(.entry-row)に「〜_cust_key」があればそれ、
+    // 無ければフォーム全体の「cust_key」(申込単位)。
+    const row = el.closest('.entry-row');
+    let src = row ? row.querySelector('[name$="_cust_' + key + '"]') : null;
+    if (!src) src = document.querySelector('[name="cust_' + key + '"]');
+    let v = "";
+    if (src) v = (src.type === "checkbox") ? (src.checked ? "1" : "") : (src.value || "");
+    const met = want ? (v === want) : !!v;
+    el.style.display = met ? "" : "none";
+    el.querySelectorAll('input,select,textarea').forEach(function (inp) { inp.disabled = !met; });
+    if (el.tagName === "INPUT" || el.tagName === "SELECT") el.disabled = !met;
+  });
 }
 // 選手1スロット分の可変項目(ふりがな/学年/性別/選手スコープ自由項目)のHTML。
 // prefix は input 名の接頭辞(行スコープで一意)。所属(player_team)は addEntry 側で扱う。
@@ -1049,6 +1091,7 @@ function addEntry(eventIdx) {
   html += divSeg;
   row.innerHTML = html;
   container.appendChild(row);
+  ttWhenSync();   // 追加行の表示条件つき項目を初期状態(非表示なら disabled)に揃える
   recalcTotal();
 }
 
@@ -1139,7 +1182,7 @@ function gatherFormData() {
   const subAnswers = {};
   (FIELD_CFG.custom || []).filter(function (c) { return c && c.scope === "submission"; }).forEach(function (c) {
     const el = form.querySelector('[name="cust_' + c.key + '"]');
-    if (!el) return;
+    if (!el || el.disabled) return;   // disabled=表示条件で非表示中(回答として送らない)
     const v = el.type === "checkbox" ? !!el.checked : (el.value || "");
     if (v !== "" && v !== false) subAnswers[c.key] = v;
   });
@@ -1166,7 +1209,7 @@ function gatherFormData() {
       const answers = {};
       (FIELD_CFG.custom || []).filter((c) => c && c.scope === "player").forEach((c) => {
         const el = row.querySelector('[name$="' + token + "_cust_" + c.key + '"]');
-        if (!el) return;
+        if (!el || el.disabled) return;   // disabled=表示条件で非表示中(回答として送らない)
         const v = el.type === "checkbox" ? !!el.checked : (el.value || "");
         if (v !== "" && v !== false) answers[c.key] = v;
       });
@@ -1503,10 +1546,15 @@ window.addEventListener("resize", ttPostHeight);
 // レイアウト/フォント確定後の取りこぼし対策に数回だけ遅延送信
 [120, 500, 1200].forEach(function (ms) { setTimeout(ttPostHeight, ms); });
 
+// 表示条件つき項目の連動(入力のたびに全条件を評価し直す。件数は高々数十なので全走査で足りる)
+document.getElementById("entryForm").addEventListener("input", ttWhenSync);
+document.getElementById("entryForm").addEventListener("change", ttWhenSync);
+
 // 初期化 (失敗しても安全網が案内を表示)
 try {
   renderEvents();
   recalcTotal();
+  ttWhenSync();
   ttPostHeight();
 } catch (e) {
   if (window.__ttShowFatal) window.__ttShowFatal(e && e.message);

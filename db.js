@@ -9228,6 +9228,33 @@ function inferGenderCategory(eventName, g, c) {
   return { gender: gender || "male", category: category || "general" };
 }
 
+// 自由項目の表示条件を評価する。when 未設定=常に表示。equals 指定=その値のとき表示、
+// 未指定=参照先が入力/チェックされていれば表示。参照先の可視状態は再帰評価しない(1段のみ)——
+// 非表示の参照先は値が空なので条件不成立=自分も非表示、で自然に閉じる。
+function _customVisible(c, getVal) {
+  if (!c || !c.when) return true;
+  const v = getVal(c.when.key);
+  if (c.when.equals != null) return String(v == null ? "" : v) === String(c.when.equals);
+  return !(v == null || v === "" || v === false);
+}
+// 自由項目の値の書式検証(入力があるときのみ。必須の空チェックは呼び出し側)。
+// エラーなら日本語文字列、OKなら null。
+function _customValueError(c, v) {
+  if (v == null || v === "" || v === false) return null;
+  const label = c.label || c.key;
+  if (c.type === "select") {
+    const opts = Array.isArray(c.options) ? c.options : [];
+    if (opts.length && !opts.includes(String(v))) return `「${label}」の選択肢が正しくありません`;
+  }
+  if (c.type === "text") {
+    const s = String(v);
+    if (c.maxlen && s.length > c.maxlen) return `「${label}」は${c.maxlen}文字以内で入力してください`;
+    if (c.input === "number" && !/^[0-9]+$/.test(s)) return `「${label}」は数字で入力してください`;
+    if (c.input === "tel" && !/^[0-9+\-() ]+$/.test(s)) return `「${label}」は電話番号の形式で入力してください`;
+  }
+  return null;
+}
+
 // 申込の必須項目をサーバ側で検証する(field_config 準拠)。満たさなければ日本語エラー文字列、
 // 満たせば null を返す。記入済みの種目行のみ検証し、空行(未申込)は弾かない。
 function _enforceRequiredFields(t, formData, entries) {
@@ -9248,21 +9275,40 @@ function _enforceRequiredFields(t, formData, entries) {
   if (F.advisor === "required" && miss(formData.advisor)) return "顧問を入力してください";
   if (F.coach === "required" && miss(formData.coach)) return "コーチを入力してください";
   if (F.note === "required" && miss(formData.note)) return "通信欄を入力してください";
+  // 申込単位の自由項目: 表示条件を評価し、非表示の値は捨てる(クライアント改造で送り込まれた値を
+  // 記録しない)。表示中のものだけ 必須チェック → 書式チェック(文字数上限・数字のみ・選択肢の実在)。
+  const subGetVal = (k) => formData.extra && formData.extra[k];
   for (const c of (fc.custom || [])) {
-    if (c && c.scope === "submission" && c.required) {
-      const a = formData.extra && formData.extra[c.key];
-      if (a == null || a === "" || a === false) return `「${c.label || c.key}」を入力してください`;
+    if (!c || c.scope === "player") continue;
+    if (!_customVisible(c, subGetVal)) {
+      if (formData.extra && (c.key in formData.extra)) delete formData.extra[c.key];
+      continue;
     }
+    const a = subGetVal(c.key);
+    if (c.required && (a == null || a === "" || a === false)) return `「${c.label || c.key}」を入力してください`;
+    const em = _customValueError(c, a); if (em) return em;
   }
-  const playerCustoms = (fc.custom || []).filter(c => c && c.scope === "player" && c.required);
+  const playerCustoms = (fc.custom || []).filter(c => c && c.scope === "player");
   // 選手スロット1つ分の必須検証(ふりがな/学年/選手 custom)。extra は当該選手の申告 object。
   const checkSlot = (evName, extra) => {
     const ex = (extra && typeof extra === "object") ? extra : {};
     if (stFor(evName, "furigana") === "required" && miss(ex.furigana)) return `${evName}: ふりがなを入力してください`;
     if (stFor(evName, "grade") === "required" && miss(ex.grade)) return `${evName}: 学年を入力してください`;
+    // 選手ごとの自由項目。表示条件の参照先は「同じ選手の回答」→無ければ「申込単位の回答」の順で解決
+    // (申込単位の「宿泊が必要」チェック→選手ごとの「宿泊日数」のような組合せを許すため)。
+    const getVal = (k) => {
+      const pv = ex.answers && ex.answers[k];
+      if (pv != null && pv !== "" && pv !== false) return pv;
+      return subGetVal(k);
+    };
     for (const c of playerCustoms) {
+      if (!_customVisible(c, getVal)) {
+        if (ex.answers && (c.key in ex.answers)) delete ex.answers[c.key];
+        continue;
+      }
       const a = ex.answers && ex.answers[c.key];
-      if (a == null || a === "" || a === false) return `${evName}: 「${c.label || c.key}」を入力してください`;
+      if (c.required && (a == null || a === "" || a === false)) return `${evName}: 「${c.label || c.key}」を入力してください`;
+      const em = _customValueError(c, a); if (em) return `${evName}: ${em}`;
     }
     return null;
   };
@@ -9280,13 +9326,17 @@ function _enforceRequiredFields(t, formData, entries) {
       if (!n1 && !n2) continue;
       const players = Array.isArray(ex.players) ? ex.players : [];
       // 記入済みスロットのみ所属・ふりがな等を必須にする(片名のみの未完成ペアで誤エラーを出さない / W3)。
+      // ふりがなはペアでは ent.furigana1/2 に載る(players[i] には無い)ため、明示的に合流させる。
+      // 合流しないと「ふりがな必須のダブルス種目は記入済みでも常にエラー」になる(2026-07-27修正)。
       if (n1) {
         if (stFor(evName, "player_team") === "required" && miss(ent.team1)) return `${evName}: 選手1の所属を入力してください`;
-        const m = checkSlot(evName, players[0]); if (m) return m.replace(evName + ":", evName + ": 選手1");
+        const m = checkSlot(evName, { furigana: ent.furigana1, ...(players[0] || {}) });
+        if (m) return m.replace(evName + ":", evName + ": 選手1");
       }
       if (n2) {
         if (stFor(evName, "player_team") === "required" && miss(ent.team2)) return `${evName}: 選手2の所属を入力してください`;
-        const m = checkSlot(evName, players[1]); if (m) return m.replace(evName + ":", evName + ": 選手2");
+        const m = checkSlot(evName, { furigana: ent.furigana2, ...(players[1] || {}) });
+        if (m) return m.replace(evName + ":", evName + ": 選手2");
       }
     } else {
       const name = String(ent.name || "").trim();
@@ -10104,10 +10154,30 @@ function sanitizeFieldConfig(raw) {
     const scope = c.scope === "player" ? "player" : "submission";
     const out = { key, label: String(c.label || key).slice(0, 60), type, required: !!c.required, scope };
     if (type === "select") out.options = (Array.isArray(c.options) ? c.options : []).map(o => String(o).slice(0, 60)).slice(0, 30);
+    // ── 項目の作り込み(v2) ──
+    // help: 入力欄の下に出す説明文 / input: テキスト欄の入力制限(数字のみ・電話番号) /
+    // maxlen: 文字数上限 / when: 表示条件(別の自由項目が入力/チェックされたとき、または特定の値のとき)
+    if (typeof c.help === "string" && c.help.trim()) out.help = c.help.trim().slice(0, 200);
+    if (type === "text" && ["number", "tel"].includes(c.input)) out.input = c.input;
+    const ml = parseInt(c.maxlen);
+    if (type === "text" && Number.isFinite(ml) && ml >= 1) out.maxlen = Math.min(ml, 300);
+    if (c.when && typeof c.when === "object") {
+      const wk = String(c.when.key || "");
+      if (KEY_RE.test(wk) && wk !== key) {
+        out.when = { key: wk };
+        if (c.when.equals != null && String(c.when.equals) !== "") out.when.equals = String(c.when.equals).slice(0, 60);
+      }
+    }
     return out;
     // 自由項目の個数上限。1項目が集計シートの1列(ダブルスは2列)になるため、無制限に増やせると
     // 誤操作でシートが列だらけになる。実運用で足りる数として50に制限する。
   }).filter(Boolean).slice(0, 50);
+  // 表示条件の参照先が実在しない(削除済み等)場合は条件を外す(=常に表示)。参照先の連鎖は
+  // 1段のみ評価する仕様(A→B→Cの多段条件は作らない)なので循環の心配はない。
+  {
+    const keys = new Set(custom.map(c => c.key));
+    custom.forEach(c => { if (c.when && !keys.has(c.when.key)) delete c.when; });
+  }
   const overrides = {};
   if (raw.event_overrides && typeof raw.event_overrides === "object") {
     for (const ev of Object.keys(raw.event_overrides)) {

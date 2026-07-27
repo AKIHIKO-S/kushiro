@@ -3504,9 +3504,10 @@ const A = {
  let events = config.events || [];
  // 必須項目設定(field_config)。サーバが解決済みオブジェクトを返す(空大会も既定で埋まっている)。
  let fieldCfg = (config.field_config && config.field_config.fields)
-   ? config.field_config : { fields: {}, custom: [], event_overrides: {} };
+   ? config.field_config : { fields: {}, custom: [], event_overrides: {}, field_meta: {} };
  if (!fieldCfg.fields) fieldCfg.fields = {};
  if (!Array.isArray(fieldCfg.custom)) fieldCfg.custom = [];
+ if (!fieldCfg.field_meta || typeof fieldCfg.field_meta !== "object") fieldCfg.field_meta = {};
  // GAS URL: 優先順位 = サーバーDB > localStorage
  let gasUrl = t.entry_gas_url || localStorage.getItem("tt_gas_url_" + t.id) || "";
  let adminEmail = localStorage.getItem("tt_admin_email") || "";
@@ -3596,9 +3597,35 @@ const A = {
          h("option", { value: "hidden", selected: cur === "hidden" ? "" : null }, "非表示"))));
    });
    fieldCfgBox.appendChild(grid);
+   // 標準項目の表示名・説明文の変更(任意)。フォームの見出しと集計シートの列名が同時に変わる。
+   const metaOf = (key) => (fieldCfg.field_meta[key] = fieldCfg.field_meta[key] || {});
+   const metaDetails = h("details", { style: { margin: "4px 0 8px" } },
+     h("summary", { style: { fontSize: "12px", cursor: "pointer", color: "var(--muted)" } },
+       "項目の表示名・説明文を変える(任意。集計シートの列名も同じ名前になります)"));
+   STD_FIELDS.forEach(([key, label]) => {
+     const m = fieldCfg.field_meta[key] || {};
+     metaDetails.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", margin: "4px 0" } },
+       h("span", { style: { fontSize: "12px", width: "110px", flexShrink: "0" } }, label),
+       h("input", { className: "input", style: { flex: "1", padding: "4px 7px", fontSize: "12px" },
+         value: m.label || "", placeholder: "表示名(空欄=標準)",
+         onInput: (e) => { metaOf(key).label = e.target.value; refreshCode(); } }),
+       h("input", { className: "input", style: { flex: "1.4", padding: "4px 7px", fontSize: "12px" },
+         value: m.help || "", placeholder: "説明文(入力欄の下に表示)",
+         onInput: (e) => { metaOf(key).help = e.target.value; refreshCode(); } })));
+   });
+   fieldCfgBox.appendChild(metaDetails);
    fieldCfgBox.appendChild(h("div", { className: "text-sm font-bold", style: { margin: "8px 0 4px" } }, "自由項目 (主催者定義)"));
    fieldCfg.custom.forEach((c, ci) => {
-     fieldCfgBox.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginBottom: "5px", padding: "6px", background: "var(--bg)", borderRadius: "6px" } },
+     const box = h("div", { style: { marginBottom: "6px", padding: "6px", background: "var(--bg)", borderRadius: "6px" } });
+     // 1段目: 並替・項目名・型・単位・必須・選択肢・削除
+     box.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
+       h("div", { style: { display: "flex", flexDirection: "column", gap: "1px" } },
+         h("button", { className: "btn btn-sm btn-ghost", style: { padding: "0 6px", fontSize: "10px", lineHeight: "1.5" },
+           title: "上へ", disabled: ci === 0 ? "" : null,
+           onClick: () => { const t2 = fieldCfg.custom[ci - 1]; fieldCfg.custom[ci - 1] = c; fieldCfg.custom[ci] = t2; renderFieldCfg(); refreshCode(); } }, "▲"),
+         h("button", { className: "btn btn-sm btn-ghost", style: { padding: "0 6px", fontSize: "10px", lineHeight: "1.5" },
+           title: "下へ", disabled: ci === fieldCfg.custom.length - 1 ? "" : null,
+           onClick: () => { const t2 = fieldCfg.custom[ci + 1]; fieldCfg.custom[ci + 1] = c; fieldCfg.custom[ci] = t2; renderFieldCfg(); refreshCode(); } }, "▼")),
        h("input", { className: "input", style: { flex: "1 1 130px", padding: "5px 7px", fontSize: "12px" }, value: c.label || "", placeholder: "項目名",
          onInput: (e) => { c.label = e.target.value; refreshCode(); } }),
        h("select", { className: "input", style: { width: "94px", padding: "5px", fontSize: "12px" },
@@ -3607,7 +3634,7 @@ const A = {
          h("option", { value: "select", selected: c.type === "select" ? "" : null }, "選択式"),
          h("option", { value: "checkbox", selected: c.type === "checkbox" ? "" : null }, "チェック")),
        h("select", { className: "input", style: { width: "100px", padding: "5px", fontSize: "12px" },
-         onChange: (e) => { c.scope = e.target.value; refreshCode(); } },
+         onChange: (e) => { c.scope = e.target.value; renderFieldCfg(); refreshCode(); } },
          h("option", { value: "submission", selected: c.scope !== "player" ? "" : null }, "申込単位"),
          h("option", { value: "player", selected: c.scope === "player" ? "" : null }, "選手ごと")),
        h("label", { style: { fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" } },
@@ -3620,6 +3647,42 @@ const A = {
          : h("span", { style: { flex: "1 1 130px" } })),
        h("button", { className: "btn btn-sm btn-danger", style: { padding: "4px 8px" },
          onClick: () => { fieldCfg.custom.splice(ci, 1); renderFieldCfg(); refreshCode(); } }, "削除")));
+     // 2段目: 説明文・入力制限(テキストのみ)・表示条件
+     const others = fieldCfg.custom.filter((o) => o !== c && o.key);
+     box.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "4px", paddingLeft: "24px" } },
+       h("input", { className: "input", style: { flex: "1.5 1 150px", padding: "4px 7px", fontSize: "11.5px" },
+         value: c.help || "", placeholder: "説明文(入力欄の下に表示)",
+         onInput: (e) => { c.help = e.target.value; refreshCode(); } }),
+       (c.type === "text"
+         ? h("select", { className: "input", style: { width: "96px", padding: "4px", fontSize: "11.5px" },
+             title: "入力できる文字の種類",
+             onChange: (e) => { c.input = e.target.value || undefined; refreshCode(); } },
+             h("option", { value: "", selected: !c.input ? "" : null }, "自由入力"),
+             h("option", { value: "number", selected: c.input === "number" ? "" : null }, "数字のみ"),
+             h("option", { value: "tel", selected: c.input === "tel" ? "" : null }, "電話番号"))
+         : null),
+       (c.type === "text"
+         ? h("input", { className: "input", type: "number", style: { width: "78px", padding: "4px 6px", fontSize: "11.5px" },
+             value: c.maxlen || "", placeholder: "字数上限", title: "文字数の上限(空欄=制限なし)",
+             onInput: (e) => { c.maxlen = parseInt(e.target.value) || undefined; refreshCode(); } })
+         : null),
+       h("select", { className: "input", style: { flex: "1 1 140px", padding: "4px", fontSize: "11.5px" },
+         title: "この項目を表示する条件(別の自由項目が入力・チェックされたときだけ出す)",
+         onChange: (e) => {
+           if (e.target.value) c.when = { key: e.target.value, equals: (c.when && c.when.equals) || undefined };
+           else c.when = undefined;
+           renderFieldCfg(); refreshCode();
+         } },
+         h("option", { value: "" }, "いつも表示"),
+         ...others.map((o) => h("option", { value: o.key, selected: c.when && c.when.key === o.key ? "" : null },
+           "「" + (o.label || o.key) + "」に入力があるとき"))),
+       (c.when && c.when.key
+         ? h("input", { className: "input", style: { width: "110px", padding: "4px 6px", fontSize: "11.5px" },
+             value: c.when.equals || "", placeholder: "特定の値(任意)",
+             title: "空欄=何か入力があれば表示。値を入れるとその値のときだけ表示(選択式の条件に)",
+             onInput: (e) => { c.when.equals = e.target.value || undefined; refreshCode(); } })
+         : null)));
+     fieldCfgBox.appendChild(box);
    });
    fieldCfgBox.appendChild(h("button", { className: "btn btn-sm btn-ghost", style: { marginTop: "4px" },
      onClick: () => {
