@@ -71,16 +71,18 @@ test("たたむ大会には「開いて記入する」案内を出す", () => {
 });
 
 // ── 3. 左縁アクセント線 ─────────────────────────────────────
-test("選手カードの区別は上端帯で作る(左縁の色付き線を使わない)", () => {
+// 当初は上端帯(3px)へ移したが、その後の案1「罫線の帳簿」で細罫1本に置き換えた。
+// どちらの段階でも守るべき不変条件は「左縁の色付き線を使わない」こと。
+test("選手の区切りに左縁の色付き線を使わない", () => {
   const h = html(mk(EV5), EV5);
   assert.ok(!/\.entry-row\s*\{[^}]*border-left:\s*4px/.test(h), "左縁の太線が無い");
   assert.ok(!/\.entry-row:hover\s*\{[^}]*border-left-color/.test(h), "ホバーで左縁が赤くならない");
-  assert.match(h, /\.entry-row\s*\{[^}]*border-top:\s*3px solid/, "上端帯で区別する");
+  assert.match(h, /\.entry-row\s*\{[^}]*border-top:/, "区切りは上側に引く");
 });
 
-test("丹頂赤を装飾に使っていない(ホバーは墨)", () => {
+test("丹頂赤を装飾に使っていない(ホバーで色を足さない)", () => {
   const h = html(mk(EV5), EV5);
-  assert.match(h, /\.entry-row:hover\s*\{\s*border-top-color:\s*#211d18/, "ホバーの色は墨");
+  assert.ok(!/\.entry-row:hover\s*\{[^}]*var\(--red\)/.test(h), "ホバーで丹頂赤を使わない");
 });
 
 // ── 4. 締切の表記 ──────────────────────────────────────────
@@ -149,4 +151,56 @@ test("テンプレートリテラル内の正規表現が壊れていない(\\d 
 test("375px向けの土台(横スクロールを生む固定幅)が入っていない", () => {
   const h = html(mk(EV5), EV5);
   assert.ok(!/min-width:\s*[6-9]\d\dpx/.test(h), "600px以上の最小幅を持つ要素が無い");
+});
+
+// ══ 承認デザイン「罫線の帳簿」(2026-07-29 承認・見本案1) の回帰 ══════════
+// 入れ子3重(種目カード → 選手ブロック → 入力欄)を、罫線だけの帳簿に置き換えた。
+// 囲みが復活すると承認された方向から外れるので、機械的に検査する。
+
+test("種目・選手・入力欄のいずれも囲みを持たない(罫線だけで区切る)", () => {
+  const h = html(mk(EV5), EV5);
+  // 種目 = 上に太罫、箱は無い
+  assert.match(h, /\.event-block\s*\{[^}]*border:\s*none;\s*border-top:\s*2px solid var\(--ink\)/);
+  assert.match(h, /\.event-block\s*\{[^}]*background:\s*transparent/);
+  assert.match(h, /\.event-block\s*\{[^}]*box-shadow:\s*none/);
+  // 選手 = 上に細罫、箱は無い
+  assert.match(h, /\.entry-row\s*\{[^}]*border:\s*none;\s*border-top:\s*1px solid var\(--line\)/);
+  assert.match(h, /\.entry-row\s*\{[^}]*background:\s*transparent/);
+  // 入力欄 = 下線だけ
+  assert.match(h, /\.entry-row input\[type="text"\][^{]*\{[^}]*border:\s*none;\s*border-bottom:\s*1px solid/);
+});
+
+test("開閉の印と行番号は塗りチップをやめ、墨の文字にする", () => {
+  const h = html(mk(EV5), EV5);
+  assert.match(h, /\.event-block summary::before,\s*\.entry-row \.row-head \.num\s*\{\s*background:\s*none !important/,
+    "赤グラデ・墨の塗りを落とす(!important は基底のグラデを消すため必要)");
+  assert.match(h, /\.entry-row \.row-head \.num\s*\{[^}]*background:\s*none/);
+});
+
+test("0件の件数バッジが空の枠として残らない", () => {
+  const h = html(mk(EV5), EV5);
+  // .count-badge の display 指定が [hidden] の既定に勝つため、明示的に消す必要がある
+  assert.match(h, /\.count-badge\[hidden\]\s*\{\s*display:\s*none;\s*\}/);
+});
+
+test("ダブルスは選手ごとに区切る(ふりがな・学年がどちらのものか読める)", () => {
+  const h = html(mk(EV5), EV5);
+  assert.match(h, /class="pair-side"/, "選手ごとのまとまりを作る");
+  assert.match(h, /class="pair-no">選手' \+ n \+ '</, "選手1 / 選手2 の見出しを付ける");
+  assert.match(h, /\.entry-row \.pair-side \+ \.pair-side\s*\{[^}]*border-top:\s*1px dashed/,
+    "区切りは破線1本(囲みは作らない)");
+  // name属性は変えていない = 送信データの形は従来どおり
+  assert.match(h, /_pair' \+ idx \+ '_n' \+ n/, "氏名の name は従来どおり");
+  assert.match(h, /_pair' \+ idx \+ '_' \+ n/, "選手ごとの可変項目の接頭辞も従来どおり");
+});
+
+test("項目数が大会で変わっても列がずれない(列数を固定しない)", () => {
+  const h = html(mk(EV5), EV5);
+  assert.match(h, /\.entry-grid\s*\{\s*grid-template-columns:\s*repeat\(auto-fit, minmax\(168px, 1fr\)\)/,
+    "auto-fit で入るだけ並べる(4列固定だと項目数が変わったとき崩れる)");
+});
+
+test("団体戦のメンバー枠も囲みを捨てる", () => {
+  const h = html(mk(EV5), EV5);
+  assert.match(h, /\.member-block\s*\{[^}]*background:\s*transparent;\s*border:\s*none;\s*border-top:\s*1px solid/);
 });

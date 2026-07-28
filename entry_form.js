@@ -972,10 +972,14 @@ function buildEntryFormHTML(tournament, events, opts) {
     font-variant-numeric: tabular-nums;
   }
 
-  /* ── 種目ブロックの開閉チップ・行番号バッジ: 赤グラデ+影 → 墨のフラット ── */
+  /* ── 種目ブロックの開閉チップ・行番号バッジ ──
+     案2(白磁)の時点では「赤グラデ+影 → 墨のフラット」だった。
+     案1(罫線の帳簿・2026-07-29承認)で塗りチップ自体をやめ、墨の文字だけにしたため
+     背景を落とす。!important は下の基底CSSの赤グラデを消すために必要
+     (ここを外すと基底の linear-gradient が復活する)。 */
   .event-block summary::before,
   .entry-row .row-head .num {
-    background: #211d18 !important;
+    background: none !important;
     box-shadow: none !important;
   }
   /* 料金・人数のピル: 琥珀/緑の常時色を白地+細罫の文字チップへ(色は状態にだけ使う) */
@@ -1055,6 +1059,100 @@ function buildEntryFormHTML(tournament, events, opts) {
   }
   @media (prefers-reduced-motion: reduce) {
     #ttRail .bar { transition-duration: .01ms; }
+  }
+
+  /* ══════════════════════════════════════════════════════════
+     承認デザイン「罫線の帳簿」(2026-07-29 オーナー承認・見本案1)
+     囲みを捨てて罫線だけで区切る。参照は大会本部の申込用紙。
+     きっかけは「種目カード → 選手ブロック → 入力欄」の入れ子3重で、
+     囲みが多く視線の起点が定まらなかったこと。入れ子を0にする。
+     ここも既存定義への後勝ち上書きなので、上のCSSは消さずにここだけ直す。
+     ══════════════════════════════════════════════════════════ */
+
+  /* ── 種目 = 太罫の上に立つ見出し。カードの箱を捨てる ── */
+  .event-block {
+    border: none; border-top: 2px solid var(--ink);
+    border-radius: 0; background: transparent; box-shadow: none;
+    padding: 14px 0 0; margin: 0 0 26px;
+  }
+  .event-block[open] { border-color: var(--ink); box-shadow: none; }
+  .event-block summary { padding-bottom: 12px; gap: 10px; }
+  /* 開閉の印は塗り箱をやめ、墨の文字だけにする(帳簿の行頭に置く記号)。
+     位置を固定して種目名の頭を揃える。 */
+  .event-block summary::before {
+    content: "＋"; display: inline-block;
+    width: 22px; flex: 0 0 22px; height: auto; margin-right: 0;
+    background: none; color: var(--ink); box-shadow: none; border-radius: 0;
+    font-size: 14px; font-weight: 800; text-align: left; line-height: inherit;
+  }
+  .event-block[open] summary::before { content: "－"; }
+  .event-block .members { margin-top: 0; }
+  .event-block .add-buttons { padding-left: 22px; margin-top: 14px; }
+  .cap-closed { background: transparent; border-top: 1px solid var(--line); padding: 14px 0 4px 22px; }
+
+  /* 件数バッジ: 丸ピルをやめる(色・枠は白磁ブロックの白地+細罫をそのまま使う) */
+  .count-badge { padding: 3px 10px; }
+  /* 0件のときは hidden 属性で消す。.count-badge の display 指定が [hidden] の既定より
+     詳細度で勝ってしまうため、空の枠だけが残っていた(実機で発見)。ここで明示的に消す。 */
+  .count-badge[hidden] { display: none; }
+
+  /* ── 選手 = 帳簿の1行。囲みを捨て、上に細罫を1本だけ引く ── */
+  .entry-row {
+    background: transparent; border: none; border-top: 1px solid var(--line);
+    border-radius: 0; box-shadow: none;
+    padding: 12px 0 14px 22px; margin: 0;
+  }
+  .entry-row:hover { border-top-color: var(--line); box-shadow: none; }
+  .entry-row .row-head { margin-bottom: 6px; }
+  /* 行番号は墨の細字。赤丸バッジをやめる(丹頂は機能色に限る) */
+  .entry-row .row-head .num {
+    background: none; color: var(--ink-2); width: auto; height: auto;
+    font-size: 12px; font-weight: 800; letter-spacing: .1em;
+  }
+
+  /* ── 入力欄は枠を持たず下線だけ(3つ目の囲みが消える) ── */
+  .entry-row input[type="text"], .entry-row input[type="date"], .entry-row select {
+    border: none; border-bottom: 1px solid var(--line); border-radius: 0;
+    background: transparent; padding: 9px 2px;
+  }
+  .entry-row input[type="text"]:focus,
+  .entry-row input[type="date"]:focus,
+  .entry-row select:focus {
+    outline: none; border-bottom: 1.5px solid var(--ink);
+    box-shadow: none; background: transparent;
+  }
+  .entry-row input:user-invalid { border-bottom-color: var(--red); background: transparent; }
+
+  /* PCでは1人ぶんを横1行に詰めて名簿のように読めるようにし、狭い画面では縦に積む。
+     項目数は大会設定で変わる(ふりがな・学年・性別・自由項目)ので、
+     列数を固定せず auto-fit で入るだけ並べる。 */
+  .entry-grid { grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 2px 18px; }
+
+  /* ダブルスは選手ごとに区切る。囲みは作らず、小さな見出しと細罫だけで分ける */
+  .entry-row .pair-side + .pair-side { border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 8px; }
+  .entry-row .pair-no {
+    font-size: 11.5px; font-weight: 800; color: var(--ink-2);
+    letter-spacing: .1em; margin-bottom: 2px;
+  }
+
+  /* 団体戦のメンバー枠も囲みを捨てる(番号 + 罫線で足りる) */
+  .member-block {
+    background: transparent; border: none; border-top: 1px solid var(--line);
+    border-radius: 0; padding: 8px 0 8px 26px; margin-bottom: 0;
+  }
+  .member-block .member-no {
+    background: none; color: var(--ink-2); width: auto; height: auto;
+    left: 2px; top: 14px; font-size: 12px; font-weight: 800;
+  }
+
+  /* 追加ボタンは墨の細枠(白磁の作法に合わせる) */
+  .btn-add-bulk { background: #fff; border-color: var(--line); color: var(--ink-2); font-weight: 600; }
+  .btn-add-bulk:hover { background: rgba(33,29,24,.06); }
+
+  @media (max-width: 560px) {
+    .entry-grid { grid-template-columns: 1fr; }
+    .entry-row { padding-left: 18px; }
+    .event-block .add-buttons { padding-left: 18px; }
   }
 
 </style>
@@ -1547,17 +1645,20 @@ function addEntry(eventIdx) {
     // 所属(player_team)の状態で 所属入力の要否を切替(hidden=省略 / required=必須)。
     const ptm = fstFor(ev.name, "player_team");
     const teamInput = (n) => ptm === "hidden" ? "" :
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t' + n + '" placeholder="選手' + n + ' 所属' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_t' + n + '" placeholder="所属' +
       (ptm === "required" ? " (必須)" : "") + '" aria-label="選手' + n + ' 所属"' +
       (ptm === "required" ? " required" : "") + ' oninput="recalcTotal()" />';
-    html += '<div class="entry-grid">' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n1" placeholder="選手1 氏名" aria-label="選手1 氏名" oninput="recalcTotal()" />' +
-      teamInput(1) +
-      playerFieldsHtml('ev' + eventIdx + '_pair' + idx + '_1', ev) +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n2" placeholder="選手2 氏名" aria-label="選手2 氏名" oninput="recalcTotal()" />' +
-      teamInput(2) +
-      playerFieldsHtml('ev' + eventIdx + '_pair' + idx + '_2', ev) +
-      '</div>';
+    // ペアは選手ごとに区切る。1つのグリッドに8欄まとめて流し込むと、ふりがな・学年が
+    // 選手1のものか選手2のものか読めなくなる(項目数が大会設定で変わるため列がずれる)。
+    // name属性は変えないので、送信データの形は従来どおり。
+    const side = (n) => '<div class="pair-side">' +
+      '<div class="pair-no">選手' + n + '</div>' +
+      '<div class="entry-grid">' +
+      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n' + n + '" placeholder="氏名 (フルネーム)" aria-label="選手' + n + ' 氏名" oninput="recalcTotal()" />' +
+      teamInput(n) +
+      playerFieldsHtml('ev' + eventIdx + '_pair' + idx + '_' + n, ev) +
+      '</div></div>';
+    html += side(1) + side(2);
   } else {
     const ptm = fstFor(ev.name, "player_team");
     const teamInput = ptm === "hidden" ? "" :
