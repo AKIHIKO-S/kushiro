@@ -768,10 +768,16 @@ app.post("/api/public/tournaments/:id/entry", entryRateLimit, async (req, res) =
 // 申込ペイロードを GAS Web App へサーバー側から中継する (server→GAS は CORS 制約なし)。
 // ブラウザからの直POSTを廃し、ここで中継することで「保存成功なのに送信エラー誤表示」を解消。
 // 失敗しても申込受付(DB保存)は成立済みのため、結果オブジェクトを返すだけで例外は投げない。
-async function relayEntryToGas(gasUrl, payload) {
+// GAS への中継。**HTTPステータスだけで成否を判断してはいけない。**
+// Apps Script のウェブアプリは、スクリプトが {ok:false,error:...} を返しても HTTP 200 で応答する。
+// 以前はここで resp.ok(=ステータス)だけを見ていたため、GAS が「必須項目が未入力」「記録できません
+// でした」を返しても中継成功と記録され、申込者には「受け付けました」と表示されていた
+// (シートに申込が無い事故の再現経路)。応答本文を読んで ok を判定する。
+const GAS_RELAY_TIMEOUT_MS = 25000;   // GAS は集計再計算等で数秒〜十数秒かかる。8秒では短すぎた
+async function relayEntryToGasOnce(gasUrl, payload) {
   if (typeof fetch !== "function") return { ok: false, error: "fetch 利用不可" };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
+  const timer = setTimeout(() => controller.abort(), GAS_RELAY_TIMEOUT_MS);
   try {
     const resp = await fetch(gasUrl, {
       method: "POST",
@@ -780,13 +786,46 @@ async function relayEntryToGas(gasUrl, payload) {
       redirect: "follow",
       signal: controller.signal,
     });
-    return { ok: resp.ok, status: resp.status };
+    const text = await resp.text().catch(() => "");
+    if (!resp.ok) {
+      return { ok: false, status: resp.status, error: `GAS応答 HTTP ${resp.status}`, retryable: resp.status >= 500 };
+    }
+    let body = null;
+    try { body = JSON.parse(text); } catch (_) { body = null; }
+    if (!body || typeof body !== "object") {
+      // JSON で返ってこないのは、GAS のログイン画面(アクセス権が「全員」でない)やエラーHTMLの可能性が高い。
+      const hint = /accounts\.google\.com|ログイン|Sign in/i.test(text)
+        ? "GASのアクセス権が「全員」になっていない可能性があります"
+        : "GASがJSON以外を返しました";
+      return { ok: false, status: resp.status, error: hint, retryable: false, snippet: String(text).slice(0, 200) };
+    }
+    if (body.ok === false) {
+      return { ok: false, status: resp.status, error: String(body.error || "GASが失敗を返しました"),
+        problems: Array.isArray(body.problems) ? body.problems : undefined, retryable: false };
+    }
+    return { ok: true, status: resp.status, verified: body.verified !== false,
+      duplicate: !!body.duplicate, ledger_row: body.ledger_row || null };
   } catch (e) {
-    console.warn("[GAS relay] 失敗:", e && e.message);
-    return { ok: false, error: (e && e.name === "AbortError") ? "timeout" : String(e && e.message || e) };
+    const isTimeout = e && e.name === "AbortError";
+    return { ok: false, error: isTimeout ? "timeout" : String(e && e.message || e), retryable: true };
   } finally {
     clearTimeout(timer);
   }
+}
+
+// 通信の失敗(タイムアウト・切断・5xx)は1回だけ再送する。
+// GAS 側は申込ID(op_id)を台帳に持ち、重複を弾くので二重登録にならない。
+// GAS が「失敗」と明示した場合(必須項目不足など)は再送しても同じなので繰り返さない。
+async function relayEntryToGas(gasUrl, payload) {
+  const first = await relayEntryToGasOnce(gasUrl, payload);
+  if (first.ok || !first.retryable) {
+    if (!first.ok) console.warn("[GAS relay] 失敗:", first.error);
+    return first;
+  }
+  console.warn("[GAS relay] 失敗(再送します):", first.error);
+  const second = await relayEntryToGasOnce(gasUrl, payload);
+  if (!second.ok) console.warn("[GAS relay] 再送も失敗:", second.error);
+  return { ...second, retried: true, first_error: first.error };
 }
 
 // ── スパム対策: Cloudflare Turnstile 検証 + ハニーポット (無償・無人運用) ──
@@ -877,6 +916,20 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
           if (Array.isArray(r.options)) relayPayload.option_items = r.options;
         }
         gasRelay = await relayEntryToGas(tournament.entry_gas_url, relayPayload);
+        // 結果を申込原本に刻む。ログに流すだけだと「どの申込が漏れたか」を後から特定できない
+        // (実際にそれで事故の原因究明ができなかった)。管理画面の未反映一覧と再送はこれを読む。
+        if (r && r.submission_id) {
+          try { db.recordGasRelay(r.submission_id, gasRelay); }
+          catch (e) { console.error("[GAS relay] 記録失敗:", e && e.message); }
+        }
+        // 届いていないなら主催者に即知らせる。GAS 側は自分が動けたときしか通知できないので、
+        // 「GAS まで到達しなかった」場合の通報はサーバー側の責任になる。
+        if (!gasRelay.ok && mailer.isEnabled() && tournament) {
+          mailer.sendGasRelayFailure({
+            tournament, formData: payload, relay: gasRelay,
+            adminUrl: `${appOriginOf(req)}/admin#tournament/${req.params.id}`,
+          }).catch(e => console.error("[GAS relay] 失敗通知メール失敗:", e && e.message));
+        }
       }
 
       // 受付成立 = 自サーバー保存 または GAS中継 の少なくとも一方が成功。
@@ -969,6 +1022,118 @@ app.post("/api/public/applicants/:token/entrants/:id/cancel", applicantLookupRat
 // 変更履歴(管理画面の申込管理で表示)
 app.get("/api/tournaments/:id/entry-changes", requireAdmin, (req, res) => {
   res.json({ items: db.listEntryChanges(req.params.id, req.query.limit) });
+});
+
+// ── 集計スプレッドシートへの反映状況(取りこぼしを見つけて直す) ──────────
+// 「申込は受け付けたのにシートに無い」を、気づける・直せる状態にするためのAPI群。
+
+// 送信先ホストを script.google.com に固定する(任意URLへの踏み台/SSRF防止)。
+// 申込の中継(submit-team-entry)と gas-stats が既に同じ制約を掛けており、ここだけ緩めない。
+function requireGasUrl(t, res) {
+  const url = (t && t.entry_gas_url) || "";
+  if (!url) { res.status(400).json({ error: "この大会に集計スプレッドシートのURLが設定されていません" }); return null; }
+  let parsed = null;
+  try { parsed = new URL(url); } catch { parsed = null; }
+  if (!parsed || parsed.protocol !== "https:" || parsed.hostname !== "script.google.com") {
+    res.status(400).json({ error: "集計スプレッドシートのURLは https://script.google.com/... 形式である必要があります" });
+    return null;
+  }
+  return url;
+}
+
+// 反映状況の一覧(未反映がどれかを名指しする)
+app.get("/api/tournaments/:id/gas-sync", requireAdmin, (req, res) => {
+  const r = db.getGasSyncState(req.params.id);
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
+});
+
+// 1件を再送する。受付時に保存した原本をそのまま送り直す(内容が変質しない)。
+// GAS 側は申込IDで重複を弾くので、既に入っていれば二重登録にならない。
+async function resendOne(tournament, submissionId) {
+  const src = db.getSubmissionForResend(submissionId);
+  if (src.error) return { ok: false, error: src.error };
+  const relayPayload = { ...src.payload, form_schema: db.buildFormSchema(tournament) };
+  if (src.op_id) relayPayload.op_id = src.op_id;
+  if (src.total_amount != null) relayPayload.total_amount = src.total_amount;
+  if (Array.isArray(src.option_items) && src.option_items.length) relayPayload.option_items = src.option_items;
+  const relay = await relayEntryToGas(tournament.entry_gas_url, relayPayload);
+  db.recordGasRelay(submissionId, relay);
+  return { ok: !!relay.ok, relay, team_name: src.submission.team_name };
+}
+
+app.post("/api/tournaments/:id/gas-sync/resend/:sid", requireAdmin, async (req, res) => {
+  const t = db.getTournament(req.params.id);
+  if (!t) return res.status(404).json({ error: "大会が見つかりません" });
+  if (!requireGasUrl(t, res)) return;
+  const r = await resendOne(t, req.params.sid);
+  if (!r.ok) return res.status(400).json({ error: r.error || (r.relay && r.relay.error) || "再送に失敗しました", relay: r.relay });
+  res.json({ ok: true, relay: r.relay });
+});
+
+// 未反映をまとめて再送する。件数が多いと GAS の実行時間上限に当たるので順番に送る。
+app.post("/api/tournaments/:id/gas-sync/resend-all", requireAdmin, async (req, res) => {
+  const t = db.getTournament(req.params.id);
+  if (!t) return res.status(404).json({ error: "大会が見つかりません" });
+  if (!requireGasUrl(t, res)) return;
+  const state = db.getGasSyncState(req.params.id);
+  const pending = state.pending || [];
+  // GAS は直列でしか捌けない(スクリプトロック)ので1件ずつ送る。1件あたり最長25秒かかりうるため、
+  // 件数ではなく**経過時間**で打ち切る。件数で切ると、遅いときにHTTPがゲートウェイタイムアウトして
+  // 「送ったのか送っていないのか分からない」状態になる(それが最も困る)。
+  const BUDGET_MS = 40000;
+  const started = Date.now();
+  const results = [];
+  for (const p of pending) {
+    if (results.length && Date.now() - started > BUDGET_MS) break;   // 最低1件は必ず試す
+    const r = await resendOne(t, p.id);
+    results.push({ id: p.id, team_name: p.team_name, ok: r.ok, error: r.ok ? null : (r.error || (r.relay && r.relay.error)) });
+  }
+  const okN = results.filter(x => x.ok).length;
+  res.json({ ok: true, sent: results.length, succeeded: okN, failed: results.length - okN,
+    remaining: Math.max(0, pending.length - results.length), results });
+});
+
+// 締切前の全件突合。シートに実際に何が入っているかを読み、DB側の申込と突き合わせる。
+// 中継の記録が「成功」でも、後からシートを人が消していれば気づけないため、シート自身に聞く。
+app.get("/api/tournaments/:id/gas-sync/reconcile", requireAdmin, async (req, res) => {
+  const t = db.getTournament(req.params.id);
+  if (!t) return res.status(404).json({ error: "大会が見つかりません" });
+  const gasUrl = requireGasUrl(t, res);
+  if (!gasUrl) return;
+  if (typeof fetch !== "function") return res.status(500).json({ error: "fetch 利用不可" });
+
+  const url = gasUrl + (gasUrl.indexOf("?") >= 0 ? "&" : "?")
+    + "action=entry_ids&tournament_id=" + encodeURIComponent(req.params.id);
+  let sheet = null;
+  try {
+    const resp = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(25000) });
+    const text = await resp.text();
+    try { sheet = JSON.parse(text); } catch (_) { sheet = null; }
+    if (!sheet || sheet.ok !== true) {
+      return res.status(502).json({ error: "スプレッドシートの内容を読めませんでした。GASを最新版に更新してください",
+        detail: String(text).slice(0, 200) });
+    }
+  } catch (e) {
+    return res.status(502).json({ error: "スプレッドシートに接続できませんでした: " + String(e && e.message || e) });
+  }
+
+  const state = db.getGasSyncState(req.params.id);
+  const inSheet = new Set((sheet.ids || []).map(String));
+  // 申込IDで突き合わせる。IDが無い旧シートでは件数比較に落とす(黙って全欠損と言わない)。
+  const missing = sheet.has_id_column
+    ? state.items.filter(s => !inSheet.has(String(s.id)))
+    : [];
+  res.json({
+    ok: true,
+    matched_by: sheet.has_id_column ? "申込ID" : "件数のみ",
+    db_count: state.total,
+    sheet_count: sheet.count || 0,
+    missing_count: sheet.has_id_column ? missing.length : Math.max(0, state.total - (sheet.count || 0)),
+    missing: missing.map(s => ({ id: s.id, team_name: s.team_name, contact_name: s.contact_name, created_at: s.created_at })),
+    note: sheet.has_id_column ? null
+      : "このシートには申込ID列がありません(GASが旧版)。件数だけの比較なので、どの申込が欠けているかは特定できません。",
+  });
 });
 
 // 申込設定のコピー元候補(去年の同じ大会などを選ぶ)
@@ -4860,7 +5025,7 @@ function lanIPv4s() {
 }
 // テスト時(require('../server'))はサーバを起動せず app と内部関数だけ公開する。
 // 本番(node server.js)は require.main===module が真になり従来どおり起動・常駐する。
-module.exports = { app, _resolveEvents };
+module.exports = { app, _resolveEvents, __test__: { relayEntryToGas, relayEntryToGasOnce } };
 
 if (require.main === module) {
 const server = app.listen(PORT, () => {   // host未指定=0.0.0.0(全インターフェース)=LAN内の他端末から到達可能

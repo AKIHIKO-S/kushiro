@@ -427,11 +427,64 @@ async function sendEntryChangeNotification(opts) {
   return getTransporter().sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text, html });
 }
 
+// 集計スプレッドシートへの中継が失敗したときの通報。
+// 申込自体は本部のDBに残っているので「申込が消えた」わけではないが、シートを見て仕事をする人には
+// 存在しない申込になる。過去にこれが事故になったため、黙って落とさず必ず知らせる。
+// GAS 側は自分が動けたときしか通知できないので、GAS に届かなかった場合の通報はこちらの役目。
+async function sendGasRelayFailure(opts) {
+  opts = opts || {};
+  if (!isEnabled()) return { skipped: "smtp_not_configured" };
+  const to = ADMIN_EMAIL || SMTP_USER;
+  if (!to) return { skipped: "no_admin_email" };
+  const t = opts.tournament || {};
+  const f = opts.formData || {};
+  const rel = opts.relay || {};
+  const reason = [rel.error, Array.isArray(rel.problems) ? rel.problems.join(" / ") : ""]
+    .filter(Boolean).join(" / ") || "原因不明";
+  const subject = `【要確認】${t.name || "大会"} 申込がスプレッドシートに記録できていません`;
+  const text = [
+    `申込を受け付けましたが、集計スプレッドシートへの記録ができませんでした。`,
+    `申込そのものは本部のシステムに保存されています（申込者を待たせる必要はありません）。`,
+    ``,
+    `■ 大会:   ${t.name || ""}${t.date ? "（" + t.date + "）" : ""}`,
+    `■ 団体:   ${f.team_name || ""}`,
+    `■ 責任者: ${f.contact_name || ""}`,
+    `■ 連絡先: ${f.contact_tel || ""} / ${f.contact_email || ""}`,
+    `■ 原因:   ${reason}`,
+    rel.retried ? `■ 再送:   1回試みましたが同じ結果でした` : "",
+    ``,
+    `【対処】`,
+    `  1. 管理画面の申込一覧を開き、「未反映」の申込を確認してください`,
+    `  2. 「シートへ再送」を押すと、受付時と同じ内容をもう一度送ります`,
+    `  3. 直らない場合は、GASのデプロイ設定（アクセス権が「全員」か）を確認してください`,
+    opts.adminUrl ? `\n管理画面: ${opts.adminUrl}` : "",
+    ``,
+    `釧路卓球協会 申込システム`,
+  ].filter(s => s !== undefined && s !== null).join("\n");
+  const html = `
+<div style="font-family:'Hiragino Sans','Yu Gothic UI',system-ui,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#1c1917;">
+  <div style="border-top:4px solid #b45309;padding-top:14px;">
+    <h1 style="font-size:18px;margin:4px 0 10px;">申込がスプレッドシートに記録できていません</h1>
+  </div>
+  <p style="font-size:14px;margin:0 0 14px;">申込そのものは本部のシステムに保存されています。シートへの反映だけが失敗しました。</p>
+  <table style="width:100%;border-collapse:collapse;font-size:14px;">
+    <tr><td style="padding:8px;background:#faf9f7;width:90px;">大会</td><td style="padding:8px;">${esc(t.name || "")}${t.date ? "（" + esc(t.date) + "）" : ""}</td></tr>
+    <tr><td style="padding:8px;background:#faf9f7;">団体</td><td style="padding:8px;font-weight:bold;">${esc(f.team_name || "")}</td></tr>
+    <tr><td style="padding:8px;background:#faf9f7;">責任者</td><td style="padding:8px;">${esc(f.contact_name || "")}</td></tr>
+    <tr><td style="padding:8px;background:#faf9f7;">原因</td><td style="padding:8px;">${esc(reason)}</td></tr>
+  </table>
+  <p style="font-size:13px;color:#57534e;margin-top:14px;">管理画面の申込一覧で「未反映」を探し、「シートへ再送」を押してください。</p>
+  ${opts.adminUrl ? `<p style="margin-top:12px;"><a href="${esc(opts.adminUrl)}" style="display:inline-block;padding:9px 16px;background:#211d18;color:#fff;border-radius:4px;text-decoration:none;font-size:13px;">管理画面を開く</a></p>` : ""}
+</div>`;
+  return getTransporter().sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text, html });
+}
+
 module.exports = {
   isEnabled,
   sendConfirmationEmail,
   sendAdminNotification,
   sendEntryChangeNotification,
+  sendGasRelayFailure,
   sendTestEmail,
   authoritativeFees,   // テスト用に公開 (#26)
   eventFeeMap,

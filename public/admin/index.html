@@ -5687,6 +5687,9 @@ const A = {
  let placedByEvent = {};   // event → Set(entrant_id) (bracket_round=1のリーフ)
  const compareBar = h("div", { style: { marginBottom: "10px" } });
  const qualityBar = h("div", { style: { marginBottom: "12px" } });
+ // 集計スプレッドシートに届いたか。過去に「申込は来ていたのにシートに無い」事故があったため、
+ // 申込一覧を開いたら必ず目に入る位置に出す。
+ const gasBar = h("div", { style: { marginBottom: "12px" } });
  const tabStrip = h("div", { className: "flex", style: { gap: "6px", flexWrap: "wrap", marginBottom: "12px" } });
  const tableWrap = h("div", { style: { overflow: "auto", maxHeight: "calc(86vh - 210px)" } });
  const summary = h("div", { className: "text-sub", style: { fontSize: "13px", marginBottom: "10px" } });
@@ -5745,6 +5748,74 @@ const A = {
      toast(`${(r && r.fixed) || 0}件を修正しました`, "ok"); await load(); }
    catch (err) { toast("失敗: " + err.message, "err"); }
  };
+ // ── 集計スプレッドシートへの反映状況 ──
+ let gasState = null;
+ const loadGas = async () => {
+   try { gasState = await api.get(`/api/tournaments/${t.id}/gas-sync`); }
+   catch (e) { gasState = null; }
+   renderGas();
+ };
+ const renderGas = () => {
+   clear(gasBar);
+   if (!gasState || gasState.error) return;
+   if (!gasState.configured) return;          // スプレッドシート未連携の大会では何も出さない
+   if (!gasState.total) return;               // 申込ゼロなら出さない
+   const failed = gasState.counts.failed || 0;
+   const unknown = gasState.counts.unknown || 0;
+   const okN = gasState.counts.ok || 0;
+   const pendingN = failed + unknown;
+   const bad = pendingN > 0;
+   const box = h("div", { style: { display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap",
+     padding: "10px 14px", borderRadius: "8px",
+     background: bad ? "#fee2e2" : "#ecfdf5", border: "1px solid " + (bad ? "#dc2626" : "#10b981") } },
+     h("span", { style: { fontWeight: 700, color: bad ? "#991b1b" : "#065f46" } },
+       bad ? `スプレッドシート未反映 ${pendingN} 件` : `スプレッドシート反映済み ${okN} 件`),
+     h("span", { className: "text-xs", style: { color: bad ? "#991b1b" : "#065f46" } },
+       `(全 ${gasState.total} 件中 反映済 ${okN}` + (failed ? ` / 失敗 ${failed}` : "")
+         + (unknown ? ` / 不明 ${unknown}` : "") + ")"));
+   if (unknown && !failed) {
+     box.appendChild(h("span", { className: "text-xs", style: { color: "#991b1b" } },
+       "「不明」はこの機能を入れる前の申込です。突合で確認できます。"));
+   }
+   box.appendChild(h("div", { style: { marginLeft: "auto", display: "flex", gap: "6px", flexWrap: "wrap" } },
+     h("button", { className: "btn btn-sm", title: "スプレッドシートを実際に読んで、DBの申込と1件ずつ突き合わせます",
+       onClick: async (e) => {
+         e.target.disabled = true; e.target.textContent = "確認中…";
+         try {
+           const r = await api.get(`/api/tournaments/${t.id}/gas-sync/reconcile`);
+           if (r.error) { toast(r.error, "err"); return; }
+           if (!r.missing_count) { toast(`突合しました。${r.db_count}件すべてシートに入っています`, "ok"); }
+           else {
+             const names = (r.missing || []).slice(0, 5).map(m => m.team_name || m.contact_name).join("、");
+             toast(`シートに無い申込が ${r.missing_count} 件あります${names ? ": " + names : ""}`, "err");
+           }
+           if (r.note) toast(r.note, "err");
+           await loadGas();
+         } catch (err) { toast("突合に失敗: " + err.message, "err"); }
+         finally { e.target.disabled = false; e.target.textContent = "シートと突合"; }
+       } }, "シートと突合"),
+     bad ? h("button", { className: "btn btn-sm", style: { background: "#dc2626", color: "#fff", borderColor: "#b91c1c" },
+       title: "受付時と同じ内容をもう一度シートへ送ります。既に入っている申込は重複しません",
+       onClick: async (e) => {
+         if (!confirm(`未反映の ${pendingN} 件をスプレッドシートへ再送します。\n\n受付時と同じ内容を送り直します。既に入っている申込は重複しません。\n\nよろしいですか？`)) return;
+         e.target.disabled = true; e.target.textContent = "再送中…";
+         try {
+           const r = await api.post(`/api/tournaments/${t.id}/gas-sync/resend-all`, {});
+           if (r.error) { toast(r.error, "err"); return; }
+           toast(`${r.succeeded}件を反映しました` + (r.failed ? ` / ${r.failed}件は失敗` : "")
+             + (r.remaining ? ` / 残り${r.remaining}件はもう一度押してください` : ""), r.failed ? "err" : "ok");
+           if (r.failed) {
+             const ng = (r.results || []).filter(x => !x.ok).slice(0, 3)
+               .map(x => `${x.team_name || x.id}: ${x.error || "原因不明"}`).join(" / ");
+             if (ng) toast(ng, "err");
+           }
+           await loadGas();
+         } catch (err) { toast("再送に失敗: " + err.message, "err"); }
+         finally { e.target.disabled = false; e.target.textContent = "未反映をシートへ再送"; }
+       } }, "未反映をシートへ再送") : null));
+   gasBar.appendChild(box);
+ };
+
  const renderQuality = () => {
    clear(qualityBar);
    if (!issueTotal) return;
@@ -5928,6 +5999,7 @@ const A = {
    refreshShibu();
    if (activeTab !== "all" && !eventsList().includes(activeTab)) activeTab = "all";
    renderQuality(); renderTabs(); renderCompare(); renderTable();
+   loadGas();   // シート反映状況は独立して読む(失敗しても一覧は出す)
  };
  // ── フィルタバー(検索/状態/性別/支部) ──
  const mkSel = (defs, onCh) => { const s = h("select", { className: "input input-sm", style: { width: "auto" } },
@@ -6493,7 +6565,7 @@ const A = {
  // メニュー(生成/編集/プレビュー/表削除/出場者削除)は最上部に置く(オーナー要望 2026-07-17)。
  // 旧「生成済みの表を編集」は統合エディタ(sheetBtn)に一本化(オーナー要望 2026-07-18)。
  const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } }, sheetBtn, genBtn, previewBtn, clearBracketsBtn, bulkDelBtn);
- const body = h("div", {}, summary, compareBar, qualityBar, tabStrip, btnBar, previewBox, filterBar, ssNote, tableWrap);
+ const body = h("div", {}, summary, gasBar, compareBar, qualityBar, tabStrip, btnBar, previewBox, filterBar, ssNote, tableWrap);
  if (opts && opts.panel) {
    // 専用ページ(タブ)描画: モーダルを開かず、高さ制限も外して画面全体で見せる
    tableWrap.style.maxHeight = "";

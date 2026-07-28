@@ -738,6 +738,21 @@ try {
     if (scols.length && !scols.find(c => c.name === "options_json")) {
       sqlite.prepare("ALTER TABLE entry_submissions ADD COLUMN options_json TEXT DEFAULT ''").run();
     }
+    // 集計スプレッドシートへ届いたかの記録。
+    // 「申込は受け付けたのにシートに無い」事故を後から追えるようにするための列で、
+    //   gas_status: ''(GAS未設定)/ok(記録を確認)/failed(届いていない)/pending(送信前)
+    //   gas_at:     最後に判定した時刻
+    //   gas_detail: 失敗理由や台帳の行番号など、人が読む手がかり
+    // これが無いと、失敗はログに流れて消え、どの申込が漏れたか特定できない。
+    if (scols.length && !scols.find(c => c.name === "gas_status")) {
+      sqlite.prepare("ALTER TABLE entry_submissions ADD COLUMN gas_status TEXT DEFAULT ''").run();
+    }
+    if (scols.length && !scols.find(c => c.name === "gas_at")) {
+      sqlite.prepare("ALTER TABLE entry_submissions ADD COLUMN gas_at TEXT DEFAULT ''").run();
+    }
+    if (scols.length && !scols.find(c => c.name === "gas_detail")) {
+      sqlite.prepare("ALTER TABLE entry_submissions ADD COLUMN gas_detail TEXT DEFAULT ''").run();
+    }
     if (scols.length) {
       sqlite.exec("CREATE INDEX IF NOT EXISTS idx_submissions_opid ON entry_submissions(tournament_id, op_id)");
     }
@@ -9184,6 +9199,76 @@ function getSubmissionByToken(token) {
   };
 }
 
+// ── 集計スプレッドシートへの反映状況 ────────────────────────────────
+// 「申込は受け付けたのにシートに無い」事故を二度と見逃さないための記録。
+// 中継のたびに結果を書き、管理画面が未反映の申込を一覧・再送できるようにする。
+
+// 中継結果を記録する。relay は relayEntryToGas の返り値。
+function recordGasRelay(submissionId, relay) {
+  if (!submissionId) return null;
+  const ok = !!(relay && relay.ok);
+  const status = !relay ? "" : (ok ? "ok" : "failed");
+  const parts = [];
+  if (relay) {
+    if (ok) {
+      if (relay.duplicate) parts.push("記録済み(再送)");
+      if (relay.ledger_row) parts.push("台帳" + relay.ledger_row + "行目");
+      if (relay.retried) parts.push("再送で成功");
+    } else {
+      if (relay.error) parts.push(String(relay.error));
+      if (Array.isArray(relay.problems) && relay.problems.length) parts.push(relay.problems.join(" / "));
+      if (relay.snippet) parts.push("応答: " + String(relay.snippet).slice(0, 120));
+    }
+  }
+  sqlite.prepare(
+    "UPDATE entry_submissions SET gas_status=?, gas_at=datetime('now','localtime'), gas_detail=? WHERE id=?"
+  ).run(status, parts.join(" / ").slice(0, 500), String(submissionId));
+  return { status, detail: parts.join(" / ") };
+}
+
+// 反映状況の集計と、未反映の申込一覧。
+// 「大会にGAS URLが設定されているか」も返す(未設定なら未反映は当然なので、画面で区別する)。
+function getGasSyncState(tournamentId) {
+  const t = stmts.getTournament.get(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  const configured = !!(t.entry_gas_url && String(t.entry_gas_url).trim());
+  const rows = sqlite.prepare(
+    `SELECT id, team_name, contact_name, contact_email, created_at,
+            COALESCE(gas_status,'') gas_status, COALESCE(gas_at,'') gas_at, COALESCE(gas_detail,'') gas_detail
+       FROM entry_submissions WHERE tournament_id=? ORDER BY created_at ASC`).all(String(tournamentId));
+  const counts = { ok: 0, failed: 0, unknown: 0 };
+  rows.forEach(r => {
+    if (r.gas_status === "ok") counts.ok++;
+    else if (r.gas_status === "failed") counts.failed++;
+    else counts.unknown++;                    // GAS未設定時や、この機能より前の申込
+  });
+  return {
+    configured, total: rows.length, counts,
+    pending: rows.filter(r => r.gas_status !== "ok"),
+    items: rows,
+  };
+}
+
+// 再送に必要な申込原本を組み立てて返す(サーバが GAS へ送る payload の材料)。
+// 保存済みの原本(payload_json)を正本にする=受付時とまったく同じ内容を送り直せる。
+function getSubmissionForResend(submissionId) {
+  const sub = sqlite.prepare("SELECT * FROM entry_submissions WHERE id=?").get(String(submissionId));
+  if (!sub) return { error: "申込が見つかりません" };
+  let payload = null;
+  try { payload = sub.payload_json ? JSON.parse(sub.payload_json) : null; } catch (_) { payload = null; }
+  if (!payload || typeof payload !== "object") return { error: "申込の原本が読めません(手作業での追記が必要です)" };
+  let options = [];
+  try { options = sub.options_json ? (JSON.parse(sub.options_json) || []) : []; } catch (_) { options = []; }
+  return {
+    ok: true,
+    submission: sub,
+    payload,
+    op_id: sub.op_id || "",
+    total_amount: sub.total_amount != null ? sub.total_amount : null,
+    option_items: options,
+  };
+}
+
 // ── 申込設定のコピー(去年の同じ大会の設定をそのまま使う) ────────────────
 // 毎年ある大会は申込の決まりもほぼ同じなので、前回の設定を引き写せるようにする。
 // コピーするのは「大会をまたいで意味が同じもの」だけ。日付・受付フラグ・GAS連携先や
@@ -13222,6 +13307,7 @@ module.exports = {
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel,
   applicantReplaceEntrant, applicantCancelEntrant, listEntryChanges,
   copyEntrySettings, listEntrySettingSources,
+  recordGasRelay, getGasSyncState, getSubmissionForResend,
   resolveEntryOptions, sanitizeEntryOptions, priceEntryOptions,
   findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,
   updateEntrySettings, getOpenTournaments, getUsedEventsCatalog,

@@ -17,7 +17,8 @@
  *   ② 拡張機能 → Apps Script を開く
  *   ③ このスクリプトを貼り付け
  *   ④ プロジェクト設定 → スクリプトプロパティ:
- *        ADMIN_EMAIL = 主催者メールアドレス (任意)
+ *        ADMIN_EMAIL = 受信確認メールの宛先 (カンマ区切りで複数可)
+ *                      未設定ならスプレッドシートの所有者へ送る
  *        ASSOCIATION_NAME = 釧路卓球協会
  *        PRICE_TEAM_M / PRICE_TEAM_F / PRICE_DBL_M / PRICE_DBL_F /
  *        PRICE_MIX_M / PRICE_MIX_F / PRICE_BENTO / PRICE_PARTY
@@ -32,6 +33,17 @@
  *   同梱し、この GAS が足りない列だけをシートの右端に追記する。既存列は消さず・並べ替えない。
  *   → 主催者がフォームに項目を足すだけで、次の申込からシートに列が増える。
  *   更新手順は OPERATIONS.md「9.5 申込フォームに項目を足したとき」を参照。
+ *
+ * 受信の確かめかた (取りこぼし対策):
+ *   申込は届いていたのにシートに記録が無い、という事故が実際に起きた。そこで
+ *   「書いたつもり」で成功を返さない造りにしてある。
+ *     1. 書き込み前に各シートの行数を控える
+ *     2. 台帳・振分けシートへ書く
+ *     3. 書いた行を読み返し、大会名・団体名・責任者の一致と行数の増分を検証
+ *     4. 検証OKのときだけ申込者へ「受け付けました」(申込内容つき)を送る
+ *     5. 指定アドレスへ受信確認を送る。検証NGなら件名を【要確認】にして必ず送る
+ *     6. 集計再計算・種目別リスト生成は最後に回す(時間切れで記録が飛ばないように)
+ *   台帳の「申込ID」列が二重登録の防止と、締切前の突合(action=entry_ids)の照合キー。
  */
 
 const SHEETS = {
@@ -150,6 +162,140 @@ function ensureAllSheets(ss) {
     sh.getRange(1, 1, 1, 4).setFontWeight("bold").setBackground("#f1f5f9");
     sh.setFrozenRows(1);
   }
+}
+
+// ════════════════════════════════════════════
+// 書込の検証 (「書いたつもり」で成功を返さない)
+// ════════════════════════════════════════════
+// 背景: 申込は届いていたのにシートに記録が無い、という事故が実際に起きた。
+// 原因は特定しきれないが、構造として「書き込んだことを確認せずに成功と返す」設計だと
+// 何が起きても気づけない。そこで書いた後に必ず読み返し、確認できたときだけ
+// 申込者へ「受け付けました」を送る。確認できなければ主催者へ【要確認】を送る。
+
+// 申込台帳に持たせる申込IDの列名。固定列ではなく「名前で解決する追加列」にしてある
+// (固定列に足すと、既存シートの列の位置がずれて集計式や種目別リストが壊れるため)。
+const COL_ENTRY_ID = "申込ID";
+
+// 検証対象シートと、その申込で増えるべき行数の数え方。
+function _expectedRowDeltas(data) {
+  const d = { };
+  d[SHEETS.TEAM] = 0; d[SHEETS.DOUBLES] = 0; d[SHEETS.MIXED] = 0; d[SHEETS.SINGLES] = 0;
+  (data.entries || []).forEach(function (en) {
+    const kind = classifyEntry(en);
+    if (kind === "team") {
+      // 団体は「メンバー1人=1行」で書かれる(members_detail か members の長さ)
+      const md = Array.isArray(en.members_detail) ? en.members_detail : null;
+      const ms = md ? md : (Array.isArray(en.members) ? en.members : []);
+      d[SHEETS.TEAM] += ms.filter(function (m) {
+        return String((m && m.name != null ? m.name : m) || "").trim();
+      }).length;
+    } else if (kind === "doubles") {
+      d[SHEETS.DOUBLES] += 1;              // ペアで1行
+    } else if (kind === "mixed") {
+      d[SHEETS.MIXED] += 1;
+    } else if (kind === "singles") {
+      d[SHEETS.SINGLES] += 1;
+    }
+    // 弁当・懇親会・相手募集は別レイアウトなので行数検証の対象外(台帳の検証で担保する)
+  });
+  return d;
+}
+
+// 検証対象シートの現在の行数(ヘッダを除く)を控える。
+function _countRows(ss) {
+  const out = {};
+  [SHEETS.TEAM, SHEETS.DOUBLES, SHEETS.MIXED, SHEETS.SINGLES].forEach(function (n) {
+    const sh = ss.getSheetByName(n);
+    out[n] = sh ? Math.max(0, sh.getLastRow() - 1) : 0;
+  });
+  return out;
+}
+
+// 書いた内容を読み返して確認する。返り値の ok が false なら「シートに入っていない」。
+function _verifyWrite(ss, data, ledgerRowNum, before) {
+  const problems = [];
+  const checks = [];
+
+  // ① 申込台帳の該当行を実際に読み、この申込の内容と一致するか
+  const sh = ss.getSheetByName(SHEETS.LEDGER);
+  if (!sh) {
+    problems.push("申込台帳シートが存在しません");
+  } else if (!ledgerRowNum || ledgerRowNum < 2 || ledgerRowNum > sh.getLastRow()) {
+    problems.push("申込台帳に行が追加されていません");
+  } else {
+    const width = Math.max(1, sh.getLastColumn());
+    const head = sh.getRange(1, 1, 1, width).getValues()[0].map(function (v) { return String(v == null ? "" : v).trim(); });
+    const row = sh.getRange(ledgerRowNum, 1, 1, width).getValues()[0];
+    const at = function (label) {
+      const i = head.indexOf(label);
+      return i < 0 ? "" : String(row[i] == null ? "" : row[i]).trim();
+    };
+    const want = [
+      ["大会名", String(data.tournament_name || "").trim()],
+      ["団体名", String(data.team_name || "").trim()],
+      ["申込責任者", String(data.contact_name || "").trim()],
+    ];
+    want.forEach(function (w) {
+      const got = at(w[0]);
+      if (got !== w[1]) problems.push("申込台帳の" + w[0] + "が一致しません(記録: 「" + got + "」/ 申込: 「" + w[1] + "」)");
+    });
+    checks.push("申込台帳: " + ledgerRowNum + "行目に記録");
+  }
+
+  // ② 各振分けシートが、この申込の分だけ増えているか
+  const expect = _expectedRowDeltas(data);
+  const nowCounts = _countRows(ss);
+  const sheetDetail = {};
+  Object.keys(expect).forEach(function (n) {
+    const exp = expect[n];
+    if (!exp) return;
+    const got = (nowCounts[n] || 0) - (before[n] || 0);
+    sheetDetail[n] = { expected: exp, actual: got };
+    if (got < exp) {
+      problems.push(n + "シート: " + exp + "行入るはずが " + got + "行しか増えていません");
+    } else {
+      checks.push(n + ": " + got + "行");
+    }
+  });
+
+  return { ok: problems.length === 0, problems: problems, checks: checks, sheets: sheetDetail, ledger_row: ledgerRowNum };
+}
+
+// 申込IDが既に台帳にあるか(再送の判定)。CacheService は6時間で消えるため、
+// 恒久的な二重登録防止はシート自身を正本にする。
+// 返り値: 見つかった行番号 / 0
+function _findEntryIdRow(ss, entryId) {
+  if (!entryId) return 0;
+  const sh = ss.getSheetByName(SHEETS.LEDGER);
+  if (!sh || sh.getLastRow() < 2) return 0;
+  const width = Math.max(1, sh.getLastColumn());
+  const head = sh.getRange(1, 1, 1, width).getValues()[0].map(function (v) { return String(v == null ? "" : v).trim(); });
+  const col = head.indexOf(COL_ENTRY_ID) + 1;
+  if (col < 1) return 0;                      // 申込ID列が無い旧シート = 判定できない
+  const vals = sh.getRange(2, col, sh.getLastRow() - 1, 1).getValues();
+  for (let i = 0; i < vals.length; i++) {
+    if (String(vals[i][0] || "").trim() === String(entryId).trim()) return i + 2;
+  }
+  return 0;
+}
+
+// 受信確認メールの宛先。カンマ/セミコロン/改行区切りで複数指定できる。
+// 未設定ならスプレッドシートの所有者へ送る(設定漏れで誰にも届かない穴を塞ぐ)。
+function _notifyRecipients() {
+  const raw = PropertiesService.getScriptProperties().getProperty("ADMIN_EMAIL") || "";
+  const list = raw.split(/[,;\s]+/).map(function (s) { return s.trim(); })
+    .filter(function (s) { return s && s.indexOf("@") > 0; });
+  if (list.length) return list;
+  try {
+    const owner = SpreadsheetApp.getActiveSpreadsheet().getOwner();
+    const em = owner && owner.getEmail();
+    if (em) return [em];
+  } catch (e) { /* 共有ドライブでは所有者を取れないことがある */ }
+  try {
+    const me = Session.getEffectiveUser().getEmail();
+    if (me) return [me];
+  } catch (e) { /* noop */ }
+  return [];
 }
 
 // ════════════════════════════════════════════
@@ -320,16 +466,30 @@ function doPost(e) {
 
     // 冪等: 同じ op_id を二重処理しない(ブラウザの二度押しや Node からの再送で
     // シートに重複行が出るのを防ぐ。Node 側 DB の op_id 冪等と揃える)。
-    // CacheService を使う(TTL自動失効=無限増殖しない)。記録は「追記が全て成功した後」に行う
-    // (途中失敗で op_id だけ確定し、再送が握り潰されて行が永久欠落するのを防ぐ)。
+    // 2段構え: ①CacheService(速い・6時間) ②申込台帳の申込ID列(恒久)。
+    // ②があるので、キャッシュが消えた後の再送や、再送で漏れを埋める運用でも重複しない。
+    // 記録は「追記が全て成功した後」に行う(途中失敗で op_id だけ確定し、再送が握り潰されて
+    // 行が永久欠落するのを防ぐ)。
     const opId = String(data.op_id || "").trim();
     const _cache = CacheService.getScriptCache();
     if (opId && _cache.get("opid_" + opId)) {
-      return _json({ ok: true, duplicate: true, message: "処理済みの申込です(再送)" });
+      return _json({ ok: true, duplicate: true, verified: true, message: "処理済みの申込です(再送)" });
     }
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     ensureAllSheets(ss);
+
+    if (opId) {
+      const dupRow = _findEntryIdRow(ss, opId);
+      if (dupRow) {
+        _cache.put("opid_" + opId, "1", 21600);
+        return _json({ ok: true, duplicate: true, verified: true, ledger_row: dupRow,
+          message: "処理済みの申込です(台帳" + dupRow + "行目に記録済み)" });
+      }
+    }
+
+    // 書き込み前の行数を控える(この申込で何行増えるべきかを後で検証する)
+    const _before = _countRows(ss);
 
     // ─── 1. 申込台帳 (履歴) ───
     const ledgerSh = ss.getSheetByName(SHEETS.LEDGER);
@@ -360,7 +520,12 @@ function doPost(e) {
     const ledgerObj = {};
     optCols.forEach(function (c, i) { ledgerObj[c.label] = optItems[i] ? optItems[i].qty : ""; });
     ledgerCols.forEach(function (c) { ledgerObj[c.label] = submissionValue(data, c.key); });
-    appendRowWithExtras(ledgerSh, LEDGER_HEADERS, ledgerRow, optCols.concat(ledgerCols), ledgerObj);
+    // 申込ID(=op_id)を台帳に残す。二重登録の恒久的な防止と、締切前の突合
+    // (プラットフォームの申込一覧とシートを突き合わせて漏れを名指しする)の照合キーになる。
+    const idCol = [{ key: "__entry_id__", label: COL_ENTRY_ID }];
+    ledgerObj[COL_ENTRY_ID] = opId || "";
+    appendRowWithExtras(ledgerSh, LEDGER_HEADERS, ledgerRow,
+      optCols.concat(ledgerCols).concat(idCol), ledgerObj);
     const ledgerRowNum = ledgerSh.getLastRow();
 
     // ─── 2. 各シートに振り分け ───
@@ -381,27 +546,50 @@ function doPost(e) {
       });
     }
 
-    // ─── 4. 集計用 再計算 ───
-    rebuildAggregate(ss, data.tournament_name);
-
-    // ─── 5. 選手名簿 (横並びレイアウト) ───
+    // ─── 4. 選手名簿 (横並びレイアウト) ───
     appendToRoster(ss, data);
 
-    // ─── 6. 種目別 選手リスト 自動再生成 ───
+    // ─── 5. 検証: 書いたものを読み返す ───
+    // ここまでが「記録」。この後のメールは、記録できたことを確認してからにする。
+    const verify = _verifyWrite(ss, data, ledgerRowNum, _before);
+
+    // ─── 6. メール ───
+    // 申込者への「受け付けました」は、シートに入ったことを確認できたときだけ送る。
+    // 確認できないまま送ると、申込者は安心し、主催者は気づかない(これが事故の形)。
+    let replyMail = "skipped";
+    if (verify.ok) {
+      try { _sendReplyMail(data, ledgerRowNum); replyMail = "sent"; }
+      catch (mailErr) { replyMail = "failed"; console.error("自動返信メール失敗:", mailErr); }
+    }
+    // 受信確認は成否にかかわらず必ず送る(NGなら件名を【要確認】にする)。
+    try { _sendReceiptNotice(data, verify, replyMail); }
+    catch (notifyErr) { console.error("受信確認メール失敗:", notifyErr); }
+
+    // ─── 7. 重い後処理 ───
+    // 集計再計算と種目別リスト生成は申込が増えるほど遅くなる。記録・検証・通知の後ろに置き、
+    // ここで時間切れになっても「申込が記録されない」ことは起きないようにする。
+    try { rebuildAggregate(ss, data.tournament_name); }
+    catch (aggErr) { console.error("集計用シート再計算失敗:", aggErr); }
     try { generateEventLists(); }
     catch (evErr) { console.error("種目別リスト生成失敗:", evErr); }
 
-    // ─── 7. 自動返信メール ───
-    try { _sendReplyMail(data, ledgerRowNum); }
-    catch (mailErr) { console.error("自動返信メール失敗:", mailErr); }
-    try { _sendAdminNotification(data, ledgerRowNum); }
-    catch (notifyErr) { console.error("主催者通知失敗:", notifyErr); }
+    // 記録が確認できたときだけ op_id を確定する。未確認のまま確定すると、
+    // 再送で埋め直す道を自分で塞いでしまう。
+    if (opId && verify.ok) _cache.put("opid_" + opId, "1", 21600);
 
-    // 追記が全て成功した後にだけ op_id を記録(6時間保持=再送はこの窓内・自動失効で増殖なし)。
-    if (opId) _cache.put("opid_" + opId, "1", 21600);
-    return _json({ ok: true, ledger_row: ledgerRowNum });
+    if (!verify.ok) {
+      // 記録できていないので失敗として返す。プラットフォーム側が未反映として記録し、
+      // 管理画面から再送できる。
+      return _json({ ok: false, verified: false, ledger_row: ledgerRowNum,
+        error: "シートへの記録を確認できませんでした: " + verify.problems.join(" / "),
+        problems: verify.problems });
+    }
+    return _json({ ok: true, verified: true, ledger_row: ledgerRowNum,
+      checks: verify.checks, reply_mail: replyMail });
   } catch (err) {
-    return _json({ ok: false, error: String(err) });
+    // 例外時も主催者に知らせる(黙って落ちるのがいちばん危ない)。
+    try { _sendFailureNotice(data, err); } catch (e2) { /* 通知の失敗で握り潰さない */ }
+    return _json({ ok: false, verified: false, error: String(err) });
   } finally {
     lock.releaseLock();
   }
@@ -1021,6 +1209,13 @@ function _sendReplyMail(data, ledgerRow) {
     (data.coach ? "■ コーチ:    " + data.coach + "\n" : "") +
     "━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
     "【お申込み内容】" + breakdown + "\n" +
+    // 有料オプション(弁当・懇親会など)。合計金額に含まれるので内訳に必ず出す。
+    ((Array.isArray(data.option_items) && data.option_items.length)
+      ? "《オプション》\n" + data.option_items.map(function (o) {
+          return "  ・" + (o.label || o.key) + "  " + (o.qty || 0) + (o.unit || "")
+            + "  ¥" + Number(o.amount || 0).toLocaleString("ja-JP");
+        }).join("\n") + "\n\n"
+      : "") +
     "━━━━━━━━━━━━━━━━━━━━━━━\n" +
     "■ 合計金額: ¥" + (data.total_amount || 0).toLocaleString("ja-JP") + "\n" +
     "━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
@@ -1032,25 +1227,75 @@ function _sendReplyMail(data, ledgerRow) {
   GmailApp.sendEmail(data.contact_email, subject, body, { name: assoc });
 }
 
-function _sendAdminNotification(data, ledgerRow) {
-  const props = PropertiesService.getScriptProperties();
-  const adminEmail = props.getProperty("ADMIN_EMAIL");
-  if (!adminEmail) return;
-  const subject = "【新規申込】" + data.tournament_name + " / " + data.team_name;
-  const totalPeople = data.entries.reduce((s, en) => {
-    if (en.type === "team") return s + (en.members || []).length;
+// 受信確認メール(指定アドレス宛)。
+// 「シートに記録できたことを確認した」という事実を主催者に返すのが目的なので、
+// 検証結果を本文に必ず載せる。確認できなかった場合は件名を【要確認】にして必ず送る。
+function _sendReceiptNotice(data, verify, replyMail) {
+  const to = _notifyRecipients();
+  if (!to.length) { console.error("受信確認メールの宛先が無い(ADMIN_EMAIL 未設定・所有者も取得不可)"); return; }
+  const ok = verify && verify.ok;
+  const subject = (ok ? "【受信確認】" : "【要確認・記録できていません】")
+    + data.tournament_name + " / " + data.team_name;
+
+  const totalPeople = (data.entries || []).reduce(function (s, en) {
+    if (en.type === "team") return s + ((en.members || []).length || (en.members_detail || []).length);
     if (en.type === "doubles" || en.type === "mixed") return s + 2;
     return s + 1;
   }, 0);
-  const body = "新規申込が届きました。\n\n" +
-    "受付番号: #" + String(ledgerRow).padStart(4, "0") + "\n" +
-    "団体名:   " + data.team_name + "\n" +
-    "責任者:   " + data.contact_name + "\n" +
-    "連絡先:   " + data.contact_tel + " / " + data.contact_email + "\n" +
-    "申込種目: " + data.entries.length + " 件 (述べ " + totalPeople + " 名)\n" +
-    "合計金額: ¥" + (data.total_amount || 0).toLocaleString("ja-JP") + "\n\n" +
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const head = ok
+    ? "申込を受け付け、スプレッドシートに記録できたことを確認しました。\n"
+      + "申込者へ自動返信メールを"
+      + (replyMail === "sent" ? "送信しました。" : replyMail === "failed" ? "送信できませんでした(下記)。" : "送信していません。")
+      + "\n"
+    : "申込を受け取りましたが、スプレッドシートへの記録を確認できませんでした。\n"
+      + "この申込は取りこぼしている可能性があります。至急ご確認ください。\n"
+      + "申込者への「受け付けました」メールは送っていません(誤った安心を与えないため)。\n";
+
+  const detail = ok
+    ? "【記録の確認】\n" + (verify.checks || []).map(function (c) { return "  ・" + c; }).join("\n") + "\n"
+    : "【確認できなかった内容】\n" + (verify.problems || []).map(function (p) { return "  ・" + p; }).join("\n") + "\n";
+
+  const body =
+    head + "\n" +
+    "━━━━━━━━━━━━━━━━━━━━━━━\n" +
+    "■ 大会名:   " + (data.tournament_name || "") + "\n" +
+    "■ 団体名:   " + (data.team_name || "") + "\n" +
+    "■ 責任者:   " + (data.contact_name || "") + "\n" +
+    "■ 連絡先:   " + (data.contact_tel || "") + " / " + (data.contact_email || "") + "\n" +
+    "■ 申込種目: " + (data.entries || []).length + " 件 (述べ " + totalPeople + " 名)\n" +
+    "■ 合計金額: ¥" + (data.total_amount || 0).toLocaleString("ja-JP") + "\n" +
+    "■ 申込ID:   " + (data.op_id || "(なし)") + "\n" +
+    "━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+    detail + "\n" +
+    (ok ? "" : "【対処】\n"
+      + "  1. 下のスプレッドシートを開き、申込台帳に該当の団体名があるか確認してください\n"
+      + "  2. 無ければ、KTTA Platform の管理画面 → 申込一覧 で「未反映」の申込を再送してください\n"
+      + "  3. それでも入らない場合は、申込内容を手で追記してください(申込自体は本部側に残っています)\n\n") +
+    "スプレッドシート:\n" + ss.getUrl() + "\n";
+
+  GmailApp.sendEmail(to.join(","), subject, body);
+}
+
+// 処理中に例外が出たときの通報。黙って落ちると誰も気づけないため、最後の砦として送る。
+function _sendFailureNotice(data, err) {
+  const to = _notifyRecipients();
+  if (!to.length) return;
+  const d = data || {};
+  const subject = "【申込の処理に失敗】" + (d.tournament_name || "(大会名不明)") + " / " + (d.team_name || "(団体名不明)");
+  const body =
+    "申込の受信処理中にエラーが発生し、記録できていない可能性があります。\n\n" +
+    "■ 大会名:   " + (d.tournament_name || "") + "\n" +
+    "■ 団体名:   " + (d.team_name || "") + "\n" +
+    "■ 責任者:   " + (d.contact_name || "") + "\n" +
+    "■ 連絡先:   " + (d.contact_tel || "") + " / " + (d.contact_email || "") + "\n" +
+    "■ 申込ID:   " + (d.op_id || "(なし)") + "\n\n" +
+    "エラー内容:\n" + String(err) + "\n\n" +
+    "KTTA Platform の管理画面 → 申込一覧 で「未反映」になっているはずです。\n" +
+    "そこから再送してください。申込自体は本部側に残っています。\n\n" +
     "スプレッドシート:\n" + SpreadsheetApp.getActiveSpreadsheet().getUrl() + "\n";
-  GmailApp.sendEmail(adminEmail, subject, body);
+  GmailApp.sendEmail(to.join(","), subject, body);
 }
 
 // ════════════════════════════════════════════
@@ -1070,6 +1315,11 @@ function doGet(e) {
   }
   if (action === "list") {
     return _json(_buildList(params.tournament_id || ""));
+  }
+  if (action === "entry_ids") {
+    // 突合用: 台帳に記録されている申込IDの一覧を返す。
+    // プラットフォーム側が「自分が送ったID」と突き合わせ、シートに無いものを名指しできる。
+    return _json(_buildEntryIds(params.tournament_id || ""));
   }
   if (action === "rebuild") {
     // 集計用シート手動再計算 (デバッグ用)
@@ -1127,6 +1377,47 @@ function _buildStats(tournamentId) {
     total_amount: totalAmount,
     by_event: byEvent,
     applications_count: filtered.length,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+// 突合用: 申込台帳に記録されている申込IDと、その識別情報を返す。
+// 申込ID列が無い旧シートでは has_id_column:false を返し、呼び出し側が
+// 「件数だけの突合」に落とせるようにする(黙って空配列を返すと「全部欠けている」と誤解される)。
+function _buildEntryIds(tournamentId) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName(SHEETS.LEDGER);
+  if (!sh || sh.getLastRow() < 2) {
+    return { ok: true, has_id_column: false, count: 0, ids: [], rows: [],
+      updated_at: new Date().toISOString() };
+  }
+  const width = Math.max(1, sh.getLastColumn());
+  const head = sh.getRange(1, 1, 1, width).getValues()[0]
+    .map(function (v) { return String(v == null ? "" : v).trim(); });
+  const iId = head.indexOf(COL_ENTRY_ID);
+  const iTid = head.indexOf("tournament_id");
+  const iTeam = head.indexOf("団体名");
+  const iName = head.indexOf("申込責任者");
+  const iTs = head.indexOf("受付日時");
+  const rows = sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues();
+
+  const out = [];
+  rows.forEach(function (r, i) {
+    if (tournamentId && iTid >= 0 && String(r[iTid] || "").trim() !== String(tournamentId)) return;
+    out.push({
+      row: i + 2,
+      id: iId >= 0 ? String(r[iId] || "").trim() : "",
+      team: iTeam >= 0 ? String(r[iTeam] || "").trim() : "",
+      contact: iName >= 0 ? String(r[iName] || "").trim() : "",
+      at: iTs >= 0 && r[iTs] ? String(r[iTs]) : "",
+    });
+  });
+  return {
+    ok: true,
+    has_id_column: iId >= 0,
+    count: out.length,
+    ids: out.map(function (x) { return x.id; }).filter(Boolean),
+    rows: out,
     updated_at: new Date().toISOString(),
   };
 }
@@ -1616,8 +1907,12 @@ function menuShowHelp() {
     "  _種目_*: 種目別 選手リスト (手動生成)\n" +
     "  領収書一覧: 全団体の領収書 (一括発行)\n" +
     "  領収書(個別発行): 手動入力 → 1枚発行\n\n" +
+    "■ 受信の確かめかた\n" +
+    "  申込を受け取ると、シートに書いた内容を読み返して確認します。\n" +
+    "  確認できたときだけ申込者へ「受け付けました」を送ります。\n" +
+    "  確認できなければ【要確認】の件名で通知します(申込者には送りません)。\n\n" +
     "■ スクリプトプロパティ (任意設定)\n" +
-    "  ADMIN_EMAIL: 主催者メール\n" +
+    "  ADMIN_EMAIL: 受信確認の宛先 (カンマ区切りで複数可・未設定ならシート所有者)\n" +
     "  ASSOCIATION_NAME: 釧路卓球協会\n" +
     "  ISSUER_NAME: 釧路卓球協会 会長 山本 満\n" +
     "  PRICE_TEAM_M/F, PRICE_DBL_M/F, PRICE_MIX_M/F, PRICE_BENTO, PRICE_PARTY",
