@@ -1166,20 +1166,20 @@ function _test() {
           {
             event: "一般男子 団体戦", type: "team", fee: 1000,
             members_detail: [
-              { name: "三本 雅敏", age: 60 },
-              { name: "村上 将三", age: 80 },
+              { name: "佐藤 太郎", age: 20 },
+              { name: "鈴木 次郎", age: 21 },
             ],
           },
           {
             event: "一般男子 ダブルス", type: "doubles", fee: 1000,
-            name1: "三本 雅敏", age1: 60,
-            name2: "村上 将三", age2: 80,
+            name1: "佐藤 太郎", age1: 20,
+            name2: "鈴木 次郎", age2: 21,
             team1: "テスト団体A", team2: "テスト団体A",
           },
           {
             event: "混合ダブルス", type: "mixed", fee: 500,
-            name1: "三本 雅敏", age1: 60,
-            name2: "江口 久美子", age2: 74,
+            name1: "佐藤 太郎", age1: 21,
+            name2: "鈴木 次郎", age2: 20,
             team1: "テスト団体A", team2: "テスト団体A",
           },
           { event: "お弁当", type: "bento", count: 3, name: "テスト団体A" },
