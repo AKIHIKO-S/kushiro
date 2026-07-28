@@ -12,7 +12,18 @@ const { eventName: _eventName } = require("./lib/events");
 function _formPreamble(tournament, opts, events) {
   opts = opts || {};
   return {
-    deadline: opts.deadline || "",
+    // 締切は開催日と同じ行に並ぶので、表記を揃える(片方だけ 2027-02-01 のISO表記だと素人臭い)。
+    // 「2027-02-01 17:00」のような日付+時刻を受け、日付部分だけ和文に直して時刻はそのまま残す。
+    deadline: (() => {
+      const raw = String(opts.deadline || "").trim();
+      if (!raw) return "";
+      const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})(.*)$/);
+      if (!m) return raw;                       // 「未定」等の自由記入はそのまま
+      const dt = new Date(m[1] + "-" + m[2] + "-" + m[3] + "T00:00:00");
+      if (isNaN(dt.getTime())) return raw;
+      return dt.toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric", weekday: "short" })
+        + (m[4] || "");
+    })(),
     paymentNote: opts.payment_note ||
       "参加料は、大会当日の開会式前に受付でお支払いください。",
     notes: opts.notes || "",
@@ -560,13 +571,14 @@ function buildEntryFormHTML(tournament, events, opts) {
   .entry-row {
     background: var(--card-2);
     border: 1.5px solid var(--line-2);
-    border-left: 4px solid #d6c8ab;
+    /* 区別は上端帯で作る。左縁の色付き線は使わない(KTTAの規範。過去に全画面で上端帯へ統一した) */
+    border-top: 3px solid #d6c8ab;
     border-radius: 10px;
     padding: 14px 16px; margin-bottom: 10px;
     transition: border-color .15s, box-shadow .15s;
     animation: ttRise .3s ease both;
   }
-  .entry-row:hover { border-left-color: var(--red); box-shadow: 0 4px 16px -10px rgba(192,21,38,.3); }
+  .entry-row:hover { border-top-color: #211d18; box-shadow: 0 4px 16px -12px rgba(33,29,24,.35); }
   .entry-row .row-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
   .entry-row .row-head .num {
     font-weight:800; font-size:13px; color:#fff;
@@ -621,8 +633,11 @@ function buildEntryFormHTML(tournament, events, opts) {
     border: 1px solid #ecc6c6; padding: 4px 11px;
     border-radius: 6px; cursor: pointer; font-size: 11.5px;
     font-weight: 700; font-family: inherit; transition: all .15s;
+    /* 押し間違えると入力済みの選手が消えるので、指で確実に押せる大きさを確保する */
+    min-height: 44px; min-width: 56px;
   }
   .btn-del:hover { background: #fbe9e9; border-color: var(--red); }
+  .events-lead { font-size: 13px; color: #57534e; line-height: 1.75; margin: 0 0 14px; }
 
   /* ── 合計 ── */
   .total-box {
@@ -1087,6 +1102,7 @@ ${closedNotice}
 
 <div class="form-section">
   <h2>出場種目</h2>
+  ${events.length > 3 ? '<p class="events-lead">出場する種目をタップして開き、選手を記入してください。出ない種目はそのままで構いません。</p>' : ''}
   <div id="eventsContainer"></div>
 </div>
 
@@ -1316,7 +1332,11 @@ function playerFieldsHtml(prefix, ev) {
   const grade = gradeStateFor(ev, evName);
   if (grade !== "hidden") {
     const lb = escapeHtml(flabel("grade", "学年"));
-    h += '<input type="text" name="' + prefix + '_grade" placeholder="' + lb + (grade === "required" ? " (必須)" : "") +
+    // 一般の部で「なぜ学年を聞かれるのか」が分からないと空欄のまま出されるので、
+    // 任意で出しているときはプレースホルダで用途を言う(例: 中3・高3が一般の部に出る場合)。
+    const ph = grade === "required" ? lb + " (必須)"
+      : (isStudentEvent(ev) ? lb : lb + " (学生の方のみ)");
+    h += '<input type="text" name="' + prefix + '_grade" placeholder="' + escapeHtml(ph) +
       '" aria-label="' + lb + '"' + (grade === "required" ? " required" : "") + ' />';
   }
   const pg = fstFor(evName, "player_gender");
@@ -1356,11 +1376,16 @@ function renderEvents() {
     const det = document.createElement("details");
     det.className = "event-block";
     det.dataset.idx = idx;
-    det.open = true; // ★ 種目セクションは初期表示で開く
+    // 種目が多い大会では、出ない種目の入力欄まで最初から全部見えていると
+    // 「これを全部埋めるのか」と誤解させ、画面も十数ページぶんに膨らむ。
+    // 3種目までは全部開いたほうが早いので開き、4種目以上はたたんで「選んで開く」形にする。
+    det.open = EVENTS.length <= 3;
     const fee = ev.fee || 0;
     const hasStuFee = (ev.fee_student != null && ev.fee_student !== fee);   // 中高生に別料金がある種目
     const feeStu = hasStuFee ? ev.fee_student : fee;
     const unit = isTeam ? "チーム" : (isDoubles ? "ペア" : "選手");
+    // 見出しに出す件数の助数詞。「0 選手」は日本語として不自然なので、数え方を分ける
+    const countUnit = isTeam ? "チーム" : (isDoubles ? "組" : "名");
     const unitSfx = isTeam ? " / チーム" : (isDoubles ? " / ペア" : " / 人");
     const feeTagHtml = hasStuFee
       ? '一般 ¥' + fee.toLocaleString("ja-JP") + ' ／ 中高生 ¥' + feeStu.toLocaleString("ja-JP") + unitSfx
@@ -1384,7 +1409,7 @@ function renderEvents() {
       '<span class="fee-tag">' + feeTagHtml + '</span>' +
       sizeTag +
       capTag +
-      (isFull ? "" : '<span class="count-badge" id="count_' + idx + '">0 ' + unit + '</span>') +
+      (isFull ? "" : '<span class="count-badge" id="count_' + idx + '" data-unit="' + countUnit + '" hidden></span>') +
       '</summary>' +
       (isFull
         ? '<div class="cap-closed">この種目は定員に達したため、申込を締め切りました。</div>'
@@ -1394,7 +1419,7 @@ function renderEvents() {
               '+ ' + unit + 'を1つ追加</button>' +
             (isTeam ? '' :
               '<button type="button" class="btn-add btn-add-bulk" onclick="addEntryBulk(' + idx + ', 5)">' +
-              '+ 5' + unit + 'を一括追加</button>') +
+              '+ 5' + (isDoubles ? '組' : '人') + 'ぶんまとめて追加</button>') +
           '</div>');
     c.appendChild(det);
     // ★ 初期1行をプリ表示 (空行で何をすればいいか分かりやすく)。満員種目には行を出さない。
@@ -1443,8 +1468,11 @@ function updateCounts() {
       }
       if (hasContent) filled++;
     });
-    const unit = ev.type === "team" ? "チーム" : (ev.type === "doubles" ? "ペア" : "選手");
-    badge.textContent = filled + " " + unit;
+    // 0件のときはバッジを出さない(「0 選手」は日本語として不自然で、しかも情報量がゼロ)。
+    // 1件以上になって初めて「3名」「2組」「1チーム」と出す。たたんだ種目でも件数が見える。
+    const unit = badge.dataset.unit || "件";
+    badge.hidden = filled === 0;
+    badge.textContent = filled === 0 ? "" : filled + unit;
   });
 }
 
@@ -2134,11 +2162,13 @@ function ttRailFilled(el) {
 }
 function ttRailUpdate() {
   if (!TT_RAIL) return;
+  // left は「まだ埋まっていない入力欄の数」だけを数える。
+  // 出場種目の選択は「欄を埋める」ことではないので、ここに足し込むと画面の数字が実際と食い違う
+  // (欄は4つしか無いのに「あと5項目」と出て、5つ目を探させてしまう)。別の条件として扱う。
   var left = 0;
-  // 出場種目は「1種目以上」が送信の条件。必須欄の数では表せないので件数で見る
-  // (未記入の行は必須が外れているため、そのままでは「任意」に見えてしまう)。
   var picked = 0;
   try { picked = gatherFormData().entries.length; } catch (e) { picked = 0; }
+  var needEvent = picked === 0;
   TT_RAIL.groups.forEach(function (g) {
     if (g.isSubmit) return;
     var reqs = [];
@@ -2147,7 +2177,8 @@ function ttRailUpdate() {
     left += n;
     var isEvents = g.secs.some(function (s) { return s.querySelector && s.querySelector("#eventsContainer"); });
     if (isEvents) {
-      if (picked === 0) { g.stEl.textContent = "未選択"; g.el.classList.remove("done"); left += 1; }
+      // 未記入の行は必須が外れているため、欄の数では「任意」に見えてしまう。件数で見る。
+      if (needEvent) { g.stEl.textContent = "未選択"; g.el.classList.remove("done"); }
       else if (n === 0) { g.stEl.textContent = picked + "件 済"; g.el.classList.add("done"); }
       else { g.stEl.textContent = "あと" + n; g.el.classList.remove("done"); }
       return;
@@ -2156,15 +2187,18 @@ function ttRailUpdate() {
     else if (n === 0) { g.stEl.textContent = "済"; g.el.classList.add("done"); }
     else { g.stEl.textContent = "あと" + n; g.el.classList.remove("done"); }
   });
+  var ready = left === 0 && !needEvent;
   TT_RAIL.groups.forEach(function (g) {
     if (!g.isSubmit) return;
-    g.stEl.textContent = left === 0 ? "できます" : "準備中";
-    g.el.classList.toggle("done", left === 0);
+    g.stEl.textContent = ready ? "できます" : "準備中";
+    g.el.classList.toggle("done", ready);
   });
-  TT_RAIL.remain.className = left === 0 ? "ok" : "";
-  TT_RAIL.remain.textContent = left === 0
-    ? "送信できます"
-    : (picked === 0 && left === 1 ? "出場種目を選んでください" : "必須があと" + left + "項目");
+  TT_RAIL.remain.className = ready ? "ok" : "";
+  // 「あと何をすればよいか」を、欄の数と種目の選択に分けて言う。
+  TT_RAIL.remain.textContent = ready ? "送信できます"
+    : left === 0 ? "出場種目を選んでください"
+    : needEvent ? "必須があと" + left + "項目 ・ 出場種目 未選択"
+    : "必須があと" + left + "項目";
 }
 
 // 表示条件つき項目の連動 + 未記入行の必須解除(入力のたびに評価し直す。件数は高々数十なので全走査で足りる)
