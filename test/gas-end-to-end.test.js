@@ -334,3 +334,152 @@ test("突合APIが台帳の申込IDを返す(締切前の欠落チェックに�
   assert.strictEqual(out.count, 1, "大会で絞り込める");
   assert.deepStrictEqual(Array.from(out.ids), [a.payload.op_id]);
 });
+
+// ══ 実運用に近い形の通し検証 ═══════════════════════════════════════
+// 31列バグは「新しいシートで、団体戦を含む申込」で初めて出た。同じ種類の
+// 取りこぼし(条件が揃ったときだけ落ちる)を探すため、実際の要項に近い形で流す。
+
+function makeRichSubmission() {
+  const t = db.createTournament({ name: "まりもオープン in Akan", date: "2027-09-20", venue: "会場" });
+  db.updateEntrySettings(t.id, {
+    entries_open: 1,
+    event_config: [
+      { name: "男子シングルス", type: "singles", fee: 700, category: "general" },
+      { name: "混合ダブルス", type: "doubles", fee: 1000, category: "general" },
+      { name: "一般 団体戦", type: "team", fee: 1000, fee_unit: "person", category: "general",
+        per_team: 4, per_team_min: 4 },
+    ],
+    entry_options: [
+      { key: "bento", label: "お弁当", price: 800, unit: "個", max: 10 },
+      { key: "party", label: "懇親会", price: 3500, unit: "名", max: 10 },
+    ],
+    field_config: {
+      version: 2,
+      fields: { furigana: "required", player_team: "required", grade: "optional" },
+      custom: [
+        { key: "zekken", label: "ゼッケン番号", type: "text", scope: "player" },
+        { key: "bus", label: "送迎バス希望", type: "checkbox", scope: "submission" },
+      ],
+      event_overrides: {},
+    },
+  });
+  const tour = db.getTournament(t.id);
+  const opId = "op-rich-" + Math.random().toString(36).slice(2);
+  const form = {
+    tournament_id: tour.id, tournament_name: tour.name,
+    team_name: "阿寒クラブ", contact_name: "担当 花子",
+    contact_tel: "0154-11-2222", contact_email: "akan@example.com",
+    supervisor: "引率 一郎", coach: "コーチ 二郎", note: "駐車場を希望します",
+    answers: { bus: true },
+    options: { bento: 5, party: 3 },
+    entries: [
+      { event: "男子シングルス", type: "singles", name: "甲野 一郎", team: "阿寒クラブ",
+        furigana: "こうの いちろう", extra_json: { grade: "", answers: { zekken: "12" } } },
+      { event: "混合ダブルス", type: "doubles", name1: "甲野 一郎", name2: "丙田 花子",
+        team1: "阿寒クラブ", team2: "阿寒クラブ",
+        furigana1: "こうの いちろう", furigana2: "へいだ はなこ" },
+      { event: "一般 団体戦", type: "team", team_name: "阿寒クラブA",
+        members: ["甲野 一郎", "乙川 二郎", "丙田 花子", "丁原 三郎"] },
+    ],
+  };
+  const r = db.createTeamEntry(tour.id, form, opId);
+  assert.ok(!r.error, r.error);
+  const payload = { ...form, form_schema: db.buildFormSchema(tour), op_id: opId,
+    total_amount: r.total_amount, option_items: r.options || [] };
+  return { tour, payload, result: r };
+}
+
+test("団体戦・オプション・自由項目を含む申込が丸ごと記録される", () => {
+  const { payload, result } = makeRichSubmission();
+  const env = makeEnv({ props: { ADMIN_EMAIL: "honbu@example.com" } });
+  const res = env.post(payload);
+
+  assert.strictEqual(res.ok, true, "成功: " + JSON.stringify(res.problems || res.error || ""));
+  assert.strictEqual(res.verified, true);
+
+  // 団体は「メンバー1人=1行」で入る(要項の1人1,000円に対応する数え方)
+  assert.strictEqual(env.sheets["団体"].getLastRow(), 5, "ヘッダ + メンバー4行");
+  assert.strictEqual(env.sheets["シングルス"].getLastRow(), 2);
+  assert.strictEqual(env.sheets["ミックス"].getLastRow(), 3, "混合はペアの2名を別行に展開(ヘッダ+2行)");
+
+  // 選手名簿(31列レイアウト)が新規シートでも書けている
+  const roster = env.sheets["選手名簿"];
+  assert.ok(roster, "選手名簿シートが作られる");
+  assert.ok(roster.getLastRow() >= 3, "ヘッダ2行 + データ");
+
+  // 有料オプションが台帳の列になり、数量が入る
+  const head = env.sheets["申込台帳"]._grid[0].map(String);
+  const row = env.sheets["申込台帳"]._grid[1];
+  const bentoCol = head.findIndex(h => h.indexOf("お弁当") === 0);
+  assert.ok(bentoCol >= 0, "お弁当の列ができる: " + JSON.stringify(head));
+  assert.strictEqual(row[bentoCol], 5, "数量が入る");
+
+  // 申込単位の自由項目も列になる
+  assert.ok(head.some(h => h.indexOf("送迎バス希望") >= 0), "自由項目が列になる: " + JSON.stringify(head));
+
+  // 金額はサーバーが確定した値をそのまま使う(GAS側で再計算しない)
+  assert.strictEqual(row[head.indexOf("合計金額")], result.total_amount);
+});
+
+test("選手ごとの自由項目が種目シートの列になる", () => {
+  const { payload } = makeRichSubmission();
+  const env = makeEnv({});
+  env.post(payload);
+  const head = env.sheets["シングルス"]._grid[0].map(String);
+  assert.ok(head.some(h => h.indexOf("ゼッケン番号") >= 0), "選手スコープの自由項目が列になる: " + JSON.stringify(head));
+});
+
+test("選手名簿の列が足りないシートでも書ける(旧版が作った名簿の救済)", () => {
+  const { payload } = makeRichSubmission();
+  const env = makeEnv({});
+  // ヘッダ2行だけ在って列が26しかない名簿を先に用意する
+  const sh = env.ss.insertSheet("選手名簿");
+  sh.getRange(1, 1).setValue("団体");
+  sh.getRange(2, 1).setValue("申請団体");
+  const res = env.post(payload);
+  assert.strictEqual(res.ok, true, "列を広げて書ける: " + JSON.stringify(res.problems || res.error || ""));
+});
+
+test("控えメールを本体が送る構成では、GASは申込者へ送らない(二重送信の防止)", () => {
+  const { payload } = makeRichSubmission();
+  const env = makeEnv({ props: { ADMIN_EMAIL: "honbu@example.com" } });
+  const res = env.post({ ...payload, suppress_reply_mail: true });
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.reply_mail, "skipped");
+  assert.ok(!env.mails.some(m => m.to === "akan@example.com"), "申込者へは送らない");
+  const honbu = env.mails.find(m => m.to === "honbu@example.com");
+  assert.ok(honbu, "受信確認は届く");
+  assert.match(honbu.body, /本部システムから送信されます/, "なぜ送っていないかを書く");
+});
+
+test("フラグが無い旧構成では従来どおりGASが控えを送る(後方互換)", () => {
+  const { payload } = makeRichSubmission();
+  const env = makeEnv({});
+  const res = env.post(payload);                 // suppress_reply_mail 無し
+  assert.strictEqual(res.reply_mail, "sent");
+  assert.ok(env.mails.some(m => m.to === "akan@example.com"));
+});
+
+test("必須項目が欠けた送信は記録せずに断る", () => {
+  const { payload } = makeRichSubmission();
+  const env = makeEnv({});
+  const res = env.post({ ...payload, contact_email: "" });
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /必須項目が未入力/);
+  assert.strictEqual(env.sheets["申込台帳"], undefined, "シートを触らずに断る");
+});
+
+test("出場者ゼロの送信は断る", () => {
+  const { payload } = makeRichSubmission();
+  const env = makeEnv({});
+  const res = env.post({ ...payload, entries: [] });
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /出場選手が登録されていません/);
+});
+
+test("壊れたJSONでも落ちずに日本語で断る", () => {
+  const env = makeEnv({});
+  const out = JSON.parse(env.sandbox.__doPost({ postData: { contents: "{壊れている" } }).getContent());
+  assert.strictEqual(out.ok, false);
+  assert.match(out.error, /JSON 解析失敗/);
+});

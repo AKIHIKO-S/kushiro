@@ -192,7 +192,10 @@ function _expectedRowDeltas(data) {
     } else if (kind === "doubles") {
       d[SHEETS.DOUBLES] += 1;              // ペアで1行
     } else if (kind === "mixed") {
-      d[SHEETS.MIXED] += 1;
+      // ミックスはペアの2名をそれぞれ別行に展開する(distributeEntries と同じ数え方)。
+      // 常に1と数えると、片方しか書けなかった取りこぼしを検証が見逃す。
+      if (String(en.name1 || "").trim()) d[SHEETS.MIXED] += 1;
+      if (String(en.name2 || "").trim()) d[SHEETS.MIXED] += 1;
     } else if (kind === "singles") {
       d[SHEETS.SINGLES] += 1;
     }
@@ -1003,6 +1006,8 @@ function appendToRoster(ss, data) {
   }
   // ヘッダー無ければ初期化
   if (sh.getLastRow() < 2) _initRosterHeader(sh);
+  // ヘッダは在るが列が足りないシート(旧版が作った・手で作られた)でも書けるようにする
+  _ensureRosterWidth(sh);
 
   // この申込の各種目を分類
   const teamMembers = [];     // {division, name, age, team}
@@ -1121,15 +1126,20 @@ function appendToRoster(ss, data) {
   // (次の申込が始まる位置 = getLastRow + 1)
 }
 
-function _initRosterHeader(sh) {
-  // 新規シートの列数は既定26。この名簿は31列目まで使うので、書く前に広げておく。
-  // 広げずに書くと「範囲外」で例外になり、申込1件がまるごと記録されない
-  // (新しいスプレッドシートで最初の申込が必ず失敗する。実際に通しテストで再現した)。
+// 選手名簿は31列目まで使う。新規シートの列数は既定26なので、書く前に広げておく。
+// 広げずに書くと「範囲外」で例外になり、申込1件がまるごと記録されない
+// (新しいスプレッドシートで最初の申込が必ず失敗する。通しテストで再現した)。
+// ヘッダ初期化を通らない経路(シートは在るが列が足りない)もあるので、書き込み前に毎回呼ぶ。
+// 足りているときは何もしないので繰り返し呼んで無害。
+function _ensureRosterWidth(sh) {
   const NEED_COLS = 31;
-  if (typeof sh.getMaxColumns === "function" && typeof sh.insertColumnsAfter === "function") {
-    const maxC = sh.getMaxColumns();
-    if (maxC < NEED_COLS) sh.insertColumnsAfter(maxC, NEED_COLS - maxC);
-  }
+  if (typeof sh.getMaxColumns !== "function" || typeof sh.insertColumnsAfter !== "function") return;
+  const maxC = sh.getMaxColumns();
+  if (maxC < NEED_COLS) sh.insertColumnsAfter(maxC, NEED_COLS - maxC);
+}
+
+function _initRosterHeader(sh) {
+  _ensureRosterWidth(sh);
   // 1行目: グループ ヘッダー
   sh.getRange(1, 4).setValue("団体");
   sh.getRange(1, 9).setValue("ダブルス");

@@ -103,7 +103,7 @@ test("この申込で何行増えるべきかを種目から数える", () => {
   const d = G._expectedRowDeltas(DATA);
   assert.strictEqual(d[S.TEAM], 4, "団体はメンバー1人=1行");
   assert.strictEqual(d[S.DOUBLES], 1, "ダブルスはペアで1行");
-  assert.strictEqual(d[S.MIXED], 1);
+  assert.strictEqual(d[S.MIXED], 2, "ミックスはペアの2名を別行に展開する");
   assert.strictEqual(d[S.SINGLES], 1);
 });
 
@@ -128,7 +128,7 @@ test("書いた内容が読み返せれば ok:true", () => {
   // 書き込み後の状態を作る
   setup({
     ledger: [ledgerRow({ tn: "テスト大会", team: "テスト団体A", contact: "山田 太郎", id: "op-abc-123" })],
-    team: 4, doubles: 1, mixed: 1, singles: 1,
+    team: 4, doubles: 1, mixed: 2, singles: 1,
   });
   const v = G._verifyWrite(sandbox.SpreadsheetApp.getActiveSpreadsheet(), DATA, 2, before);
   assert.ok(v.ok, "検証を通る: " + JSON.stringify(v.problems));
@@ -150,7 +150,7 @@ test("台帳の中身が別の申込なら ok:false(行番号だけ合ってい�
   const before = G._countRows(sandbox.SpreadsheetApp.getActiveSpreadsheet());
   setup({
     ledger: [ledgerRow({ tn: "テスト大会", team: "よその団体", contact: "山田 太郎" })],
-    team: 4, doubles: 1, mixed: 1, singles: 1,
+    team: 4, doubles: 1, mixed: 2, singles: 1,
   });
   const v = G._verifyWrite(sandbox.SpreadsheetApp.getActiveSpreadsheet(), DATA, 2, before);
   assert.strictEqual(v.ok, false);
@@ -162,7 +162,7 @@ test("振分けシートの行が足りなければ ok:false", () => {
   const before = G._countRows(sandbox.SpreadsheetApp.getActiveSpreadsheet());
   setup({
     ledger: [ledgerRow({ tn: "テスト大会", team: "テスト団体A", contact: "山田 太郎" })],
-    team: 2, doubles: 1, mixed: 1, singles: 1,     // 団体は4行入るはずが2行
+    team: 2, doubles: 1, mixed: 2, singles: 1,     // 団体は4行入るはずが2行
   });
   const v = G._verifyWrite(sandbox.SpreadsheetApp.getActiveSpreadsheet(), DATA, 2, before);
   assert.strictEqual(v.ok, false);
@@ -174,7 +174,7 @@ test("他の申込が同時に入って行が多い分には通す(自分の分�
   const before = G._countRows(sandbox.SpreadsheetApp.getActiveSpreadsheet());
   setup({
     ledger: [ledgerRow({ tn: "テスト大会", team: "テスト団体A", contact: "山田 太郎" })],
-    team: 6, doubles: 1, mixed: 1, singles: 1,
+    team: 6, doubles: 1, mixed: 2, singles: 1,
   });
   const v = G._verifyWrite(sandbox.SpreadsheetApp.getActiveSpreadsheet(), DATA, 2, before);
   assert.ok(v.ok, "多い分には落とさない: " + JSON.stringify(v.problems));
