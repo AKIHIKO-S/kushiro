@@ -557,7 +557,11 @@ function doPost(e) {
     // 申込者への「受け付けました」は、シートに入ったことを確認できたときだけ送る。
     // 確認できないまま送ると、申込者は安心し、主催者は気づかない(これが事故の形)。
     let replyMail = "skipped";
-    if (verify.ok) {
+    // 本体サーバー側でも控えメールを送る構成(SMTP設定あり)のときは、こちらは送らない。
+    // 両方送ると申込者に同じ内容が2通届く。本体の控えには申込番号が入っていて
+    // 「申込後に選手を差し替える」画面で使うため、残すのは本体側にする。
+    // 旧バージョンの本体はこのフラグを送らないので、その場合は従来どおりこちらが送る。
+    if (verify.ok && !data.suppress_reply_mail) {
       try { _sendReplyMail(data, ledgerRowNum); replyMail = "sent"; }
       catch (mailErr) { replyMail = "failed"; console.error("自動返信メール失敗:", mailErr); }
     }
@@ -1118,6 +1122,14 @@ function appendToRoster(ss, data) {
 }
 
 function _initRosterHeader(sh) {
+  // 新規シートの列数は既定26。この名簿は31列目まで使うので、書く前に広げておく。
+  // 広げずに書くと「範囲外」で例外になり、申込1件がまるごと記録されない
+  // (新しいスプレッドシートで最初の申込が必ず失敗する。実際に通しテストで再現した)。
+  const NEED_COLS = 31;
+  if (typeof sh.getMaxColumns === "function" && typeof sh.insertColumnsAfter === "function") {
+    const maxC = sh.getMaxColumns();
+    if (maxC < NEED_COLS) sh.insertColumnsAfter(maxC, NEED_COLS - maxC);
+  }
   // 1行目: グループ ヘッダー
   sh.getRange(1, 4).setValue("団体");
   sh.getRange(1, 9).setValue("ダブルス");
@@ -1246,8 +1258,10 @@ function _sendReceiptNotice(data, verify, replyMail) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const head = ok
     ? "申込を受け付け、スプレッドシートに記録できたことを確認しました。\n"
-      + "申込者へ自動返信メールを"
-      + (replyMail === "sent" ? "送信しました。" : replyMail === "failed" ? "送信できませんでした(下記)。" : "送信していません。")
+      + "申込者への控えメールは"
+      + (replyMail === "sent" ? "こちらから送信しました。"
+        : replyMail === "failed" ? "送信できませんでした(下記)。"
+        : "本部システムから送信されます(二重送信を避けるため、こちらからは送っていません)。")
       + "\n"
     : "申込を受け取りましたが、スプレッドシートへの記録を確認できませんでした。\n"
       + "この申込は取りこぼしている可能性があります。至急ご確認ください。\n"

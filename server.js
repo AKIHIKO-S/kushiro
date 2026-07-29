@@ -911,6 +911,11 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
         // シートを書くと、フォームの計算違いや改造がそのまま台帳に載るため。
         const relayPayload = { ...payload, form_schema: db.buildFormSchema(tournament) };
         if (opId) relayPayload.op_id = opId;
+        // 控えメールをこちらから送る構成なら、GAS 側には送らせない(申込者に同じ内容が2通届く)。
+        // 残すのはこちら側にする: 控えに申込番号が入っていて、申込後の選手差し替え画面で使うため。
+        if (mailer.isEnabled() && !r.error && Array.isArray(r.entrant_ids) && r.entrant_ids.length > 0) {
+          relayPayload.suppress_reply_mail = true;
+        }
         if (r && !r.error) {
           if (r.total_amount != null) relayPayload.total_amount = r.total_amount;
           if (Array.isArray(r.options)) relayPayload.option_items = r.options;
