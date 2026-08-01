@@ -3564,7 +3564,9 @@ const A = {
  let gasUrl = t.entry_gas_url || localStorage.getItem("tt_gas_url_" + t.id) || "";
  let adminEmail = localStorage.getItem("tt_admin_email") || "";
  let deadline = "";
- let paymentNote = "参加料は、大会当日の開会式前に受付でお支払いください。";
+ // 参加料の案内文。大会に保存された値を正本にする(上部団体の大会など、当日払いでない場合がある)。
+ let paymentNote = (config.entry_payment_note || t.entry_payment_note
+   || "参加料は、大会当日の開会式前に受付でお支払いください。");
 
  // 種目編集テーブル
  const eventsTable = h("table", { className: "tbl", style: { minWidth: "720px" } });
@@ -4217,6 +4219,7 @@ const A = {
        event_config: events,
        field_config: fieldCfg,       // 必須項目設定 + 自由項目(サーバ側で sanitize される)
        entry_options: entryOptions,  // 有料オプション(サーバ側で sanitize される)
+       entry_payment_note: paymentNote,   // 参加料の案内文(埋込URLではなく大会に持たせる)
        organizer: orgEl ? orgEl.value.trim() : (t.organizer || "釧路卓球協会"),
        entry_gas_url: gasUrl || "",  // GAS URL も DB に保存
      });

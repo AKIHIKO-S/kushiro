@@ -3371,7 +3371,7 @@ app.get("/api/tournaments/:id/entry-form.html", (req, res) => {
       gas_url: req.query.gas_url || "REPLACE_WITH_GAS_WEB_APP_URL",
       admin_email: req.query.admin_email || "",
       deadline: req.query.deadline || "",
-      payment_note: req.query.payment_note || "",
+      payment_note: tournament.entry_payment_note || req.query.payment_note || "",
       notes: req.query.notes || "",
       turnstile_sitekey: process.env.TURNSTILE_SITEKEY || "",
       field_config: db.resolveFieldConfig(tournament),   // 必須項目設定(空なら既定=現行フォーム相当)
@@ -3407,6 +3407,7 @@ app.get("/api/tournaments/:id/entry-form-config", (req, res) => {
     entry_capacity: tournament.entry_capacity || 0,
     capacity: db.getEntryCapacityState(tournament.id),
     entry_options: db.resolveEntryOptions(tournament),
+    entry_payment_note: tournament.entry_payment_note || "",   // 参加料の案内文(大会に保存された値)
     suggested_gas_url: "https://script.google.com/macros/s/AKfycb.../exec",
   });
 });
@@ -4968,7 +4969,7 @@ app.get("/entry/:id", (req, res) => {
       gas_url: postUrl,
       admin_email: req.query.admin_email || "",
       deadline: db.entryDeadlineLabel(tournament) || req.query.deadline || "",
-      payment_note: req.query.payment_note || "",
+      payment_note: tournament.entry_payment_note || req.query.payment_note || "",
       notes: req.query.notes || "",
       turnstile_sitekey: process.env.TURNSTILE_SITEKEY || "",
       field_config: db.resolveFieldConfig(tournament),   // 必須項目設定(空なら既定=現行フォーム相当)

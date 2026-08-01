@@ -204,3 +204,20 @@ test("団体戦のメンバー枠も囲みを捨てる", () => {
   const h = html(mk(EV5), EV5);
   assert.match(h, /\.member-block\s*\{[^}]*background:\s*transparent;\s*border:\s*none;\s*border-top:\s*1px solid/);
 });
+
+// ══ 申込の同一性(op_id)の作り方 ═════════════════════════════════
+// 二度押し・通信リトライを1件にまとめる鍵。内容の一部だけを拾うと、
+// 「区分を選び直しただけの送り直し」が同じ申込と判定され、前回の内容のまま
+// 「受け付けました」と返ってしまう(申込者は直ったと思い、本部には古い内容が残る)。
+test("申込の同一性は送信内容そのもので決める(一部の項目だけ拾わない)", () => {
+  const h = html(mk(EV5), EV5);
+  assert.match(h, /function ttOpId/);
+  assert.match(h, /JSON\.stringify\(copy\)/, "送信内容そのものを鍵にする");
+  assert.ok(!/x: \(data\.entries \|\| \[\]\)\.map/.test(h), "種目と氏名だけを拾う旧実装が残っていない");
+});
+
+test("毎回変わる値は同一性の判定から除く(正当な再送を別物にしない)", () => {
+  const h = html(mk(EV5), EV5);
+  assert.match(h, /k === "cf_turnstile_token"/, "Turnstileトークンは除く");
+  assert.match(h, /k === "hp_url"/, "ハニーポットは除く");
+});

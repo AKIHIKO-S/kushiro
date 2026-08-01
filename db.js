@@ -558,6 +558,10 @@ try {
   // 1人が申し込める種目数の上限(0=無制限)。要項の「一人最大3種目にエントリーできます」
   // (タンチョウオープン等)を機械的に守るため。同一申込内で氏名が一致する選手を数える。
   addTCol("entry_max_events", "INTEGER DEFAULT 0");
+  // 参加料の納め方の案内文。既定は「大会当日の開会式前に受付でお支払いください」だが、
+  // 上部団体(道連)の大会を支部で取りまとめる場合など、当日払いではない大会がある。
+  // 埋込URLのクエリ任せにすると、URLを作り直さない限り誤った案内が出続けるため大会に持たせる。
+  addTCol("entry_payment_note", "TEXT DEFAULT ''");
   addTCol("entry_events", "TEXT DEFAULT ''"); // JSON配列: ["男子シングルス","女子シングルス",...]
   addTCol("event_config", "TEXT DEFAULT ''"); // JSON配列: 詳細 [{name, fee, type, per_team, note}]
   addTCol("entry_gas_url", "TEXT DEFAULT ''"); // GAS Web App URL (申込先 スプレッドシート)
@@ -2548,6 +2552,7 @@ function createTournament(data) {
       entry_capacity: data.entry_capacity !== undefined ? data.entry_capacity : preset.entry_capacity,
       entry_max_events: data.entry_max_events !== undefined ? data.entry_max_events : preset.entry_max_events,
       entry_options: data.entry_options !== undefined ? data.entry_options : preset.entry_options,
+      entry_payment_note: data.entry_payment_note !== undefined ? data.entry_payment_note : preset.payment_note,
       entries_open: open && evCfg.length > 0,   // 種目ゼロで受付ONは作らない(DB層の不変条件)
       entry_deadline: data.entry_deadline,
       entry_events: (Array.isArray(data.entry_events) && data.entry_events.length)
@@ -9289,6 +9294,7 @@ function copyEntrySettings(targetId, sourceId, opts) {
     entry_deadline_time: src.entry_deadline_time || "",
     entry_capacity: src.entry_capacity || 0,
     entry_max_events: src.entry_max_events || 0,
+    entry_payment_note: src.entry_payment_note || "",
     field_config: resolveFieldConfig(src),
     entry_options: resolveEntryOptions(src),
     entry_events: (() => { try { return JSON.parse(dst.entry_events || "[]"); } catch (_) { return []; } })(),
@@ -11108,6 +11114,7 @@ function updateEntrySettings(tournamentId, settings) {
       entry_capacity = ?,
       entry_options = ?,
       entry_max_events = ?,
+      entry_payment_note = ?,
       entry_events = ?,
       event_config = ?,
       field_config = ?,
@@ -11132,6 +11139,10 @@ function updateEntrySettings(tournamentId, settings) {
     settings.entry_max_events !== undefined
       ? Math.max(0, Math.min(99, parseInt(settings.entry_max_events) || 0))
       : (t.entry_max_events || 0),
+    // 参加料の案内文。明示指定時のみ更新(未指定なら既存値を維持)
+    settings.entry_payment_note !== undefined
+      ? String(settings.entry_payment_note || "").slice(0, 500)
+      : (t.entry_payment_note || ""),
     JSON.stringify(settings.entry_events || []),
     typeof evCfg === "string" ? evCfg : JSON.stringify(evCfg || []),
     fldCfg,

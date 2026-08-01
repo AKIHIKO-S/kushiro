@@ -60,6 +60,20 @@
     field_config: { fields: { furigana: "required", grade: "required", player_team: "optional", supervisor: "required", advisor: "optional" } },
     entry_deadline_time: "17:00",
   };
+  // 上部団体(道連)の大会を支部で取りまとめるとき。団体戦の監督を聞き、学年は無い(成年の大会)。
+  // 生年月日は種目側の age_check(年代別区分の資格判定)で聞くのでここには入れない。
+  const ENTRY_FEDERATION = {
+    // 成年の大会なので「引率顧問・コーチ」ではなく「監督」を聞く(学生大会の語彙を持ち込まない)。
+    field_config: {
+      fields: { furigana: "required", grade: "hidden", player_team: "required",
+        supervisor: "optional", advisor: "hidden", coach: "hidden" },
+      field_meta: { supervisor: { label: "監督", help: "団体戦に申し込む場合は監督を記入してください（選手との兼任可）" } },
+    },
+    entry_deadline_time: "17:00",
+    // 上部団体の大会は支部がまとめて送金するので、既定の「当日受付でお支払い」は誤案内になる。
+    payment_note: "参加料は釧路卓球協会（釧路支部）が取りまとめて主催団体へ送金します。"
+      + "個人・チームから直接お振込みされないようお願いします。支部への納入方法は別途ご連絡します。",
+  };
 
   const TEMPLATES = [
     {
@@ -448,9 +462,79 @@
       rules: { ...RULE_LARGE_BALL, ball: "ニッタク 44mm オレンジ抗菌", note: "3Gマッチ (ファイナル6:6スタート、9pチェンジ)" },
       court: SMALL_COURT,
     },
+    {
+      // 北海道卓球連盟の主催大会。釧路卓球協会は「釧路支部」として支部内の申込を取りまとめ、
+      // 道連事務局へまとめて提出・送金する立場になる(要項15「必ず各支部事務局が取りまとめて
+      // 行うものとする」)。したがってこのフォームは**支部内の締切**で締める必要があり、
+      // 道連必着日そのものを締切にしてはいけない(取りまとめの時間が無くなる)。
+      id: "princess_hokkaido",
+      entry_preset: ENTRY_FEDERATION,
+      name: "北海道プリンセス卓球大会",
+      season: "秋",
+      reference_date: "09-26",
+      venue: "よつ葉アリーナ十勝 (帯広市大通北1丁目1番地)",
+      organizer: "北海道卓球連盟",
+      co_organizer: "十勝卓球協会 (北海道卓球連盟 十勝支部) 主管",
+      description: "北海道卓球連盟主催の女子大会。1日目に団体戦(複・単・複)、2日目に個人戦シングルス(年代別7部門)。"
+        + "釧路卓球協会は釧路支部として支部内の申込を取りまとめ、道連事務局へ提出する。",
+      eligibility: "当該年度の一般選手登録を済ませた成年女性(既婚歴不問・日学連登録者は不可)。大会年度の翌4月1日時点で満18歳以上。",
+      events: [
+        // 団体戦: 監督1名(選手兼可)+ 選手4〜7人で登録。試合は 複・単・複 の3本で2点先取。
+        // 1・2番は異なる3名、3番は出ていない選手か 1・2番のうち1人だけ重複可。
+        { name: "団体戦", gender: "female", type: "team", fee: 7000,
+          per_team: 7, per_team_min: 4, tie_format: "D,S,D", category: "general",
+          note: "監督1名(選手兼可)+選手4〜7人。複・単・複の2点先取。当日3名ならオープン参加、2名は不可" },
+        // 個人戦シングルス: 年代別・卓球歴別の7部門。**この内1種目のみ出場可**なので、
+        // 種目を7つに割らず1種目の中の「区分」にする(フォームでは択一になり、二重申込が構造的に起きない)。
+        // 年齢は大会年度の翌4月1日現在で判定する(要項8「年齢の算出基準は翌年4月1日現在」)。
+        // ③〜⑦は下の年代にも出場できるため、上限は設けず下限(min_age)だけを効かせる。
+        { name: "個人戦 シングルス", gender: "female", type: "singles", fee: 2000, category: "general",
+          age_check: { mode: "birthdate", as_of: "" },   // as_of は大会作成時に「翌年4月1日」を入れる
+          entry_categories: [
+            { value: "beginner", label: "ビギナーの部", short: "ビギナー", min_age: 18,
+              note: "年齢に関係なく出場可。過去にビギナーの部で優勝した方は出場できません" },
+            { value: "under30",  label: "サーティ以下", short: "サーティ以下", min_age: 18 },
+            { value: "forty",    label: "フォーティ",   short: "フォーティ",   min_age: 40 },
+            { value: "fifty",    label: "フィフティ",   short: "フィフティ",   min_age: 50 },
+            { value: "sixty",    label: "シックスティ", short: "シックスティ", min_age: 60 },
+            { value: "seventy",  label: "セブンティ",   short: "セブンティ",   min_age: 70 },
+            { value: "eighty",   label: "エイティ",     short: "エイティ",     min_age: 80 },
+          ],
+          note: "7部門のうち1部門のみ出場可。全部門とも3名以上で成立" },
+      ],
+      rules: {
+        points: 11, games: 3,
+        referee_rule: "mutual_then_loser",
+        ball: "JTTA公認プラスチック球 40mm ホワイト",
+        enforce_referee_rule: true,
+        note: "団体は複・単・複の2点先取。リーグ戦からトーナメント戦へ移行。ゼッケンは当該年度の日本卓球協会指定のもの",
+      },
+      court: DEFAULT_COURT,
+    },
   ];
 
   global.TT_TEMPLATES = TEMPLATES;
+
+  // 年代別区分の基準日(age_check.as_of)を、大会日付から「その年度の翌4月1日」に解決する。
+  // 例: 2026-09-26 の大会 → 年度は2026年度(4月〜翌3月) → 基準日は 2027-04-01。
+  // テンプレ側は as_of を空にしておき、ここで年を埋める。既に入っている値は尊重する。
+  function _fiscalNextApril1(dateStr) {
+    const m = String(dateStr || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return "";
+    const y = parseInt(m[1], 10), mo = parseInt(m[2], 10);
+    const fiscalYear = mo >= 4 ? y : y - 1;     // 1〜3月は前年度
+    return (fiscalYear + 1) + "-04-01";
+  }
+  function _resolveAgeAsOf(events, dateStr) {
+    if (!Array.isArray(events)) return events;
+    const asOf = _fiscalNextApril1(dateStr);
+    return events.map(function (e) {
+      if (!e || !e.age_check || e.age_check.mode !== "birthdate") return e;
+      if (e.age_check.as_of) return e;          // 明示指定があればそのまま
+      if (!asOf) return e;                      // 日付未定なら空のまま(サーバ側が年度4/1へフォールバック)
+      return { ...e, age_check: { ...e.age_check, as_of: asOf } };
+    });
+  }
 
   // テンプレ → 大会作成データ。年度依存の数値(回数)は含まない。
   // 大会名には季節ラベルだけ任意で付加可能 (例: "くしろリーグ団体選手権 (夏季)")
@@ -492,7 +576,10 @@
       entry_max_events: tpl.entry_max_events || 0,
       // 申込プリセット(この大会で聞くこと)。大会作成時にそのまま申込設定へ流す。
       _entry_preset: tpl.entry_preset || null,
-      _events: tpl.events,
+      // 年代別の資格判定は「大会年度の翌4月1日現在の年齢」で行うのが要項の慣例。
+      // テンプレは年を持てないので、確定した大会日付からここで解決する
+      // (未解決のまま渡すと年齢判定が大会日基準になり、境界の1年がずれる)。
+      _events: _resolveAgeAsOf(tpl.events, date),
       _rules: tpl.rules,
       _sponsors: tpl.sponsors,
       _season: tpl.season,

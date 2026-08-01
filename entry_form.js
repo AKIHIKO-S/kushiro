@@ -1996,15 +1996,21 @@ function ttHash(str) {
   for (var i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
   return h.toString(36);
 }
+// 申込の「同一性」を表す鍵。同じ内容の再送(二度押し・通信リトライ)はこれが一致し、
+// サーバ側で1件として扱われる=重複登録が起きない。
+//
+// 申込内容の一部だけを拾ってはいけない。以前は 氏名・団体名・種目 だけを見ていたため、
+// 参加区分を選び直した / ふりがなを直した / 弁当の数量を変えた だけの送り直しが
+// 「同じ申込」と判定され、前回の内容のまま「受け付けました」と返っていた
+// (申込者は直ったと思い、本部には古い内容が残る)。
+// そこで送信内容そのものを鍵にする。毎回変わる値(Turnstileトークン)だけ除く。
 function ttOpId(data) {
-  var sig = JSON.stringify({
-    t: data.team_name || "", e: data.contact_email || "", n: data.contact_name || "",
-    x: (data.entries || []).map(function (it) {
-      return [it.event, it.type, it.name || "", it.name1 || "", it.name2 || "",
-        it.team_name || "", (it.members || []).join(",")];
-    }),
+  var copy = {};
+  Object.keys(data || {}).forEach(function (k) {
+    if (k === "cf_turnstile_token" || k === "hp_url") return;   // 送信のたびに変わる/意味を持たない
+    copy[k] = data[k];
   });
-  return "entry-" + TOURNAMENT_ID + "-" + ttHash(sig);
+  return "entry-" + TOURNAMENT_ID + "-" + ttHash(JSON.stringify(copy));
 }
 
 async function submitForm(e) {
