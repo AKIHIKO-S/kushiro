@@ -472,6 +472,10 @@
       name: "北海道プリンセス卓球大会",
       season: "秋",
       reference_date: "09-26",
+      // 支部内の申込締切。道連事務局への必着(第55回は8月28日)より前に締めて、
+      // 取りまとめ・提出の時間を確保する。8月25日はオーナー確定値(2026-08-01)。
+      reference_deadline: "08-25",
+      deadline_note: "道連事務局への必着日より前に支部で締めます（第55回は道連必着8月28日）。",
       venue: "よつ葉アリーナ十勝 (帯広市大通北1丁目1番地)",
       organizer: "北海道卓球連盟",
       co_organizer: "十勝卓球協会 (北海道卓球連盟 十勝支部) 主管",
@@ -525,6 +529,16 @@
     const fiscalYear = mo >= 4 ? y : y - 1;     // 1〜3月は前年度
     return (fiscalYear + 1) + "-04-01";
   }
+  // 申込締切(月日)を、確定した大会日付と同じ年で解決する。
+  // 締切が開催日より後になる組み合わせ(例: 1月開催で締切12月)は前年に送る。
+  function _resolveDeadline(refMMDD, dateStr) {
+    if (!refMMDD || !/^\d{2}-\d{2}$/.test(String(refMMDD))) return "";
+    const m = String(dateStr || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return "";
+    const y = parseInt(m[1], 10);
+    const same = y + "-" + refMMDD;
+    return same < dateStr ? same : (y - 1) + "-" + refMMDD;
+  }
   function _resolveAgeAsOf(events, dateStr) {
     if (!Array.isArray(events)) return events;
     const asOf = _fiscalNextApril1(dateStr);
@@ -576,6 +590,10 @@
       entry_max_events: tpl.entry_max_events || 0,
       // 申込プリセット(この大会で聞くこと)。大会作成時にそのまま申込設定へ流す。
       _entry_preset: tpl.entry_preset || null,
+      // 申込締切。テンプレは月日だけを持ち、確定した大会日付から年を決める
+      // (締切が開催日より後にならないよう、月日が開催日を過ぎていれば前年にする)。
+      entry_deadline: _resolveDeadline(tpl.reference_deadline, date),
+      _deadline_note: tpl.deadline_note || "",
       // 年代別の資格判定は「大会年度の翌4月1日現在の年齢」で行うのが要項の慣例。
       // テンプレは年を持てないので、確定した大会日付からここで解決する
       // (未解決のまま渡すと年齢判定が大会日基準になり、境界の1年がずれる)。

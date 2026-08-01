@@ -224,3 +224,37 @@ test("既存テンプレートの数と申込プリセットの網羅は保た�
   const missing = ids.filter((_, i) => !W.TT_TEMPLATES[i].entry_preset);
   assert.strictEqual(missing.length, 0, "プリセット未設定: " + missing.join(", "));
 });
+
+// ── 申込締切(支部内)の解決 ────────────────────────────────────
+// 道連事務局への必着日より前に支部で締める必要がある(取りまとめの時間)。
+// テンプレは月日だけを持ち、確定した大会日付から年を決める。
+test("支部内の申込締切が大会日付と同じ年で入る", () => {
+  const b = built("2026-09-26");
+  assert.strictEqual(b.entry_deadline, "2026-08-25", "第55回は2026-08-25(道連必着8/28の前)");
+  assert.ok(b.entry_deadline < b.date, "締切は開催日より前");
+});
+
+test("翌年の大会でも締切が追随する", () => {
+  const b = built("2027-09-25");
+  assert.strictEqual(b.entry_deadline, "2027-08-25");
+});
+
+test("締切の月日が開催日を過ぎる組み合わせでは前年に送る", () => {
+  // 1月開催の大会に「8月25日締切」を当てると同年では締切が後になってしまう
+  const W2 = loadTemplates();
+  const orig = Array.from(W2.TT_TEMPLATES).find(t => t.id === "princess_hokkaido");
+  const b = W2.TT_buildTournamentFromTemplate("princess_hokkaido", { date: "2027-01-10" });
+  assert.strictEqual(b.entry_deadline, "2026-08-25", "前年の8/25になる(締切が開催日より後にならない)");
+  assert.ok(orig, "テンプレは存在する");
+});
+
+test("締切の理由(道連必着日)が運用者に見える", () => {
+  const b = built("2026-09-26");
+  assert.match(b._deadline_note, /道連事務局への必着日より前/);
+  assert.match(b._deadline_note, /8月28日/, "第55回の必着日が書いてある");
+});
+
+test("締切を持たないテンプレートは空のまま(既存の挙動を変えない)", () => {
+  const b = W.TT_buildTournamentFromTemplate("chugaku_shinjin", { date: "2027-11-24" });
+  assert.strictEqual(b.entry_deadline, "", "reference_deadline が無ければ空");
+});

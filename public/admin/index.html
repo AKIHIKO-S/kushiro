@@ -2603,6 +2603,9 @@ const A = {
  if (data.date) document.getElementById("tDate").value = data.date;
  document.getElementById("tVenue").value = data.venue || "";
  document.getElementById("tDesc").value = data.description || "";
+ // テンプレが締切を持っていれば入れる(空欄のときだけ。手入力を上書きしない)
+ const dlIn = document.getElementById("ntDeadline");
+ if (dlIn && data.entry_deadline && !dlIn.value) dlIn.value = data.entry_deadline;
  // ★ テンプレの種目を種目リストへ実体化 (以前は破棄され、毎回手入力していた)。
  //   既に種目を組んでいたら全置換の確認を取る (手入力の消失防止)。
  if (!events.length || confirm("テンプレートの種目で現在の種目リストを置き換えます。よろしいですか?")) {
@@ -2617,6 +2620,10 @@ const A = {
  if (data._sponsors && data._sponsors.length) {
  metaEl.appendChild(h("div", { className: "text-xs" },
  h("b", {}, "後援: "), data._sponsors.join(", ")));
+ }
+ if (data._deadline_note) {
+ metaEl.appendChild(h("div", { className: "text-xs" },
+ h("b", {}, "締切: "), (data.entry_deadline || "-") + "  " + data._deadline_note));
  }
  metaEl.appendChild(h("div", { className: "text-xs mt-1", style: { color: "var(--accent)" } },
  "種目・料金は下で追加・修正できます。読込後もすべて手動で変更可。"));
