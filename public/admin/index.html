@@ -4020,6 +4020,43 @@ const A = {
  };
  buildCopyBox();
 
+ // このモーダルの設定をすべてサーバーへ保存する。
+ // 以前は「保存して閉じる」が localStorage への書込だけで、項目設定・自由項目・オプションを
+ // サーバーへ送っていなかった。それなのに「設定を保存しました」と出して閉じるため、
+ // 自由項目を削除しても反映されない(消したつもりが残る)状態だった。
+ // 保存の入口を1つにして、どちらのボタンからも同じ処理を通す。
+ const saveAll = async () => {
+   const eventNames = events.map(e => e.name);
+   const openEl = document.getElementById("efgOpen");
+   const dlEl = document.getElementById("efgDeadline");
+   const orgEl = document.getElementById("efgOrganizer");
+   const r = await api.put(`/api/tournaments/${t.id}/entry-settings`, {
+     entries_open: openEl ? openEl.checked : !!t.entries_open,
+     entry_deadline: dlEl ? dlEl.value : (t.entry_deadline || ""),
+     entry_events: eventNames,
+     event_config: events,
+     field_config: fieldCfg,       // 必須項目設定 + 自由項目(サーバ側で sanitize される)
+     entry_options: entryOptions,  // 有料オプション(サーバ側で sanitize される)
+     entry_payment_note: paymentNote,   // 参加料の案内文(埋込URLではなく大会に持たせる)
+     organizer: orgEl ? orgEl.value.trim() : (t.organizer || "釧路卓球協会"),
+     entry_gas_url: gasUrl || "",  // GAS URL も DB に保存
+   });
+   if (r && r.error) throw new Error(r.error);
+   // localStorage にも保存 (将来 admin で参照しやすいよう)
+   if (gasUrl) localStorage.setItem("tt_gas_url_" + t.id, gasUrl);
+   if (adminEmail) localStorage.setItem("tt_admin_email", adminEmail);
+   // 画面が持っている大会データも更新しておく
+   t.entries_open = openEl ? openEl.checked : t.entries_open;
+   t.entry_deadline = dlEl ? dlEl.value : t.entry_deadline;
+   t.organizer = orgEl ? orgEl.value.trim() : t.organizer;
+   t.entry_gas_url = gasUrl;
+   const statusMsg = (openEl && openEl.checked) ? "受付中" : "停止中";
+   const cN = (fieldCfg.custom || []).length, oN = (entryOptions || []).length;
+   return `${events.length}種目 / ${statusMsg}`
+     + (cN ? ` / 自由項目${cN}` : "") + (oN ? ` / オプション${oN}` : "")
+     + (gasUrl ? " / GAS連携" : "");
+ };
+
  const body = h("div", {},
  copyBox,
  // ★ 受付ステータス + 締切日 (最重要設定を先頭に)
@@ -4073,7 +4110,8 @@ const A = {
  ),
  h("div", { style: { fontSize: "11px", color: "#78350f", marginTop: "8px", lineHeight: "1.6" } },
    "「受付中」になっていないと、公開URLにアクセスしても申込できません。",
-   "下の「保存して閉じる」で設定が反映されます。"),
+   "この画面の設定（種目・料金・入力項目・自由項目・オプション・締切）は、"
+   + "下の「保存して閉じる」か「この画面の設定をすべてサーバーに保存」を押すまで反映されません。"),
  ),
 
  h("div", { className: "text-sm mb-3",
@@ -4212,39 +4250,12 @@ const A = {
  h("div", { className: "flex gap-2 mt-2 flex-wrap" },
  h("button", { className: "btn btn-sm",
    style: { background: "#15803d", color: "#fff" },
- onClick: async () => {
-   // event_config + 受付ON/OFF + 締切 + GAS URL をサーバーに保存
-   try {
-     const eventNames = events.map(e => e.name);
-     const openEl = document.getElementById("efgOpen");
-     const dlEl = document.getElementById("efgDeadline");
-     const orgEl = document.getElementById("efgOrganizer");
-     const r = await api.put(`/api/tournaments/${t.id}/entry-settings`, {
-       entries_open: openEl ? openEl.checked : !!t.entries_open,
-       entry_deadline: dlEl ? dlEl.value : (t.entry_deadline || ""),
-       entry_events: eventNames,
-       event_config: events,
-       field_config: fieldCfg,       // 必須項目設定 + 自由項目(サーバ側で sanitize される)
-       entry_options: entryOptions,  // 有料オプション(サーバ側で sanitize される)
-       entry_payment_note: paymentNote,   // 参加料の案内文(埋込URLではなく大会に持たせる)
-       organizer: orgEl ? orgEl.value.trim() : (t.organizer || "釧路卓球協会"),
-       entry_gas_url: gasUrl || "",  // GAS URL も DB に保存
-     });
-     if (r.error) return toast("保存失敗: " + r.error, "err");
-     // localStorage にも保存 (将来 admin で参照しやすいよう)
-     if (gasUrl) localStorage.setItem("tt_gas_url_" + t.id, gasUrl);
-     const statusMsg = (openEl && openEl.checked) ? "受付中" : "停止中";
-     const gasMsg = gasUrl ? " + GAS連携" : "";
-     toast("保存しました (" + events.length + "種目, " + statusMsg + gasMsg + ")", "ok");
-     // 大会データを reload して画面更新
-     t.entries_open = openEl ? openEl.checked : t.entries_open;
-     t.entry_deadline = dlEl ? dlEl.value : t.entry_deadline;
-     t.organizer = orgEl ? orgEl.value.trim() : t.organizer;
-     t.entry_gas_url = gasUrl;
-   } catch (e) {
-     toast("保存失敗: " + e.message, "err");
-   }
- } }, "▼ サーバーに保存 (受付ON/OFF + 締切 + 種目 + GAS URL)"),
+ onClick: async (e) => {
+   const btn = e.target; btn.disabled = true;
+   try { toast("保存しました (" + (await saveAll()) + ")", "ok"); }
+   catch (err) { toast("保存失敗: " + err.message, "err"); }
+   finally { btn.disabled = false; }
+ } }, "▼ この画面の設定をすべてサーバーに保存"),
  h("button", { className: "btn btn-sm",
  onClick: () => {
  codeArea.select(); document.execCommand("copy");
@@ -4333,11 +4344,17 @@ const A = {
      document.querySelector(".modal-bg")?.remove();
      A.openPublicOriginConfig();
    } }, "本番URL設定"),
- h("button", { className: "btn", onClick: () => {
- localStorage.setItem("tt_gas_url_" + t.id, gasUrl);
- if (adminEmail) localStorage.setItem("tt_admin_email", adminEmail);
- toast("設定を保存しました", "ok");
- document.querySelector(".modal-bg")?.remove();
+ h("button", { className: "btn", onClick: async (e) => {
+ // 名前どおり「保存して」閉じる。以前はlocalStorageに書くだけで、
+ // 項目設定・自由項目・オプションがサーバーへ届いていなかった。
+ const btn = e.target; btn.disabled = true; btn.textContent = "保存中…";
+ try {
+   toast("保存しました (" + (await saveAll()) + ")", "ok");
+   document.querySelector(".modal-bg")?.remove();
+ } catch (err) {
+   toast("保存失敗: " + err.message + "（画面は閉じていません）", "err");
+   btn.disabled = false; btn.textContent = "保存して閉じる";
+ }
  } }, "保存して閉じる"),
  );
  openModal("申込フォーム生成 (WordPress / Jimdo 埋込)", body, foot, { size: "lg" });
