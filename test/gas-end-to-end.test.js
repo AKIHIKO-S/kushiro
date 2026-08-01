@@ -483,3 +483,65 @@ test("壊れたJSONでも落ちずに日本語で断る", () => {
   assert.strictEqual(out.ok, false);
   assert.match(out.error, /JSON 解析失敗/);
 });
+
+// ══ 控えメールの差出人 ═════════════════════════════════════════
+// Google の制約で、差出人は「Gmailの送信元として登録済み(エイリアス)」でないと変えられない。
+// 未登録のアドレスを from に渡すと送信そのものが失敗するので、確かめてから使う。
+// 未登録なら差出人は所有者のままにし、返信先(replyTo)だけ希望アドレスに寄せる。
+function makeEnvWithGmail(opts) {
+  const env = makeEnv(opts);
+  const sent = [];
+  env.sandbox.GmailApp = {
+    getAliases: () => (opts.aliases || []),
+    sendEmail: (to, subject, body, o) => { sent.push({ to, subject, body, opts: o || {} }); },
+  };
+  env.sent = sent;
+  return env;
+}
+
+test("差出人がGmailに登録済みなら、そのアドレスから送る", () => {
+  const { payload } = makeSubmission();
+  const env = makeEnvWithGmail({ props: { REPLY_FROM: "entry@kushirotta.jp", ADMIN_EMAIL: "honbu@example.com" },
+    aliases: ["entry@kushirotta.jp"] });
+  env.post(payload);
+  const reply = env.sent.find(m => m.to === "applicant@example.com");
+  assert.ok(reply, "申込者へ送っている");
+  assert.strictEqual(reply.opts.from, "entry@kushirotta.jp", "差出人を差し替える");
+  assert.strictEqual(reply.opts.replyTo, undefined, "差出人を変えられたので返信先の指定は不要");
+});
+
+test("未登録のアドレスは差出人にせず、返信先だけ寄せる(送信失敗を避ける)", () => {
+  const { payload } = makeSubmission();
+  const env = makeEnvWithGmail({ props: { REPLY_FROM: "entry@kushirotta.jp" }, aliases: [] });
+  env.post(payload);
+  const reply = env.sent.find(m => m.to === "applicant@example.com");
+  assert.strictEqual(reply.opts.from, undefined, "登録されていない差出人は使わない");
+  assert.strictEqual(reply.opts.replyTo, "entry@kushirotta.jp", "返信先には設定する");
+});
+
+test("REPLY_FROM 未設定なら受信確認の宛先を差出人にする", () => {
+  const { payload } = makeSubmission();
+  const env = makeEnvWithGmail({ props: { ADMIN_EMAIL: "honbu@example.com, sub@example.com" },
+    aliases: ["honbu@example.com"] });
+  env.post(payload);
+  const reply = env.sent.find(m => m.to === "applicant@example.com");
+  assert.strictEqual(reply.opts.from, "honbu@example.com", "1つ目を使う");
+});
+
+test("差出人が所有者本人なら余計な指定をしない", () => {
+  const { payload } = makeSubmission();
+  const env = makeEnvWithGmail({ props: { REPLY_FROM: "me@example.com" }, aliases: [] });
+  env.post(payload);
+  const reply = env.sent.find(m => m.to === "applicant@example.com");
+  assert.strictEqual(reply.opts.from, undefined);
+  assert.strictEqual(reply.opts.replyTo, undefined);
+  assert.ok(reply.opts.name, "差出人名は付ける");
+});
+
+test("何も設定していなくても控えメールは送れる", () => {
+  const { payload } = makeSubmission();
+  const env = makeEnvWithGmail({ props: {}, aliases: [] });
+  const res = env.post(payload);
+  assert.strictEqual(res.ok, true);
+  assert.ok(env.sent.some(m => m.to === "applicant@example.com"));
+});

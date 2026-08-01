@@ -638,6 +638,8 @@ function buildEntryFormHTML(tournament, events, opts) {
   }
   .btn-del:hover { background: #fbe9e9; border-color: var(--red); }
   .events-lead { font-size: 13px; color: #57534e; line-height: 1.75; margin: 0 0 14px; }
+  /* 団体戦の人数の決まり(何人まで必須で、どこからが任意か)を欄のすぐ下に置く */
+  .member-hint { font-size: 12px; color: var(--ink-2); line-height: 1.7; margin-top: 8px; }
 
   /* ── 合計 ── */
   .total-box {
@@ -1354,6 +1356,14 @@ function ttRowIsUsed(row) {
     .forEach(function (el) { if (String(el.value || "").trim()) hit = true; });
   return hit;
 }
+// そのメンバー欄に何か書かれているか(氏名でも、ふりがな等の付随項目でも)。
+function ttMemberIsUsed(block) {
+  var hit = false;
+  block.querySelectorAll("input, select, textarea").forEach(function (el) {
+    if (el.type === "checkbox" ? el.checked : String(el.value || "").trim()) hit = true;
+  });
+  return hit;
+}
 function ttSyncRowRequired() {
   document.querySelectorAll(".entry-row").forEach(function (row) {
     if (!row.getAttribute("data-req-scanned")) {
@@ -1361,6 +1371,27 @@ function ttSyncRowRequired() {
       row.setAttribute("data-req-scanned", "1");
     }
     var used = ttRowIsUsed(row);
+    // 団体戦は「行」単位で必須を切り替えると、上限人数ぶん全員の入力を求めてしまう。
+    // 最少人数までは必須、それ以降は「書き始めた人だけ」必須にする
+    // (例: 4〜7人の大会で5人目の氏名だけ書いたら、その人のふりがなは必須になる)。
+    var blocks = row.querySelectorAll(".member-block[data-mi]");
+    if (blocks.length) {
+      blocks.forEach(function (b) {
+        var live = used && (b.querySelector('[data-req-orig="1"][name$="_m' + b.getAttribute("data-mi") + '"]')
+          ? true : ttMemberIsUsed(b));
+        b.querySelectorAll('[data-req-orig="1"]').forEach(function (el) {
+          if (live) el.setAttribute("required", "");
+          else el.removeAttribute("required");
+        });
+      });
+      // メンバー欄の外(チーム名など)は従来どおり行単位
+      row.querySelectorAll('[data-req-orig="1"]').forEach(function (el) {
+        if (el.closest(".member-block[data-mi]")) return;
+        if (used) el.setAttribute("required", "");
+        else el.removeAttribute("required");
+      });
+      return;
+    }
     row.querySelectorAll('[data-req-orig="1"]').forEach(function (el) {
       if (used) el.setAttribute("required", "");
       else el.removeAttribute("required");
@@ -1620,6 +1651,10 @@ function addEntry(eventIdx) {
   if (isTeam) {
     html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_name" placeholder="チーム名" aria-label="チーム名" oninput="recalcTotal()" style="margin-bottom:9px;" />';
     const per = ev.per_team || 6;
+    // 要項の最少人数(例: プリンセス大会は4〜7人)。ここまでは必須、それ以降は任意にする。
+    // 登録できる上限の人数ぶん欄を出しているだけなので、全部埋めさせてはいけない。
+    const minN = Math.max(0, Math.min(per, parseInt(ev.per_team_min) || 0));
+    const memberLabel = (i) => "メンバー" + (i + 1) + " 氏名" + (i < minN ? " (必須)" : " (任意)");
     // メンバーごとの可変項目(ふりがな・学年・性別・選手スコープの自由項目)。
     // 種目別設定で1つでも表示される項目があるときだけメンバーを枠で囲む
     // (何も無ければ従来どおり氏名だけのフラットな並び=既存の見た目を変えない)。
@@ -1627,19 +1662,32 @@ function addEntry(eventIdx) {
     if (memberFields) {
       for (let i = 0; i < per; i++) {
         const pre = 'ev' + eventIdx + '_team' + idx + '_m' + i;
-        html += '<div class="member-block">' +
+        // 最少人数を超える枠は「書く人だけ」。付随項目(ふりがな等)の見出しから「(必須)」を外す
+        // ---書かない人の欄に必須と表示されていると、埋めないと送れないと誤解させる。
+        // required 属性自体は残す(ttSyncRowRequired が、書き始めた人にだけ効かせ直す)。
+        const fields = i < minN ? playerFieldsHtml(pre + '_x', ev)
+          : playerFieldsHtml(pre + '_x', ev).split(' (必須)"').join('"');
+        html += '<div class="member-block" data-mi="' + i + '">' +
           '<div class="member-no">' + (i + 1) + '</div>' +
           '<div class="entry-grid">' +
-          '<input type="text" name="' + pre + '" placeholder="メンバー' + (i + 1) + ' 氏名" aria-label="メンバー' + (i + 1) + ' 氏名" oninput="recalcTotal()" />' +
-          playerFieldsHtml(pre + '_x', ev) +
+          '<input type="text" name="' + pre + '" placeholder="' + memberLabel(i) + '" aria-label="メンバー' + (i + 1) + ' 氏名"' +
+          (i < minN ? " required" : "") + ' oninput="recalcTotal()" />' +
+          fields +
           '</div></div>';
       }
     } else {
       html += '<div class="entry-grid">';
       for (let i = 0; i < per; i++) {
-        html += '<input type="text" name="ev' + eventIdx + '_team' + idx + '_m' + i + '" placeholder="メンバー' + (i + 1) + ' 氏名" aria-label="メンバー' + (i + 1) + ' 氏名" oninput="recalcTotal()" />';
+        html += '<div class="member-block" data-mi="' + i + '" style="padding:0;border:none">' +
+          '<input type="text" name="ev' + eventIdx + '_team' + idx + '_m' + i + '" placeholder="' + memberLabel(i) +
+          '" aria-label="メンバー' + (i + 1) + ' 氏名"' + (i < minN ? " required" : "") + ' oninput="recalcTotal()" /></div>';
       }
       html += '</div>';
+    }
+    if (minN) {
+      html += '<div class="member-hint">' + minN + '人まで必須です。' + (per > minN
+        ? (minN + 1) + '人目から' + per + '人目までは、出場する方だけご記入ください'
+          + (memberFields ? '（記入した方は他の欄も必要です）' : '') + '。' : '') + '</div>';
     }
   } else if (isDoubles) {
     // 所属(player_team)の状態で 所属入力の要否を切替(hidden=省略 / required=必須)。

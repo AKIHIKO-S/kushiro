@@ -282,6 +282,30 @@ function _findEntryIdRow(ss, entryId) {
   return 0;
 }
 
+// 申込者へ送る控えメールの差出人。
+// スクリプトプロパティ REPLY_FROM(無ければ ADMIN_EMAIL の1つ目)を使う。
+//
+// Google の制約: 差出人アドレスは「Gmail の送信元(エイリアス)として登録済み」でないと変えられない。
+//   Gmail → 設定 → アカウント → 「他のメールアドレスを追加」で登録し確認を済ませたものだけ。
+// 未登録のアドレスを from に渡すと送信自体が失敗するので、登録済みか確かめてから使う。
+// 未登録なら差出人はスクリプト所有者のままにし、代わりに返信先(replyTo)を希望アドレスにする
+// (申込者が「返信」を押せば希望アドレスへ届く。何も設定しないより実務上の効果がある)。
+function _replyFromOptions(assoc) {
+  const props = PropertiesService.getScriptProperties();
+  const want = String(props.getProperty("REPLY_FROM") || "").trim()
+    || (_notifyRecipients()[0] || "");
+  const opts = { name: assoc };
+  if (!want || want.indexOf("@") < 0) return opts;
+  let aliases = [];
+  try { aliases = GmailApp.getAliases() || []; } catch (e) { aliases = []; }
+  let self = "";
+  try { self = Session.getEffectiveUser().getEmail() || ""; } catch (e) { self = ""; }
+  if (want === self) return opts;                       // 所有者本人なら何も指定しなくてよい
+  if (aliases.indexOf(want) >= 0) { opts.from = want; return opts; }
+  opts.replyTo = want;                                   // エイリアス未登録 → 返信先だけ寄せる
+  return opts;
+}
+
 // 受信確認メールの宛先。カンマ/セミコロン/改行区切りで複数指定できる。
 // 未設定ならスプレッドシートの所有者へ送る(設定漏れで誰にも届かない穴を塞ぐ)。
 function _notifyRecipients() {
@@ -1246,7 +1270,7 @@ function _sendReplyMail(data, ledgerRow) {
     "ご不明な点がございましたら、本メールへご返信ください。\n\n" +
     assoc + "\n";
 
-  GmailApp.sendEmail(data.contact_email, subject, body, { name: assoc });
+  GmailApp.sendEmail(data.contact_email, subject, body, _replyFromOptions(assoc));
 }
 
 // 受信確認メール(指定アドレス宛)。
@@ -1937,6 +1961,9 @@ function menuShowHelp() {
     "  確認できなければ【要確認】の件名で通知します(申込者には送りません)。\n\n" +
     "■ スクリプトプロパティ (任意設定)\n" +
     "  ADMIN_EMAIL: 受信確認の宛先 (カンマ区切りで複数可・未設定ならシート所有者)\n" +
+    "  REPLY_FROM: 申込者への控えメールの差出人 (未設定なら ADMIN_EMAIL の1つ目)\n" +
+    "    ※Gmailの送信元として登録済みのアドレスのみ差出人にできます。\n" +
+    "      未登録の場合は差出人はこのアカウントのまま、返信先だけそのアドレスになります\n" +
     "  ASSOCIATION_NAME: 釧路卓球協会\n" +
     "  ISSUER_NAME: 釧路卓球協会 会長 山本 満\n" +
     "  PRICE_TEAM_M/F, PRICE_DBL_M/F, PRICE_MIX_M/F, PRICE_BENTO, PRICE_PARTY",

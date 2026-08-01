@@ -258,3 +258,67 @@ test("締切を持たないテンプレートは空のまま(既存の挙動を�
   const b = W.TT_buildTournamentFromTemplate("chugaku_shinjin", { date: "2027-11-24" });
   assert.strictEqual(b.entry_deadline, "", "reference_deadline が無ければ空");
 });
+
+// ── 団体戦の人数: 最少人数までが必須、それ以降は任意 ──────────────────
+// 上限人数ぶんの欄を出しているだけなのに全員の入力を求めると、4人で出るチームが
+// 申し込めなくなる(実際に「7人全員の入力が求められる」と報告された)。
+test("最少人数までの氏名だけ必須にし、それ以降は任意にする", () => {
+  const events = Array.from(built("2026-09-26")._events).map(e => JSON.parse(JSON.stringify(e)));
+  const t = db.createTournament({
+    name: "人数の必須", date: "2026-09-26", venue: "会場",
+    event_config: events, entries_open: true, entry_preset: tpl().entry_preset,
+  });
+  const h = entryForm.buildEntryFormHTML(t, events, { field_config: db.resolveFieldConfig(t) });
+  assert.match(h, /const minN = Math\.max\(0, Math\.min\(per, parseInt\(ev\.per_team_min\) \|\| 0\)\)/,
+    "最少人数を per_team_min から取る");
+  assert.match(h, /i < minN \? " required" : ""/, "最少人数までの氏名だけ required にする");
+  assert.match(h, /memberLabel = \(i\) =>[^;]*i < minN \? " \(必須\)" : " \(任意\)"/,
+    "見出しでも必須/任意が分かる");
+});
+
+test("最少人数を超える枠の付随項目から「(必須)」表示を外す", () => {
+  const events = Array.from(built("2026-09-26")._events).map(e => JSON.parse(JSON.stringify(e)));
+  const t = db.createTournament({
+    name: "付随項目の表示", date: "2026-09-26", venue: "会場",
+    event_config: events, entries_open: true, entry_preset: tpl().entry_preset,
+  });
+  const h = entryForm.buildEntryFormHTML(t, events, { field_config: db.resolveFieldConfig(t) });
+  assert.match(h, /split\(' \(必須\)"'\)\.join\('"'\)/,
+    "書かない人の欄に必須と出さない(埋めないと送れないと誤解させる)");
+});
+
+test("書き始めた人の欄だけ必須に戻す", () => {
+  const events = Array.from(built("2026-09-26")._events).map(e => JSON.parse(JSON.stringify(e)));
+  const t = db.createTournament({
+    name: "書き始めた人", date: "2026-09-26", venue: "会場",
+    event_config: events, entries_open: true, entry_preset: tpl().entry_preset,
+  });
+  const h = entryForm.buildEntryFormHTML(t, events, { field_config: db.resolveFieldConfig(t) });
+  assert.match(h, /function ttMemberIsUsed/, "メンバー単位で使用中かを見る");
+  assert.match(h, /\.member-block\[data-mi\]/, "メンバー枠を識別できる");
+  assert.match(h, /人まで必須です/, "何人までが必須かを画面に書く");
+});
+
+test("最少人数の設定が無い種目は従来どおり(全員任意)", () => {
+  const t = db.createTournament({ name: "min無し", date: "2027-01-10", venue: "会場" });
+  const ev = [{ name: "団体戦", type: "team", fee: 3000, per_team: 4 }];   // per_team_min 無し
+  db.updateEntrySettings(t.id, { entries_open: 1, event_config: ev });
+  const h = entryForm.buildEntryFormHTML(db.getTournament(t.id), ev,
+    { field_config: db.resolveFieldConfig(db.getTournament(t.id)) });
+  assert.match(h, /if \(minN\) \{/, "minN が 0 なら案内文も必須も出さない");
+});
+
+test("サーバーは4人未満を断り、5人・7人は受ける(画面と食い違わない)", () => {
+  const events = Array.from(built("2026-09-26")._events).map(e => JSON.parse(JSON.stringify(e)));
+  const t = db.createTournament({
+    name: "人数の検証", date: "2026-09-26", venue: "会場",
+    event_config: events, entries_open: true, entry_preset: tpl().entry_preset,
+  });
+  const submit = (members) => db.createTeamEntry(t.id, {
+    team_name: "釧路クラブ", contact_name: "担当", contact_tel: "0154", contact_email: "a@example.com",
+    entries: [{ event: "団体戦", type: "team", team_name: "釧路" + members.length, members }],
+  }, "op-n-" + Math.random().toString(36).slice(2), { enforce: true });
+  assert.match(submit(["甲", "乙", "丙"]).error || "", /4人/);
+  assert.ok(!submit(["甲", "乙", "丙", "丁", "戊"]).error, "5人は受ける");
+  assert.ok(!submit(["甲", "乙", "丙", "丁", "戊", "己", "庚"]).error, "7人は受ける");
+});
