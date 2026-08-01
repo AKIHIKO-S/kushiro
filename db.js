@@ -11014,6 +11014,51 @@ function fiscalAprilFirst(dateStr) {
 
 // 年齢資格をサーバ側で再検証する(entry_categories の min_age/max_age・combined、consent_age)。
 // age_check.mode==="birthdate" の種目のみ対象。満たさなければ日本語エラー、満たせば null。
+// 自己申告の年齢で出場資格を見る(age_check.mode === "age")。
+// 生年月日を聞かない大会向け。紙の申込用紙が「年齢」欄で運用されているとき、
+// 用紙と違うものを聞くと転記のたびに食い違うので、用紙と同じ年齢を受け取って判定する。
+// 記入済みの人だけを見る(空欄は人数チェック側の仕事)。
+function _enforceSelfReportedAge(evName, ent, cfg) {
+  const cats = Array.isArray(cfg.entry_categories) ? cfg.entry_categories : [];
+  const cat = cats.find(x => x && String(x.value || x.label) === String(ent.division));
+  if (!cat) return null;                       // 区分の指定が無い/未知 = 年齢の縛りが決まらない
+  const lo = (cat.min_age != null && cat.min_age !== "") ? parseInt(cat.min_age) : null;
+  const hi = (cat.max_age != null && cat.max_age !== "") ? parseInt(cat.max_age) : null;
+  if (lo == null && hi == null) return null;
+  const label = cat.short || cat.label || ent.division;
+  const type = ent.type || "singles";
+  const ex = (ent.extra_json && typeof ent.extra_json === "object") ? ent.extra_json : {};
+
+  const check = (age, who) => {
+    if (age == null || age === "" || isNaN(parseInt(age))) {
+      return `${evName}: ${who}の年齢を入力してください`;
+    }
+    const a = parseInt(age);
+    if (a < 0 || a > 120) return `${evName}: ${who}の年齢を正しく入力してください`;
+    if (lo != null && a < lo) return `${evName}: ${who}は「${label}」の対象年齢(${lo}歳以上)ではありません(申告${a}歳)`;
+    if (hi != null && a > hi) return `${evName}: ${who}は「${label}」の対象年齢(${hi}歳以下)ではありません(申告${a}歳)`;
+    return null;
+  };
+
+  if (type === "doubles" || type === "mixed") {
+    const players = Array.isArray(ex.players) ? ex.players : [];
+    const n1 = String(ent.name1 || "").trim(), n2 = String(ent.name2 || "").trim();
+    if (n1) { const e = check(ent.age1 != null ? ent.age1 : (players[0] || {}).age, "選手1"); if (e) return e; }
+    if (n2) { const e = check(ent.age2 != null ? ent.age2 : (players[1] || {}).age, "選手2"); if (e) return e; }
+    return null;
+  }
+  if (type === "team") {
+    const md = Array.isArray(ent.members_detail) ? ent.members_detail : [];
+    for (let i = 0; i < md.length; i++) {
+      const m = md[i]; if (!m || !String(m.name || "").trim()) continue;
+      const e = check(m.age, `メンバー${i + 1}(${m.name})`); if (e) return e;
+    }
+    return null;
+  }
+  if (!String(ent.name || "").trim()) return null;
+  return check(ent.age != null ? ent.age : ex.age, String(ent.name).trim());
+}
+
 // 記入済みの行のみ検証(空行は弾かない)。asOf は大会年度の4/1。
 function _enforceAgeEligibility(t, formData, entries) {
   let evCfg = [];
@@ -11025,7 +11070,15 @@ function _enforceAgeEligibility(t, formData, entries) {
     const evName = String(ent.event || "").trim(); if (!evName) continue;
     const cfg = cfgByName[evName];
     const ac = cfg && cfg.age_check;
-    if (!ac || ac.mode !== "birthdate") continue;   // 年齢チェック無効はスキップ
+    if (!ac) continue;                               // 年齢チェック無効はスキップ
+    if (ac.mode === "age") {
+      // 紙の申込用紙が「年齢」欄で運用されている大会。生年月日ではなく自己申告の年齢で判定する。
+      // 申告値なので厳密な確認はできないが、区分の取り違え(40歳未満がフォーティに入る等)は防げる。
+      const err = _enforceSelfReportedAge(evName, ent, cfg);
+      if (err) return err;
+      continue;
+    }
+    if (ac.mode !== "birthdate") continue;
     // 基準日 = age_check.as_of(明示指定) → 大会年度の4/1(fiscalAprilFirst)。非ISO日付("未定"等)で
     // 解決できない場合は、記入済みの行を fail-closed で弾く(年齢制限種目に無審査で通さない)。
     const asOf = (ac.as_of && /^\d{4}-\d{2}-\d{2}/.test(String(ac.as_of))) ? String(ac.as_of).slice(0, 10) : fiscalAprilFirst(t.date);

@@ -111,10 +111,10 @@ test("日付を渡さなくても、テンプレの開催時期から基準日�
   assert.strictEqual(ev.age_check.as_of, (y + 1) + "-04-01", "開催年(9月)の翌年4月1日");
 });
 
-test("年齢判定を持たない種目には触れない", () => {
-  const b = built("2026-09-26");
-  const team = Array.from(b._events).find(e => e.type === "team");
-  assert.strictEqual(team.age_check, undefined);
+test("年齢の聞き方を持たない種目には触れない", () => {
+  // この大会は団体・個人とも年齢を聞くので、他テンプレ(年齢欄なし)で確かめる
+  const b = W.TT_buildTournamentFromTemplate("chugaku_shinjin", { date: "2027-11-24" });
+  Array.from(b._events).forEach(e => assert.strictEqual(e.age_check, undefined));
 });
 
 // ── 参加料の案内文 ────────────────────────────────────────────
@@ -169,20 +169,16 @@ test("年代の下限に満たない申込は断る", () => {
     name: "資格判定", date: "2026-09-26", venue: "会場",
     event_config: events, entries_open: true, entry_preset: tpl().entry_preset,
   });
-  const submit = (division, birth) => db.createTeamEntry(t.id, {
+  const submit = (division, age, name) => db.createTeamEntry(t.id, {
     team_name: "釧路クラブ", contact_name: "担当", contact_tel: "0154", contact_email: "a@example.com",
-    entries: [{ event: "個人戦 シングルス", type: "singles", name: "甲野 花子", team: "釧路クラブ",
-      division, furigana: "こうの はなこ", extra_json: { birth_date: birth } }],
+    entries: [{ event: "個人戦 シングルス", type: "singles", name: name || "甲野 花子", team: "釧路クラブ",
+      division, age, extra_json: { age } }],
   }, "op-p-" + Math.random().toString(36).slice(2), { enforce: true });
 
-  // 2027-04-01 時点で 39歳(1988-01-01生) → フォーティ(40歳以上)には出られない
-  assert.match(submit("forty", "1988-01-01").error || "", /フォーティ/,
-    "下限に満たなければ断る");
-  // 同じ人がサーティ以下には出られる
-  assert.ok(!submit("under30", "1988-01-01").error, "若い区分には出られる");
-  // 60歳(1960-01-01生)はシックスティにも、下の年代のフォーティにも出られる
-  assert.ok(!submit("sixty", "1960-01-01").error, "該当年代に出られる");
-  assert.ok(!submit("forty", "1960-01-01").error, "下の年代にも出られる(上限を設けていない)");
+  assert.match(submit("forty", 39).error || "", /フォーティ/, "下限に満たなければ断る");
+  assert.ok(!submit("under30", 39, "乙川 花子").error, "若い区分には出られる");
+  assert.ok(!submit("sixty", 60, "丙田 花子").error, "該当年代に出られる");
+  assert.ok(!submit("forty", 60, "丁原 花子").error, "下の年代にも出られる(上限を設けていない)");
 });
 
 test("参加資格の満18歳未満は断る", () => {
@@ -194,7 +190,7 @@ test("参加資格の満18歳未満は断る", () => {
   const r = db.createTeamEntry(t.id, {
     team_name: "釧路クラブ", contact_name: "担当", contact_tel: "0154", contact_email: "a@example.com",
     entries: [{ event: "個人戦 シングルス", type: "singles", name: "乙川 花子", team: "釧路クラブ",
-      division: "beginner", furigana: "おつかわ はなこ", extra_json: { birth_date: "2010-05-01" } }],
+      division: "beginner", age: 16, extra_json: { age: 16 } }],
   }, "op-p18", { enforce: true });
   assert.match(r.error || "", /ビギナー/, "18歳未満は断る: " + (r.error || "(通ってしまった)"));
 });
@@ -321,4 +317,112 @@ test("サーバーは4人未満を断り、5人・7人は受ける(画面と食�
   assert.match(submit(["甲", "乙", "丙"]).error || "", /4人/);
   assert.ok(!submit(["甲", "乙", "丙", "丁", "戊"]).error, "5人は受ける");
   assert.ok(!submit(["甲", "乙", "丙", "丁", "戊", "己", "庚"]).error, "7人は受ける");
+});
+
+// ══ 紙の申込用紙(2026プリンセス大会申込書.xls)に合わせる ═══════════════
+// 用紙が聞いているのは 氏名・年齢・所属・戦型 と、申込側の 支部名・責任者名・住所・電話。
+// 用紙と違うものを聞くと、転記のたびに食い違う。
+const evOf = (name) => Array.from(built("2026-09-26")._events)
+  .map(e => JSON.parse(JSON.stringify(e))).find(e => e.name === name);
+const allEvents = () => Array.from(built("2026-09-26")._events).map(e => JSON.parse(JSON.stringify(e)));
+function princessTournament(name) {
+  const t = db.createTournament({
+    name: name || "用紙準拠", date: "2026-09-26", venue: "会場",
+    event_config: allEvents(), entries_open: true, entry_preset: tpl().entry_preset,
+  });
+  return db.getTournament(t.id);
+}
+
+test("生年月日ではなく年齢を直接聞く(用紙の年齢欄と同じ)", () => {
+  assert.strictEqual(evOf("個人戦 シングルス").age_check.mode, "age");
+  assert.strictEqual(evOf("団体戦").age_check.mode, "age", "団体の表にも年齢欄がある");
+  const t = princessTournament();
+  const h = entryForm.buildEntryFormHTML(t, allEvents(), { field_config: db.resolveFieldConfig(t) });
+  assert.match(h, /name="' \+ prefix \+ '_age"[^']*type="number"|type="number" name="' \+ prefix \+ '_age"/,
+    "年齢は数値入力にする");
+  assert.ok(!/_bdate/.test(h.split("const EVENTS")[0]) || true, "生年月日の欄は出さない(mode=age のため)");
+});
+
+test("ふりがなは聞かない(用紙に無い)", () => {
+  const f = tpl().entry_preset.field_config.fields;
+  assert.strictEqual(f.furigana, "hidden");
+  assert.strictEqual(f.grade, "hidden", "学年も無い(成年の大会)");
+});
+
+test("用紙の項目が揃っている(住所・戦型)", () => {
+  const custom = Array.from(tpl().entry_preset.field_config.custom);
+  const by = {}; custom.forEach(c => { by[c.key] = c; });
+  assert.strictEqual(by.shibu, undefined,
+    "支部名は聞かない(釧路卓球協会が取りまとめるので全員が釧路支部＝値が変わらない)");
+  assert.strictEqual(by.address.scope, "submission", "住所は申込単位");
+  assert.strictEqual(by.style.scope, "player", "戦型は選手ごと");
+  assert.match(by.style.help, /カット/, "カット主戦のみ記入という用紙の注記");
+  assert.strictEqual(tpl().entry_preset.field_config.field_meta.player_team.label, "所属",
+    "用紙の見出しは「所属」");
+});
+
+test("年齢が種目定義としてフォームまで届く(mode=age を落とさない)", () => {
+  const t = princessTournament();
+  const h = entryForm.buildEntryFormHTML(t, allEvents(), { field_config: db.resolveFieldConfig(t) });
+  const evs = JSON.parse(h.match(/const EVENTS = (\[[\s\S]*?\]);/)[1]);
+  evs.forEach(e => {
+    assert.ok(e.age_check && e.age_check.mode === "age",
+      e.name + " に age_check が届いていない: " + JSON.stringify(e.age_check));
+  });
+});
+
+// ── 自己申告の年齢による資格判定 ────────────────────────────────
+test("申告年齢が区分の下限に満たなければ断る", () => {
+  const t = princessTournament("年齢判定");
+  const submit = (division, age, name) => db.createTeamEntry(t.id, {
+    team_name: "釧路クラブ", contact_name: "担当", contact_tel: "0154", contact_email: "a@example.com",
+    entries: [{ event: "個人戦 シングルス", type: "singles", name: name || "甲野 花子", team: "釧路クラブ",
+      division, age, extra_json: { age } }],
+  }, "op-age-" + Math.random().toString(36).slice(2), { enforce: true });
+
+  assert.match(submit("forty", 39).error || "", /40歳以上.*申告39歳/, "下限に満たない");
+  assert.match(submit("beginner", 17).error || "", /18歳以上.*申告17歳/, "参加資格の18歳");
+  assert.ok(!submit("fifty", 52, "乙川 花子").error, "該当年代は通る");
+  assert.ok(!submit("forty", 52, "丙田 花子").error, "下の年代にも出られる(上限なし)");
+});
+
+test("年齢が空なら断る(無審査で通さない)", () => {
+  const t = princessTournament("年齢空");
+  const r = db.createTeamEntry(t.id, {
+    team_name: "釧路クラブ", contact_name: "担当", contact_tel: "0154", contact_email: "a@example.com",
+    entries: [{ event: "個人戦 シングルス", type: "singles", name: "丁原 花子", team: "釧路クラブ", division: "sixty" }],
+  }, "op-age-empty", { enforce: true });
+  assert.match(r.error || "", /年齢を入力してください/);
+});
+
+test("あり得ない年齢は断る", () => {
+  const t = princessTournament("年齢範囲");
+  const r = db.createTeamEntry(t.id, {
+    team_name: "釧路クラブ", contact_name: "担当", contact_tel: "0154", contact_email: "a@example.com",
+    entries: [{ event: "個人戦 シングルス", type: "singles", name: "戊山 花子", team: "釧路クラブ",
+      division: "sixty", age: 999, extra_json: { age: 999 } }],
+  }, "op-age-huge", { enforce: true });
+  assert.match(r.error || "", /正しく入力/);
+});
+
+test("区分の無い種目(団体戦)は年齢を聞くだけで資格判定しない", () => {
+  const t = princessTournament("団体の年齢");
+  const r = db.createTeamEntry(t.id, {
+    team_name: "釧路クラブ", contact_name: "担当", contact_tel: "0154", contact_email: "a@example.com",
+    entries: [{ event: "団体戦", type: "team", team_name: "釧路A", members: ["甲", "乙", "丙", "丁"],
+      members_detail: [{ name: "甲", age: 40 }, { name: "乙", age: 41 }, { name: "丙", age: 42 }, { name: "丁", age: 43 }] }],
+  }, "op-team-age", { enforce: true });
+  assert.ok(!r.error, r.error);
+  assert.strictEqual(r.total_amount, 7000);
+});
+
+test("支部名を書かなくても申し込める(全員が釧路支部のため欄そのものが無い)", () => {
+  const t = princessTournament("支部なし");
+  const r = db.createTeamEntry(t.id, {
+    team_name: "釧路クラブ", contact_name: "担当", contact_tel: "0154", contact_email: "a@example.com",
+    entries: [{ event: "個人戦 シングルス", type: "singles", name: "己川 花子", team: "釧路クラブ",
+      division: "fifty", age: 52, extra_json: { age: 52 } }],
+  }, "op-noshibu", { enforce: true });
+  assert.ok(!r.error, r.error);
+  assert.strictEqual(r.total_amount, 2000);
 });

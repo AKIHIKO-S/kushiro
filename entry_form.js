@@ -130,8 +130,12 @@ function buildEntryFormHTML(tournament, events, opts) {
     fee_unit: e.fee_unit === "person" ? "person" : undefined,
     // 大会が定義した参加区分(自己申告)。value/label/short/fee_override/min_age/max_age/combined を使う。
     entry_categories: Array.isArray(e.entry_categories) ? e.entry_categories : undefined,
-    // 年齢自動判定(生年月日入力→基準日時点の満年齢で資格判定)。mode:"birthdate" で有効。
-    age_check: (e.age_check && e.age_check.mode === "birthdate") ? e.age_check : undefined,
+    // 年齢の聞き方。
+    //   "birthdate" … 生年月日を入力し、基準日時点の満年齢で資格判定する
+    //   "age"       … 年齢を直接入力する(紙の申込用紙が年齢欄で運用されている大会)
+    // どちらもフォーム側で欄の出し分けに使うので、両方そのまま渡す。
+    age_check: (e.age_check && (e.age_check.mode === "birthdate" || e.age_check.mode === "age"))
+      ? e.age_check : undefined,
   })));
 
   // 年齢基準日 = 大会の年度の4月1日(学校年度)。生年月日から満年齢を算出する基準。
@@ -1455,6 +1459,13 @@ function playerFieldsHtml(prefix, ev) {
       'title="生年月日(' + AGE_ASOF + ' 時点の満年齢で出場資格を判定します)" ' +
       'oninput="ttUpdateAge(this)" style="color:#555;" />' +
       '<span class="age-hint" style="font-size:12px;color:var(--ink-2);align-self:center;"></span>';
+  } else if (ev.age_check && ev.age_check.mode === "age") {
+    // 紙の申込用紙が「年齢」欄で運用されている大会は、生年月日ではなく年齢を直接書いてもらう。
+    // 用紙と同じものを聞くのが、転記する本部にとっても申込者にとっても間違いが少ない。
+    h += '<input type="number" name="' + prefix + '_age" min="0" max="120" inputmode="numeric" required ' +
+      'placeholder="年齢 (必須)" aria-label="年齢 (必須)"' +
+      (AGE_ASOF ? ' title="' + AGE_ASOF + ' 時点の年齢をご記入ください"' : '') +
+      ' oninput="recalcTotal()" />';
   }
   // 学年の扱い(gradeStateFor): 学生の種目は設定どおり、一般の部は任意で出す
   // (一般の部に学生が出場する場合に記入してもらう)、シニア・ラージの年代別は出さない。
@@ -1857,6 +1868,7 @@ function gatherFormData() {
       const ex = {};
       const g = q("_grade"); if (g) ex.grade = g;
       const bd = q("_bdate"); if (bd) ex.birth_date = bd;   // 年齢自動判定用(サーバが基準日で満年齢を検証)
+      const ag = q("_age"); if (ag !== "") ex.age = parseInt(ag, 10);   // 紙の用紙と同じ「年齢」直接入力
       const answers = {};
       (FIELD_CFG.custom || []).filter((c) => c && c.scope === "player").forEach((c) => {
         const el = row.querySelector('[name$="' + token + "_cust_" + c.key + '"]');
@@ -1911,6 +1923,9 @@ function gatherFormData() {
         if (s1.gender) obj.gender = s1.gender;
         if (s2.gender) obj.partner_gender = s2.gender;
         if (s1.extra || s2.extra) obj.extra_json = { players: [s1.extra || {}, s2.extra || {}] };
+        // 年齢は集計シートの「年齢」列(紙の申込用紙と同じ並び)にそのまま入る形でも送る。
+        if (s1.extra && s1.extra.age != null) obj.age1 = s1.extra.age;
+        if (s2.extra && s2.extra.age != null) obj.age2 = s2.extra.age;
       } else {
         obj.name = val('input[name$="_name"]');
         obj.team = val('input[name$="_team"]');
@@ -1920,6 +1935,7 @@ function gatherFormData() {
         if (s.furigana) obj.furigana = s.furigana;
         if (s.gender) obj.gender = s.gender;
         if (s.extra) obj.extra_json = s.extra;
+        if (s.extra && s.extra.age != null) obj.age = s.extra.age;
       }
       data.entries.push(obj);
       data.total_amount += obj.fee;

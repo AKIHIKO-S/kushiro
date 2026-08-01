@@ -63,11 +63,25 @@
   // 上部団体(道連)の大会を支部で取りまとめるとき。団体戦の監督を聞き、学年は無い(成年の大会)。
   // 生年月日は種目側の age_check(年代別区分の資格判定)で聞くのでここには入れない。
   const ENTRY_FEDERATION = {
+    // 紙の申込用紙(2026プリンセス大会申込書.xls)に合わせる。
+    // 用紙が聞いているのは 氏名・年齢・所属・戦型 と、申込側の 支部名・責任者名・住所・電話。
+    // ふりがなは用紙に無いので聞かない(用紙と違うものを聞くと転記のたびに食い違う)。
     // 成年の大会なので「引率顧問・コーチ」ではなく「監督」を聞く(学生大会の語彙を持ち込まない)。
     field_config: {
-      fields: { furigana: "required", grade: "hidden", player_team: "required",
+      fields: { furigana: "hidden", grade: "hidden", player_team: "required",
         supervisor: "optional", advisor: "hidden", coach: "hidden" },
-      field_meta: { supervisor: { label: "監督", help: "団体戦に申し込む場合は監督を記入してください（選手との兼任可）" } },
+      field_meta: {
+        supervisor: { label: "監督", help: "団体戦に申し込む場合は監督を記入してください（選手との兼任可）" },
+        player_team: { label: "所属" },
+      },
+      // 用紙の「支部名」は聞かない。釧路卓球協会が取りまとめる以上、申込者は全員が釧路支部で
+      // 値が変わらないため、書かせても手間が増えるだけ(本部が用紙へ転記するときに「釧路」と入れる)。
+      custom: [
+        { key: "address", label: "住所", type: "text", scope: "submission",
+          help: "申込用紙の「住所」欄です（団体戦の責任者）" },
+        { key: "style", label: "戦型", type: "text", scope: "player",
+          help: "カット主戦の方のみ「カット」とご記入ください（用紙の注記どおり）" },
+      ],
     },
     entry_deadline_time: "17:00",
     // 上部団体の大会は支部がまとめて送金するので、既定の「当日受付でお支払い」は誤案内になる。
@@ -487,13 +501,18 @@
         // 1・2番は異なる3名、3番は出ていない選手か 1・2番のうち1人だけ重複可。
         { name: "団体戦", gender: "female", type: "team", fee: 7000,
           per_team: 7, per_team_min: 4, tie_format: "D,S,D", category: "general",
+          // 用紙の団体表は「氏名・年齢・支部・所属チーム」。年齢欄があるので選手ごとに聞く。
+          // 区分が無いので資格判定はせず、記入してもらうだけ(集計シートの年齢列に入る)。
+          age_check: { mode: "age", as_of: "" },
           note: "監督1名(選手兼可)+選手4〜7人。複・単・複の2点先取。当日3名ならオープン参加、2名は不可" },
         // 個人戦シングルス: 年代別・卓球歴別の7部門。**この内1種目のみ出場可**なので、
         // 種目を7つに割らず1種目の中の「区分」にする(フォームでは択一になり、二重申込が構造的に起きない)。
         // 年齢は大会年度の翌4月1日現在で判定する(要項8「年齢の算出基準は翌年4月1日現在」)。
         // ③〜⑦は下の年代にも出場できるため、上限は設けず下限(min_age)だけを効かせる。
         { name: "個人戦 シングルス", gender: "female", type: "singles", fee: 2000, category: "general",
-          age_check: { mode: "birthdate", as_of: "" },   // as_of は大会作成時に「翌年4月1日」を入れる
+          // 用紙は「年齢」欄。生年月日は聞かず、用紙と同じ年齢を書いてもらう。
+          // 基準日(翌年4月1日)は入力の目安として画面に出す。
+          age_check: { mode: "age", as_of: "" },
           entry_categories: [
             { value: "beginner", label: "ビギナーの部", short: "ビギナー", min_age: 18,
               note: "年齢に関係なく出場可。過去にビギナーの部で優勝した方は出場できません" },
@@ -543,7 +562,9 @@
     if (!Array.isArray(events)) return events;
     const asOf = _fiscalNextApril1(dateStr);
     return events.map(function (e) {
-      if (!e || !e.age_check || e.age_check.mode !== "birthdate") return e;
+      // birthdate は判定に使い、age は「何歳時点で書くか」の目安として画面に出す。どちらも埋める。
+      if (!e || !e.age_check) return e;
+      if (e.age_check.mode !== "birthdate" && e.age_check.mode !== "age") return e;
       if (e.age_check.as_of) return e;          // 明示指定があればそのまま
       if (!asOf) return e;                      // 日付未定なら空のまま(サーバ側が年度4/1へフォールバック)
       return { ...e, age_check: { ...e.age_check, as_of: asOf } };
