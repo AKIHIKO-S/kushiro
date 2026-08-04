@@ -116,3 +116,29 @@ test("削除した自由項目は集計シートの列定義からも消える",
     field_config: { version: 2, fields: {}, event_overrides: {}, field_meta: {}, custom: [] } });
   assert.ok(!/ゼッケン番号/.test(cols()), "削除したら列定義からも消える");
 });
+
+// ── 未連携が画面に出るか ──────────────────────────────────────
+// 実際に起きた不具合(2026-08-04 オーナー報告): 「申込データがどこに飛んでいるか分かりません」。
+// 反映状況バーは `configured` が false のとき何も出さない造りだったため、
+// GAS URL 未設定のまま受付が進むと、申込がどこへも行かないまま溜まっても気づけなかった。
+test("スプレッドシート未連携でも申込があれば警告を出す", () => {
+  assert.match(ADMIN, /if \(!gasState\.configured\) \{/, "未連携でも早期returnせず分岐する");
+  assert.match(ADMIN, /スプレッドシート未連携/, "状態を名指しする");
+  assert.match(ADMIN, /本部システムに保存されていますが、スプレッドシートには送られていません/,
+    "申込が消えたわけではないことも伝える");
+  assert.match(ADMIN, /未反映をシートへ再送」で過去の申込もまとめて送れます/, "後から救える道を示す");
+  assert.ok(!/if \(!gasState\.configured\) return;/.test(ADMIN), "黙って何も出さない実装が残っていない");
+});
+
+test("申込ゼロなら未連携でも出さない(まだ困っていない)", () => {
+  const seg = ADMIN.split("const renderGas = () => {")[1].split("gasBar.appendChild")[0];
+  assert.match(seg, /if \(!gasState\.total\) return;/, "申込ゼロは対象外");
+  assert.ok(seg.indexOf("if (!gasState.total) return;") < seg.indexOf("if (!gasState.configured) {"),
+    "件数の判定を先に置く");
+});
+
+test("GAS URL欄が空のときは欄のすぐ下でも知らせる", () => {
+  assert.match(ADMIN, /\(!gasUrl \? h\("div", \{ className: "text-xs mt-1"/, "空欄のときだけ出す");
+  assert.match(ADMIN, /この欄が空のあいだ、申込は本部システムにだけ保存され/);
+  assert.match(ADMIN, /申込自体は失われません/, "不安を煽らない");
+});

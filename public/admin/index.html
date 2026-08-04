@@ -4192,6 +4192,13 @@ const A = {
  onInput: (e) => { gasUrl = e.target.value; refreshCode(); } }),
  h("div", { className: "text-xs text-sub mt-1" },
  "gas/entry_form_handler.gs を Google スプレッドシートに設置し、ウェブアプリとしてデプロイした URL"),
+ // 受付中なのに未設定だと、申込がどこにも送られないまま溜まる。空欄の意味を明示する。
+ (!gasUrl ? h("div", { className: "text-xs mt-1",
+   style: { padding: "8px 10px", background: "#fef3c7", border: "1px solid #d97706",
+     borderRadius: "6px", color: "#78350f", lineHeight: "1.7" } },
+   h("strong", {}, "未設定です。"),
+   "この欄が空のあいだ、申込は本部システムにだけ保存され、スプレッドシートには送られません",
+   "（申込自体は失われません）。集計シートを使うならURLを登録してください。") : null),
  ),
  h("div", { className: "two-col" },
  h("div", { className: "field" },
@@ -5785,8 +5792,22 @@ const A = {
  const renderGas = () => {
    clear(gasBar);
    if (!gasState || gasState.error) return;
-   if (!gasState.configured) return;          // スプレッドシート未連携の大会では何も出さない
    if (!gasState.total) return;               // 申込ゼロなら出さない
+   // 未連携のときに何も出さないと、申込がどこへ行ったのか分からないまま溜まる
+   // (実際に「申込データがどこに飛んでいるか分かりません」という報告が出た)。
+   // 申込があるのに連携していないなら、それ自体を知らせる。
+   if (!gasState.configured) {
+     gasBar.appendChild(h("div", { style: { display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap",
+       padding: "10px 14px", borderRadius: "8px", background: "#fef3c7", border: "1px solid #d97706" } },
+       h("span", { style: { fontWeight: 700, color: "#78350f" } }, "スプレッドシート未連携"),
+       h("span", { className: "text-xs", style: { color: "#78350f", lineHeight: "1.7" } },
+         `申込 ${gasState.total} 件は本部システムに保存されていますが、スプレッドシートには送られていません。`
+         + "集計シートを使うなら、フォーム設定で「GAS Web App URL」を登録してください。"
+         + "登録後は「未反映をシートへ再送」で過去の申込もまとめて送れます。"),
+       h("button", { className: "btn btn-sm", style: { marginLeft: "auto" },
+         onClick: () => A.openEntryFormGenerator(t) }, "フォーム設定を開く")));
+     return;
+   }
    const failed = gasState.counts.failed || 0;
    const unknown = gasState.counts.unknown || 0;
    const okN = gasState.counts.ok || 0;

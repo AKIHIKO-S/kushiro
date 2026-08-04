@@ -120,7 +120,11 @@ function authoritativeFees(tournament, entries) {
 function entriesTable(entries) {
   if (!entries || !entries.length) return "";
   const rows = entries.map(e => {
-    let label = e.event || "(種目不明)";
+    // label は「エスケープ済みの断片 + 自分で書いたタグ」を組み立てた HTML。
+    // 出力時にもう一度 esc() を通すとタグが文字として見える(実際にメールで
+    // 「<br><span style=...>区分: …</span>」がそのまま表示された)。
+    // 値は必ずここで esc() し、出力側では素通しにする。
+    let label = esc(e.event || "(種目不明)");
     // 参加区分(entry_categories のラベル / 中高生区分)があれば種目名の下に添える。
     if (e.division_label) label += `<br><span style="font-size:12px;color:#92400e;">区分: ${esc(e.division_label)}</span>`;
     // ★ 全てのユーザー入力を esc() でエスケープ (XSS / メールインジェクション対策)
@@ -136,7 +140,7 @@ function entriesTable(entries) {
       detail = `${esc(e.name || "")} (${esc(e.team || "")})`;
     }
     return `<tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${esc(label)}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${label}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${detail}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;">${formatYen(e.fee)}</td>
     </tr>`;
