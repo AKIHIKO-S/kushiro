@@ -919,6 +919,16 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
         if (r && !r.error) {
           if (r.total_amount != null) relayPayload.total_amount = r.total_amount;
           if (Array.isArray(r.options)) relayPayload.option_items = r.options;
+          // 集計シートの各行にエントリーIDを載せる。シートの行から申込・選手を一意に辿れるようにする。
+          // 重複でスキップされた行があると位置がずれるので、作成時に控えた位置(entry_index)で戻す。
+          if (Array.isArray(r.created_entries) && Array.isArray(relayPayload.entries)) {
+            relayPayload.entries = relayPayload.entries.map(e => ({ ...e }));   // 元payloadを壊さない
+            r.created_entries.forEach(ce => {
+              if (!ce || ce.entry_id == null) return;
+              const t = relayPayload.entries[ce.entry_index];
+              if (t) t.entry_id = ce.entry_id;
+            });
+          }
         }
         gasRelay = await relayEntryToGas(tournament.entry_gas_url, relayPayload);
         // 結果を申込原本に刻む。ログに流すだけだと「どの申込が漏れたか」を後から特定できない

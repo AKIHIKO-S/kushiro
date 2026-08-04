@@ -402,10 +402,11 @@ test("団体戦・オプション・自由項目を含む申込が丸ごと記�
   assert.strictEqual(env.sheets["シングルス"].getLastRow(), 2);
   assert.strictEqual(env.sheets["ミックス"].getLastRow(), 3, "混合はペアの2名を別行に展開(ヘッダ+2行)");
 
-  // 選手名簿(31列レイアウト)が新規シートでも書けている
-  const roster = env.sheets["選手名簿"];
-  assert.ok(roster, "選手名簿シートが作られる");
-  assert.ok(roster.getLastRow() >= 3, "ヘッダ2行 + データ");
+  // 選手名簿(31列・まりもオープン様式)は既定では作らない。
+  // 種目構成の違う大会に無条件で作ると、意味の無い枠が並んで読みにくくなるため。
+  assert.strictEqual(env.sheets["選手名簿"], undefined,
+    "既定では作らない(既にある大会か LEGACY_SUMMARY=1 のときだけ)");
+  assert.strictEqual(env.sheets["集計用"], undefined, "集計用も同じ");
 
   // 有料オプションが台帳の列になり、数量が入る
   const head = env.sheets["申込台帳"]._grid[0].map(String);
@@ -544,4 +545,102 @@ test("何も設定していなくても控えメールは送れる", () => {
   const res = env.post(payload);
   assert.strictEqual(res.ok, true);
   assert.ok(env.sent.some(m => m.to === "applicant@example.com"));
+});
+
+// ══ 集計シートを最低限にする(2026-08-04 オーナー方針) ═══════════════
+// 「申込混在状態」の報告を受けての整理。
+//   ・その大会に無い種目の空シートを作らない
+//   ・弁当・懇親会は基本的に不要(該当の申込があるときだけ)
+//   ・選手名簿/集計用(まりもオープン様式)は既定で作らない
+//   ・種目シートの各行に「エントリーID」を置き、申込へ紐づけられるようにする
+//   ・台帳の固定列は最低限。引率顧問等はフォームで聞いている大会だけ列になる
+
+test("その大会に出てくる種目のシートだけ作る", () => {
+  const { payload } = makeSubmission();          // シングルス + ダブルス のみ
+  const env = makeEnv({});
+  env.post(payload);
+  assert.ok(env.sheets["シングルス"], "申込のある種目は作る");
+  assert.ok(env.sheets["ダブルス"], "申込のある種目は作る");
+  assert.strictEqual(env.sheets["団体"], undefined, "申込の無い種目は作らない");
+  assert.strictEqual(env.sheets["ミックス"], undefined);
+  assert.strictEqual(env.sheets["ダブルス相手募集者"], undefined, "募集が無ければ作らない");
+});
+
+test("弁当・懇親会のシートは該当の申込があるときだけ作る", () => {
+  const { payload } = makeSubmission();
+  const env = makeEnv({});
+  env.post(payload);
+  assert.strictEqual(env.sheets["お弁当、懇親会"], undefined, "基本的に不要");
+
+  const { payload: p2 } = makeSubmission();
+  const env2 = makeEnv({});
+  p2.entries.push({ event: "お弁当", type: "bento", count: 3, name: "釧路クラブ" });
+  env2.post(p2);
+  assert.ok(env2.sheets["お弁当、懇親会"], "申込があれば作る");
+});
+
+test("種目シートの各行にエントリーIDが入る", () => {
+  const { payload } = makeSubmission();
+  // 本体サーバーが付ける entry_id を再現する
+  payload.entries[0].entry_id = "abcd1234-5678-90ef-ghij-klmnopqrstuv";
+  payload.entries[1].entry_id = "ffff9999-1111-2222-3333-444455556666";
+  const env = makeEnv({});
+  env.post(payload);
+  const sg = env.sheets["シングルス"];
+  const head = sg._grid[0].map(String);
+  assert.strictEqual(head[0], "エントリーID", "先頭列に置く(最初に目に入る)");
+  assert.strictEqual(String(sg._grid[1][0]), "abcd1234", "先頭8文字に短縮する");
+  const db2 = env.sheets["ダブルス"];
+  assert.strictEqual(String(db2._grid[1][0]), "ffff9999");
+});
+
+test("エントリーIDが無い申込(旧プラットフォーム)でも列は空で通る", () => {
+  const { payload } = makeSubmission();          // entry_id を付けない
+  const env = makeEnv({});
+  const res = env.post(payload);
+  assert.strictEqual(res.ok, true, "記録できる");
+  assert.strictEqual(String(env.sheets["シングルス"]._grid[1][0]), "", "空欄になるだけ");
+});
+
+test("台帳の固定列は最低限で、突合の照合キーは残す", () => {
+  const { payload } = makeSubmission();
+  const env = makeEnv({});
+  env.post(payload);
+  const head = env.sheets["申込台帳"]._grid[0].map(String);
+  ["受付日時", "大会名", "団体名", "申込責任者", "電話番号", "メールアドレス",
+   "申込種目数", "参加人数(述べ)", "合計金額"].forEach(h => {
+    assert.ok(head.includes(h), h + " は固定列");
+  });
+  assert.ok(head.includes("tournament_id"), "突合の絞り込みに使うので残す");
+  assert.ok(head.includes("申込ID"), "二重登録の防止と逆引きに使う");
+  // 引率顧問・コーチ・備考(通信欄)は「固定列」ではなくなった。
+  // 既定のフォームではこれらを聞いているので列にはなるが、出どころは form_schema。
+  // 聞いていない大会では列が出ないことは次のテストで確かめる。
+  const fixed = head.slice(0, LEDGER_FIXED.length);
+  assert.deepStrictEqual(fixed, LEDGER_FIXED, "固定列は最低限の並び");
+});
+const LEDGER_FIXED = ["受付日時", "大会名", "団体名", "申込責任者", "電話番号", "メールアドレス",
+  "申込種目数", "参加人数(述べ)", "合計金額", "tournament_id"];
+
+test("フォームで聞いている項目だけが台帳の列になる", () => {
+  const t = db.createTournament({ name: "監督を聞く大会", date: "2027-06-01", venue: "会場" });
+  db.updateEntrySettings(t.id, {
+    entries_open: 1,
+    event_config: [{ name: "団体戦", type: "team", fee: 3000 }],
+    field_config: { version: 2, fields: { supervisor: "optional", coach: "hidden", note: "hidden" },
+      custom: [], event_overrides: {}, field_meta: { supervisor: { label: "監督" } } },
+  });
+  const cols = db.buildFormSchema(db.getTournament(t.id)).columns.ledger.map(c => c.label);
+  assert.ok(cols.includes("監督"), "聞いている項目は列になる: " + JSON.stringify(cols));
+  assert.ok(!cols.includes("コーチ"), "聞いていない項目は列にしない");
+  assert.ok(!cols.includes("通信欄"));
+});
+
+test("まりもオープン様式のシートが既にあれば従来どおり更新する", () => {
+  const { payload } = makeSubmission();
+  const env = makeEnv({});
+  env.ss.insertSheet("選手名簿");                 // その様式で運用している大会を再現
+  const res = env.post(payload);
+  assert.strictEqual(res.ok, true, res.error || "");
+  assert.ok(env.sheets["集計用"], "既存運用は壊さない(集計用も作られる)");
 });

@@ -103,6 +103,9 @@ function makeSheets(opts) {
 }
 const headerOf = (sh) => sh.grid[0];
 const rowsOf = (sh) => sh.grid.slice(1);
+// 種目シートの先頭列は「エントリーID」(本体が付ける識別子。テストの送信データには無いので空)。
+// 既存の期待値は種目名から始まるため、比較前に先頭の1セルを外す。
+const rowBody = (sh, i) => rowsOf(sh)[i].slice(1);
 const cellAt = (sh, rowIdx, header) => {
   const c = headerOf(sh).indexOf(header);
   assert.ok(c >= 0, `列「${header}」が存在すること (実際: ${JSON.stringify(headerOf(sh))})`);
@@ -117,7 +120,7 @@ test("form_schema が無い送信では列も値も従来と完全に同じ", ()
     entries: [{ event: "男子シングルス", type: "singles", name: "山田 太郎", age: 30, team: "釧路ク" }],
   });
   assert.deepStrictEqual(headerOf(sheets["シングルス"]), H.SINGLES, "ヘッダが増えないこと");
-  assert.deepStrictEqual(rowsOf(sheets["シングルス"])[0],
+  assert.deepStrictEqual(rowBody(sheets["シングルス"], 0),
     ["男子シングルス", "一般男子", "山田 太郎", 30, "釧路ク"]);
 });
 
@@ -144,8 +147,8 @@ test("ふりがな・学年・自由項目を可視にすると、その列が�
     }],
   });
   const sh = sheets["シングルス"];
-  assert.deepStrictEqual(headerOf(sh).slice(0, 5), H.SINGLES, "既存列は先頭に不変であること");
-  assert.deepStrictEqual(headerOf(sh).slice(5), ["ふりがな", "学年", "シューズサイズ"]);
+  assert.deepStrictEqual(headerOf(sh).slice(0, H.SINGLES.length), H.SINGLES, "既存列は先頭に不変であること");
+  assert.deepStrictEqual(headerOf(sh).slice(H.SINGLES.length), ["ふりがな", "学年", "シューズサイズ"]);
   assert.strictEqual(cellAt(sh, 0, "ふりがな"), "やまだ たろう");
   assert.strictEqual(cellAt(sh, 0, "学年"), "中2");
   assert.strictEqual(cellAt(sh, 0, "シューズサイズ"), "26.5");
@@ -211,8 +214,8 @@ test("ダブルスは選手1と選手2で別々の列になり、値が入れ替
     }],
   });
   const sh = sheets["ダブルス"];
-  assert.deepStrictEqual(headerOf(sh).slice(0, 8), H.DOUBLES);
-  assert.deepStrictEqual(headerOf(sh).slice(8),
+  assert.deepStrictEqual(headerOf(sh).slice(0, H.DOUBLES.length), H.DOUBLES);
+  assert.deepStrictEqual(headerOf(sh).slice(H.DOUBLES.length),
     ["ふりがな1", "学年1", "靴1", "ふりがな2", "学年2", "靴2"]);
   assert.strictEqual(cellAt(sh, 0, "ふりがな1"), "こう");
   assert.strictEqual(cellAt(sh, 0, "ふりがな2"), "おつ");
@@ -312,8 +315,14 @@ test("申込台帳スキーマに顧問と申込単位の自由項目が載る",
     }),
   };
   const s = db.buildFormSchema(tournament);
+  // 引率顧問・コーチ・備考(通信欄)も「フォームで聞いている大会だけ」列になる方式へ変えた。
+  // この fixture は fields に advisor しか書いていないが、既定値(DEFAULT_FIELD_CONFIG)で
+  // supervisor / coach / note が optional なので、それらも列に出るのが正しい。
   assert.deepStrictEqual(s.columns.ledger, [
+    { key: "supervisor", label: "引率顧問" },
     { key: "advisor", label: "顧問" },
+    { key: "coach", label: "コーチ" },
+    { key: "note", label: "備考" },
     { key: "cust:bus", label: "貸切バス" },
   ]);
   assert.deepStrictEqual(s.columns.player, [{ key: "cust:shoes", label: "靴" }]);
@@ -323,9 +332,12 @@ test("申込台帳スキーマに顧問と申込単位の自由項目が載る",
 });
 
 // ── 既定(空設定)では列が1本も増えない = 既存大会の見た目が変わらない ────
-test("設定が空の既存大会では追加列がゼロ", () => {
+test("設定が空の既存大会では、既定で聞いている項目だけが列になる", () => {
+  // 引率顧問・コーチ・備考は既定(DEFAULT_FIELD_CONFIG)で optional = フォームに出ている。
+  // 「聞いている項目だけ列にする」方式なので、この3つは列になるのが正しい。
+  // 選手側(ふりがな・学年・性別)は既定 hidden なので列は増えない。
   const s = db.buildFormSchema({ id: "t10", event_config: "[]" });
-  assert.deepStrictEqual(s.columns.ledger, []);
+  assert.deepStrictEqual(s.columns.ledger.map(c => c.key), ["supervisor", "coach", "note"]);
   assert.deepStrictEqual(s.columns.player, []);
 });
 
@@ -414,7 +426,11 @@ test("項目名を変えるとフォームの見出しとシート列名が同�
   assert.ok(html.includes("部活動顧問"), "連絡先セクションの見出しも変更されること");
   const s = db.buildFormSchema(tournament);
   assert.deepStrictEqual(s.columns.player.map(c => c.label), ["よみがな"]);
-  assert.deepStrictEqual(s.columns.ledger.map(c => c.label), ["部活動顧問"]);
+  // 既定で聞いている 引率顧問・コーチ・備考 も列になる(聞いている項目だけ列にする方式)。
+  // ここで確かめたいのは「表示名の変更が列名に伝わる」ことなので、顧問の位置だけ見る。
+  const ledgerLabels = s.columns.ledger.map(c => c.label);
+  assert.ok(ledgerLabels.includes("部活動顧問"), "変更後の名前が列名になる: " + JSON.stringify(ledgerLabels));
+  assert.ok(!ledgerLabels.includes("顧問"), "変更前の名前は残らない");
 });
 
 test("sanitizeFieldConfig が field_meta を安全に受け取る", () => {

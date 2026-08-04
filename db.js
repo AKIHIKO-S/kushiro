@@ -10274,7 +10274,8 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
   // 途中で例外が出ても全てロールバックし「entrant だけ残って原本/トークンが無い」不整合を防ぐ
   // (Phase4 review: createTeamEntry 非原子性 / 漏れゼロ方針)。
   const persist = sqlite.transaction(() => {
-    for (const ent of entries) {
+    for (let _srcIdx = 0; _srcIdx < entries.length; _srcIdx++) {
+      const ent = entries[_srcIdx];
       const evName = String(ent.event || "").trim();
       if (!evName) continue;
       const type = ent.type || "singles";
@@ -10378,6 +10379,11 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
 
       const e = createEntrant(data);
       createdEntrants.push(e);
+      // 集計シートの各行を申込へ紐づけるための識別子。どの申込のどの行かを一意に辿れるよう、
+      // 作成された entrant の id と、送信データ内での位置を控える
+      // (重複でスキップされた行があると位置がずれるため、位置も一緒に持つ)。
+      emailItem.entry_id = e.id;
+      emailItem.entry_index = _srcIdx;
       pricedEntries.push(emailItem);
 
       // tournament_players はマスタDB に該当する選手がいる場合のみ追加 (重複管理用)。団体は対象外。
@@ -10890,10 +10896,14 @@ function buildFormSchema(tournament) {
     .filter(c => c && c.key && (c.scope === "player" ? "player" : "submission") === scope)
     .map(c => ({ key: "cust:" + c.key, label: String(c.label || c.key) }));
 
-  // 申込台帳(1申込=1行)に足す列。受付日時/団体名/責任者/連絡先/引率顧問/コーチ/備考は
-  // 既存の固定列で出ているため、ここでは「固定列に無いのに収集している項目」だけを足す。
+  // 申込台帳(1申込=1行)に足す列。
+  // 固定列は「受付日時・大会名・団体名・責任者・電話・メール・種目数・人数・合計」だけに絞ってあり、
+  // 引率顧問・顧問・コーチ・通信欄は**フォームで聞いている大会だけ**列になる
+  // (聞いていない項目の空列が全大会に並ぶと、集計シートが読みにくくなるため)。
   const ledger = [];
-  if (visibleAnywhere("advisor")) ledger.push(col("advisor"));
+  ["supervisor", "advisor", "coach", "note"].forEach(k => {
+    if (visibleAnywhere(k)) ledger.push(col(k));
+  });
   ledger.push(...customOf("submission"));
 
   // 選手行シート(シングルス/団体/ダブルス/ミックス)に足す列。氏名・年齢・チーム名・区分は固定列。

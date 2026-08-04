@@ -60,17 +60,28 @@ const SHEETS = {
   RECEIPT_MANUAL: "領収書(個別発行)",
 };
 
-const SINGLES_HEADERS = ["種目", "区分", "氏名", "年齢", "チーム名"];
+// 各行を申込へ紐づける識別子。本部が「この選手はどの申込か」を辿れるようにする。
+// 先頭に置くのは、目で追うとき最初に見る列だから。
+const COL_ENTRY_REF = "エントリーID";
 
+const SINGLES_HEADERS = [COL_ENTRY_REF, "種目", "区分", "氏名", "年齢", "チーム名"];
+
+// 申込1件ぶんの最低限。本部がやることは「誰から・いくら・どう連絡するか」なので、そこに絞る。
+// 引率顧問・コーチ・備考・tournament_id は、必要な大会だけフォーム項目として出せば
+// form_schema 経由で自動的に列が増える(定義が正本・列は導出)。固定列には持たない。
 const LEDGER_HEADERS = [
   "受付日時", "大会名", "団体名", "申込責任者", "電話番号", "メールアドレス",
-  "引率顧問", "コーチ", "申込種目数", "参加人数(述べ)", "合計金額",
-  "備考", "tournament_id",
+  "申込種目数", "参加人数(述べ)", "合計金額",
+  // 以下は機械が使う列。人が読む列の後ろに置く。
+  //   tournament_id … 1つのシートで複数大会を扱うときの絞り込みキー。
+  //                   締切前の突合(action=entry_ids)がこれで大会を切り分けるので外せない。
+  //   申込ID        … 二重登録の防止と、種目シートの「エントリーID」からの逆引き。
+  "tournament_id",
 ];
 
-const TEAM_HEADERS = ["種目", "区分", "氏名", "年齢", "チーム名"];
-const DOUBLES_HEADERS = ["種目", "区分", "氏名1", "年齢", "氏名2", "年齢", "チーム名1", "チーム名2"];
-const MIXED_HEADERS = ["種目", "性別", "氏名", "年齢", "チーム名"];
+const TEAM_HEADERS = [COL_ENTRY_REF, "種目", "区分", "氏名", "年齢", "チーム名"];
+const DOUBLES_HEADERS = [COL_ENTRY_REF, "種目", "区分", "氏名1", "年齢", "氏名2", "年齢", "チーム名1", "チーム名2"];
+const MIXED_HEADERS = [COL_ENTRY_REF, "種目", "性別", "氏名", "年齢", "チーム名"];
 const PARTNER_HEADERS = ["申込チーム", "区分", "氏名1", "年齢", "備考"];
 
 // 集計用シートの料金 (スクリプトプロパティで上書き可)
@@ -146,21 +157,42 @@ function getOrCreateSheet(ss, name, headers) {
   return sh;
 }
 
-function ensureAllSheets(ss) {
+// まりもオープン様式の集計(選手名簿31列 / 集計用)を使う大会かどうか。
+// 既にそのシートがある = その様式で運用しているので従来どおり更新する。
+// 無い大会には作らない(種目構成が違うと意味の無い枠が並び、読みにくくなるため)。
+// 新規に使いたいときは スクリプトプロパティ LEGACY_SUMMARY=1。
+function _legacySummaryWanted(ss) {
+  if (ss.getSheetByName(SHEETS.ROSTER) || ss.getSheetByName(SHEETS.AGGREGATE)) return true;
+  const v = PropertiesService.getScriptProperties().getProperty("LEGACY_SUMMARY");
+  return String(v || "").trim() === "1";
+}
+
+// この申込に実際に出てくる種目だけシートを作る。
+// 以前は全種目ぶん+弁当+相手募集を無条件で作っていたため、その大会に無い種目の
+// 空シートが並び「申込が混在して見える」状態になっていた(オーナー報告)。
+// 既に在るシートは触らない(過去の大会のデータを消さない)。
+function ensureAllSheets(ss, data) {
   getOrCreateSheet(ss, SHEETS.LEDGER, LEDGER_HEADERS);
-  getOrCreateSheet(ss, SHEETS.TEAM, TEAM_HEADERS);
-  getOrCreateSheet(ss, SHEETS.DOUBLES, DOUBLES_HEADERS);
-  getOrCreateSheet(ss, SHEETS.MIXED, MIXED_HEADERS);
-  getOrCreateSheet(ss, SHEETS.SINGLES, SINGLES_HEADERS);
-  getOrCreateSheet(ss, SHEETS.PARTNER, PARTNER_HEADERS);
-  // 弁当・懇親会は2列構造 (お弁当 | 懇親会)
-  const sb = ss.getSheetByName(SHEETS.BENTO);
-  if (!sb) {
-    const sh = ss.insertSheet(SHEETS.BENTO);
-    sh.getRange(1, 1).setValue("お弁当");
-    sh.getRange(1, 4).setValue("懇親会");
-    sh.getRange(1, 1, 1, 4).setFontWeight("bold").setBackground("#f1f5f9");
-    sh.setFrozenRows(1);
+  const kinds = {};
+  ((data && data.entries) || []).forEach(function (en) { kinds[classifyEntry(en)] = true; });
+  if (kinds.team) getOrCreateSheet(ss, SHEETS.TEAM, TEAM_HEADERS);
+  if (kinds.doubles) getOrCreateSheet(ss, SHEETS.DOUBLES, DOUBLES_HEADERS);
+  if (kinds.mixed) getOrCreateSheet(ss, SHEETS.MIXED, MIXED_HEADERS);
+  if (kinds.singles) getOrCreateSheet(ss, SHEETS.SINGLES, SINGLES_HEADERS);
+  // ダブルス相手募集は、その申込に募集があるときだけ
+  if (Array.isArray(data && data.partner_search) && data.partner_search.length) {
+    getOrCreateSheet(ss, SHEETS.PARTNER, PARTNER_HEADERS);
+  }
+  // 弁当・懇親会は基本的に不要(オーナー方針)。該当の申込があるときだけ作る。
+  if (kinds.bento || kinds.party) {
+    const sb = ss.getSheetByName(SHEETS.BENTO);
+    if (!sb) {
+      const sh = ss.insertSheet(SHEETS.BENTO);
+      sh.getRange(1, 1).setValue("お弁当");
+      sh.getRange(1, 4).setValue("懇親会");
+      sh.getRange(1, 1, 1, 4).setFontWeight("bold").setBackground("#f1f5f9");
+      sh.setFrozenRows(1);
+    }
   }
 }
 
@@ -504,7 +536,7 @@ function doPost(e) {
     }
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    ensureAllSheets(ss);
+    ensureAllSheets(ss, data);
 
     if (opId) {
       const dupRow = _findEntryIdRow(ss, opId);
@@ -528,12 +560,13 @@ function doPost(e) {
       return s + 1;
     }, 0);
     // 固定列は従来どおりの並び + フォーム定義から導出した追加列(顧問・申込単位の自由項目)。
+    // 固定列は最低限(誰から・いくら・どう連絡するか)。引率顧問・顧問・コーチ・通信欄は
+    // フォームで聞いている大会だけ form_schema 経由で列が増える。
     const ledgerRow = [
       ts, data.tournament_name, data.team_name, data.contact_name,
       data.contact_tel, data.contact_email,
-      data.supervisor || "", data.coach || "",
       totalEntries, totalPeople, data.total_amount || 0,
-      data.note || "", data.tournament_id || "",
+      data.tournament_id || "",
     ];
     // 有料オプション(弁当・懇親会など)。主催者が定義した項目ごとに列を作り、数量を書く。
     // 金額は KTTA Platform が受付時に確定した値(option_items)をそのまま使う。
@@ -573,8 +606,9 @@ function doPost(e) {
       });
     }
 
-    // ─── 4. 選手名簿 (横並びレイアウト) ───
-    appendToRoster(ss, data);
+    // ─── 4. 選手名簿 (横並びレイアウト・まりもオープン様式) ───
+    // 既にシートがあるか、明示的に有効化されている大会だけ(上のコメント参照)。
+    if (_legacySummaryWanted(ss)) appendToRoster(ss, data);
 
     // ─── 5. 検証: 書いたものを読み返す ───
     // ここまでが「記録」。この後のメールは、記録できたことを確認してからにする。
@@ -599,7 +633,12 @@ function doPost(e) {
     // ─── 7. 重い後処理 ───
     // 集計再計算と種目別リスト生成は申込が増えるほど遅くなる。記録・検証・通知の後ろに置き、
     // ここで時間切れになっても「申込が記録されない」ことは起きないようにする。
-    try { rebuildAggregate(ss, data.tournament_name); }
+    // 選手名簿(31列の横並び)と集計用は、まりもオープンの様式に合わせた専用レイアウト。
+    // どの大会にも無条件で作ると、種目構成の違う大会では意味の無い枠が並び
+    // 「申込が混在して見える」状態になる(オーナー報告)。
+    // 既にシートがある大会(=その様式で運用している)だけ従来どおり更新する。
+    // 新しく使いたい場合はスクリプトプロパティ LEGACY_SUMMARY=1 で明示的に有効化する。
+    try { if (_legacySummaryWanted(ss)) rebuildAggregate(ss, data.tournament_name); }
     catch (aggErr) { console.error("集計用シート再計算失敗:", aggErr); }
     try { generateEventLists(); }
     catch (evErr) { console.error("種目別リスト生成失敗:", evErr); }
@@ -630,11 +669,25 @@ function doPost(e) {
 // 振分けロジック
 // ════════════════════════════════════════════
 
+// 各行に載せる紐づけ用の識別子。
+// KTTA Platform が申込を受け付けたときに採番した entrant の id を短縮して使う。
+// 短縮するのは目で追う列だから。先頭8文字あれば1大会内で重複しない。
+// 旧バージョンのプラットフォーム(idを送らない)からの申込では空欄になる。
+function entryRef(en) {
+  const id = String((en && en.entry_id) || "").trim();
+  return id ? id.slice(0, 8) : "";
+}
+
 function distributeEntries(ss, data) {
-  const teamSh = ss.getSheetByName(SHEETS.TEAM);
-  const dblSh = ss.getSheetByName(SHEETS.DOUBLES);
-  const mixSh = ss.getSheetByName(SHEETS.MIXED);
-  const sglSh = ss.getSheetByName(SHEETS.SINGLES);
+  // 実際に書く直前に用意する(遅延作成)。その大会に無い種目のシートは作られないので、
+  // 集計シートに空シートが並ばない。ensureAllSheets と条件がずれても、
+  // シート無しで appendRow を呼んで申込1件を丸ごと失うことがない。
+  const _cache = {};
+  const lazy = (name, headers) => () => _cache[name] || (_cache[name] = getOrCreateSheet(ss, name, headers));
+  const teamSh = lazy(SHEETS.TEAM, TEAM_HEADERS);
+  const dblSh = lazy(SHEETS.DOUBLES, DOUBLES_HEADERS);
+  const mixSh = lazy(SHEETS.MIXED, MIXED_HEADERS);
+  const sglSh = lazy(SHEETS.SINGLES, SINGLES_HEADERS);
   const bentoSh = ss.getSheetByName(SHEETS.BENTO);
 
   // 選手単位の追加列(ふりがな・学年・性別・選手ごとの自由項目)をフォーム定義から取得する。
@@ -665,7 +718,8 @@ function distributeEntries(ss, data) {
         if (!m.name) return;
         const obj = {};
         teamCols.forEach(function (c) { obj[c.label] = memberValue(m, c.key); });
-        appendRowWithExtras(teamSh, TEAM_HEADERS, [
+        appendRowWithExtras(teamSh(), TEAM_HEADERS, [
+          entryRef(en),
           en.event || "",
           division || "一般",
           m.name,
@@ -678,7 +732,8 @@ function distributeEntries(ss, data) {
       const obj = {};
       dblCols1.forEach(function (c) { obj[c.label] = playerValue(en, 0, c.key); });
       dblCols2.forEach(function (c) { obj[c.label] = playerValue(en, 1, c.key); });
-      appendRowWithExtras(dblSh, DOUBLES_HEADERS, [
+      appendRowWithExtras(dblSh(), DOUBLES_HEADERS, [
+        entryRef(en),
         en.event || "",
         division,
         en.name1 || "",
@@ -693,21 +748,22 @@ function distributeEntries(ss, data) {
       if (en.name1) {
         const o1 = {};
         mixCols.forEach(function (c) { o1[c.label] = playerValue(en, 0, c.key); });
-        appendRowWithExtras(mixSh, MIXED_HEADERS,
-          [en.event || "", "男子", en.name1, en.age1 || "", en.team1 || en.team || teamName], mixCols, o1);
+        appendRowWithExtras(mixSh(), MIXED_HEADERS,
+          [entryRef(en), en.event || "", "男子", en.name1, en.age1 || "", en.team1 || en.team || teamName], mixCols, o1);
       }
       if (en.name2) {
         const o2 = {};
         mixCols.forEach(function (c) { o2[c.label] = playerValue(en, 1, c.key); });
-        appendRowWithExtras(mixSh, MIXED_HEADERS,
-          [en.event || "", "女子", en.name2, en.age2 || "", en.team2 || en.team || teamName], mixCols, o2);
+        appendRowWithExtras(mixSh(), MIXED_HEADERS,
+          [entryRef(en), en.event || "", "女子", en.name2, en.age2 || "", en.team2 || en.team || teamName], mixCols, o2);
       }
     } else if (kind === "singles") {
       // シングルス: 専用シートに記録
       if (en.name) {
         const obj = {};
         sglCols.forEach(function (c) { obj[c.label] = playerValue(en, null, c.key); });
-        appendRowWithExtras(sglSh, SINGLES_HEADERS, [
+        appendRowWithExtras(sglSh(), SINGLES_HEADERS, [
+          entryRef(en),
           en.event || "",
           division,
           en.name,
@@ -1947,9 +2003,12 @@ function menuShowHelp() {
     "KTTA Platform - GAS スプレッドシート",
     "■ シート一覧\n" +
     "  申込台帳: 申込履歴 (1申込=1行)\n" +
-    "  選手名簿: 団体別の出場選手一覧\n" +
     "  団体/ダブルス/ミックス/シングルス: 種目別エントリー\n" +
-    "  お弁当、懇親会: 弁当・懇親会の参加者\n" +
+    "    ※その大会に申込のある種目のシートだけ作られます\n" +
+    "    ※各行の「エントリーID」で申込台帳の申込と紐づきます\n" +
+    "  お弁当、懇親会: 該当の申込があるときだけ作られます\n" +
+    "  選手名簿/集計用: まりもオープン様式。既にシートがある大会か\n" +
+    "    LEGACY_SUMMARY=1 のときだけ更新します\n" +
     "  ダブルス相手募集者: ペア募集リクエスト\n" +
     "  集計用: 団体別 種目別人数+合計金額 (自動再計算)\n" +
     "  _種目_*: 種目別 選手リスト (手動生成)\n" +
