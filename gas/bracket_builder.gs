@@ -124,8 +124,10 @@ function bbBuildStructure(n) {
   const byes = size - count;
   const order = bbSeedOrder(size);
 
-  // 上位シードから不戦勝を割り当てる(標準配置)
-  const slots = order.map(function (rank) { return { rank: rank, bye: rank <= byes }; });
+  // 枠は「シード順位の高い順に埋まる」。参加者数を超える順位の枠が空く。
+  // 空いた枠の相手(=上位シード)が1回戦を戦わずに勝ち上がる、というのが不戦勝の実体。
+  // ここを逆にすると第1シードの枠が空欄になり、最下位ランクの枠に選手が入ってしまう。
+  const slots = order.map(function (rank) { return { rank: rank, bye: rank > count }; });
   let no = 0;
   slots.forEach(function (s) { s.no = s.bye ? 0 : (++no); });
 
@@ -296,9 +298,11 @@ function bbRender(sh, st, geo) {
   const R = bbRenderHalf(sh, st, geo, geo.half, geo.half, geo.rightNoCol, geo.rightCol, -1, h.right);
   // 決勝: 両山の勝者を中央でつなぐ
   if (L && R) {
-    bbHLine(sh, L.row, L.col, geo.centerCol, 1);
+    // 決勝の縦線は中央列の「左辺」1本。左の横線はその手前まで、右の横線はその列から
+    // 引くことで、1本の縦線に左右がぴったり合流する。
+    bbHLine(sh, L.row, L.col, geo.centerCol - 1, 1);
     bbHLine(sh, R.row, R.col, geo.centerCol, -1);
-    bbVLine(sh, L.row, R.row, geo.centerCol);
+    bbVLine(sh, L.row, R.row, geo.centerCol, -1);
     const mid = Math.round((L.row + R.row) / 2);
     if (h.fin && h.fin.label) {
       sh.getRange(mid, geo.centerCol).setValue(h.fin.label)
@@ -332,7 +336,7 @@ function bbRenderHalf(sh, st, geo, slotFrom, slotCount, noCol, colOf, dir, round
       if (g.played) {
         bbHLine(sh, a.row, a.col, col, dir);
         bbHLine(sh, b.row, b.col, col, dir);
-        bbVLine(sh, a.row, b.row, col);
+        bbVLine(sh, a.row, b.row, col, dir);
         const mid = Math.round((a.row + b.row) / 2);
         next.push({ row: mid, alive: true, col: col });
         if (g.label) {
@@ -367,9 +371,20 @@ function bbHLine(sh, row, fromCol, toCol, dir) {
     .setBorder(null, null, true, null, null, null, "#333333", SpreadsheetApp.BorderStyle.SOLID);
 }
 
-// 縦線: 列 col の rowA〜rowB。セルの右罫線で引く。
-function bbVLine(sh, rowA, rowB, col) {
+// 縦線。横線とぴったり繋げるために、罫線の「どの辺か」を厳密に合わせる。
+//
+//   セル(r,c)の下罫線 = 行r と 行r+1 の境界
+//   セル(r,c)の右罫線 = 列c と 列c+1 の境界
+//
+// 横線は「その行の下辺」に引いてあるので、縦線は
+//   ・上端 = rowA の下辺 → 行 rowA+1 から始める(rowA から引くと1行上にはみ出す)
+//   ・左右 = 進む向き側の辺(左山は右辺・右山は左辺)。逆にすると横線の端と繋がらない
+// この2点がずれていたため、線が食い違って見えていた。
+function bbVLine(sh, rowA, rowB, col, dir) {
   const top = Math.min(rowA, rowB), bottom = Math.max(rowA, rowB);
-  sh.getRange(top, col, bottom - top + 1, 1)
-    .setBorder(null, null, null, true, null, null, "#333333", SpreadsheetApp.BorderStyle.SOLID);
+  if (bottom <= top) return;
+  const right = (dir >= 0), left = !right;
+  sh.getRange(top + 1, col, bottom - top, 1)
+    .setBorder(null, left || null, null, right || null, null, null,
+      "#333333", SpreadsheetApp.BorderStyle.SOLID);
 }

@@ -83,10 +83,26 @@ test("通し番号は不戦勝を飛ばして上から1..参加者数", () => {
   assert.ok(arr(st.slots).filter(s => s.bye).every(s => s.no === 0), "不戦勝の枠に番号は振らない");
 });
 
-test("不戦勝は上位シードに付く(標準配置)", () => {
-  const st = build(5);                       // 8枠・不戦勝3 → シード1,2,3が不戦勝
+test("空くのは下位ランクの枠。上位シードが不戦勝で上がる", () => {
+  // 枠はシード順位の高い順に埋まる。参加者数を超える順位の枠が空き、
+  // その相手(=上位シード)が1回戦を戦わずに勝ち上がる。
+  // ここを逆にすると第1シードの枠が空欄になり、最下位ランクの枠に選手が入る。
+  const st = build(5);                       // 8枠・5名 → rank 6,7,8 の枠が空く
   const byeRanks = arr(st.slots).filter(s => s.bye).map(s => s.rank).sort((a, b) => a - b);
-  assert.deepStrictEqual(byeRanks, [1, 2, 3]);
+  assert.deepStrictEqual(byeRanks, [6, 7, 8]);
+  const first = arr(st.slots)[0];
+  assert.strictEqual(first.rank, 1, "先頭は第1シードの枠");
+  assert.strictEqual(first.bye, false, "第1シードの枠は空にしない");
+  assert.strictEqual(first.no, 1, "通し番号1がつく");
+});
+
+test("参加者数と同じ数だけ枠が埋まる", () => {
+  [5, 12, 97, 100].forEach(n => {
+    const st = build(n);
+    assert.strictEqual(arr(st.slots).filter(s => !s.bye).length, n, n + "名ぶん埋まる");
+    assert.ok(arr(st.slots).filter(s => s.bye).every(s => s.rank > n),
+      "空くのは参加者数を超えるランクの枠だけ");
+  });
 });
 
 // ── 試合番号の形式(元ソフトの4種) ───────────────────────────────
@@ -150,12 +166,22 @@ test("各回戦の試合数は枠の半分ずつ減る(不戦勝を含む論理�
   assert.deepStrictEqual(arr(st.rounds).map(g => g.length), [64, 32, 16, 8, 4, 2, 1]);
 });
 
-test("1回戦で不戦勝どうしが当たることはない(上位シードは散らばる)", () => {
-  [5, 9, 17, 33, 78].forEach(n => {
+test("空き枠どうしが当たることはない(不戦勝が無駄にならない)", () => {
+  [5, 9, 17, 33, 78, 97].forEach(n => {
     const st = build(n);
     const bothBye = arr(st.rounds[0]).filter(g => st.slots[g.lo].bye && st.slots[g.hi].bye);
-    assert.strictEqual(bothBye.length, 0, n + "名: 不戦勝どうしの枠ができている");
+    assert.strictEqual(bothBye.length, 0, n + "名: 空き枠どうしが当たっている");
   });
+});
+
+test("不戦勝は上位シードに付く(空き枠の相手が上位から順)", () => {
+  const st = build(97);                      // 128枠・空き31 → 第1〜31シードが不戦勝
+  const gotBye = arr(st.rounds[0]).filter(g => !g.played).map(g => {
+    const a = st.slots[g.lo], b = st.slots[g.hi];
+    return a.bye ? b.rank : a.rank;          // 空いていない側 = 不戦勝で上がる人
+  }).sort((x, y) => x - y);
+  assert.deepStrictEqual(gotBye, Array.from({ length: 31 }, (_, i) => i + 1),
+    "第1〜31シードが1回戦を戦わずに上がる");
 });
 
 // ══ 対面(両山)形式 ═══════════════════════════════════════════
