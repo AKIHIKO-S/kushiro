@@ -173,67 +173,71 @@ function bbAssignNumbers(structure, style) {
 // シートへ描く
 // ══════════════════════════════════════════
 
+
 const BB_ROW0 = 6;        // 1枠目の行
 const BB_ROWSTEP = 2;     // 枠と枠の間隔(1行あける)
-const BB_COL_NO = 2;      // 通し番号の列(B)
-const BB_COL0 = 3;        // 1回戦の縦線を引く列(C)
+
+// 対面(両山)にするか。元ソフトの制約に合わせ、7名までは片山のみ。
+//   「４人以上７名までは、片山形式のみで作成されます。両山では作成できません。」(操作説明)
+function bbIsFacing(count) { return count >= 8; }
+
+// 表の骨格を「左右どちらの山か」で振り分ける。
+// rounds[ri] の前半が左山・後半が右山、最後の1試合が中央の決勝。
+// これは組み合わせの木が「隣どうしを合わせる」形だから成り立つ(bbBuildStructure と対)。
+function bbSplitHalves(st) {
+  const perHalf = st.rounds.length - 1;          // 各山の回戦数(決勝を除く)
+  const left = [], right = [];
+  for (let ri = 0; ri < perHalf; ri++) {
+    const g = st.rounds[ri], h = g.length / 2;
+    left.push(g.slice(0, h));
+    right.push(g.slice(h));
+  }
+  return { perHalf: perHalf, left: left, right: right, fin: st.rounds[st.rounds.length - 1][0] };
+}
 
 function bbBuild() {
   const cfg = bbReadSettings();
   const st = bbAssignNumbers(bbBuildStructure(cfg["参加者数"]), String(cfg["試合番号形式"] || "1-1形式").trim());
+  const facing = bbIsFacing(st.count);
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sh = ss.getSheetByName(BB_OUTPUT);
   if (sh) ss.deleteSheet(sh);          // 作り直し(前回の罫線を残さない)
   sh = ss.insertSheet(BB_OUTPUT);
 
-  const rounds = st.rounds.length;
-  const lastRow = BB_ROW0 + (st.size - 1) * BB_ROWSTEP + 2;
-  const lastCol = BB_COL0 + rounds + 1;
-  bbEnsureSize(sh, lastRow, lastCol);
+  const geo = facing ? bbLayoutFacing(st) : bbLayoutSingle(st);
+  bbEnsureSize(sh, geo.lastRow + 2, geo.lastCol + 1);
 
-  // 見出し
-  sh.getRange(1, BB_COL_NO).setValue(cfg["大会名"] || "").setFontWeight("bold").setFontSize(14);
-  sh.getRange(2, BB_COL_NO).setValue(
+  // 見出し(中央寄りに置く。両山では表の真ん中が決勝なので上部が空く)
+  const hcol = facing ? Math.max(2, geo.centerCol - 3) : 2;
+  sh.getRange(1, hcol).setValue(cfg["大会名"] || "").setFontWeight("bold").setFontSize(14);
+  sh.getRange(2, hcol).setValue(
     [cfg["開催日"], cfg["会場"]].filter(function (x) { return String(x || "").trim(); }).join("　").trim()
   ).setFontSize(11);
-  sh.getRange(3, BB_COL_NO).setValue(cfg["種目"] || "").setFontWeight("bold").setFontSize(12);
-  sh.getRange(4, BB_COL_NO).setValue(
-    st.count + "名 / " + st.size + "枠" + (st.byes ? " (不戦勝 " + st.byes + ")" : "")
+  sh.getRange(3, hcol).setValue(cfg["種目"] || "").setFontWeight("bold").setFontSize(12);
+  sh.getRange(4, hcol).setValue(
+    st.count + "名 / " + st.size + "枠" + (st.byes ? " (不戦勝 " + st.byes + ")" : "") +
+    (facing ? " / 対面(両山)" : " / 片山")
   ).setFontSize(10).setFontColor("#777777");
 
-  // 枠(通し番号 + 名前を書く欄)
-  const noVals = [], nameRows = [];
-  for (let i = 0; i < st.size; i++) {
-    const r = BB_ROW0 + i * BB_ROWSTEP;
-    const s = st.slots[i];
-    noVals.push([s.bye ? "" : s.no]);
-    if (!s.bye) nameRows.push(r);
-  }
-  sh.getRange(BB_ROW0, BB_COL_NO, st.size * BB_ROWSTEP - 1, 1).clearContent();
-  for (let i = 0; i < st.size; i++) {
-    const r = BB_ROW0 + i * BB_ROWSTEP;
-    sh.getRange(r, BB_COL_NO).setValue(noVals[i][0]);
-  }
-  sh.getRange(BB_ROW0, BB_COL_NO, st.size * BB_ROWSTEP, 1)
-    .setHorizontalAlignment("right").setFontSize(10).setFontColor("#555555");
-
-  // 罫線を引く
-  bbDrawLines(sh, st);
+  bbRender(sh, st, geo);
 
   // 体裁
-  sh.setColumnWidth(1, 24);
-  sh.setColumnWidth(BB_COL_NO, 34);
-  for (let c = BB_COL0; c <= lastCol; c++) sh.setColumnWidth(c, 46);
-  for (let r = BB_ROW0; r <= lastRow; r++) sh.setRowHeight(r, 18);
-  sh.setFrozenRows(4);
-  sh.getRange(1, 1, lastRow, lastCol).setVerticalAlignment("middle");
+  sh.setColumnWidth(1, 20);
+  geo.numCols.forEach(function (c) { sh.setColumnWidth(c, 36); });
+  for (let c = 2; c <= geo.lastCol; c++) {
+    if (geo.numCols.indexOf(c) < 0) sh.setColumnWidth(c, 44);
+  }
+  for (let r = BB_ROW0; r <= geo.lastRow; r++) sh.setRowHeight(r, 18);
+  sh.getRange(1, 1, geo.lastRow + 2, geo.lastCol + 1).setVerticalAlignment("middle");
   ss.setActiveSheet(sh);
 
   SpreadsheetApp.getUi().alert(
     "トーナメント表を作りました。\n\n" +
-    "参加者数: " + st.count + "名\n枠: " + st.size + "\n不戦勝: " + st.byes + "\n" +
-    "回戦数: " + rounds + "\n試合数: " + bbCountPlayed(st) + "");
+    "参加者数: " + st.count + "名\n" +
+    "形式: " + (facing ? "対面(両山)" : "片山 ※7名までは片山のみ") + "\n" +
+    "枠: " + st.size + "  不戦勝: " + st.byes + "\n" +
+    "回戦数: " + st.rounds.length + "  試合数: " + bbCountPlayed(st));
 }
 
 function bbCountPlayed(st) {
@@ -247,58 +251,123 @@ function bbEnsureSize(sh, rows, cols) {
   if (sh.getMaxColumns() < cols) sh.insertColumnsAfter(sh.getMaxColumns(), cols - sh.getMaxColumns());
 }
 
-// 罫線でトーナメントの線を引く。
-// ・各枠から右へ1本(下線)= 選手の線
-// ・回戦ごとに、勝ち上がる2つを縦線でつなぐ
-// ・不戦勝は「試合をしない」ので、その枠の線を次の回戦までまっすぐ伸ばす
-function bbDrawLines(sh, st) {
-  const rowOf = function (slot) { return BB_ROW0 + slot * BB_ROWSTEP; };
-  // 各位置の「現在の代表行」。勝ち上がると2つの中点へ移る
-  let pos = [];
-  for (let i = 0; i < st.size; i++) pos.push({ row: rowOf(i), alive: !st.slots[i].bye, col: BB_COL_NO });
-
-  st.rounds.forEach(function (games, ri) {
-    const col = BB_COL0 + ri;
-    games.forEach(function (g) {
-      const a = pos[g.lo], b = pos[g.hi];
-      if (g.played) {
-        // 2人とも居る = 実際の試合。両方の線を col まで伸ばし、縦線でつなぐ
-        bbHLine(sh, a.row, a.col, col);
-        bbHLine(sh, b.row, b.col, col);
-        bbVLine(sh, a.row, b.row, col);
-        const mid = Math.round((a.row + b.row) / 2);
-        pos[g.lo / 2] = { row: mid, alive: true, col: col };
-        if (g.label) {
-          sh.getRange(mid, col + 1).setValue(g.label)
-            .setFontSize(9).setFontColor("#777777").setHorizontalAlignment("left");
-        }
-      } else {
-        // 不戦勝(または両方不在)。線だけを次の回戦へまっすぐ伸ばす
-        const live = a.alive ? a : (b.alive ? b : null);
-        if (live) {
-          bbHLine(sh, live.row, live.col, col);
-          pos[g.lo / 2] = { row: live.row, alive: true, col: col };
-        } else {
-          pos[g.lo / 2] = { row: a.row, alive: false, col: col };
-        }
-      }
-    });
-    pos.length = games.length;
-  });
-
-  // 優勝者の線を1マス伸ばす
-  const champ = pos[0];
-  if (champ && champ.alive) bbHLine(sh, champ.row, champ.col, champ.col + 1);
+// ── 配置の計算 ──────────────────────────────────────────────
+// 対面(両山): 左端に番号 → 右へ勝ち上がる / 右端に番号 → 左へ勝ち上がる / 中央が決勝。
+// 行は左右で共通なので、片山の半分の高さに収まる(紙に載るのが両山の利点)。
+function bbLayoutFacing(st) {
+  const h = bbSplitHalves(st);
+  const half = st.size / 2;
+  const leftNo = 2, leftR0 = 3;
+  const centerCol = leftR0 + h.perHalf;             // 決勝
+  const rightNo = centerCol + h.perHalf + 1;
+  return {
+    facing: true, halves: h, perHalf: h.perHalf,
+    leftNoCol: leftNo, rightNoCol: rightNo, centerCol: centerCol,
+    leftCol: function (ri) { return leftR0 + ri; },
+    rightCol: function (ri) { return centerCol + (h.perHalf - ri); },
+    rowOf: function (i) { return BB_ROW0 + i * BB_ROWSTEP; },   // 山の中での位置(0..half-1)
+    half: half,
+    numCols: [leftNo, rightNo],
+    lastRow: BB_ROW0 + (half - 1) * BB_ROWSTEP,
+    lastCol: rightNo,
+  };
 }
 
-// 横線: (row, fromCol) から (row, toCol) まで。セルの下罫線で引く
-function bbHLine(sh, row, fromCol, toCol) {
-  if (toCol <= fromCol) return;
-  sh.getRange(row, fromCol + 1, 1, toCol - fromCol)
+// 片山(7名まで): すべて左端に並べ、右へ勝ち上がる。
+function bbLayoutSingle(st) {
+  const noCol = 2, r0 = 3;
+  return {
+    facing: false, perHalf: st.rounds.length,
+    leftNoCol: noCol, centerCol: r0 + st.rounds.length - 1,
+    leftCol: function (ri) { return r0 + ri; },
+    rowOf: function (i) { return BB_ROW0 + i * BB_ROWSTEP; },
+    numCols: [noCol],
+    lastRow: BB_ROW0 + (st.size - 1) * BB_ROWSTEP,
+    lastCol: r0 + st.rounds.length,
+  };
+}
+
+// ── 描画 ────────────────────────────────────────────────────
+function bbRender(sh, st, geo) {
+  if (!geo.facing) { bbRenderHalf(sh, st, geo, 0, st.size, geo.leftNoCol, geo.leftCol, 1, st.rounds); return; }
+  const h = geo.halves;
+  // 左山: 枠0..half-1 / 右山: 枠half..size-1(行は山の中での位置で共通)
+  const L = bbRenderHalf(sh, st, geo, 0, geo.half, geo.leftNoCol, geo.leftCol, 1, h.left);
+  const R = bbRenderHalf(sh, st, geo, geo.half, geo.half, geo.rightNoCol, geo.rightCol, -1, h.right);
+  // 決勝: 両山の勝者を中央でつなぐ
+  if (L && R) {
+    bbHLine(sh, L.row, L.col, geo.centerCol, 1);
+    bbHLine(sh, R.row, R.col, geo.centerCol, -1);
+    bbVLine(sh, L.row, R.row, geo.centerCol);
+    const mid = Math.round((L.row + R.row) / 2);
+    if (h.fin && h.fin.label) {
+      sh.getRange(mid, geo.centerCol).setValue(h.fin.label)
+        .setFontSize(9).setFontColor("#777777").setHorizontalAlignment("center");
+    }
+  }
+}
+
+// 片方の山を描く。dir=1 なら右へ、-1 なら左へ勝ち上がる。
+// 返り値はその山の勝者の位置(決勝でつなぐため)。
+function bbRenderHalf(sh, st, geo, slotFrom, slotCount, noCol, colOf, dir, roundGames) {
+  // 番号を置く
+  for (let i = 0; i < slotCount; i++) {
+    const s = st.slots[slotFrom + i];
+    const r = geo.rowOf(i);
+    if (!s.bye) sh.getRange(r, noCol).setValue(s.no);
+  }
+  sh.getRange(BB_ROW0, noCol, slotCount * BB_ROWSTEP, 1)
+    .setHorizontalAlignment(dir > 0 ? "right" : "left")
+    .setFontSize(10).setFontColor("#555555");
+
+  // 勝ち上がりの線
+  let pos = [];
+  for (let i = 0; i < slotCount; i++) {
+    pos.push({ row: geo.rowOf(i), alive: !st.slots[slotFrom + i].bye, col: noCol });
+  }
+  for (let ri = 0; ri < roundGames.length; ri++) {
+    const col = colOf(ri), games = roundGames[ri], next = [];
+    for (let gi = 0; gi < games.length; gi++) {
+      const g = games[gi], a = pos[gi * 2], b = pos[gi * 2 + 1];
+      if (g.played) {
+        bbHLine(sh, a.row, a.col, col, dir);
+        bbHLine(sh, b.row, b.col, col, dir);
+        bbVLine(sh, a.row, b.row, col);
+        const mid = Math.round((a.row + b.row) / 2);
+        next.push({ row: mid, alive: true, col: col });
+        if (g.label) {
+          sh.getRange(mid, col + (dir > 0 ? 1 : -1)).setValue(g.label)
+            .setFontSize(9).setFontColor("#777777")
+            .setHorizontalAlignment(dir > 0 ? "left" : "right");
+        }
+      } else {
+        // 不戦勝。線だけを次の回戦へまっすぐ伸ばす(試合はしないので縦線を引かない)
+        const live = a.alive ? a : (b.alive ? b : null);
+        if (live) {
+          bbHLine(sh, live.row, live.col, col, dir);
+          next.push({ row: live.row, alive: true, col: col });
+        } else {
+          next.push({ row: a.row, alive: false, col: col });
+        }
+      }
+    }
+    pos = next;
+  }
+  return pos[0] && pos[0].alive ? pos[0] : null;
+}
+
+// 横線。dir=1 は fromCol→toCol(右向き)、dir=-1 は fromCol→toCol(左向き)。
+// セルの下罫線で引く(図形を使わないので印刷・再計算で崩れない)。
+function bbHLine(sh, row, fromCol, toCol, dir) {
+  const a = Math.min(fromCol, toCol), b = Math.max(fromCol, toCol);
+  if (b <= a) return;
+  const start = (dir > 0) ? a + 1 : a;
+  const width = (dir > 0) ? (b - a) : (b - a);
+  sh.getRange(row, start, 1, width)
     .setBorder(null, null, true, null, null, null, "#333333", SpreadsheetApp.BorderStyle.SOLID);
 }
 
-// 縦線: 列 col の rowA〜rowB。セルの右罫線で引く
+// 縦線: 列 col の rowA〜rowB。セルの右罫線で引く。
 function bbVLine(sh, rowA, rowB, col) {
   const top = Math.min(rowA, rowB), bottom = Math.max(rowA, rowB);
   sh.getRange(top, col, bottom - top + 1, 1)

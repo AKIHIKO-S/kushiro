@@ -17,8 +17,10 @@ const vm = require("node:vm");
 const SRC = fs.readFileSync(path.join(__dirname, "..", "gas", "bracket_builder.gs"), "utf8");
 const sandbox = { console, JSON, String, Number, Array, Object, Math, Date, Error };
 vm.createContext(sandbox);
-vm.runInContext(SRC + "\n;globalThis.__api = { bbSeedOrder, bbBuildStructure, bbAssignNumbers };", sandbox);
+vm.runInContext(SRC + "\n;globalThis.__api = { bbSeedOrder, bbBuildStructure, bbAssignNumbers,"
+  + " bbIsFacing, bbSplitHalves };", sandbox);
 const G = sandbox.__api;
+const G2 = sandbox.__api;   // 対面(両山)まわり
 
 const build = (n, style) => G.bbAssignNumbers(G.bbBuildStructure(n), style || "1-1形式");
 // vm 内で作られた配列は host の Array と別realmで deepStrictEqual が通らない。
@@ -154,4 +156,58 @@ test("1回戦で不戦勝どうしが当たることはない(上位シードは
     const bothBye = arr(st.rounds[0]).filter(g => st.slots[g.lo].bye && st.slots[g.hi].bye);
     assert.strictEqual(bothBye.length, 0, n + "名: 不戦勝どうしの枠ができている");
   });
+});
+
+// ══ 対面(両山)形式 ═══════════════════════════════════════════
+// 元ソフトの既定は両山。ただし操作説明の制限どおり「4名以上7名までは片山のみ」。
+// 両山は左右の山を同じ行に並べるので、紙に載る高さ(片山の半分)になる。
+
+test("8名以上は対面(両山)、7名までは片山", () => {
+  [4, 5, 6, 7].forEach(n => assert.strictEqual(G2.bbIsFacing(n), false, n + "名は片山"));
+  [8, 9, 16, 78, 128].forEach(n => assert.strictEqual(G2.bbIsFacing(n), true, n + "名は両山"));
+});
+
+test("左右の山に同数ずつ分かれ、決勝が中央に1つ残る", () => {
+  const st = build(78);
+  const h = G2.bbSplitHalves(st);
+  assert.strictEqual(h.perHalf, 6, "128枠なら各山6回戦 + 決勝で7回戦");
+  assert.strictEqual(arr(h.left).length, 6);
+  assert.strictEqual(arr(h.right).length, 6);
+  arr(h.left).forEach((g, i) => {
+    assert.strictEqual(arr(g).length, arr(h.right[i]).length, (i + 1) + "回戦の試合数が左右で同じ");
+  });
+  assert.ok(h.fin, "決勝がある");
+});
+
+test("左右あわせた試合数は全体と一致する(取りこぼさない)", () => {
+  [8, 16, 33, 78, 128].forEach(n => {
+    const st = build(n);
+    const h = G2.bbSplitHalves(st);
+    const half = arr(h.left).concat(arr(h.right))
+      .reduce((s, g) => s + arr(g).filter(x => x.played).length, 0);
+    const total = half + (h.fin.played ? 1 : 0);
+    assert.strictEqual(total, n - 1, n + "名: 左右+決勝で 参加者数-1 試合");
+  });
+});
+
+test("1回戦の試合は左右に振り分けられる(片方に寄らない)", () => {
+  const st = build(78);
+  const h = G2.bbSplitHalves(st);
+  assert.strictEqual(arr(h.left[0]).length, 32, "128枠の1回戦は左右32ずつ");
+  assert.strictEqual(arr(h.right[0]).length, 32);
+});
+
+test("通し番号は左の山に1..k、右の山に続きが入る", () => {
+  const st = build(16);           // 16枠・不戦勝0 → 左1..8 / 右9..16
+  const half = st.size / 2;
+  const leftNos = arr(st.slots).slice(0, half).map(s => s.no);
+  const rightNos = arr(st.slots).slice(half).map(s => s.no);
+  assert.deepStrictEqual(leftNos, [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepStrictEqual(rightNos, [9, 10, 11, 12, 13, 14, 15, 16]);
+});
+
+test("不戦勝がある場合も、左の山から順に番号が続く", () => {
+  const st = build(12);           // 16枠・不戦勝4
+  const nos = arr(st.slots).filter(s => !s.bye).map(s => s.no);
+  assert.deepStrictEqual(nos, Array.from({ length: 12 }, (_, i) => i + 1), "上から通しで1..12");
 });
