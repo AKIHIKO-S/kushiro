@@ -18,7 +18,7 @@ const SRC = fs.readFileSync(path.join(__dirname, "..", "gas", "bracket_builder.g
 const sandbox = { console, JSON, String, Number, Array, Object, Math, Date, Error };
 vm.createContext(sandbox);
 vm.runInContext(SRC + "\n;globalThis.__api = { bbSeedOrder, bbBuildStructure, bbAssignNumbers,"
-  + " bbIsFacing, bbSplitHalves };", sandbox);
+  + " bbIsFacing, bbSplitHalves, bbLeafRows, bbCountFilled, bbLayoutFacing, BB_ROW0, BB_ROWSTEP };", sandbox);
 const G = sandbox.__api;
 const G2 = sandbox.__api;   // 対面(両山)まわり
 
@@ -236,4 +236,58 @@ test("不戦勝がある場合も、左の山から順に番号が続く", () =>
   const st = build(12);           // 16枠・不戦勝4
   const nos = arr(st.slots).filter(s => !s.bye).map(s => s.no);
   assert.deepStrictEqual(nos, Array.from({ length: 12 }, (_, i) => i + 1), "上から通しで1..12");
+});
+
+// ══ 行間は必ず一定 ═══════════════════════════════════════════
+// オーナー報告「シードだけ行が大きくなってしまっています」。
+// 原因は空き枠にも行を割り当てていたこと。空き枠の隣は不戦勝で上がるシードなので、
+// そのシードの行間だけが広く見えていた。
+// 紙の慣習どおり「人がいる枠にだけ行を割り当て、不戦勝は線をまっすぐ伸ばす」に変えた。
+
+const G3 = sandbox.__api;
+
+test("枠の行間はどこでも同じ(シードの前後だけ広くならない)", () => {
+  [8, 12, 16, 33, 78, 97, 100].forEach(n => {
+    const st = build(n);
+    const half = st.size / 2;
+    [[0, half], [half, half]].forEach(([from, len], side) => {
+      const rows = arr(G3.bbLeafRows(st, from, len)).filter(r => r !== null);
+      const gaps = [];
+      for (let i = 1; i < rows.length; i++) gaps.push(rows[i] - rows[i - 1]);
+      const uniq = [...new Set(gaps)];
+      assert.ok(uniq.length <= 1,
+        n + "名の" + (side ? "右" : "左") + "山: 行間がばらついている " + JSON.stringify(uniq));
+    });
+  });
+});
+
+test("空き枠には行を割り当てない", () => {
+  const st = build(97);
+  const rows = arr(G3.bbLeafRows(st, 0, st.size / 2));
+  arr(st.slots).slice(0, st.size / 2).forEach((s, i) => {
+    if (s.bye) assert.strictEqual(rows[i], null, "空き枠は行を持たない");
+    else assert.ok(typeof rows[i] === "number", "人がいる枠は行を持つ");
+  });
+});
+
+test("表の高さは実人数で決まる(枠数ではない)", () => {
+  const st = build(97);                       // 128枠だが97名
+  const left = G3.bbCountFilled(st, 0, st.size / 2);
+  const right = G3.bbCountFilled(st, st.size / 2, st.size / 2);
+  assert.strictEqual(left + right, 97, "左右あわせて実人数");
+  const geo = G3.bbLayoutFacing(st);
+  const expect = G3.BB_ROW0 + (Math.max(left, right) - 1) * G3.BB_ROWSTEP;
+  assert.strictEqual(geo.lastRow, expect);
+  assert.ok(geo.lastRow < G3.BB_ROW0 + (st.size / 2 - 1) * G3.BB_ROWSTEP,
+    "空き枠に行を取っていた頃より短くなる");
+});
+
+test("左右の人数はほぼ半々になる(片側に寄らない)", () => {
+  [12, 33, 78, 97, 100].forEach(n => {
+    const st = build(n);
+    const half = st.size / 2;
+    const l = G3.bbCountFilled(st, 0, half), r = G3.bbCountFilled(st, half, half);
+    assert.strictEqual(l + r, n, n + "名: 合計が合わない");
+    assert.ok(Math.abs(l - r) <= 1, n + "名: 左右の差が大きい(" + l + " / " + r + ")");
+  });
 });

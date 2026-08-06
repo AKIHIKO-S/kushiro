@@ -267,12 +267,32 @@ function bbLayoutFacing(st) {
     leftNoCol: leftNo, rightNoCol: rightNo, centerCol: centerCol,
     leftCol: function (ri) { return leftR0 + ri; },
     rightCol: function (ri) { return centerCol + (h.perHalf - ri); },
-    rowOf: function (i) { return BB_ROW0 + i * BB_ROWSTEP; },   // 山の中での位置(0..half-1)
     half: half,
     numCols: [leftNo, rightNo],
-    lastRow: BB_ROW0 + (half - 1) * BB_ROWSTEP,
+    // 空き枠に行を割り当てない(下の bbLeafRows 参照)ので、高さは実人数で決まる。
+    lastRow: BB_ROW0 + (Math.max(bbCountFilled(st, 0, half), bbCountFilled(st, half, half)) - 1) * BB_ROWSTEP,
     lastCol: rightNo,
   };
+}
+
+// 山の中の「実際に人がいる枠」の数
+function bbCountFilled(st, from, len) {
+  let n = 0;
+  for (let i = 0; i < len; i++) if (!st.slots[from + i].bye) n++;
+  return n;
+}
+
+// 枠ごとの行を決める。**人がいる枠にだけ**上から等間隔で行を割り当てる。
+// 空き枠に行を与えると、その隣(不戦勝で上がるシード)の行間だけが広く見える
+// ——「シードだけ行が大きい」という見え方の正体はこれ。
+// 不戦勝の線は行を余分に使わず、まっすぐ右(左)へ伸ばして登場回戦につなぐ。
+function bbLeafRows(st, from, len) {
+  const rows = [];
+  let k = 0;
+  for (let i = 0; i < len; i++) {
+    rows.push(st.slots[from + i].bye ? null : (BB_ROW0 + (k++) * BB_ROWSTEP));
+  }
+  return rows;
 }
 
 // 片山(7名まで): すべて左端に並べ、右へ勝ち上がる。
@@ -282,9 +302,8 @@ function bbLayoutSingle(st) {
     facing: false, perHalf: st.rounds.length,
     leftNoCol: noCol, centerCol: r0 + st.rounds.length - 1,
     leftCol: function (ri) { return r0 + ri; },
-    rowOf: function (i) { return BB_ROW0 + i * BB_ROWSTEP; },
     numCols: [noCol],
-    lastRow: BB_ROW0 + (st.size - 1) * BB_ROWSTEP,
+    lastRow: BB_ROW0 + (bbCountFilled(st, 0, st.size) - 1) * BB_ROWSTEP,
     lastCol: r0 + st.rounds.length,
   };
 }
@@ -314,20 +333,26 @@ function bbRender(sh, st, geo) {
 // 片方の山を描く。dir=1 なら右へ、-1 なら左へ勝ち上がる。
 // 返り値はその山の勝者の位置(決勝でつなぐため)。
 function bbRenderHalf(sh, st, geo, slotFrom, slotCount, noCol, colOf, dir, roundGames) {
-  // 番号を置く
+  // 人がいる枠にだけ行を割り当てる(空き枠は行を取らない=行間が一定になる)
+  const leafRows = bbLeafRows(st, slotFrom, slotCount);
+  let filled = 0;
   for (let i = 0; i < slotCount; i++) {
     const s = st.slots[slotFrom + i];
-    const r = geo.rowOf(i);
-    if (!s.bye) sh.getRange(r, noCol).setValue(s.no);
+    if (s.bye) continue;
+    sh.getRange(leafRows[i], noCol).setValue(s.no);
+    filled++;
   }
-  sh.getRange(BB_ROW0, noCol, slotCount * BB_ROWSTEP, 1)
-    .setHorizontalAlignment(dir > 0 ? "right" : "left")
-    .setFontSize(10).setFontColor("#555555");
+  if (filled) {
+    sh.getRange(BB_ROW0, noCol, filled * BB_ROWSTEP, 1)
+      .setHorizontalAlignment(dir > 0 ? "right" : "left")
+      .setFontSize(10).setFontColor("#555555");
+  }
 
   // 勝ち上がりの線
   let pos = [];
   for (let i = 0; i < slotCount; i++) {
-    pos.push({ row: geo.rowOf(i), alive: !st.slots[slotFrom + i].bye, col: noCol });
+    const s = st.slots[slotFrom + i];
+    pos.push({ row: leafRows[i], alive: !s.bye, col: noCol });
   }
   for (let ri = 0; ri < roundGames.length; ri++) {
     const col = colOf(ri), games = roundGames[ri], next = [];
@@ -351,7 +376,8 @@ function bbRenderHalf(sh, st, geo, slotFrom, slotCount, noCol, colOf, dir, round
           bbHLine(sh, live.row, live.col, col, dir);
           next.push({ row: live.row, alive: true, col: col });
         } else {
-          next.push({ row: a.row, alive: false, col: col });
+          // どちらにも人がいない枠。行は持たない(この先も線を引かない)
+          next.push({ row: null, alive: false, col: col });
         }
       }
     }
