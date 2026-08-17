@@ -644,3 +644,93 @@ test("まりもオープン様式のシートが既にあれば従来どおり�
   assert.strictEqual(res.ok, true, res.error || "");
   assert.ok(env.sheets["集計用"], "既存運用は壊さない(集計用も作られる)");
 });
+
+// ── entry_categories(ビギナー/サーティ/フォーティ等の年代区分)がシートに反映される ──
+// 事故の実態: シートの「区分」列は種目名から男子/女子だけを拾う deriveDivision 固定で、
+// entry_categories で選んだ年代区分(division_label)は一切書かれていなかった。
+test("entry_categories の区分ラベルがシングルスシートの「区分」列に反映される", () => {
+  const t = db.createTournament({
+    name: "区分反映大会", date: "2027-06-01", venue: "会場", entries_open: 1,
+    event_config: [{
+      name: "個人戦 シングルス", type: "singles", fee: 2000, category: "general",
+      entry_categories: [
+        { value: "beginner", label: "ビギナーの部", short: "ビギナー" },
+        { value: "under30", label: "サーティ以下", short: "サーティ以下" },
+        { value: "forty", label: "フォーティ", short: "フォーティ" },
+      ],
+    }],
+  });
+  const opId = "op-cat-" + Math.random().toString(36).slice(2);
+  const form = {
+    tournament_id: t.id, tournament_name: t.name,
+    team_name: "釧路卓球クラブ", contact_name: "担当 太郎", contact_tel: "0154-00-0000", contact_email: "a@b.jp",
+    entries: [
+      { event: "個人戦 シングルス", type: "singles", name: "甲野 一郎", team: "釧路卓球クラブ",
+        division: "under30", division_label: "サーティ以下" },
+      { event: "個人戦 シングルス", type: "singles", name: "乙川 二郎", team: "釧路卓球クラブ",
+        division: "forty", division_label: "フォーティ" },
+    ],
+  };
+  const r = db.createTeamEntry(t.id, form, opId);
+  assert.ok(!r.error, r.error);
+  const payload = { ...form, form_schema: db.buildFormSchema(db.getTournament(t.id)), op_id: opId,
+    total_amount: r.total_amount, option_items: r.options || [] };
+
+  const env = makeEnv({});
+  const res = env.post(payload);
+  assert.strictEqual(res.ok, true, res.error || "");
+
+  const sg = env.sheets["シングルス"];
+  const head = sg._grid[0].map(String);
+  const divCol = head.indexOf("区分");
+  assert.ok(divCol >= 0, "区分列がある");
+  const rows = sg._grid.slice(1).map(row => row[divCol]);
+  assert.ok(rows.includes("サーティ以下"), "選んだ区分がそのままシートに載る: " + JSON.stringify(rows));
+  assert.ok(rows.includes("フォーティ"), "選んだ区分がそのままシートに載る: " + JSON.stringify(rows));
+  assert.ok(!rows.includes("一般"), "従来の「一般」固定に戻っていない: " + JSON.stringify(rows));
+});
+
+test("entry_categories が無い種目は従来通り種目名から性別区分を維持する(後方互換)", () => {
+  const { payload } = makeSubmission();   // "男子シングルス"/"男子ダブルス"(entry_categories無し)
+  const env = makeEnv({});
+  env.post(payload);
+  const sg = env.sheets["シングルス"];
+  const head = sg._grid[0].map(String);
+  const divCol = head.indexOf("区分");
+  assert.strictEqual(String(sg._grid[1][divCol]), "一般男子",
+    "entry_categories 未使用の大会は従来どおり種目名由来の区分のまま");
+});
+
+test("entry_categories と性別つき種目名を両方持つ場合は併記し、集計の男女判定を壊さない", () => {
+  const t = db.createTournament({
+    name: "併記大会", date: "2027-06-02", venue: "会場", entries_open: 1,
+    event_config: [{
+      name: "一般男子 団体戦", type: "team", fee: 3000,
+      entry_categories: [{ value: "a", label: "Aブロック", short: "Aブロック" }],
+    }],
+  });
+  const opId = "op-mix-" + Math.random().toString(36).slice(2);
+  const form = {
+    tournament_id: t.id, tournament_name: t.name,
+    team_name: "釧路卓球クラブ", contact_name: "担当 太郎", contact_tel: "0154-00-0000", contact_email: "a@b.jp",
+    entries: [{
+      event: "一般男子 団体戦", type: "team", team_name: "釧路卓球クラブ",
+      division: "a", division_label: "Aブロック",
+      members: ["甲野 一郎", "乙川 二郎"],
+      members_detail: [{ name: "甲野 一郎", age: 20 }, { name: "乙川 二郎", age: 21 }],
+    }],
+  };
+  const r = db.createTeamEntry(t.id, form, opId);
+  assert.ok(!r.error, r.error);
+  const payload = { ...form, form_schema: db.buildFormSchema(db.getTournament(t.id)), op_id: opId,
+    total_amount: r.total_amount, option_items: r.options || [] };
+  const env = makeEnv({});
+  const res = env.post(payload);
+  assert.strictEqual(res.ok, true, res.error || "");
+  const teamSh = env.sheets["団体"];
+  const head = teamSh._grid[0].map(String);
+  const divCol = head.indexOf("区分");
+  const divVal = String(teamSh._grid[1][divCol]);
+  assert.strictEqual(divVal, "Aブロック（一般男子）", "区分ラベルに性別を併記する: " + divVal);
+  assert.match(divVal, /男/, "集計用シートの男女カウント(/男/.test)が引き続き拾える文字列である");
+});

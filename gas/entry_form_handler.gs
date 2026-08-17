@@ -125,6 +125,21 @@ function divGender(division) {
   return "";
 }
 
+// シートの「区分」列に書く表示値を決める。
+// 大会が entry_categories (ビギナー/サーティ/フォーティ等の年代・レベル区分) を定義していれば
+// 申込フォームがその表示ラベルを en.division_label として送ってくる。これが有れば最優先で使う
+// (旧来の deriveDivision は種目名の "男子/女子" しか拾えず、entry_categories の区分が
+//  一切シートに反映されていなかった=このバグの本体)。
+// イベント名に男子/女子が明示されている種目では、その情報も括弧書きで残す
+// (rebuildAggregate の男女カウントは区分文字列に「男」「女」が含まれるかで判定しているため、
+//  ここで捨てると集計が壊れる)。
+function resolveDivision(en) {
+  const g = deriveDivision(en.event);
+  const catLabel = String(en.division_label || "").trim();
+  if (!catLabel) return g;
+  return /男子|女子/.test(g) ? (catLabel + "（" + g + "）") : catLabel;
+}
+
 // イベント名+typeから種目タイプを判定 (team/doubles/mixed/singles/bento/party/partner)
 function classifyEntry(entry) {
   const ev = entry.event || "";
@@ -705,7 +720,7 @@ function distributeEntries(ss, data) {
 
   data.entries.forEach(en => {
     const kind = classifyEntry(en);
-    const division = deriveDivision(en.event);
+    const division = resolveDivision(en);
     const teamName = data.team_name || "";
 
     if (kind === "team") {
@@ -1098,7 +1113,7 @@ function appendToRoster(ss, data) {
 
   data.entries.forEach(en => {
     const kind = classifyEntry(en);
-    const division = deriveDivision(en.event);
+    const division = resolveDivision(en);
     const tn = data.team_name || "";
     if (kind === "team") {
       const list = en.members_detail || (en.members || []).map(name => ({ name }));
