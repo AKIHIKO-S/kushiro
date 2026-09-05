@@ -46,3 +46,9 @@ venv/
 
 # 作業用の一時ファイル(モック・実験スクリプト・検証用スクショ)
 scratchpad/
+
+# Claude Code / Codex の共有作業ログ（案件の詳細が入るためリポジトリには含めない）
+.worklog.md
+
+# 旧AGENTS.mdの退避（ローカルのみ）
+AGENTS.md.bak-*

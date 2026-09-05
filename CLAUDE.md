@@ -87,3 +87,53 @@ standalone/  オフライン単機運用ラッパ (start.command/.bat)
 - 料金は `tournament.event_config[].fee`(種目別)が正。集計/領収書(reports `feesFromEventConfig`)・確認メール(mailer `authoritativeFees`)はこれを使い、クライアント供給の fee/total は信用しない。
 - 未認証レスポンスは `sanitizeTournamentPublic` で referee_token/passcode/entry_gas_url を除去。クライアントIPは `clientIp(req)`(trust proxy準拠)に集約。
 - **xlsx は2系統**: 読み込み(.xls/.xlsx パーサ)と大半の帳票は `xlsx`(SheetJS CE 0.20.3)。ただし CE は**セル罫線(スタイル)を書き出せない**(有料機能)。罫線が要る**両山トーナメント表だけ** `reports.buildBracketXlsx` 内で `require("xlsx-js-style")`(罫線対応 drop-in fork)を使う。新たに罫線付き xlsx を書くときは同 fork を使うこと(`cell.s.border` + `cellStyles:true`)。
+---
+
+## Claude Code と Codex の分担
+
+同じフォルダを両方から触る。**実体は1つしかない**ので、コピーを作らず、次の型で共有する。
+
+### 作業前に必ずやること
+
+このディレクトリの `.worklog.md` の先頭を読む。**相手が作業中と書いてあれば、そのファイル群には触らない**。
+自分が始めるときは先頭に1行足す。
+
+```
+- 2026-09-05 14:30 [Codex] 開始: テーマのCSS実装（wp-content/themes/dhl-theme/assets/）
+```
+
+終わったら同じ行の下にインデントして結果を書く。
+
+```
+  → 完了: ver16.3 で本番zip作成まで / 未了: オーナーのアップロード待ち
+```
+
+これが引き継ぎと排他を兼ねる。ロックファイルは使わない（置き忘れると相手が永久に入れないため）。
+
+### どちらが向くか
+
+判断の軸は「**その作業に MCP 接続が要るか**」と「**答えが一意に決まるか**」の2つ。
+
+| 作業 | 担当 | 理由 |
+|------|------|------|
+| 設計判断・原因調査・比較検討・方針決め | Claude Code | `fable-thinking` の敵対検査を別コンテキストのサブエージェントで回せる |
+| デザインの見本制作・承認取り・敵対的レビュー | Claude Code | `production-team` の破壊者を独立モデルに分離できる。Codex は同一セッションで演じるため独立性が落ちる |
+| 画像生成・Figma・Adobe・Gmail・カレンダー | Claude Code | MCP 接続が Claude Code 側にしかない |
+| 実装・リファクタ・テスト・ビルド | Codex | 答えが一意に決まる作業。Codex の方が速く、思考の分離が要らない |
+| 網羅的な機械作業（全ファイル監査・一括置換） | Codex | 同上 |
+| 文章の本文（コピー・レポート） | Claude Code | 文章のAI感はデザインのAI感と同罪（`~/.claude/CLAUDE.md` §7） |
+
+**迷ったら Codex に実装させ、Claude Code にレビューさせる。** 逆（Claude が書いて Codex がレビュー）は、
+Codex 側に独立した破壊者を立てられないぶん検査が甘くなる。
+
+### このプロジェクト固有の取り決め
+
+- **Codex が主体**でよい。Node.js + テストで完結し、答えが一意に決まる作業が大半のため
+- Claude Code が受け持つのは、viewer のデザイン（`ktta-design-system` の白磁トンマナ）、
+  組み合わせ・シード配置の設計判断、本番反映前の敵対的レビュー
+- **git があるので同時作業ができる**。並行するときは Codex が作業ブランチ、
+  Claude Code が main 側に立つ。マージ前に `.worklog.md` で相手の状況を確認する
+- 公開リポジトリ（AKIHIKO-S/kushiro）なので PII 厳禁。実名簿はローカルのみ
+- GAS の自動デプロイはできない。Codex も Claude Code も同じくできないので、
+  「GAS 再デプロイが必要」と明記してオーナーに渡す
+
