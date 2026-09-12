@@ -17,7 +17,6 @@ let srv;
 const jhead = { "Content-Type": "application/json" };
 const akhead = { ...jhead, "X-Admin-Key": KEY };
 const adminPost = (p, b) => fetch(BASE + p, { method: "POST", headers: akhead, body: JSON.stringify(b) }).then(r => r.json());
-const pubGet = (p) => fetch(BASE + p).then(r => r.json());
 
 const EV = "男子シングルス";
 let playerA, playerB, tour;
@@ -55,46 +54,24 @@ after(() => {
   for (const ext of ["", "-wal", "-shm"]) try { fs.rmSync(DB + ext, { force: true }); } catch (e) {}
 });
 
-const NG_PLAYER_KEYS = ["note", "rating", "merged_into", "created_at", "updated_at"];
-
-test("公開選手一覧: 内部列が全行から消えている(表示用の集計列は残る)", async () => {
-  const rows = await pubGet("/api/public/players");
-  assert.ok(Array.isArray(rows) && rows.length >= 2, "一覧が返る");
-  for (const r of rows) NG_PLAYER_KEYS.forEach(k => assert.ok(!(k in r), `一覧に ${k} が無い`));
-  const a = rows.find(r => r.id === playerA.id);
-  assert.ok(a && a.name === playerA.name && "match_wins" in a, "name/集計列は残る");
-  assert.ok(!JSON.stringify(rows).includes("MEMO-KANMOKU"), "内部メモの値が一覧のどこにも出ない");
+test("公開選手一覧: 非認証の全選手名簿は返さない", async () => {
+  const r = await fetch(BASE + "/api/public/players");
+  assert.strictEqual(r.status, 404, "公開の全選手名簿は廃止済み");
 });
 
-test("公開選手詳細: 内部列が消え、戦績(matches)からも内部列が消える。tournament_id と sets は残る", async () => {
-  const p = await pubGet("/api/public/players/" + playerA.id);
-  NG_PLAYER_KEYS.forEach(k => assert.ok(!(k in p), `詳細に ${k} が無い`));
-  assert.ok(Array.isArray(p.achievements) && Array.isArray(p.affiliations) && p.level_stats, "公開機能の列は残る");
-  assert.ok(Array.isArray(p.matches) && p.matches.length >= 1, "戦績が載る");
-  for (const m of p.matches) {
-    ["referee_id", "pending_result", "winner_rating_delta", "loser_rating_delta",
-     "sets_json", "live_sets_json", "live_score_rev", "call_count", "called_at"].forEach(k =>
-      assert.ok(!(k in m), `戦績行に ${k} が無い`));
-    assert.ok("tournament_id" in m, "出場大会数の集計に使う tournament_id は残る");
-    assert.ok(Array.isArray(m.sets), "パース済み sets は残る");
-  }
-  assert.ok(!JSON.stringify(p).includes("MEMO-KANMOKU"), "内部メモの値が詳細のどこにも出ない");
+test("公開選手詳細: 他人の選手IDをURLへ指定しても返さない", async () => {
+  const r = await fetch(BASE + "/api/public/players/" + playerA.id);
+  assert.strictEqual(r.status, 404, "選手IDだけでは詳細を取得できない");
 });
 
-test("公開グローバル検索(/api/public/search): サニタイズされる", async () => {
-  const rows = await pubGet("/api/public/search?q=" + encodeURIComponent("機密"));
-  assert.ok(Array.isArray(rows) && rows.length >= 2, "検索が返る");
-  for (const r of rows) NG_PLAYER_KEYS.forEach(k => assert.ok(!(k in r), `検索結果に ${k} が無い`));
+test("公開グローバル検索: 氏名による全選手探索は返さない", async () => {
+  const r = await fetch(BASE + "/api/public/search?q=" + encodeURIComponent("機密"));
+  assert.strictEqual(r.status, 404, "公開の氏名検索は廃止済み");
 });
 
-test("公開試合検索(/api/public/matches): 内部列が消え sets/tournament_id は残る", async () => {
-  const d = await pubGet("/api/public/matches?player_name=" + encodeURIComponent("佐藤機密"));
-  assert.ok(d && Array.isArray(d.matches) && d.matches.length >= 1, "検索結果が返る");
-  for (const m of d.matches) {
-    ["referee_id", "pending_result", "winner_rating_delta", "loser_rating_delta", "sets_json"].forEach(k =>
-      assert.ok(!(k in m), `検索行に ${k} が無い`));
-    assert.ok("tournament_id" in m && Array.isArray(m.sets), "tournament_id/sets は残る");
-  }
+test("公開試合検索: 氏名から横断的な試合履歴を返さない", async () => {
+  const r = await fetch(BASE + "/api/public/matches?player_name=" + encodeURIComponent("佐藤機密"));
+  assert.strictEqual(r.status, 404, "公開の横断試合検索は廃止済み");
 });
 
 test("管理GET(/api/players, /api/players/:id)は認可必須になり、鍵ありでは生データ(note)が読める", async () => {

@@ -271,6 +271,9 @@ async function pushTournamentToCloud(tid) {
   }
 }
 const IS_PROD = process.env.NODE_ENV === "production";
+// ブラウザはCookieセッションのみ使う。旧X-Admin-Key等は開発・自動テストの互換経路としてだけ残し、
+// 本番では明示的にALLOW_LEGACY_KEY_HEADERS=1を設定しない限り受け付けない。
+const ALLOW_LEGACY_KEY_HEADERS = !IS_PROD || process.env.ALLOW_LEGACY_KEY_HEADERS === "1";
 
 // HTML エラー応答 (本番では内部詳細を隠す — Y3 対策)
 function errHtml(title, e) {
@@ -381,12 +384,21 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS（大会運営アプリや別ドメインのViewerから叩けるように）
+// CORS: 認証Cookieを使うAPIを任意オリジンへ開放しない。外部埋込は画面だけを使い、
+// データ要求は同一オリジンのサーバー経由に限定する。
+const CORS_ALLOW_ORIGINS = new Set(
+  (process.env.CORS_ALLOW_ORIGINS || "").split(",").map(s => s.trim()).filter(Boolean)
+);
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Admin-Key, X-Op-Id");
-  if (req.method === "OPTIONS") return res.sendStatus(200);
+  const origin = req.get("Origin") || "";
+  if (origin && CORS_ALLOW_ORIGINS.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Op-Id");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+  if (req.method === "OPTIONS") return origin && CORS_ALLOW_ORIGINS.has(origin) ? res.sendStatus(204) : res.sendStatus(403);
   next();
 });
 
@@ -442,19 +454,31 @@ const DIAG = {
   totalRequests: 0,
   errorCount: 0,
 };
+function auditResource(req) {
+  const p = String(req.path || "");
+  const m = p.match(/^\/api\/(?:public\/)?(tournaments|players|matches|entrants|applicant|coach)(?:\/([^/]+))?/);
+  return m ? { type: m[1], id: String(m[2] || "").slice(0, 128) } : { type: "api", id: "" };
+}
+function auditRoute(req) {
+  const route = req.route && req.route.path;
+  return String(route || req.path || "").replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{20,}|\d{4,}|[A-Za-z0-9_-]{16,})(?=\/|$)/gi, "/:id").slice(0, 200);
+}
 function recordError(err, req, res, statusCode) {
+  // 例外文やスタックには入力値・外部応答が含まれ得るため保存しない。診断には経路、
+  // HTTP状態、例外種別だけで十分であり、個人情報を運用ログへ二次保存しない。
+  const errorType = String((err && (err.code || err.name)) || "Error")
+    .replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 80) || "Error";
   const entry = {
     time: new Date().toISOString(),
     method: (req && req.method) || "",
-    url: (req && (req.originalUrl || req.url)) || "",
+    url: (req && req.path) || "",
     status: statusCode || 500,
-    message: String(err && err.message || err).slice(0, 500),
-    stack: String(err && err.stack || "").slice(0, 2000),
+    error_type: errorType,
   };
   DIAG.errors.unshift(entry);
   if (DIAG.errors.length > DIAG.maxErrors) DIAG.errors.length = DIAG.maxErrors;
   DIAG.errorCount++;
-  console.error("[ERR]", entry.method, entry.url, "-", entry.message);
+  console.error("[ERR]", entry.method, entry.url, entry.status, entry.error_type);
 }
 
 // リクエスト統計ミドルウェア
@@ -468,7 +492,7 @@ app.use((req, res, next) => {
     DIAG.recentRequests.unshift({
       time: new Date().toISOString(),
       method: req.method,
-      url: (req.originalUrl || req.url).slice(0, 200),
+      url: (req.path || "").slice(0, 200),
       status: res.statusCode,
       ms,
     });
@@ -478,6 +502,21 @@ app.use((req, res, next) => {
     // 5xx は errors にも記録
     if (res.statusCode >= 500) {
       recordError(new Error("HTTP " + res.statusCode), req, res, res.statusCode);
+    }
+    // 監査は正規化済みpathとIDだけを記録する。クエリ・本文・Cookie・認証情報は絶対に残さない。
+    if ((req.path || "").startsWith("/api/") && !["/api/health", "/api/diagnostics"].includes(req.path || "")) {
+      const actor = req.auth || { principal_type: "anonymous", principal_id: "" };
+      const resource = auditResource(req);
+      db.logAccessAudit({
+        principal_type: actor.principal_type,
+        principal_id: actor.principal_id,
+        action: ["GET", "HEAD"].includes(req.method) ? "read" : "write",
+        resource_type: resource.type,
+        resource_id: resource.id,
+        method: req.method,
+        route: auditRoute(req),
+        status: res.statusCode,
+      });
     }
   });
   next();
@@ -490,10 +529,65 @@ function safeEqualStr(a, b) {
   if (ba.length !== bb.length) return false;
   try { return crypto.timingSafeEqual(ba, bb); } catch (e) { return false; }
 }
-// ADMIN_KEY 設定時のみ管理APIを保護。
-// 認証は X-Admin-Key ヘッダのみ受け付ける (URLに ?key= を載せない=
-// アクセスログ/ブラウザ履歴/Referer への管理キー漏えいを防止)。
+
+// ── サーバー側セッション ───────────────────────────────────────────
+// ブラウザへは HttpOnly / Secure / SameSite Cookie だけを渡す。管理鍵・監督コード・
+// 申込番号・本人確認コードそのものを localStorage / sessionStorage / URL に残さない。
+const SESSION_COOKIE = "ktta_session";
+function cookieValue(req, key) {
+  const raw = String(req.get("cookie") || "");
+  for (const item of raw.split(";")) {
+    const i = item.indexOf("=");
+    if (i < 0) continue;
+    if (item.slice(0, i).trim() === key) {
+      try { return decodeURIComponent(item.slice(i + 1).trim()); } catch (_) { return ""; }
+    }
+  }
+  return "";
+}
+function sessionOf(req) {
+  if (req.kttaSession !== undefined) return req.kttaSession;
+  req.kttaSession = db.getAuthSession(cookieValue(req, SESSION_COOKIE)) || null;
+  return req.kttaSession;
+}
+function setSessionCookie(res, token, expiresAt) {
+  res.cookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: IS_PROD,
+    sameSite: "strict",
+    path: "/",
+    expires: new Date(expiresAt),
+  });
+}
+function clearSessionCookie(res) {
+  res.clearCookie(SESSION_COOKIE, { httpOnly: true, secure: IS_PROD, sameSite: "strict", path: "/" });
+}
+function setPrincipal(req, type, id, scope) {
+  req.auth = { principal_type: type, principal_id: String(id || ""), scope: scope || {} };
+  return req.auth;
+}
+function sessionHas(req, ...types) {
+  const s = sessionOf(req);
+  if (!s || !types.includes(s.principal_type)) return false;
+  setPrincipal(req, s.principal_type, s.principal_id, s.scope);
+  return true;
+}
+function requireSameOrigin(req, res, next) {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+  const origin = req.get("Origin");
+  // 通常の同一オリジンfetchはOriginを送る。非ブラウザ内部連携はCookieを持たないためここを通らない。
+  if (!origin || origin !== appOriginOf(req)) return res.status(403).json({ error: "この操作は同一サイトからのみ実行できます" });
+  next();
+}
+function requireSession(types) {
+  return (req, res, next) => {
+    if (!sessionHas(req, ...types)) return res.status(401).json({ error: "ログインが必要です" });
+    return requireSameOrigin(req, res, next);
+  };
+}
+// 管理APIはサーバー側Cookieセッションだけで保護する。旧ヘッダ鍵は開発・自動テスト以外では閉じる。
 function requireAdmin(req, res, next) {
+  if (sessionHas(req, "admin", "owner")) return requireSameOrigin(req, res, next);
   if (!ADMIN_KEY) {
     // 本番で管理キー未設定なら「フェイルクローズ」: 無保護で通さず拒否する。
     // (キー流出やメール悪用による想定外コストを防ぐ — 開発時のみバイパス)
@@ -506,16 +600,18 @@ function requireAdmin(req, res, next) {
     }
     return next(); // 開発環境のみ無保護を許可
   }
-  const key = req.get("X-Admin-Key");
-  if (key && safeEqualStr(key, ADMIN_KEY)) return next();
+  const key = ALLOW_LEGACY_KEY_HEADERS ? req.get("X-Admin-Key") : "";
+  if (key && safeEqualStr(key, ADMIN_KEY)) { setPrincipal(req, "admin", "server-key"); return next(); }
   res.status(401).json({ error: "管理キーが必要です" });
 }
 
 // requireAdmin と同じ判定の真偽値版。リクエストは拒否せず「秘密フィールドを返すか」の出し分けに使う。
 function isAdminAuthed(req) {
+  if (sessionHas(req, "admin", "owner")) return true;
   if (!ADMIN_KEY) return !IS_PROD;            // 開発時のみ許可 / 本番でキー未設定はフェイルクローズ
-  const key = req.get("X-Admin-Key");
-  return !!(key && safeEqualStr(key, ADMIN_KEY));
+  const key = ALLOW_LEGACY_KEY_HEADERS ? req.get("X-Admin-Key") : "";
+  if (key && safeEqualStr(key, ADMIN_KEY)) { setPrincipal(req, "admin", "server-key"); return true; }
+  return false;
 }
 
 // ── オーナー権限 (管理キーの更に上の「上級管理者」) ──
@@ -538,24 +634,26 @@ function requireOwnerStrict(req, res, next) {
   return requireOwner(req, res, next);
 }
 function requireOwner(req, res, next) {
+  if (sessionHas(req, "owner")) return requireSameOrigin(req, res, next);
   const ip = clientIp(req);
   if (ownerBlocked(ip)) return res.status(429).json({ error: "試行回数が多すぎます。しばらく待ってから再試行してください。" });
   if (OWNER_KEY) {
     // 分離が有効: オーナーキー必須(管理キーだけでは通らない)。
-    const key = req.get("X-Owner-Key") || (req.body && req.body.owner_key) || "";
-    if (key && safeEqualStr(key, OWNER_KEY)) { ownerOk(ip); return next(); }
+    const key = ALLOW_LEGACY_KEY_HEADERS ? (req.get("X-Owner-Key") || (req.body && req.body.owner_key) || "") : "";
+    if (key && safeEqualStr(key, OWNER_KEY)) { ownerOk(ip); setPrincipal(req, "owner", "server-key"); return next(); }
     ownerFailMark(ip);
     return res.status(401).json({ error: "オーナーキーが必要です" });
   }
-  // OWNER_KEY 未設定: 分離は未活性(opt-in)。後方互換で管理キーにフォールバック(=従来どおり)。
-  // 既存環境にこのコードが入った瞬間にバックアップ/復元/削除がロックアウトされるのを防ぐ。
-  // セキュリティは「今より弱くならない」: OWNER_KEY を設定した時点でゲートが立つ。
+  // 本番はOWNER_KEY無しでの管理キー代替を禁止する。全件データや復元機能を通常管理者へ落とさない。
+  if (IS_PROD) return res.status(503).json({ error: "上級管理機能にはサーバー環境変数 OWNER_KEY が必要です" });
+  // 開発環境だけ既存テストのために管理キーへフォールバックする。
   return requireAdmin(req, res, next);
 }
 // オーナー操作の実行者名(自由記入・日本語可)を取り出す。監査ログ用。
 // HTTPヘッダは latin1 のみ(日本語不可)なので、ヘッダは encodeURIComponent 済みとして decode する。
 // JSONボディ(operator)は UTF-8 をそのまま運べるため、POST はボディを優先。
 function ownerOperator(req) {
+  if (req.auth && req.auth.principal_type === "owner" && req.auth.principal_id) return String(req.auth.principal_id).slice(0, 80);
   if (req.body && req.body.operator) return String(req.body.operator).slice(0, 80);
   let op = req.get("X-Owner-Operator") || "";
   try { op = decodeURIComponent(op); } catch (e) { /* 不正な%列はそのまま */ }
@@ -563,7 +661,20 @@ function ownerOperator(req) {
 }
 // オーナー操作を監査ログに記録するヘルパ。
 function auditOwner(req, action, detail) {
-  try { db.logOwnerAction({ action, detail: detail || "", operator: ownerOperator(req), ip: clientIp(req) }); } catch (e) {}
+  try { db.logOwnerAction({ action, operator: ownerAuditCode(req) }); } catch (e) {}
+}
+function validOperatorCode(value) {
+  const code = String(value || "").trim();
+  return /^[A-Za-z0-9_-]{3,32}$/.test(code) ? code : "";
+}
+// 監査の「誰」は氏名ではなく担当コードだけを保存する。旧ヘッダ鍵の server-key は実施者ではない。
+function ownerAuditCode(req) {
+  const bodyCode = validOperatorCode(req.body && req.body.operator);
+  if (bodyCode) return bodyCode;
+  if (req.auth && req.auth.principal_type === "owner" && req.auth.principal_id !== "server-key") {
+    return validOperatorCode(req.auth.principal_id);
+  }
+  return "";
 }
 
 // 未認証レスポンスから漏らしてはならない大会の秘密フィールド。
@@ -577,11 +688,53 @@ function sanitizeTournamentPublic(t) {
   for (const f of TOURNAMENT_SECRET_FIELDS) delete c[f];
   return c;
 }
+// 開発・合成テストだけは環境変数で明示的に公開を許可できる。本番既定は常に非公開。
+const PUBLIC_VIEW_DEFAULT = !IS_PROD && process.env.PUBLIC_VIEW_DEFAULT === "1";
+function isPublicTournament(tournament) {
+  return !!tournament && (Number(tournament.public_view_enabled) === 1 || PUBLIC_VIEW_DEFAULT);
+}
+function requirePublicTournament(req, res, next) {
+  const tournament = db.getTournamentMeta(req.params.id);
+  if (!isPublicTournament(tournament)) {
+    // 非公開大会と存在しない大会を同じ応答にしてID列挙を防ぐ。
+    return res.status(404).json({ error: "公開されている大会が見つかりません" });
+  }
+  req.publicTournament = tournament;
+  return next();
+}
+
+// 受付を明示的に開始した大会だけ申込フォームを公開する。管理者は受付前のプレビューを
+// 継続できるが、第三者が大会IDを推測して受付設定・種目・会場を読むことは許可しない。
+function requireOpenEntryOrAdmin(req, res, next) {
+  const tournament = db.getTournament(req.params.id);
+  if (!tournament || (!tournament.entries_open && !isAdminAuthed(req))) {
+    return res.status(404).json({ error: "公開されている申込フォームが見つかりません" });
+  }
+  req.entryTournament = tournament;
+  return next();
+}
 
 // 審判結果入力 用ミドルウェア (管理キーとは別の限定トークン)。
 // X-Referee-Token ヘッダ or ?t= or body.t で受け取り、有効な大会に解決できれば通す。
 // 解決できない=トークン無効/審判入力OFF/失効 → 403。req.refTournament に大会を載せる。
 function requireReferee(req, res, next) {
+  // URL能力トークンは初回の /api/ref/session 交換だけに使う。以後はHttpOnly Cookieの
+  // スコープ(大会・コート)を優先し、ブラウザ履歴やオフラインキューへトークンを残さない。
+  const session = sessionOf(req);
+  if (session && session.principal_type === "referee" && session.scope && session.scope.tournament_id) {
+    const t = db.getTournament(session.scope.tournament_id);
+    if (t) {
+      setPrincipal(req, "referee", session.principal_id, session.scope);
+      req.refTournament = t;
+      req.refCourt = session.scope.court == null ? null : Number(session.scope.court);
+      return next();
+    }
+  }
+  // 本番で能力トークンを受け付けるのはCookie交換の一度だけ。結果入力APIへ
+  // ?t=... を直接付けても通さず、履歴・Referer・オフラインキューへの漏えいを防ぐ。
+  if (IS_PROD && req.path !== "/api/ref/session") {
+    return res.status(401).json({ error: "審判セッションが必要です。審判用リンクを開き直してください。" });
+  }
   // (a) 共有トークン (大会全コート共通)
   const token = req.get("X-Referee-Token")
     || (req.query && req.query.t)
@@ -639,27 +792,95 @@ const applicantLookupRateLimit = rateLimit({ windowMs: 60000, max: 40 });
 const publicSearchRateLimit = rateLimit({ windowMs: 60000, max: parseInt(process.env.PUBLIC_SEARCH_MAX) || 120,
   message: "検索リクエストが多すぎます。少し待って再試行してください。" });
 
+// ── 認証情報のCookie交換 ──────────────────────────────────────────
+// 入力された鍵/コードは照合だけに使い、レスポンス・DB・監査ログ・ブラウザストレージへ残さない。
+function createBrowserSession(req, res, principalType, principalId, scope, ttlSeconds) {
+  const made = db.createAuthSession({ principal_type: principalType, principal_id: principalId, scope, ttl_seconds: ttlSeconds });
+  if (made.error) return null;
+  setSessionCookie(res, made.token, made.expires_at);
+  setPrincipal(req, principalType, principalId, scope);
+  return made;
+}
+function plainActor(value, fallback) {
+  // 監査主体は氏名ではなく運営が発行する担当コードだけを許可する。
+  // これにより「誰の操作か」を追える一方、監査DBに個人情報を蓄積しない。
+  const s = String(value || "").trim().slice(0, 32);
+  return /^[A-Za-z0-9_-]{3,32}$/.test(s) ? s : fallback;
+}
+app.get("/api/auth/session", (req, res) => {
+  const s = sessionOf(req);
+  if (!s) return res.json({ authenticated: false });
+  res.json({ authenticated: true, principal_type: s.principal_type, principal_id: s.principal_id, expires_at: s.expires_at });
+});
+app.delete("/api/auth/session", requireSession(["admin", "owner", "coach", "applicant", "player", "referee"]), (req, res) => {
+  db.destroyAuthSession(cookieValue(req, SESSION_COOKIE));
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+app.post("/api/auth/admin/session", rateLimit({ windowMs: 60000, max: 8, message: "試行回数が多すぎます。しばらく待ってください。" }), (req, res) => {
+  const key = String((req.body || {}).key || "");
+  if (!ADMIN_KEY || !safeEqualStr(key, ADMIN_KEY)) return res.status(401).json({ error: "管理キーが正しくありません" });
+  const actor = plainActor((req.body || {}).operator, "admin");
+  createBrowserSession(req, res, "admin", actor, {}, 60 * 60 * 8);
+  res.json({ ok: true, principal_type: "admin", principal_id: actor });
+});
+app.post("/api/auth/owner/session", rateLimit({ windowMs: 60000, max: 8, message: "試行回数が多すぎます。しばらく待ってください。" }), (req, res) => {
+  const key = String((req.body || {}).key || "");
+  if (!OWNER_KEY || !safeEqualStr(key, OWNER_KEY)) return res.status(401).json({ error: "オーナーキーが正しくありません" });
+  const actor = plainActor((req.body || {}).operator, "owner");
+  createBrowserSession(req, res, "owner", actor, {}, 60 * 60);
+  res.json({ ok: true, principal_type: "owner", principal_id: actor });
+});
+app.post("/api/auth/coach/session", (req, res) => {
+  const ip = _coachIp(req);
+  if (coachBlocked(ip)) return res.status(429).json({ error: COACH_BLOCK_MSG });
+  const coach = db.coachByCode((req.body || {}).code);
+  if (!coach) { coachFail(ip); return res.status(401).json({ error: "コードが無効です。本部にご確認ください。" }); }
+  coachOk(ip);
+  createBrowserSession(req, res, "coach", coach.id, { team: coach.team || "" }, 60 * 60 * 8);
+  const count = db.getCoachRoster(coach.id).length;
+  res.json({ ok: true, coach: { id: coach.id, name: coach.name, team: coach.team || "", player_cap: coach.player_cap, player_count: count,
+    member_name: coach.member_name || "", member_role: coach.member_role || "" } });
+});
+app.post("/api/auth/applicant/session", applicantLookupRateLimit, (req, res) => {
+  const sub = db.getSubmissionByToken(String((req.body || {}).token || ""));
+  if (sub.error || !sub.ok || !sub.tournament) return res.status(404).json({ error: "申込が見つかりません" });
+  // getSubmissionByTokenは表示用へ投影済みなので、申込IDだけを改めてトークンから取得する専用関数を使わない。
+  // entry_idからは所有性を復元できないため、DB側でトークン照合したIDを返す小さな経路を利用する。
+  const source = db.resolveSubmissionToken(String((req.body || {}).token || ""));
+  if (!source) return res.status(404).json({ error: "申込が見つかりません" });
+  createBrowserSession(req, res, "applicant", source.id, { tournament_id: source.tournament_id }, 60 * 60 * 24 * 14);
+  res.json({ ok: true, tournament: sub.tournament });
+});
+app.post("/api/auth/player/session", rateLimit({ windowMs: 60000, max: 10, message: "試行回数が多すぎます。しばらく待ってください。" }), (req, res) => {
+  const player = db.verifyPlayerAccessCode((req.body || {}).player_id, (req.body || {}).code);
+  if (!player) return res.status(401).json({ error: "選手番号または本人確認コードが正しくありません" });
+  createBrowserSession(req, res, "player", player.id, {}, 60 * 60 * 24 * 30);
+  res.json({ ok: true, player: { id: player.id, name: player.name } });
+});
+// 審判QRの能力トークンを短期Cookieへ交換する。トークンはこの一度のPOST以外では受け取らない。
+app.post("/api/ref/session", rateLimit({ windowMs: 60000, max: 20, message: "リクエストが多すぎます。しばらく待って再試行してください。" }), requireReferee, (req, res) => {
+  const tid = req.refTournament.id;
+  const court = req.refCourt == null ? null : Number(req.refCourt);
+  createBrowserSession(req, res, "referee", tid + ":" + (court || "all"), { tournament_id: tid, court }, 60 * 60 * 12);
+  res.json({ ok: true, tournament_id: tid, court });
+});
+
 // robots.txt: 全クローラに索引禁止を明示 (#271 参加者PII保護。X-Robots-Tag と二重)
 app.get("/robots.txt", (req, res) => {
   res.type("text/plain").send("User-agent: *\nDisallow: /\n");
 });
 
 // ═══ 公開API（閲覧画面用・認証なし） ═══════════════════
-app.get("/api/public/players", publicSearchRateLimit, (req, res) => {
-  const { search, gender, category, team, sort } = req.query;
-  res.json(db.getPlayers({ search, gender, category, team, sort }).map(publicPlayer));
+// 選手名簿・対戦履歴の横断検索は本人以外の行を列挙できるため公開しない。
+app.all("/api/public/players", (req, res) => res.status(404).json({ error: "公開選手名簿は提供していません" }));
+app.all("/api/public/players/:id", (req, res) => res.status(404).json({ error: "公開選手名簿は提供していません" }));
+app.get("/api/public/tournaments", (req, res) => {
+  res.json(db.getTournaments().filter(isPublicTournament).map(sanitizeTournamentPublic));
 });
-app.get("/api/public/players/:id", (req, res) => {
-  const player = db.getPlayer(req.params.id);
-  if (!player) return res.status(404).json({ error: "選手が見つかりません" });
-  res.json(publicPlayer(player));
-});
-app.get("/api/public/tournaments", (req, res) => { res.json(db.getTournaments().map(sanitizeTournamentPublic)); });
-app.get("/api/public/tournaments/:id", (req, res) => {
+app.get("/api/public/tournaments/:id", requirePublicTournament, (req, res) => {
   // 軽量版: 全試合の埋込みを省く (閲覧はメタ+選手数のみ使用し、試合は /matches を別途取得)。大規模大会で~1MBの無駄を削減。
-  const t = db.getTournamentMeta(req.params.id);
-  if (!t) return res.status(404).json({ error: "大会が見つかりません" });
-  res.json(sanitizeTournamentPublic(t));
+  res.json(sanitizeTournamentPublic(req.publicTournament));
 });
 // 公開 /matches から落とす内部列(進行内部・Elo差分・原文sets_json重複・承認待ち暫定結果)。
 // 軽量化が主目的(数百試合で生320KB級→約▲59%)。表示に要る referee_name(「審判: X」を viewer が表示)・
@@ -703,7 +924,7 @@ function publicPlayer(p) {
   if (Array.isArray(o.matches)) o.matches = o.matches.map(publicHistoryMatch);
   return o;
 }
-app.get("/api/public/tournaments/:id/matches", (req, res) => {
+app.get("/api/public/tournaments/:id/matches", requirePublicTournament, (req, res) => {
   // 進行フィンガープリントを ETag 化(未変化の再取得は304で本体0=ポーリング軽量化)。
   // fingerprint は live_score_rev を含むため、速報の更新でもポーラーが新データを取れる。
   const fp = db.getOpsFingerprint(req.params.id);
@@ -735,21 +956,10 @@ app.get("/api/public/stats/breakdowns", (req, res) => {
 app.get("/api/public/last-updated", (req, res) => { res.json({ t: db.getLastUpdated() }); });
 
 // ── 試合検索 () ───────────────────────────────
-app.get("/api/public/matches", publicSearchRateLimit, (req, res) => {
-  // 公開検索も内部列(Elo差分・審判ID・承認待ち・速報生JSON等)を落とす。sets(パース済み)は残る。
-  const matches = db.searchMatches(req.query).map(publicHistoryMatch);
-  const total = db.countMatchesForSearch(req.query);
-  res.json({ total, count: matches.length, matches });
-});
-app.get("/api/public/matches/filters", (req, res) => {
-  res.json(db.getSearchFilters());
-});
-app.get("/api/public/players/:id/opponents", (req, res) => {
-  res.json(db.getPlayerOpponents(req.params.id));
-});
-app.get("/api/public/players/:id/event-stats", (req, res) => {
-  res.json(db.getPlayerEventStats(req.params.id));
-});
+app.all("/api/public/matches", (req, res) => res.status(404).json({ error: "公開横断検索は提供していません" }));
+app.all("/api/public/matches/filters", (req, res) => res.status(404).json({ error: "公開横断検索は提供していません" }));
+app.all("/api/public/players/:id/opponents", (req, res) => res.status(404).json({ error: "公開選手名簿は提供していません" }));
+app.all("/api/public/players/:id/event-stats", (req, res) => res.status(404).json({ error: "公開選手名簿は提供していません" }));
 // ── 公開申込 (大会への申込) ─────────────────────────
 app.get("/api/public/open-tournaments", (req, res) => {
   res.json(db.getOpenTournaments().map(sanitizeTournamentPublic));
@@ -853,10 +1063,14 @@ function isHoneypotTripped(payload) {
   return !!(payload && (payload.hp_url || payload.website || payload.hp_email));
 }
 
-// GAS 経由でも、同一サーバー直接でも受けられる (text/plain or application/json)
-// CORS は全開放 (公開フォームのため)
+// GAS 経由でも、同一サーバー直接でも受けられる (text/plain or application/json)。
+// 任意オリジンからの書込みを許すと、第三者サイトが利用者のブラウザを踏み台にして申込を量産できる。
+// 外部連携のサーバー間POSTは Origin を持たないため許可し、ブラウザCORSは許可済みオリジンだけに限定する。
 app.options("/api/public/tournaments/:id/submit-team-entry", (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const origin = req.get("Origin");
+  if (!origin || !CORS_ALLOW_ORIGINS.has(origin)) return res.sendStatus(403);
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.sendStatus(204);
@@ -865,7 +1079,12 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
   entryRateLimit,
   express.text({ limit: "1mb", type: ["text/plain", "application/json"] }),
   async (req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    const origin = req.get("Origin");
+    if (origin) {
+      if (!CORS_ALLOW_ORIGINS.has(origin)) return res.status(403).json({ error: "許可されていない送信元です" });
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+    }
     let payload = req.body;
     if (typeof payload === "string") {
       try { payload = JSON.parse(payload); }
@@ -983,24 +1202,20 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
   }
 );
 
-// ── Phase4: 申込者本人の閲覧 (申込番号トークンで自分の申込内容を確認。閲覧のみ・認証不要・PII最小) ──
-// トークン空間は 32^12 ≈ 1.1e18 と広く列挙は非現実的だが、念のため専用レート制限を併用。
-// 閲覧元 /entry/status は同一オリジンなので CORS 開放はしない(クロスオリジンからの読取を許さない)。
-app.get("/api/public/applicants/:token", applicantLookupRateLimit, (req, res) => {
+// ── 申込者本人の閲覧・変更 ─────────────────────────────────────────
+// 申込番号は /api/auth/applicant/session でHttpOnly Cookieへ一度だけ交換する。
+// URLに能力トークンを置かないため、履歴・プロキシログ・共有リンクからの漏えいを防ぐ。
+app.get("/api/applicant/me", requireSession(["applicant"]), (req, res) => {
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  const r = db.getSubmissionByToken(String(req.params.token || ""));
+  const r = db.getSubmissionById(req.auth.principal_id);
   if (r.error) return res.status(404).json(r);
   res.json(r);
 });
 
-// ── 申込後の選手変更(申込者本人が申込番号で行う) ────────────────────────
-// 想定は「締切前に出場選手が変わった/出られなくなった」。締切後・組合せ作成後は db 側で拒否し、
-// 本部への連絡を案内する。閲覧と同じレート制限を掛け、更新後の申込内容をそのまま返す。
-app.post("/api/public/applicants/:token/entrants/:id/replace", applicantLookupRateLimit, async (req, res) => {
+app.post("/api/applicant/entrants/:id/replace", requireSession(["applicant"]), async (req, res) => {
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  const token = String(req.params.token || "");
   const b = req.body || {};
-  const r = db.applicantReplaceEntrant(token, String(req.params.id || ""), {
+  const r = db.applicantReplaceEntrantBySubmission(req.auth.principal_id, String(req.params.id || ""), {
     slot: b.slot, name: b.name, furigana: b.furigana, team: b.team,
     grade: b.grade, birth_date: b.birth_date, answers: b.answers, reason: b.reason,
   });
@@ -1014,14 +1229,13 @@ app.post("/api/public/applicants/:token/entrants/:id/replace", applicantLookupRa
       });
     }
   } catch (e) { recordError(e, req, res, 0); }
-  res.json(db.getSubmissionByToken(token));
+  res.json(db.getSubmissionById(req.auth.principal_id));
 });
 
-app.post("/api/public/applicants/:token/entrants/:id/cancel", applicantLookupRateLimit, async (req, res) => {
+app.post("/api/applicant/entrants/:id/cancel", requireSession(["applicant"]), async (req, res) => {
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  const token = String(req.params.token || "");
   const reason = String((req.body || {}).reason || "");
-  const r = db.applicantCancelEntrant(token, String(req.params.id || ""), reason);
+  const r = db.applicantCancelEntrantBySubmission(req.auth.principal_id, String(req.params.id || ""), reason);
   if (r.error) return res.status(400).json({ error: r.error });
   try {
     if (mailer.isEnabled() && r.tournament) {
@@ -1031,7 +1245,7 @@ app.post("/api/public/applicants/:token/entrants/:id/cancel", applicantLookupRat
       });
     }
   } catch (e) { recordError(e, req, res, 0); }
-  res.json(db.getSubmissionByToken(token));
+  res.json(db.getSubmissionById(req.auth.principal_id));
 });
 
 // 変更履歴(管理画面の申込管理で表示)
@@ -1184,12 +1398,7 @@ app.post("/api/mail/test", requireAdmin, async (req, res) => {
     res.status(500).json({ error: "送信失敗: " + e.message });
   }
 });
-app.get("/api/public/search", publicSearchRateLimit, (req, res) => {
-  const { q, limit } = req.query;
-  if (!q) return res.json([]);
-  const players = db.getPlayers({ search: q });
-  res.json(players.slice(0, parseInt(limit) || 20).map(publicPlayer));
-});
+app.all("/api/public/search", (req, res) => res.status(404).json({ error: "公開選手検索は提供していません" }));
 
 // ═══ 管理API（選手CRUD） ══════════════════════════════
 // GET も requireAdmin(note=内部メモ・rating 等の生データを返すため。利用元は admin UI のみ。
@@ -1202,6 +1411,13 @@ app.get("/api/players/:id", requireAdmin, (req, res) => {
   const player = db.getPlayer(req.params.id);
   if (!player) return res.status(404).json({ error: "選手が見つかりません" });
   res.json(player);
+});
+// 選手本人ポータル用の確認コードは管理者だけが発行/再発行できる。
+// 平文はこのレスポンスで一度だけ返し、DBにはハッシュのみを残す。
+app.post("/api/players/:id/access-code", requireAdmin, (req, res) => {
+  const r = db.issuePlayerAccessCode(req.params.id, (req.body || {}).ttl_seconds);
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
 });
 // ─── 登録団体マスタ(取込で団体を選手にしない正本リスト) ───────────────
 app.get("/api/registered-teams", requireAdmin, (req, res) => {
@@ -1328,7 +1544,8 @@ app.get("/api/player-merge/candidates", requireAdmin, (req, res) => {
   res.json(db.findDuplicatePlayerCandidates());
 });
 app.post("/api/players/:id/merge", requireOwner, (req, res) => {
-  const operator = (req.body || {}).operator || ownerOperator(req);
+  const operator = ownerAuditCode(req);
+  if (!operator) return res.status(400).json({ error: "操作担当コードを入力してください" });
   const r = db.mergePlayers(req.params.id, (req.body || {}).duplicate_id, { operator });
   if (r.error) return res.status(400).json(r);
   auditOwner(req, "players_merge", "survivor=" + req.params.id + " dup=" + ((req.body || {}).duplicate_id || "") +
@@ -1340,7 +1557,8 @@ app.get("/api/player-merges", requireOwner, (req, res) => {
   res.json({ merges: db.listPlayerMerges(req.query.limit) });
 });
 app.post("/api/player-merges/:id/undo", requireOwner, (req, res) => {
-  const operator = (req.body || {}).operator || ownerOperator(req);
+  const operator = ownerAuditCode(req);
+  if (!operator) return res.status(400).json({ error: "操作担当コードを入力してください" });
   const r = db.unmergePlayers(req.params.id, { operator });
   if (r.error) return res.status(400).json(r);
   auditOwner(req, "players_merge_undo", "merge_id=" + req.params.id +
@@ -1360,8 +1578,15 @@ function coachFail(ip) { const now = Date.now(); const e = _coachFail.get(ip);
   if (!e || now > e.resetAt) _coachFail.set(ip, { count: 1, resetAt: now + COACH_FAIL_WINDOW }); else e.count++; }
 function coachOk(ip) { _coachFail.delete(ip); }
 const COACH_BLOCK_MSG = "試行回数が多すぎます。しばらく待ってから再度お試しください。";
-// 監督コード認証 (X-Coach-Code ヘッダ / body / query)
+// 監督コードは本番ではログイン時の一度だけ受け取り、以後はCookieセッションに限定する。
 function requireCoach(req, res, next) {
+  if (sessionHas(req, "coach")) {
+    const coach = db.getCoachAccount(req.auth.principal_id);
+    if (!coach) return res.status(401).json({ error: "監督アカウントが見つかりません" });
+    req.coach = coach;
+    return requireSameOrigin(req, res, next);
+  }
+  if (IS_PROD) return res.status(401).json({ error: "監督ログインが必要です" });
   const ip = _coachIp(req);
   if (coachBlocked(ip)) return res.status(429).json({ error: COACH_BLOCK_MSG });
   const code = req.get("X-Coach-Code") || (req.body && req.body.coach_code) || req.query.coach_code;
@@ -1369,6 +1594,7 @@ function requireCoach(req, res, next) {
   if (!coach) { coachFail(ip); return res.status(401).json({ error: "監督ログインが必要です（コードが無効か無効化されています）" }); }
   coachOk(ip);
   req.coach = coach;
+  setPrincipal(req, "coach", coach.id, { team: coach.team || "" });
   next();
 }
 // 監督ログイン (コード→アカウント情報。コード自体は返さない)
@@ -1378,6 +1604,8 @@ app.post("/api/coach/login", (req, res) => {
   const coach = db.coachByCode((req.body || {}).code);
   if (!coach) { coachFail(ip); return res.status(401).json({ error: "コードが無効です。本部にご確認ください。" }); }
   coachOk(ip);
+  // 旧URLもCookieセッションを発行する互換入口にする。ブラウザ側は /api/auth/coach/session を使用する。
+  createBrowserSession(req, res, "coach", coach.id, { team: coach.team || "" }, 60 * 60 * 8);
   const count = db.getCoachRoster(coach.id).length;
   res.json({ ok: true, coach: { id: coach.id, name: coach.name, team: coach.team || "", player_cap: coach.player_cap, player_count: count,
     member_name: coach.member_name || "", member_role: coach.member_role || "" } });
@@ -1618,12 +1846,12 @@ app.delete("/api/match-records/:id", requireAdmin, (req, res) => {
 });
 
 // ═══ 管理API（大会CRUD） ══════════════════════════════
-app.get("/api/tournaments", (req, res) => {
+app.get("/api/tournaments", requireAdmin, (req, res) => {
   // 認証なしでも到達可能な経路。管理キーがあれば完全データ、なければ秘密フィールドを除去 (#1/#14)。
   const list = db.getTournaments();
   res.json(isAdminAuthed(req) ? list : list.map(sanitizeTournamentPublic));
 });
-app.get("/api/tournaments/:id", (req, res) => {
+app.get("/api/tournaments/:id", requireAdmin, (req, res) => {
   const t = db.getTournament(req.params.id);
   if (!t) return res.status(404).json({ error: "大会が見つかりません" });
   res.json(isAdminAuthed(req) ? t : sanitizeTournamentPublic(t));
@@ -1648,12 +1876,12 @@ app.put("/api/tournaments/:id", requireAdmin, (req, res) => {
 app.delete("/api/tournaments/:id", requireOwner, (req, res) => {
   const t = db.getTournament(req.params.id);
   db.deleteTournament(req.params.id);
-  auditOwner(req, "tournament_delete", (t && t.name ? t.name + " " : "") + "(" + req.params.id + ")");
+  auditOwner(req, "tournament_delete");
   res.json({ ok: true });
 });
 
 // ═══ 管理API（試合CRUD・セット記録） ═════════════
-app.get("/api/tournaments/:id/matches", (req, res) => {
+app.get("/api/tournaments/:id/matches", requireAdmin, (req, res) => {
   res.json(db.getMatchesByTournament(req.params.id));
 });
 app.post("/api/tournaments/:id/matches", requireAdmin, (req, res) => {
@@ -1666,7 +1894,7 @@ app.post("/api/tournaments/:id/scheduled-match", requireAdmin, (req, res) => {
   if (r.error) return res.status(400).json(r);
   res.status(201).json(r);
 });
-app.get("/api/matches/:id", (req, res) => {
+app.get("/api/matches/:id", requireAdmin, (req, res) => {
   const m = db.getMatch(req.params.id);
   if (!m) return res.status(404).json({ error: "試合が見つかりません" });
   res.json(m);
@@ -1681,7 +1909,7 @@ app.delete("/api/matches/:id", requireAdmin, (req, res) => {
 });
 
 // ═══ 出場選手（エントリー管理） ═══════════════════════
-app.get("/api/tournaments/:id/players", (req, res) => {
+app.get("/api/tournaments/:id/players", requireAdmin, (req, res) => {
   res.json(db.getTournamentPlayers(req.params.id));
 });
 app.post("/api/tournaments/:id/players", requireAdmin, (req, res) => {
@@ -1705,10 +1933,10 @@ function stripEntrantPII(rows) {
     return rest;
   });
 }
-app.get("/api/tournaments/:id/entrants", (req, res) => {
+app.get("/api/tournaments/:id/entrants", requireAdmin, (req, res) => {
   res.json(stripEntrantPII(db.getEntrants(req.params.id, req.query.event)));
 });
-app.get("/api/public/tournaments/:id/entrants", (req, res) => {
+app.get("/api/public/tournaments/:id/entrants", requirePublicTournament, (req, res) => {
   res.json(stripEntrantPII(db.getEntrants(req.params.id, req.query.event)));
 });
 // 単一エントリーは note(申込者の連絡先PII)を含む生データを返すため要管理キー
@@ -2153,14 +2381,15 @@ app.post("/api/tournaments/:id/bracket/generate", requireAdmin, blockOngoingBrac
 // 抽選ドロー: シードを標準位置に固定 + 非シードをランダム抽選(同一所属/地区を分散) → ブラケット凍結。
 // body: { event, draw_seed?, separate_by?('team'|'region'|'none'), force?, preview?, drawn_by? }
 //   preview=1(query/body): DBを書かず組合せだけ返す(確定前dry_run)。
-//   確定(preview無し)は実施者名 drawn_by 必須(単一ADMIN_KEYで個人識別できないため最小の説明責任)。
+//   確定(preview無し)は操作担当コード drawn_by 必須(氏名を監査へ残さない)。
 // 同じ draw_seed を指定すれば同一結果を再現できる(検証・引き直し用)。結果入力済みは force ガード。
 app.post("/api/tournaments/:id/bracket/draw", requireAdmin, blockOngoingBracketEdit, (req, res) => {
   const event = req.body?.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
   const preview = req.query.preview === "1" || req.body?.preview === true || req.body?.preview === 1;
-  if (!preview && !String(req.body?.drawn_by || "").trim()) {
-    return res.status(400).json({ error: "実施者名(drawn_by)が必要です(抽選の記録用)", needs_drawn_by: true });
+  const drawnBy = validOperatorCode(req.body?.drawn_by);
+  if (!preview && !drawnBy) {
+    return res.status(400).json({ error: "操作担当コード(drawn_by)が必要です(英数字・ハイフン・アンダースコア3〜32文字)", needs_drawn_by: true });
   }
   // 確定(非preview)のみ同時作業ガード。preview(dry_run)はDBを書かないので素通し。
   if (!preview && bracketRevStale(req.params.id, event, req.body)) return sendBracketConflict(res, req.params.id, event);
@@ -2170,7 +2399,7 @@ app.post("/api/tournaments/:id/bracket/draw", requireAdmin, blockOngoingBracketE
     block_sizes: req.body?.block_sizes,
     force: !!req.body?.force,
     preview,
-    drawn_by: req.body?.drawn_by,
+    drawn_by: drawnBy,
   });
   if (r?.error) return res.status(400).json(r);
   if (!preview) db.markSheetDirty(req.params.id, event);   // 旧経路の抽選確定(共存フック)
@@ -2233,7 +2462,8 @@ app.post("/api/tournaments/:id/seed-suggestions/apply", requireAdmin, (req, res)
   const assignments = req.body?.assignments;
   if (!Array.isArray(assignments)) return res.status(400).json({ error: "assignments が必要です" });
   const source = "auto:" + (req.body?.by || "blend");
-  const setBy = String(req.body?.set_by || "").trim();
+  const setBy = validOperatorCode(req.body?.set_by);
+  if (!setBy) return res.status(400).json({ error: "操作担当コード(set_by)が必要です" });
   let applied = 0;
   for (const a of assignments) {
     if (!a || !a.entrant_id) continue;
@@ -2368,7 +2598,7 @@ app.get("/api/tournaments/:id/league/previous-candidates", requireAdmin, (req, r
   res.json(list);
 });
 // 団体リーグの順位表+対戦結果(公開・PIIなし)。?event=&block= 。block 省略で全ブロック。
-app.get("/api/public/tournaments/:id/standings", (req, res) => {
+app.get("/api/public/tournaments/:id/standings", requirePublicTournament, (req, res) => {
   const event = req.query.event;
   if (!event) return res.status(400).json({ error: "event が必要です" });
   const block = req.query.block || undefined;
@@ -2418,7 +2648,7 @@ app.put("/api/entrants/:id/bracket-number", requireAdmin, (req, res) => {
   res.json(e);
 });
 // マスタDBにリンクすべき選手の提案
-app.get("/api/entrants/:id/suggest-player", (req, res) => {
+app.get("/api/entrants/:id/suggest-player", requireAdmin, (req, res) => {
   const e = db.getEntrant(req.params.id);
   if (!e) return res.status(404).json({ error: "エントリーが見つかりません" });
   const target = req.query.partner === "1"
@@ -2808,7 +3038,7 @@ app.post("/api/tournaments/:id/entrants/upload-excel",
 });
 
 // バリデーション (重複/欠落検出)
-app.get("/api/tournaments/:id/entrants/validate", (req, res) => {
+app.get("/api/tournaments/:id/entrants/validate", requireAdmin, (req, res) => {
   res.json(db.validateEntrants(req.params.id, req.query.event || ""));
 });
 // 所属相違の解決: 同一人物としてマスタDBの所属を更新 (#192)
@@ -3026,7 +3256,7 @@ function _sendBracketXlsx(req, res) {
   }
 }
 app.get("/api/tournaments/:id/bracket/export.xlsx", requireAdmin, _sendBracketXlsx);
-app.get("/api/public/tournaments/:id/bracket/export.xlsx", _sendBracketXlsx);
+app.get("/api/public/tournaments/:id/bracket/export.xlsx", requirePublicTournament, _sendBracketXlsx);
 
 // Excelラウンドトリップ取込: export.xlsx を手修正→再取込して『位置だけ』正本化する(往復ループを閉じる)。
 // _import シート(機械可読)を読み、entrantを消さず差分でブラケットを再構成。dry_run=1でプレビュー・force=1で結果上書き。
@@ -3365,10 +3595,9 @@ app.get("/api/used-events", requireAdmin, (req, res) => {
   res.json({ events: db.getUsedEventsCatalog() });
 });
 
-app.get("/api/tournaments/:id/entry-form.html", (req, res) => {
+app.get("/api/tournaments/:id/entry-form.html", requireOpenEntryOrAdmin, (req, res) => {
   try {
-    const tournament = db.getTournament(req.params.id);
-    if (!tournament) return res.status(404).send("<h1>大会が見つかりません</h1>");
+    const tournament = req.entryTournament;
     let events = _resolveEvents(tournament);
     // フォーム要求にに events が含まれていれば優先 (JSON 文字列)
     if (req.query.events) {
@@ -3402,9 +3631,8 @@ app.get("/api/tournaments/:id/entry-form.html", (req, res) => {
 });
 
 // 申込フォームの events 情報を JSON で取得 (admin UI 用)
-app.get("/api/tournaments/:id/entry-form-config", (req, res) => {
-  const tournament = db.getTournament(req.params.id);
-  if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
+app.get("/api/tournaments/:id/entry-form-config", requireOpenEntryOrAdmin, (req, res) => {
+  const tournament = req.entryTournament;
   const events = _resolveEvents(tournament);
   res.json({
     tournament: { id: tournament.id, name: tournament.name, date: tournament.date,
@@ -3418,7 +3646,6 @@ app.get("/api/tournaments/:id/entry-form-config", (req, res) => {
     capacity: db.getEntryCapacityState(tournament.id),
     entry_options: db.resolveEntryOptions(tournament),
     entry_payment_note: tournament.entry_payment_note || "",   // 参加料の案内文(大会に保存された値)
-    suggested_gas_url: "https://script.google.com/macros/s/AKfycb.../exec",
   });
 });
 
@@ -3458,7 +3685,7 @@ app.get("/api/tournaments/:id/gas-stats", requireAdmin, gasProxyRateLimit, async
 });
 
 // 申込団体別 (内訳付き) JSON 出力
-app.get("/api/tournaments/:id/applicants", (req, res) => {
+app.get("/api/tournaments/:id/applicants", requireAdmin, (req, res) => {
   const tournament = db.getTournament(req.params.id);
   if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
   const entrants = db.getEntrants(req.params.id);
@@ -3512,7 +3739,7 @@ app.get("/api/tournaments/:id/applicants.xlsx", requireAdmin, (req, res) => {
   }
 });
 // 統計 (種目×ブロック分布)
-app.get("/api/tournaments/:id/entrants/stats", (req, res) => {
+app.get("/api/tournaments/:id/entrants/stats", requireAdmin, (req, res) => {
   res.json(db.getEntrantStats(req.params.id));
 });
 
@@ -3529,7 +3756,7 @@ app.post("/api/tournaments/:id/bracket", requireAdmin, blockOngoingBracketEdit, 
   res.json({ ...r, bracket_rev: db.bracketRev(req.params.id, event) });
 });
 
-app.get("/api/tournaments/:id/bracket", (req, res) => {
+app.get("/api/tournaments/:id/bracket", requireAdmin, (req, res) => {
   res.json(db.getBracket(req.params.id, req.query.event || ""));
 });
 
@@ -3626,7 +3853,7 @@ function getCachedLiveJSON(tid) {
   return entry;
 }
 
-app.get("/api/tournaments/:id/operations", (req, res) => {
+app.get("/api/tournaments/:id/operations", requireAdmin, (req, res) => {
   // 管理(進行管理)は常にフレッシュ取得 (キャッシュ非経由)。
   // 審判の報告→承認待ちが本部に即座に届くように。公開 /live はキャッシュ維持で負荷を抑える。
   const state = db.getOperationState(req.params.id);
@@ -3638,12 +3865,12 @@ app.get("/api/tournaments/:id/operations", (req, res) => {
 
 // 団体戦の所属選手 (名簿) — 進行管理で「どの選手が出場するか」を表示するため。
 // メンバー名のみ返却 (連絡先などの PII は含めない)。
-app.get("/api/tournaments/:id/team-rosters", (req, res) => {
+app.get("/api/tournaments/:id/team-rosters", requireAdmin, (req, res) => {
   res.json({ rosters: db.getTeamRosters(req.params.id) });
 });
 
 // 各種目のベスト8 (準々決勝進出者・氏名+所属) — 進行管理で常時表示 #208
-app.get("/api/tournaments/:id/best8", (req, res) => {
+app.get("/api/tournaments/:id/best8", requireAdmin, (req, res) => {
   res.json({ events: db.getAllBest8(req.params.id) });
 });
 
@@ -3696,7 +3923,7 @@ app.post("/api/admin/snapshots/restore", requireOwner, (req, res) => {
   // ③ systemd journal にも残す(外部の durable トレイル) → ④ 実行。最も破壊的な操作の証跡を確保。
   if (!db.snapshotPath(name)) return res.status(404).json({ error: "スナップショットが見つかりません" });
   auditOwner(req, "db_restore", name);
-  console.log("[owner-audit] db_restore name=" + name + " operator=" + (ownerOperator(req) || "-") + " ip=" + clientIp(req));
+  console.log("[owner-audit] db_restore");
   let r;
   try { r = db.restoreSnapshot(name); }
   catch (e) { return res.status(500).json({ error: "復元に失敗しました: " + e.message }); }
@@ -3716,6 +3943,7 @@ app.get("/api/owner/verify", requireOwner, (req, res) => res.json({ ok: true }))
 app.get("/api/owner/configured", (req, res) => res.json({ configured: !!OWNER_KEY }));
 // オーナー監査ログ。
 app.get("/api/owner/audit", requireOwner, (req, res) => res.json({ log: db.getOwnerAudit(req.query.limit) }));
+app.get("/api/owner/access-audit", requireOwner, (req, res) => res.json({ log: db.listAccessAudit(req.query.limit) }));
 // DB全体の保存(.dbダウンロード)。一貫スナップショットを生成してそのまま返す=全PIIを含む最重要操作。
 app.get("/api/owner/db-download", requireOwner, async (req, res) => {
   try {
@@ -3726,11 +3954,11 @@ app.get("/api/owner/db-download", requireOwner, async (req, res) => {
     sendDbFile(res, p, "tournament-" + snap.name.replace(/^manual_/, ""));
   } catch (e) { res.status(500).json({ error: "DB保存に失敗しました: " + e.message }); }
 });
-// 全選手の削除 (取り返しのつかない操作)。実行前に自動バックアップ + 件数の打鍵確認 + 実施者名を要求。
+// 全選手の削除 (取り返しのつかない操作)。実行前に自動バックアップ + 件数の打鍵確認 + 担当コードを要求。
 app.post("/api/owner/players/delete-all", requireOwnerStrict, async (req, res) => {
   const b = req.body || {};
-  const operator = ownerOperator(req);
-  if (!operator) return res.status(400).json({ error: "実施者名を入力してください（監査ログに記録します）。" });
+  const operator = ownerAuditCode(req);
+  if (!operator) return res.status(400).json({ error: "操作担当コードを入力してください（監査ログに記録します）。" });
   const total = (db.getPlayers() || []).length;
   if (Number(b.confirm) !== Number(total))
     return res.status(400).json({ error: "確認のため、現在の選手数（" + total + "）を正確に入力してください。", expected: total });
@@ -3753,7 +3981,7 @@ app.post("/api/owner/restore-upload", requireOwner,
   const name = req.file.originalname || "upload";
   // 復元はDB全体(=owner_audit表ごと)を差し替えるため、close 前に監査 + journal に残す。
   auditOwner(req, "db_restore_upload", name);
-  console.log("[owner-audit] db_restore_upload name=" + name + " operator=" + (ownerOperator(req) || "-") + " ip=" + clientIp(req));
+  console.log("[owner-audit] db_restore_upload");
   let r;
   try { r = db.restoreFromUpload(req.file.path, name); }
   catch (e) { r = { error: "復元に失敗しました: " + e.message }; }
@@ -3767,7 +3995,7 @@ app.post("/api/owner/restore-upload", requireOwner,
   if (r.restart_required) _restartAfterResponse(res, "upload:" + name);
 });
 
-app.get("/api/public/tournaments/:id/live", (req, res) => {
+app.get("/api/public/tournaments/:id/live", requirePublicTournament, (req, res) => {
   const entry = getCachedLiveJSON(req.params.id);
   if (!entry) return res.status(404).json({ error: "大会が見つかりません" });
   // 進行fingerprint(entry.key)を ETag 化。未変化のポーリングは 304(本体なし)で返し帯域/再シリアライズを節約。
@@ -3777,7 +4005,7 @@ app.get("/api/public/tournaments/:id/live", (req, res) => {
 });
 
 // 進行の変化検知用 軽量エンドポイント (クライアントは変化時のみ重い /live を取得)
-app.get("/api/public/tournaments/:id/ops-version", (req, res) => {
+app.get("/api/public/tournaments/:id/ops-version", requirePublicTournament, (req, res) => {
   const fp = db.getOpsFingerprint(req.params.id);
   // fp 自体を ETag 化。未変化のポーリング(大半)は 304 で返し、Cloudflare/ブラウザが安価に再検証できる。
   const tag = (fp && fp.v != null ? fp.v : "0") + "|" + (fp && fp.status || "");
@@ -3808,7 +4036,7 @@ function getCachedMatchListJSON(tid) {
   }
   return entry;
 }
-app.get("/api/public/tournaments/:id/match-list", (req, res) => {
+app.get("/api/public/tournaments/:id/match-list", requirePublicTournament, (req, res) => {
   const entry = getCachedMatchListJSON(req.params.id);
   if (!entry) return res.status(404).json({ error: "大会が見つかりません" });
   // 進行fingerprint(entry.key)を ETag 化。参照タブの再取得が未変化なら 304 で軽量化。
@@ -3852,7 +4080,7 @@ setInterval(() => {
   }
 }, 800).unref();  // プロセスのクリーン終了を妨げない (他の定期掃引と同じ方針)
 
-app.get("/api/public/tournaments/:id/ops-stream", (req, res) => {
+app.get("/api/public/tournaments/:id/ops-stream", requirePublicTournament, (req, res) => {
   if (sseTotal >= SSE_MAX) return res.status(503).end();
   const ip = sseClientIp(req);
   if ((sseByIp.get(ip) || 0) >= SSE_PER_IP) return res.status(429).end();  // 同一IPの過剰接続を拒否
@@ -3889,11 +4117,15 @@ app.get("/api/public/tournaments/:id/ops-stream", (req, res) => {
   res.on("error", cleanup);
 });
 
-// 選手個人の試合状況 (マイ番号ポータル用)
-app.get("/api/public/players/:id/live-status", (req, res) => {
-  const status = db.getPlayerLiveStatus(req.params.id, req.query.tournament_id);
+// 選手個人の試合状況は、本人セッションだけが読める。選手IDの推測では到達できない。
+app.get("/api/player/me/live-status", requireSession(["player"]), (req, res) => {
+  const status = db.getPlayerLiveStatus(req.auth.principal_id, req.query.tournament_id);
   if (!status) return res.status(404).json({ error: "選手が見つかりません" });
   res.json(status);
+});
+// 旧URLは選手IDだけで本人の試合状況を取得できたため、明示的に廃止する。
+app.all("/api/public/players/:id/live-status", (req, res) => {
+  res.status(410).json({ error: "このURLは廃止されました。本人確認後のマイページをご利用ください。" });
 });
 
 app.post("/api/matches/:id/call", requireAdmin, (req, res) => {
@@ -3958,19 +4190,24 @@ app.get("/api/push/vapid-public-key", (req, res) => {
   res.json({ enabled: PUSH_ENABLED, key: VAPID_PUBLIC });
 });
 app.post("/api/push/subscribe", rateLimit({ windowMs: 60000, max: 30 }), (req, res) => {
+  if (!sessionHas(req, "player")) return res.status(401).json({ error: "選手本人のログインが必要です" });
+  if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    const origin = req.get("Origin");
+    if (!origin || origin !== appOriginOf(req)) return res.status(403).json({ error: "この操作は同一サイトからのみ実行できます" });
+  }
   if (!PUSH_ENABLED) return res.status(503).json({ error: "プッシュ通知は無効です" });
-  const { player_id, subscription } = req.body || {};
-  if (!player_id || !subscription) return res.status(400).json({ error: "player_id と subscription が必要です" });
+  const { subscription } = req.body || {};
+  const player_id = req.auth.principal_id;
+  if (!subscription) return res.status(400).json({ error: "subscription が必要です" });
   if (!isAllowedPushEndpoint(subscription.endpoint))
     return res.status(400).json({ error: "購読エンドポイントが不正です" });   // #8 SSRF対策
   const r = db.savePushSubscription(player_id, subscription);
   if (r.error) return res.status(400).json(r);
   res.json({ ok: true });
 });
-app.post("/api/push/unsubscribe", (req, res) => {
+app.post("/api/push/unsubscribe", requireSession(["player"]), (req, res) => {
   const ep = (req.body || {}).endpoint;
-  if (ep) db.deletePushSubscription(ep);
-  res.json({ ok: true });
+  res.json(db.deletePushSubscriptionForPlayer(req.auth.principal_id, ep));
 });
 
 app.post("/api/matches/:id/referee", requireAdmin, (req, res) => {
@@ -4070,7 +4307,7 @@ app.post("/api/matches/:id/confirm-result", requireAdmin, (req, res) => {
 });
 
 // ─── 操作ログ + Undo (誤操作/抗議対応) ──────────────────────────
-app.get("/api/tournaments/:id/op-log", (req, res) => {
+app.get("/api/tournaments/:id/op-log", requireAdmin, (req, res) => {
   res.json({ log: db.getOpLog(req.params.id, req.query.limit) });
 });
 app.post("/api/tournaments/:id/undo-last", requireAdmin, (req, res) => {
@@ -4144,7 +4381,8 @@ function refBaseUrl(req) {
   return (req.protocol || "http") + "://" + host;
 }
 
-// コート別 審判QR: 各コートの審判入力リンク(/ref?tid&court&ct)を、会場オフラインでも使える
+// コート別 審判QR: 認証情報はURLフラグメントへ置く。#以降はHTTPリクエスト・プロキシログ・
+// Refererに送られず、審判ページが初回だけCookieへ交換した直後に履歴からも消す。
 // ローカル生成QR(qrcode 同梱)付きで返す。審判は担当コートのQRをスキャンするだけで入力に入れる
 // (長いトークン付きURLの手入力=伝達難易度 を回避)。?courts=N で枚数、?base= で接続先を指定可。
 app.get("/api/admin/tournaments/:id/referee-court-qr", requireAdmin, async (req, res) => {
@@ -4157,7 +4395,7 @@ app.get("/api/admin/tournaments/:id/referee-court-qr", requireAdmin, async (req,
   const n = Math.max(1, Math.min(want, links.count, 40));
   const courts = [];
   for (const l of links.links.slice(0, n)) {
-    const url = base + "/ref?tid=" + encodeURIComponent(links.tournament_id) + "&court=" + l.court + "&ct=" + l.key;
+    const url = base + "/ref#tid=" + encodeURIComponent(links.tournament_id) + "&court=" + l.court + "&ct=" + l.key;
     let qr = "";
     try { qr = await QRCode.toString(url, { type: "svg", margin: 1, width: 150 }); } catch (e) {}
     courts.push({ court: l.court, url, qr });
@@ -4333,7 +4571,7 @@ app.post("/api/matches/:id/reject-result", requireAdmin, (req, res) => {
 });
 
 // ── ブラケット JSON エクスポート/インポート ─────────
-app.get("/api/tournaments/:id/bracket/export", (req, res) => {
+app.get("/api/tournaments/:id/bracket/export", requireAdmin, (req, res) => {
   const event = req.query.event;
   if (event) {
     const data = db.exportBracket(req.params.id, event);
@@ -4352,7 +4590,7 @@ app.get("/api/tournaments/:id/bracket/export", (req, res) => {
   }
 });
 // 同じデータを公開API側でも取得可能（読み取り専用）
-app.get("/api/public/tournaments/:id/bracket/export", (req, res) => {
+app.get("/api/public/tournaments/:id/bracket/export", requirePublicTournament, (req, res) => {
   const event = req.query.event;
   if (event) {
     const data = db.exportBracket(req.params.id, event);
@@ -4669,7 +4907,7 @@ app.get("/api/health", (req, res) => {
 
 // 端末接続案内(LAN URL + ローカル生成QR)。会場オフラインでも外部QRサービスに依存しない(qrcode 同梱)。
 // 本部ホストで開いた管理画面が、他の運営端末/大画面/観客端末の接続先を提示するのに使う。
-app.get("/api/lan-info", async (req, res) => {
+app.get("/api/lan-info", requireAdmin, async (req, res) => {
   const ips = lanIPv4s();
   const targets = [
     { path: "admin", label: "運営(他端末)" },
@@ -4913,7 +5151,7 @@ app.post("/api/forms/submit", async (req, res) => {
   let data;
   try { data = JSON.parse(raw); }
   catch (_) {
-    console.warn("[forms/submit] GAS応答がJSONではありません:", gasRes.status, raw.slice(0, 200));
+    console.warn("[forms/submit] GAS応答がJSONではありません:", gasRes.status, "bytes=" + raw.length);
     return res.status(502).json({
       ok: false,
       error: "GAS応答がJSONではありません",
@@ -4954,17 +5192,9 @@ app.get("/entry/status", (req, res) => {
 // Jimdo 等への iframe 埋込にも、単独URL公開にもこの URL を使用。
 // 既存 /api/tournaments/:id/entry-form.html と同じ HTML を返すが
 // デフォルトで「自己サーバーに POST」する設定にする (GAS 不要)。
-app.get("/entry/:id", (req, res) => {
+app.get("/entry/:id", requireOpenEntryOrAdmin, (req, res) => {
   try {
-    const tournament = db.getTournament(req.params.id);
-    if (!tournament) {
-      return res.status(404).type("html").send(
-        "<!doctype html><meta charset='utf-8'><title>大会が見つかりません</title>" +
-        "<style>body{font-family:system-ui;text-align:center;padding:80px 20px;color:#1c1917}" +
-        "h1{font-size:24px}p{color:#78716c}</style>" +
-        "<h1>大会が見つかりません</h1><p>URL を確認してください。</p>"
-      );
-    }
+    const tournament = req.entryTournament;
     const events = _resolveEvents(tournament);
     // POST 先: 大会に GAS URL が設定されていればそちらへ (スプレッドシート連携)
     //          設定されていなければ本サーバーへ (自己完結)
@@ -5022,12 +5252,12 @@ app.use((err, req, res, next) => {
 // 未捕捉の Promise 例外 / 同期例外
 process.on("uncaughtException", (err) => {
   recordError(err, null, null, 500);
-  console.error("[FATAL] uncaughtException:", err);
+  console.error("[FATAL] uncaughtException");
 });
 process.on("unhandledRejection", (reason) => {
   const err = reason instanceof Error ? reason : new Error(String(reason));
   recordError(err, null, null, 500);
-  console.error("[FATAL] unhandledRejection:", reason);
+  console.error("[FATAL] unhandledRejection");
 });
 
 // LAN内の他端末(運営2〜3台/大画面/観客)が本部ホストに接続するための IPv4 を列挙。

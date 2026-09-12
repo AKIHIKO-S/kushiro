@@ -9,6 +9,9 @@ const { mulberry32, shuffle, randomSeed } = require("./lib/rng");
 const TTTieOrder = require("./public/shared/tie-order");   // 団体戦オーダー検証 (admin と同一実装)
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "tournament.db");
+// 新規に指定されたDB_PATHまで「空DBの破損」と扱うと、同じスナップショット置き場の
+// 別大会を誤って復元してしまう。起動前に存在した空ファイルだけを復旧対象にする。
+const DB_FILE_EXISTED_AT_BOOT = fs.existsSync(DB_PATH);
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 // ── DBの原子的差し替え + 起動時 自己修復 ──────────────────────────
@@ -74,6 +77,7 @@ function _recoverDbThenOpen(p, origErr) {
 // 空/不在DBは integrity_check=ok を通ってしまう。KTTAテーブルが無い(=空)のに健全な安全網が
 // 存在するなら「本来データがあったのに消えた」とみなす(真の初回起動はスナップ無しなので巻き込まない)。
 function _looksEmptyButHasSnapshots(handle) {
+  if (!DB_FILE_EXISTED_AT_BOOT) return false; // 初回作成DBは安全網から復元しない。
   let hasTables = 1;   // 取得失敗時は「テーブルあり=通常起動」に倒す(誤復旧を避ける)
   try { hasTables = handle.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE type='table' AND name IN ('tournaments','players','matches')").get().c; } catch (e) {}
   if (hasTables >= 1) return false;   // 既存DB(テーブルあり)=通常起動
@@ -142,6 +146,7 @@ sqlite.exec(`
     court_count INTEGER DEFAULT 4,
     status TEXT DEFAULT 'scheduled',
     description TEXT DEFAULT '',
+    public_view_enabled INTEGER DEFAULT 0,
     state_json TEXT DEFAULT '{}',
     created_at TEXT DEFAULT (datetime('now','localtime')),
     updated_at TEXT DEFAULT (datetime('now','localtime'))
@@ -306,6 +311,46 @@ sqlite.exec(`
     v TEXT DEFAULT ''
   );
 
+  -- 認証セッション: 平文トークンはサーバーが発行時に一度返すだけで、DBにはハッシュだけを保持する。
+  -- principal_type / principal_id が行単位認可の唯一の主体情報になる。
+  CREATE TABLE IF NOT EXISTS auth_sessions (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    principal_type TEXT NOT NULL,
+    principal_id TEXT NOT NULL DEFAULT '',
+    scope_json TEXT NOT NULL DEFAULT '{}',
+    expires_at TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    last_seen_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash);
+  CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at);
+
+  -- アクセス監査: URLクエリ・本文・氏名・連絡先・認証情報は保存しない。
+  CREATE TABLE IF NOT EXISTS access_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at TEXT DEFAULT (datetime('now','localtime')),
+    principal_type TEXT NOT NULL DEFAULT 'anonymous',
+    principal_id TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL,
+    resource_type TEXT NOT NULL DEFAULT '',
+    resource_id TEXT NOT NULL DEFAULT '',
+    method TEXT NOT NULL DEFAULT '',
+    route TEXT NOT NULL DEFAULT '',
+    status INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_access_audit_time ON access_audit(occurred_at);
+  CREATE INDEX IF NOT EXISTS idx_access_audit_principal ON access_audit(principal_type, principal_id, occurred_at);
+
+  -- 選手本人ポータル用の確認コード。選手ID自体は公開識別子なので、認証には絶対に使わない。
+  CREATE TABLE IF NOT EXISTS player_access_codes (
+    player_id TEXT PRIMARY KEY,
+    code_hash TEXT NOT NULL,
+    issued_at TEXT DEFAULT (datetime('now','localtime')),
+    expires_at TEXT DEFAULT '',
+    FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+  );
+
   -- Web Push 購読 (マイ番号=選手 ごと・端末ごと)
   CREATE TABLE IF NOT EXISTS push_subscriptions (
     endpoint TEXT PRIMARY KEY,
@@ -346,7 +391,7 @@ sqlite.exec(`
     leaves_json TEXT DEFAULT '',         -- 確定リーフ順 [entrant_id|null]
     leaves_hash TEXT DEFAULT '',         -- 確定配置の SHA-256(封印=後の手修正検知に使える)
     warnings TEXT DEFAULT '',            -- JSON
-    drawn_by TEXT DEFAULT '',            -- 実施者名(自己申告。単一ADMIN_KEYで個人識別できないため)
+    drawn_by TEXT DEFAULT '',            -- 操作担当コード(氏名は監査へ保存しない)
     before_state TEXT DEFAULT '',        -- 抽選直前のブラケット(undoDraw 用): {matches:[...], entrants:[{id,bracket_number,bracket_side}]}
     status TEXT DEFAULT 'committed',     -- committed / superseded / undone
     superseded_by TEXT DEFAULT '',
@@ -587,6 +632,8 @@ try {
   // 本部は会場の掲示/口頭で審判に伝える → 会場にいる人だけが知り得る運用。
   addTCol("referee_passcode", "TEXT DEFAULT ''");
   addTCol("referee_passcode_required", "INTEGER DEFAULT 0");
+  // 公開閲覧は大会ごとの明示許可制。既存大会を勝手に公開しないため既定は0。
+  addTCol("public_view_enabled", "INTEGER DEFAULT 0");
 
   // 監督・顧問アカウントに所属チームを追加 (#285 拡張)
   const ccols = sqlite.prepare("PRAGMA table_info(coach_accounts)").all();
@@ -1072,12 +1119,12 @@ const stmts = {
   `),
   getTournament: sqlite.prepare(`SELECT * FROM tournaments WHERE id = ?`),
   insertTournament: sqlite.prepare(`
-    INSERT INTO tournaments (id, name, date, venue, court_count, status, description, state_json)
-    VALUES (@id, @name, @date, @venue, @court_count, @status, @description, @state_json)
+    INSERT INTO tournaments (id, name, date, venue, court_count, status, description, public_view_enabled, state_json)
+    VALUES (@id, @name, @date, @venue, @court_count, @status, @description, @public_view_enabled, @state_json)
   `),
   updateTournament: sqlite.prepare(`
     UPDATE tournaments SET name=@name, date=@date, venue=@venue, court_count=@court_count,
-      status=@status, description=@description, state_json=@state_json,
+      status=@status, description=@description, public_view_enabled=@public_view_enabled, state_json=@state_json,
       updated_at=datetime('now','localtime') WHERE id=@id
   `),
   deleteTournament: sqlite.prepare(`DELETE FROM tournaments WHERE id = ?`),
@@ -1859,6 +1906,12 @@ const MERGE_REPOINT = [
   ["player_requests", "player_id"],
   ["affiliations", "player_id"],   // 所属履歴 (#298): マージで survivor へ付替・undo で復元
 ];
+// 監査列は氏名ではなく運営が発行する担当コードだけを受け入れる。サーバーAPI以外から
+// DALを呼ぶ経路でも同じ制約を効かせ、ログへ個人情報を戻さない。
+function auditOperatorCode(value) {
+  const code = String(value || "").trim();
+  return /^[A-Za-z0-9_-]{3,32}$/.test(code) ? code : "";
+}
 function mergePlayers(survivorId, dupId, opts = {}) {
   if (!survivorId || !dupId) return { error: "結合する2名を指定してください" };
   if (survivorId === dupId) return { error: "同一の選手は結合できません" };
@@ -1928,7 +1981,7 @@ function mergePlayers(survivorId, dupId, opts = {}) {
       .run(survivorId, dupId);
     sqlite.prepare(`INSERT INTO player_merges (id, survivor_id, dup_id, operator, refs_json, survivor_before_json)
       VALUES (?,?,?,?,?,?)`)
-      .run(mergeId, survivorId, dupId, String(opts.operator || ""), JSON.stringify(refs), JSON.stringify(before));
+      .run(mergeId, survivorId, dupId, auditOperatorCode(opts.operator), JSON.stringify(refs), JSON.stringify(before));
   });
   tx();
   return { ok: true, merge_id: mergeId, survivor: getPlayer(survivorId), merged_name: dup.name };
@@ -2001,7 +2054,7 @@ function unmergePlayers(mergeId, opts = {}) {
     sqlite.prepare(`UPDATE players SET merged_into = NULL, updated_at = datetime('now','localtime') WHERE id = ?`)
       .run(log.dup_id);
     sqlite.prepare(`UPDATE player_merges SET undone_at = datetime('now','localtime'), undo_operator = ? WHERE id = ?`)
-      .run(String(opts.operator || ""), mergeId);
+      .run(auditOperatorCode(opts.operator), mergeId);
   });
   tx();
   return { ok: true, merge_id: mergeId, survivor_id: log.survivor_id, dup_id: log.dup_id,
@@ -2512,6 +2565,7 @@ function createTournament(data) {
     court_count: data.court_count || 4,
     status: data.status || "scheduled",
     description: data.description || "",
+    public_view_enabled: data.public_view_enabled === true || data.public_view_enabled === 1 || data.public_view_enabled === "1" ? 1 : 0,
     state_json: JSON.stringify(data.state || {}),
   });
   // テンプレ由来の付随設定を反映 (court layout / referee rule / template_id)
@@ -2579,6 +2633,9 @@ function updateTournament(id, data) {
     court_count: data.court_count ?? existing.court_count,
     status: data.status ?? existing.status ?? "scheduled",
     description: data.description ?? existing.description ?? "",
+    public_view_enabled: data.public_view_enabled === undefined
+      ? (existing.public_view_enabled || 0)
+      : (data.public_view_enabled === true || data.public_view_enabled === 1 || data.public_view_enabled === "1" ? 1 : 0),
     state_json: data.state ? JSON.stringify(data.state) : existing.state_json,
   });
   // 大会レベル (district/hokkaido/national/other) を個別更新
@@ -5530,7 +5587,7 @@ function importRoster(tournamentId, payload) {
     for (const e of entries) {
       if (!e || !String(e.name || "").trim()) continue;
       let ev = mode === "direct"
-        ? String(e.event || "").replace(/[ -]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60)   // 制御文字除去+空白圧縮+60字上限
+        ? String(e.event || "").replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60)   // 制御文字除去+空白圧縮+60字上限
         : rosterEventName(e, mode);
       if (!ev) continue;
       if (splitGender) ev = splitEventName(ev, e);
@@ -6168,7 +6225,7 @@ function drawSingleBracket(tournamentId, event, opts) {
         seeded: seededCount, ecount: entrants.length,
         snap: JSON.stringify(snap), ehash: _sha256(JSON.stringify(snap)),
         leaves: JSON.stringify(leafIds), lhash: _sha256(JSON.stringify(leafIds)),
-        warn: JSON.stringify(warnings), by: String(opts.drawn_by || ""), before: JSON.stringify(before),
+        warn: JSON.stringify(warnings), by: auditOperatorCode(opts.drawn_by), before: JSON.stringify(before),
       });
     });
     tx();
@@ -9067,6 +9124,13 @@ function _submissionByToken(token) {
   return submissionStmts.getByTokenHash.get(h) || null;
 }
 
+// セッション交換専用。表示用の申込内容や連絡先を返さず、所有者IDだけを返す。
+function resolveSubmissionToken(token) {
+  if (!token) return null;
+  const sub = _submissionByToken(token);
+  return sub ? { id: sub.id, tournament_id: sub.tournament_id } : null;
+}
+
 // 申込者本人がトークンで自分の申込を閲覧する(閲覧のみ)。連絡先メール等の生PIIは返さない。
 // 閲覧する申込内容は submission_id に紐づく entrants を「生で」引くため、部分再送で
 // 後から併合された種目も(同じトークンで)常に全件表示される (Phase4残: 併合)。
@@ -9117,10 +9181,8 @@ function purgeOldSubmissionPII(retentionDays) {
   return { ok: true, purged: n, cutoff, retention_days: days };
 }
 
-function getSubmissionByToken(token) {
-  if (!token) return { error: "申込番号を入力してください" };
-  const sub = _submissionByToken(token);
-  if (!sub) return { error: "申込が見つかりません。申込番号をご確認ください" };
+function _submissionView(sub) {
+  if (!sub) return { error: "申込が見つかりません" };
   const ents = sqlite.prepare(
     `SELECT * FROM entrants WHERE submission_id = ? ORDER BY event, seed, furigana`).all(sub.id);
   // 万一 submission_id 紐付けが無い旧データは、原本の entrant_ids にフォールバック。
@@ -9202,6 +9264,20 @@ function getSubmissionByToken(token) {
     options: optionItems,   // 申込者の確認ページに出す(何をいくつ頼んだか)
     extra: subExtra || null,
   };
+}
+
+function getSubmissionByToken(token) {
+  if (!token) return { error: "申込番号を入力してください" };
+  const sub = _submissionByToken(token);
+  if (!sub) return { error: "申込が見つかりません。申込番号をご確認ください" };
+  return _submissionView(sub);
+}
+
+// URL上の申込番号をセッションへ交換した後は、このID経路だけを使う。
+function getSubmissionById(submissionId) {
+  const sub = submissionStmts.getById.get(String(submissionId || ""));
+  if (!sub) return { error: "申込が見つかりません" };
+  return _submissionView(sub);
 }
 
 // ── 集計スプレッドシートへの反映状況 ────────────────────────────────
@@ -9385,9 +9461,9 @@ function _entryEditLock(t, event) {
 
 // 変更を受け付けてよいかを判定する。OKなら {ok, sub, ent, t}、ダメなら {error}。
 // 順に検査し、最初に引っかかった理由を日本語で返す。
-function _checkApplicantEditable(token, entrantId) {
-  const sub = _submissionByToken(token);
-  if (!sub) return { error: "申込が見つかりません。申込番号をご確認ください" };
+function _checkApplicantEditableBySubmission(submissionId, entrantId) {
+  const sub = submissionStmts.getById.get(String(submissionId || ""));
+  if (!sub) return { error: "申込が見つかりません" };
   const ent = entrantStmts.get.get(String(entrantId || ""));
   if (!ent) return { error: "対象の申込が見つかりません" };
   // 他人の申込を触れないこと。submission_id が一致するか、原本の entrant_ids に含まれること。
@@ -9405,6 +9481,13 @@ function _checkApplicantEditable(token, entrantId) {
   const lock = _entryEditLock(t, ent.event);
   if (lock) return { error: lock };
   return { ok: true, sub, ent, t };
+}
+
+function _checkApplicantEditable(token, entrantId, submissionId) {
+  if (submissionId) return _checkApplicantEditableBySubmission(submissionId, entrantId);
+  const sub = _submissionByToken(token);
+  if (!sub) return { error: "申込が見つかりません。申込番号をご確認ください" };
+  return _checkApplicantEditableBySubmission(sub.id, entrantId);
 }
 
 // 変更履歴を1件記録する。
@@ -9446,9 +9529,9 @@ function _recalcSubmissionTotal(submissionId) {
 
 // 申込者が出場選手を差し替える。氏名(ダブルスは選手1/2のどちらか)と付随項目を入れ替える。
 // args: { slot:1|2(ダブルスのみ), name, furigana?, team?, grade?, answers?, reason? }
-function applicantReplaceEntrant(token, entrantId, args) {
+function applicantReplaceEntrant(token, entrantId, args, submissionId) {
   args = args || {};
-  const chk = _checkApplicantEditable(token, entrantId);
+  const chk = _checkApplicantEditable(token, entrantId, submissionId);
   if (chk.error) return chk;
   const { sub, ent, t } = chk;
   const name = String(args.name || "").trim();
@@ -9550,9 +9633,13 @@ function applicantReplaceEntrant(token, entrantId, args) {
   return { ok: true, entrant_id: ent.id, before, after, tournament: t };
 }
 
+function applicantReplaceEntrantBySubmission(submissionId, entrantId, args) {
+  return applicantReplaceEntrant("", entrantId, args, submissionId);
+}
+
 // 申込者が出場を取り消す。物理削除せず status='cancelled' にし、枠と金額を戻す。
-function applicantCancelEntrant(token, entrantId, reason) {
-  const chk = _checkApplicantEditable(token, entrantId);
+function applicantCancelEntrant(token, entrantId, reason, submissionId) {
+  const chk = _checkApplicantEditable(token, entrantId, submissionId);
   if (chk.error) return chk;
   const { sub, ent, t } = chk;
   const before = { event: ent.event, name: ent.display_name || ent.name, team: ent.team || "", fee: ent.fee || 0 };
@@ -9564,6 +9651,10 @@ function applicantCancelEntrant(token, entrantId, reason) {
     kind: "cancel", before, after: null, reason, actor: "applicant",
   });
   return { ok: true, entrant_id: ent.id, before, total_amount: total, tournament: t };
+}
+
+function applicantCancelEntrantBySubmission(submissionId, entrantId, reason) {
+  return applicantCancelEntrant("", entrantId, reason, submissionId);
 }
 
 // 大会の変更履歴(新しい順)。管理画面の申込管理で表示する。
@@ -10636,7 +10727,7 @@ function findEntrantDataIssues(tournamentId) {
   const items = [];
 
   // 事前集計1: 重複申込(同種目内で 正規化氏名+正規化所属 が一致する組。rejected は除外)
-  const dupKeyOf = (e) => String(e.event || "") + " " + normalizeName(e.name).replace(/\s/g, "") + " " + _normClub(e.team);
+  const dupKeyOf = (e) => String(e.event || "") + "\u0000" + normalizeName(e.name).replace(/\s/g, "") + "\u0000" + _normClub(e.team);
   const dupCount = {};
   for (const e of rows) {
     if (e.status === "rejected") continue;
@@ -11520,7 +11611,7 @@ function swapDoublesOrder(tournamentId, event) {
 //   ・matches の player/entrant/referee の id(FK)は null 化(クラウドに無い選手IDでのFK違反回避・PII連鎖防止)。
 //     公開ビューは player1_name 等の非正規化名で描画するので表示は成立する。
 const SYNC_T_FIELDS = ["id", "name", "date", "venue", "court_count", "status", "description", "state_json",
-  "category", "organizer", "court_rows", "court_cols", "event_config", "compare_tournament_id"];
+  "category", "organizer", "court_rows", "court_cols", "event_config", "compare_tournament_id", "public_view_enabled"];
 const SYNC_MATCH_NULL_FK = ["winner_id", "loser_id", "player1_id", "player2_id",
   "player1_entrant_id", "player2_entrant_id", "referee_id"];
 let _matchColCache = null;
@@ -12662,23 +12753,34 @@ function hasOngoingTournament() {
 }
 
 // ─── オーナー監査ログ (上級権限での破壊的操作の証跡) ───────────────
-// 共有鍵では個人識別できないため、実行者(operator 自由記入)+操作+詳細+IP を残す(draw_log と同思想)。
+// 氏名・IP・URL・データ本文を残さず、担当コードと操作種別だけを記録する。
 sqlite.exec(`CREATE TABLE IF NOT EXISTS owner_audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT DEFAULT (datetime('now','localtime')),
   action TEXT NOT NULL,
   detail TEXT DEFAULT '',
   operator TEXT DEFAULT '',
-  ip TEXT DEFAULT ''
+  ip TEXT DEFAULT '',
+  privacy_v2 INTEGER DEFAULT 0
 )`);
-function logOwnerAction({ action, detail, operator, ip } = {}) {
+try {
+  const cols = sqlite.prepare("PRAGMA table_info(owner_audit)").all();
+  if (!cols.some(c => c.name === "privacy_v2")) sqlite.exec("ALTER TABLE owner_audit ADD COLUMN privacy_v2 INTEGER DEFAULT 0");
+  // 旧形式は詳細・氏名・IPを保持していたため、初回移行で不可逆に匿名化する。
+  sqlite.prepare("UPDATE owner_audit SET detail='', operator='', ip='', privacy_v2=1 WHERE COALESCE(privacy_v2,0)=0").run();
+  // 旧版では抽選・名寄せの担当欄に自由入力の氏名を許していた。新形式の担当コードと
+  // 区別できない既存値は消去し、監査台帳から個人名が残らないようにする。
+  sqlite.prepare("UPDATE draw_log SET drawn_by='' WHERE COALESCE(drawn_by,'')<>''").run();
+  sqlite.prepare("UPDATE player_merges SET operator='', undo_operator='' WHERE COALESCE(operator,'')<>'' OR COALESCE(undo_operator,'')<>''").run();
+} catch (e) {}
+function logOwnerAction({ action, operator } = {}) {
   try {
-    sqlite.prepare(`INSERT INTO owner_audit (action, detail, operator, ip) VALUES (?,?,?,?)`)
-      .run(String(action || ""), String(detail || ""), String(operator || ""), String(ip || ""));
+    sqlite.prepare(`INSERT INTO owner_audit (action, detail, operator, ip, privacy_v2) VALUES (?,?,?,?,1)`)
+      .run(String(action || ""), "", auditOperatorCode(operator), "");
   } catch (e) { /* 監査の失敗は本処理を止めない */ }
 }
 function getOwnerAudit(limit = 200) {
-  return sqlite.prepare(`SELECT id, ts, action, detail, operator, ip FROM owner_audit ORDER BY id DESC LIMIT ?`)
+  return sqlite.prepare(`SELECT id, ts, action, operator FROM owner_audit ORDER BY id DESC LIMIT ?`)
     .all(Math.min(parseInt(limit) || 200, 1000));
 }
 
@@ -12945,6 +13047,11 @@ function getPushSubscriptionsForPlayer(playerId) {
   }).filter(Boolean);
 }
 function deletePushSubscription(endpoint) { if (endpoint) pushStmts.delByEndpoint.run(endpoint); }
+function deletePushSubscriptionForPlayer(playerId, endpoint) {
+  if (!playerId || !endpoint) return { ok: true, removed: 0 };
+  const r = sqlite.prepare("DELETE FROM push_subscriptions WHERE player_id=? AND endpoint=?").run(playerId, endpoint);
+  return { ok: true, removed: r.changes || 0 };
+}
 // マイ番号(プッシュ)を登録済みの選手ID一覧 (#288 Admin可視化用)。端末数も返す。
 function getPushPlayerIds() {
   return sqlite.prepare("SELECT player_id, COUNT(*) AS n FROM push_subscriptions GROUP BY player_id").all()
@@ -12968,6 +13075,93 @@ function getPushSubscribersDetailed() {
 function deletePushSubscriptionsForPlayer(playerId) {
   const r = sqlite.prepare("DELETE FROM push_subscriptions WHERE player_id=?").run(playerId);
   return { ok: true, removed: r.changes || 0 };
+}
+
+// ── セッション・本人確認コード・アクセス監査 ────────────────────────
+// セッション値と本人確認コードは平文保存しない。DB流出時にそのままログインへ使えないよう、
+// SHA-256ハッシュだけを保持する。Cookieの平文トークンは発行レスポンスで一度だけ使われる。
+function _hashAuthSecret(value) {
+  return crypto.createHash("sha256").update(String(value || "")).digest("hex");
+}
+// 監査台帳では本人・申込・端末を直接識別できる値を保存しない。サーバーだけが持つ
+// AUDIT_HASH_KEY を混ぜた安定擬似IDにし、同じ主体/対象へのアクセス相関だけを可能にする。
+// 専用鍵が無い環境でも、サーバー専用の管理鍵から導いた安定鍵を使う。
+// 平文の管理鍵・監査対象のIDはいずれもログへ書き出さない。
+const _auditHashKey = process.env.AUDIT_HASH_KEY || crypto.createHash("sha256")
+  .update("ktta-access-audit\0" + (process.env.ADMIN_KEY || "") + "\0" + (process.env.OWNER_KEY || ""))
+  .digest("hex");
+function _auditSubject(value) {
+  const raw = String(value || "");
+  if (!raw) return "";
+  return "id_" + crypto.createHash("sha256").update(_auditHashKey + "\0" + raw).digest("hex").slice(0, 20);
+}
+function _randomAuthSecret() { return crypto.randomBytes(32).toString("base64url"); }
+function createAuthSession({ principal_type, principal_id, scope, ttl_seconds } = {}) {
+  const type = String(principal_type || "").trim();
+  const id = String(principal_id || "").trim();
+  if (!type || !id) return { error: "認証主体が不正です" };
+  const ttl = Math.max(60, Math.min(60 * 60 * 24 * 30, parseInt(ttl_seconds) || 60 * 60 * 8));
+  const token = _randomAuthSecret();
+  const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
+  sqlite.prepare(`INSERT INTO auth_sessions
+    (id, token_hash, principal_type, principal_id, scope_json, expires_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))`)
+    .run(uid(), _hashAuthSecret(token), type, id, JSON.stringify(scope || {}), expiresAt);
+  return { token, expires_at: expiresAt };
+}
+function getAuthSession(token) {
+  if (!token) return null;
+  const row = sqlite.prepare(`SELECT * FROM auth_sessions WHERE token_hash=?`).get(_hashAuthSecret(token));
+  if (!row) return null;
+  if (Date.parse(row.expires_at) <= Date.now()) {
+    sqlite.prepare("DELETE FROM auth_sessions WHERE id=?").run(row.id);
+    return null;
+  }
+  sqlite.prepare("UPDATE auth_sessions SET last_seen_at=datetime('now','localtime') WHERE id=?").run(row.id);
+  let scope = {}; try { scope = JSON.parse(row.scope_json || "{}") || {}; } catch (_) {}
+  return { id: row.id, principal_type: row.principal_type, principal_id: row.principal_id, scope, expires_at: row.expires_at };
+}
+function destroyAuthSession(token) {
+  if (!token) return { ok: true };
+  const r = sqlite.prepare("DELETE FROM auth_sessions WHERE token_hash=?").run(_hashAuthSecret(token));
+  return { ok: true, removed: r.changes || 0 };
+}
+function issuePlayerAccessCode(playerId, ttlSeconds) {
+  const p = getPlayer(playerId);
+  if (!p) return { error: "選手が見つかりません" };
+  const code = crypto.randomBytes(9).toString("base64url");
+  const ttl = Math.max(300, Math.min(60 * 60 * 24 * 365, parseInt(ttlSeconds) || 60 * 60 * 24 * 180));
+  const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
+  sqlite.prepare(`INSERT INTO player_access_codes (player_id, code_hash, issued_at, expires_at)
+    VALUES (?, ?, datetime('now','localtime'), ?)
+    ON CONFLICT(player_id) DO UPDATE SET code_hash=excluded.code_hash, issued_at=excluded.issued_at, expires_at=excluded.expires_at`)
+    .run(p.id, _hashAuthSecret(code), expiresAt);
+  return { ok: true, player_id: p.id, code, expires_at: expiresAt };
+}
+function verifyPlayerAccessCode(playerId, code) {
+  const p = getPlayer(playerId);
+  if (!p || !code) return null;
+  const row = sqlite.prepare("SELECT * FROM player_access_codes WHERE player_id=?").get(p.id);
+  if (!row || (row.expires_at && Date.parse(row.expires_at) <= Date.now())) return null;
+  const hash = _hashAuthSecret(code);
+  if (hash.length !== String(row.code_hash || "").length || !crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(String(row.code_hash)))) return null;
+  return p;
+}
+function logAccessAudit({ principal_type, principal_id, action, resource_type, resource_id, method, route, status } = {}) {
+  try {
+    sqlite.prepare(`INSERT INTO access_audit
+      (principal_type, principal_id, action, resource_type, resource_id, method, route, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(String(principal_type || "anonymous").slice(0, 32), _auditSubject(principal_id),
+        String(action || "read").slice(0, 16), String(resource_type || "").slice(0, 48),
+        _auditSubject(resource_id), String(method || "").slice(0, 12),
+        String(route || "").slice(0, 200), Math.max(0, parseInt(status) || 0));
+  } catch (e) { /* 監査失敗で本処理を止めない */ }
+}
+function listAccessAudit(limit) {
+  const n = Math.max(1, Math.min(1000, parseInt(limit) || 200));
+  return sqlite.prepare(`SELECT occurred_at, principal_type, principal_id, action, resource_type, resource_id, method, route, status
+    FROM access_audit ORDER BY id DESC LIMIT ?`).all(n);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -13314,8 +13508,11 @@ module.exports = {
   setLiveScore, clearLiveScore, parseLiveScore,   // セットカウント速報(表示専用の暫定値)
   getRefereeCourtLinks, resolveRefereeCourt,
   setRefereePasscode, verifyRefereePasscode,   // #261 会場パスコード
-  kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription, getPushPlayerIds,
+  kvGet, kvSet, savePushSubscription, getPushSubscriptionsForPlayer, deletePushSubscription, deletePushSubscriptionForPlayer, getPushPlayerIds,
   getPushSubscribersDetailed, deletePushSubscriptionsForPlayer,
+  // 認証セッション・本人確認コード・個人情報を含まないアクセス監査
+  createAuthSession, getAuthSession, destroyAuthSession,
+  issuePlayerAccessCode, verifyPlayerAccessCode, logAccessAudit, listAccessAudit,
   // DB スナップショット (バックアップ/復元)
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, restoreFromUpload, hasOngoingTournament,
   // オーナー監査ログ (上級権限)
@@ -13376,10 +13573,10 @@ module.exports = {
   createEntry, createTeamEntry, getEntries,
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
-  getSubmissionByToken, deleteSubmissionPII, purgeOldSubmissionPII,
+  getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel,
-  applicantReplaceEntrant, applicantCancelEntrant, listEntryChanges,
+  applicantReplaceEntrant, applicantCancelEntrant, applicantReplaceEntrantBySubmission, applicantCancelEntrantBySubmission, listEntryChanges,
   copyEntrySettings, listEntrySettingSources,
   recordGasRelay, getGasSyncState, getSubmissionForResend,
   resolveEntryOptions, sanitizeEntryOptions, priceEntryOptions,

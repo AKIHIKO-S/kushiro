@@ -202,8 +202,8 @@ async function sendConfirmationEmail(opts) {
   const note = formData.note || "";
   // Phase4: 申込番号(トークン) + 本人確認ページのURL。本人が後から申込内容を閲覧できる。
   const token = (result && result.applicant_token) || "";
-  const statusUrl = (token && opts.appOrigin)
-    ? `${opts.appOrigin}/entry/status?token=${encodeURIComponent(token)}` : "";
+  // 能力トークンをURLに含めない。確認ページで申込番号を入力し、HttpOnlyセッションへ交換する。
+  const statusUrl = (token && opts.appOrigin) ? `${opts.appOrigin}/entry/status` : "";
 
   const subject = `【${tournName}】申込を受け付けました`;
 

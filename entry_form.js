@@ -2116,7 +2116,8 @@ async function submitForm(e) {
       // Phase4: 申込番号(トークン)。本人が後から /entry/status で申込内容を確認できる。
       const token = result.applicant_token || "";
       let appOrigin = ""; try { appOrigin = new URL(SUBMIT_URL).origin; } catch (_) {}
-      const statusUrl = token ? appOrigin + "/entry/status?token=" + encodeURIComponent(token) : "";
+      // 申込番号をURLへ入れると履歴・アクセスログへ残るため、確認ページは番号入力式にする。
+      const statusUrl = token ? appOrigin + "/entry/status" : "";
       const tokenBlock = token ? (
         '<div class="ticket">' +
           '<div class="ticket-label">申込番号</div>' +
@@ -2400,9 +2401,7 @@ try {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Phase4: 申込者本人の閲覧ページ (/entry/status?token=…)
-// 申込番号(トークン)で自分の申込内容を確認する(閲覧のみ)。自己完結HTML。
-// データは GET /api/public/applicants/:token から取得し、PII(メール等)は含まない。
+// 申込者本人の閲覧ページ。申込番号はURLに含めず、同一オリジンでHttpOnlyセッションへ交換する。
 // ─────────────────────────────────────────────────────────────
 function buildApplicantStatusHTML() {
   return `<!doctype html>
@@ -2596,7 +2595,7 @@ function buildApplicantStatusHTML() {
   }
 
   // ── 申込後の選手変更(締切前・組合せ作成前のみ) ──────────────────
-  var LAST=null, TOKEN="";
+  var LAST=null;
   function openEdit(idx,slot){
     var e=(LAST&&LAST.entries||[])[idx]; if(!e)return;
     var cur = slot===2 ? (e.name2||e.partner_name||"") : (e.name1||e.name||"");
@@ -2634,7 +2633,7 @@ function buildApplicantStatusHTML() {
   }
   function val(id){var el=document.getElementById(id);return el?String(el.value||"").trim():"";}
   function send(path,body){
-    return fetch("/api/public/applicants/"+encodeURIComponent(TOKEN)+path,{
+    return fetch("/api/applicant"+path,{
       method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
     }).then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
       .then(function(x){
@@ -2678,13 +2677,16 @@ function buildApplicantStatusHTML() {
   function lookup(token){
     token=String(token||"").trim();
     if(!token){setMsg("申込番号を入力してください。");return;}
-    TOKEN=token.toUpperCase();
     show("result",false);
     setMsg("");
-    fetch("/api/public/applicants/"+encodeURIComponent(token))
+    fetch("/api/auth/applicant/session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:token})})
       .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
       .then(function(x){
         if(!x.ok||x.j.error){setMsg(esc(x.j.error||"申込が見つかりませんでした。番号をご確認ください。"));return;}
+        return fetch("/api/applicant/me").then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});});
+      }).then(function(x){
+        if(!x)return;
+        if(!x.ok||x.j.error){setMsg(esc(x.j.error||"申込内容を読み込めませんでした。"));return;}
         render(x.j);
       })
       .catch(function(){setMsg("通信エラーが発生しました。時間をおいて再度お試しください。");});
@@ -2697,11 +2699,6 @@ function buildApplicantStatusHTML() {
   document.getElementById("lookupForm").addEventListener("submit",function(e){
     e.preventDefault();lookup(document.getElementById("tokenInput").value);
   });
-  // URL の ?token= があれば自動で照会
-  (function(){
-    var m=location.search.match(/[?&]token=([^&]+)/);
-    if(m){var tok=decodeURIComponent(m[1]);document.getElementById("tokenInput").value=tok;lookup(tok);}
-  })();
 </script>
 </body>
 </html>`;

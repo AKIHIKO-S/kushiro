@@ -16,8 +16,21 @@ let srv;
 
 const jhead = { "Content-Type": "application/json" };
 const akhead = { ...jhead, "X-Admin-Key": KEY };
-const adminPost = (p, b) => fetch(BASE + p, { method: "POST", headers: akhead, body: JSON.stringify(b) }).then(r => r.json());
 const adminPut = (p, b) => fetch(BASE + p, { method: "PUT", headers: akhead, body: JSON.stringify(b) }).then(r => r.json());
+const adminPost = async (p, b) => {
+  const out = await fetch(BASE + p, { method: "POST", headers: akhead, body: JSON.stringify(b) }).then(r => r.json());
+  // 既存の公開閲覧系スモークは、明示公開した大会だけを対象にする。
+  if (p === "/api/tournaments" && out && out.id) await adminPut(`/api/tournaments/${out.id}`, { public_view_enabled: true });
+  return out;
+};
+async function playerSession(playerId) {
+  const issued = await adminPost(`/api/players/${playerId}/access-code`, {});
+  assert.ok(issued.code, "本人確認コードを発行");
+  const login = await fetch(BASE + "/api/auth/player/session", { method: "POST", headers: jhead,
+    body: JSON.stringify({ player_id: playerId, code: issued.code }) });
+  assert.strictEqual(login.status, 200, "選手本人ログイン");
+  return (login.headers.get("set-cookie") || "").split(";")[0];
+}
 
 before(async () => {
   srv = spawn(process.execPath, ["server.js"], {
@@ -165,7 +178,7 @@ test("(d) 抽選ドロー: HTTP で draw→再現性→両山Excel出力→認�
   const noBy = await fetch(BASE + `/api/tournaments/${t.id}/bracket/draw`, { method: "POST", headers: akhead, body: JSON.stringify({ event: EV, draw_seed: 777 }) });
   assert.strictEqual(noBy.status, 400, "drawn_by 無しの確定は拒否");
   // 抽選(種固定で再現性を確認・実施者名付き)
-  const d1 = await adminPost(`/api/tournaments/${t.id}/bracket/draw`, { event: EV, draw_seed: 777, separate_by: "team", drawn_by: "運営太郎" });
+  const d1 = await adminPost(`/api/tournaments/${t.id}/bracket/draw`, { event: EV, draw_seed: 777, separate_by: "team", drawn_by: "ops-01" });
   assert.ok(d1.success, "抽選成功: " + JSON.stringify(d1).slice(0, 120));
   assert.strictEqual(d1.draw_seed, 777, "draw_seed 返却");
   assert.strictEqual(d1.bracket_size, 8, "枠数8");
@@ -174,7 +187,7 @@ test("(d) 抽選ドロー: HTTP で draw→再現性→両山Excel出力→認�
   const slots1 = (Array.isArray(r1) ? r1 : r1.matches || []).filter(m => m.bracket_round === 1)
     .sort((a, b) => a.bracket_pos - b.bracket_pos).map(m => [m.player1_name, m.player2_name]);
   // 同じ種で引き直すと同一配置(force 不要: 結果未入力)
-  const d2 = await adminPost(`/api/tournaments/${t.id}/bracket/draw`, { event: EV, draw_seed: 777, separate_by: "team", drawn_by: "運営太郎" });
+  const d2 = await adminPost(`/api/tournaments/${t.id}/bracket/draw`, { event: EV, draw_seed: 777, separate_by: "team", drawn_by: "ops-01" });
   assert.ok(d2.success, "再抽選成功");
   const r2 = await fetch(BASE + `/api/public/tournaments/${t.id}/matches`).then(r => r.json());
   const slots2 = (Array.isArray(r2) ? r2 : r2.matches || []).filter(m => m.bracket_round === 1)
@@ -272,7 +285,7 @@ test("(g2) /live callable: 待機理由(blocks/is_blocked)を射影し内部ID(l
 });
 
 test("(h) /api/lan-info: 端末接続用のURLとローカル生成QR(外部QR非依存)を返す", async () => {
-  const info = await fetch(BASE + "/api/lan-info").then(r => r.json());
+  const info = await fetch(BASE + "/api/lan-info", { headers: akhead }).then(r => r.json());
   assert.ok(typeof info.port === "number", "port を返す");
   assert.ok(Array.isArray(info.ips), "ips 配列");
   assert.ok(Array.isArray(info.urls), "urls 配列");
@@ -285,7 +298,7 @@ test("(h) /api/lan-info: 端末接続用のURLとローカル生成QR(外部QR�
 
 test("(i) /api/sync/push: X-Sync-Key 認証で受信し公開ミラーを作る(誤キーは401)", async () => {
   const snap = {
-    v: 1, tournament: { id: "synct-1", name: "同期テスト", date: "2027-01-01", venue: "本部", status: "ongoing" },
+    v: 1, tournament: { id: "synct-1", name: "同期テスト", date: "2027-01-01", venue: "本部", status: "ongoing", public_view_enabled: 1 },
     matches: [{ id: "sm-1", tournament_id: "synct-1", event: "S", round: "決勝", round_order: 1, match_no: 1,
       bracket_round: 1, bracket_pos: 0, player1_name: "Ａ", player2_name: "Ｂ", winner_name: "Ａ", status: "completed",
       winner_id: "should-be-nulled", player1_entrant_id: "should-be-nulled" }],
@@ -359,13 +372,13 @@ test("(m) コート別 審判QR: 審判入力ON時に各コートのローカル
   assert.strictEqual(r.count, 3, "指定枚数=3");
   assert.strictEqual((r.courts || []).length, 3, "3コート分");
   assert.match(r.courts[0].qr || "", /<svg/, "コートQRはローカルSVG");
-  assert.ok(r.courts[0].url.includes("/ref?tid=") && r.courts[0].url.includes("&court=1") && r.courts[0].url.includes("&ct="),
-    "URLは /ref?tid&court&ct 形式: " + r.courts[0].url);
+  assert.ok(r.courts[0].url.includes("/ref#tid=") && r.courts[0].url.includes("&court=1") && r.courts[0].url.includes("&ct="),
+    "URLは /ref#tid&court&ct 形式: " + r.courts[0].url);
   // localhost(127.0.0.1)アクセスは他端末から到達不能なため base を localhost のままにしない
   assert.ok(!/127\.0\.0\.1|localhost/.test(r.base), "baseはlocalhostでない(LAN IP置換): " + r.base);
   // コート別キーは別コートのキーでは通らない(自分のコート限定の契約)。?base= 明示も尊重
   const r2 = await fetch(BASE + `/api/admin/tournaments/${t.id}/referee-court-qr?courts=2&base=http://192.168.50.9:3000`, { headers: akhead }).then(r => r.json());
-  assert.ok(r2.courts[0].url.startsWith("http://192.168.50.9:3000/ref?tid="), "?base=明示が反映");
+  assert.ok(r2.courts[0].url.startsWith("http://192.168.50.9:3000/ref#tid="), "?base=明示が反映");
 });
 
 test("(n) gas-stats プロキシは requireAdmin(未認証拒否)・URL未設定は400 (#5 踏み台化対策)", async () => {
@@ -382,8 +395,10 @@ test("(n) gas-stats プロキシは requireAdmin(未認証拒否)・URL未設定
 });
 
 test("(o) push subscribe は endpoint を検証(http/生IP/内部は拒否・既知プッシュhostのみ許可 / #8 SSRF)", async () => {
-  const sub = (ep) => fetch(BASE + "/api/push/subscribe", { method: "POST", headers: jhead,
-    body: JSON.stringify({ player_id: 1, subscription: { endpoint: ep, keys: { p256dh: "x", auth: "y" } } }) }).then(r => r.json().then(j => ({ status: r.status, j })));
+  const p = await adminPost("/api/players", { name: "通知検証", team: "合成" });
+  const cookie = await playerSession(p.id);
+  const sub = (ep) => fetch(BASE + "/api/push/subscribe", { method: "POST", headers: { ...jhead, Cookie: cookie, Origin: BASE },
+    body: JSON.stringify({ subscription: { endpoint: ep, keys: { p256dh: "x", auth: "y" } } }) }).then(r => r.json().then(j => ({ status: r.status, j })));
   const http = await sub("http://fcm.googleapis.com/x");
   assert.ok(/不正/.test(http.j.error || ""), "httpは拒否: " + JSON.stringify(http.j));
   const ip = await sub("https://10.0.0.5/x");
@@ -428,7 +443,7 @@ test("(r) オーナー DB保存: .db を一貫スナップショットで返す(
   assert.ok(buf.length > 1000, "中身がある");
 });
 
-test("(s) オーナー 全選手削除: 実施者名と件数の打鍵確認が必須・実行で自動バックアップ＋監査記録", async () => {
+test("(s) オーナー 全選手削除: 担当コードと件数の打鍵確認が必須・実行で自動バックアップ＋監査記録", async () => {
   // 選手を2人作る
   await adminPost("/api/players", { name: "削除対象A", team: "X" });
   await adminPost("/api/players", { name: "削除対象B", team: "X" });
@@ -436,24 +451,24 @@ test("(s) オーナー 全選手削除: 実施者名と件数の打鍵確認が�
   const before = await fetch(BASE + "/api/players", { headers: akhead }).then(r => r.json());
   const total = before.length;
   assert.ok(total >= 2, "選手が居る: " + total);
-  // 実施者名なし → 400
+  // 担当コードなし → 400
   const noOp = await fetch(BASE + "/api/owner/players/delete-all", { method: "POST",
     headers: { ...jhead, "X-Owner-Key": OKEY }, body: JSON.stringify({ confirm: total }) }).then(r => ({ s: r.status }));
-  assert.strictEqual(noOp.s, 400, "実施者名なしは400");
-  // 件数間違い → 400 (実施者名はボディで渡し、件数チェックを単独で検証)
+  assert.strictEqual(noOp.s, 400, "担当コードなしは400");
+  // 件数間違い → 400 (担当コードはボディで渡し、件数チェックを単独で検証)
   const badCount = await fetch(BASE + "/api/owner/players/delete-all", { method: "POST",
-    headers: ohead, body: JSON.stringify({ confirm: total + 99, operator: "テスト実施者" }) }).then(r => ({ s: r.status }));
+    headers: ohead, body: JSON.stringify({ confirm: total + 99, operator: "ops-01" }) }).then(r => ({ s: r.status }));
   assert.strictEqual(badCount.s, 400, "件数不一致は400");
   // 正しく削除 → ok + backup名 + 監査
   const ok = await fetch(BASE + "/api/owner/players/delete-all", { method: "POST",
-    headers: ohead, body: JSON.stringify({ confirm: total, operator: "テスト実施者" }) }).then(r => r.json());
+    headers: ohead, body: JSON.stringify({ confirm: total, operator: "ops-01" }) }).then(r => r.json());
   assert.ok(ok.ok && ok.deleted === total && ok.backup, "削除成功+自動バックアップ: " + JSON.stringify(ok));
   const after = await fetch(BASE + "/api/players", { headers: akhead }).then(r => r.json());
   assert.strictEqual(after.length, 0, "全選手が消えた");
-  // 監査ログに players_delete_all + 実施者名
+  // 監査ログに players_delete_all + 担当コード
   const audit = await fetch(BASE + "/api/owner/audit", { headers: { "X-Owner-Key": OKEY } }).then(r => r.json());
   const ev = (audit.log || []).find(e => e.action === "players_delete_all");
-  assert.ok(ev && ev.operator === "テスト実施者", "監査に削除と実施者が記録: " + JSON.stringify(ev));
+  assert.ok(ev && ev.operator === "ops-01", "監査に削除と担当コードが記録: " + JSON.stringify(ev));
 });
 
 test("(t) 機密.dbの送出は共有キャッシュ禁止(no-store)で硬化されている", async () => {
@@ -495,7 +510,8 @@ test("(v) プッシュ/マイ選手 管理: 一覧(名前付き)・個別/一括
   const pid = p.id || (p.player && p.player.id);
   assert.ok(pid, "選手作成: " + JSON.stringify(p).slice(0, 80));
   const sub = { endpoint: "https://fcm.googleapis.com/fcm/send/smoke-" + pid, keys: { p256dh: "BTestKeyNotReal0000000000000000000000000000000000000000000000000000000000000000000000000", auth: "authtest0000000000000000" } };
-  const subRes = await fetch(BASE + "/api/push/subscribe", { method: "POST", headers: jhead, body: JSON.stringify({ player_id: pid, subscription: sub }) }).then(r => r.json());
+  const cookie = await playerSession(pid);
+  const subRes = await fetch(BASE + "/api/push/subscribe", { method: "POST", headers: { ...jhead, Cookie: cookie, Origin: BASE }, body: JSON.stringify({ subscription: sub }) }).then(r => r.json());
   assert.ok(subRes.ok, "購読登録: " + JSON.stringify(subRes));
   // 一覧に名前付きで出る
   const listed = await fetch(BASE + "/api/admin/push/players", { headers: akhead }).then(r => r.json());
@@ -697,4 +713,51 @@ test("(aa) 罫線ドラッグ→シード昇格の配線: draft→ops(set_entry_
   const st = await fetch(BASE + `/api/tournaments/${t.id}/bracket/sheet?event=` + encodeURIComponent(EV),
     { headers: akhead }).then(r => r.json());
   assert.ok((st.unplaced || []).length === 1, "押し出された選手が未配置トレイに残る(消えない)");
+});
+
+test("(ab) 選手本人セッション: 他人のID直打ちを拒否し、監査ログに確認コードを残さない", async () => {
+  const p1 = await adminPost("/api/players", { name: "本人 一郎", team: "合成クラブ" });
+  const p2 = await adminPost("/api/players", { name: "他人 二郎", team: "合成クラブ" });
+  assert.ok(p1.id && p2.id, "合成選手を作成");
+  const issued = await adminPost(`/api/players/${p1.id}/access-code`, {});
+  assert.ok(issued.code && issued.code.length >= 12, "本人確認コードは発行時だけ返る");
+  const login = await fetch(BASE + "/api/auth/player/session", {
+    method: "POST", headers: jhead,
+    body: JSON.stringify({ player_id: p1.id, code: issued.code }),
+  });
+  assert.strictEqual(login.status, 200, "正しい選手番号とコードでログイン");
+  const cookie = (login.headers.get("set-cookie") || "").split(";")[0];
+  assert.match(cookie, /^ktta_session=/, "HttpOnlyセッションCookieを発行");
+  const mine = await fetch(BASE + `/api/player/me/live-status?player_id=${encodeURIComponent(p2.id)}`, { headers: { Cookie: cookie } });
+  assert.strictEqual(mine.status, 200, "本人セッションは自分の状態を取得");
+  const mineBody = await mine.json();
+  assert.strictEqual(mineBody.player.id, p1.id, "クエリの他人IDを無視し本人だけ返す");
+  const anon = await fetch(BASE + "/api/player/me/live-status");
+  assert.strictEqual(anon.status, 401, "Cookie無しの本人APIは拒否");
+  const old = await fetch(BASE + `/api/public/players/${p2.id}/live-status`);
+  assert.strictEqual(old.status, 410, "旧ID直打ちURLは廃止");
+  const audit = await fetch(BASE + "/api/owner/access-audit?limit=50", { headers: { "X-Owner-Key": "smoke-owner-key-2468" } }).then(r => r.json());
+  const text = JSON.stringify(audit.log || []);
+  assert.ok(text.includes("/api/player/me/live-status"), "本人データ読取を監査記録");
+  assert.ok(!text.includes(issued.code), "監査ログに本人確認コードを残さない");
+  assert.ok(!text.includes("本人 一郎"), "監査ログに氏名を残さない");
+});
+
+test("(ac) 非公開大会と公開選手名簿はURL直打ちでも取得できない", async () => {
+  const privateTournament = await fetch(BASE + "/api/tournaments", { method: "POST", headers: akhead,
+    body: JSON.stringify({ name: "非公開検証", date: "2027-01-01" }) }).then(r => r.json());
+  assert.ok(privateTournament.id, "非公開大会を作成");
+  const hidden = await fetch(BASE + `/api/public/tournaments/${privateTournament.id}/matches`);
+  assert.strictEqual(hidden.status, 404, "未公開大会の試合はID直打ちでも404");
+  const people = await fetch(BASE + "/api/public/players?search=%E5%B1%B1%E7%94%B0");
+  assert.strictEqual(people.status, 404, "公開選手検索は停止");
+  const cross = await fetch(BASE + "/api/public/matches");
+  assert.strictEqual(cross.status, 404, "公開横断試合検索は停止");
+
+  const form = await fetch(BASE + `/entry/${privateTournament.id}`);
+  assert.strictEqual(form.status, 404, "受付前の申込フォームは大会ID直打ちでも404");
+  const formConfig = await fetch(BASE + `/api/tournaments/${privateTournament.id}/entry-form-config`);
+  assert.strictEqual(formConfig.status, 404, "受付前のフォーム設定は大会ID直打ちでも404");
+  const adminPreview = await fetch(BASE + `/entry/${privateTournament.id}`, { headers: akhead });
+  assert.strictEqual(adminPreview.status, 200, "管理者だけは受付前フォームをプレビューできる");
 });

@@ -83,7 +83,7 @@ test("マージ: 全参照テーブルが survivor へ付け替わり dup はリ
   raw.prepare(`INSERT INTO player_requests (id, coach_id, player_id, type) VALUES (?,?,?,?)`)
     .run(uid2(), "co1", dp.id, "edit");
 
-  const r = db.mergePlayers(sv.id, dp.id, { operator: "テスト担当" });
+  const r = db.mergePlayers(sv.id, dp.id, { operator: "ops-merge" });
   assert.ok(r.ok && r.merge_id, "マージ成功: " + JSON.stringify(r.error || ""));
 
   // 全列で dup 参照ゼロ(漏れ検知)
@@ -101,7 +101,7 @@ test("マージ: 全参照テーブルが survivor へ付け替わり dup はリ
   assert.strictEqual(raw.prepare(`SELECT team FROM players WHERE id=?`).get(sv.id).team, "凍結クラブ");
   // 台帳
   const log = raw.prepare(`SELECT * FROM player_merges WHERE id = ?`).get(r.merge_id);
-  assert.strictEqual(log.operator, "テスト担当");
+  assert.strictEqual(log.operator, "ops-merge");
   assert.ok(JSON.parse(log.refs_json)["matches.winner_id"].length === 1);
 
   // リダイレクト解決と一覧除外
@@ -119,7 +119,7 @@ test("マージ: 全参照テーブルが survivor へ付け替わり dup はリ
   assert.ok(db.deletePlayer(sv.id).error, "リダイレクト先は削除不可");
 
   // ── undo: 台帳の行だけが戻り、survivor 固有の行は不動 ──
-  const u = db.unmergePlayers(r.merge_id, { operator: "取消担当" });
+  const u = db.unmergePlayers(r.merge_id, { operator: "ops-undo" });
   assert.ok(u.ok, "取り消し成功: " + JSON.stringify(u.error || ""));
   assert.strictEqual(countRef("matches", "winner_id", dp.id), 1, "dup の勝ち試合が戻る");
   assert.strictEqual(raw.prepare(`SELECT winner_id FROM matches WHERE id=?`).get(svOwnMatch).winner_id,
@@ -158,14 +158,14 @@ test("チェーン C→B→A: 旧IDは最終先に解決され、取り消しは
 test("マージ履歴: listPlayerMerges が新しい順に選手名付きで返す", () => {
   const X = mkPlayer("履歴花子", "X");
   const Y = mkPlayer("履歴花子", "Y");
-  const r = db.mergePlayers(X.id, Y.id, { operator: "記録係" });
+  const r = db.mergePlayers(X.id, Y.id, { operator: "ops-history" });
   const list = db.listPlayerMerges(10);
   assert.ok(list.length >= 1);
   const top = list[0];
   assert.strictEqual(top.id, r.merge_id, "最新のマージが先頭");
   assert.strictEqual(top.survivor_name, "履歴花子");
   assert.strictEqual(top.dup_name, "履歴花子");
-  assert.strictEqual(top.operator, "記録係");
+  assert.strictEqual(top.operator, "ops-history");
   assert.strictEqual(top.undone_at, "");
 });
 

@@ -153,21 +153,19 @@
 <script>
 (function () {
   "use strict";
-  var params = new URLSearchParams(location.search);
+  // 新規QRは # の後ろに認証情報を置く。旧リンクも移行期間だけ ? を読めるが、
+  // 初回Cookie交換後はどちらも history.replaceState で消える。
+  var params = new URLSearchParams((location.hash || "").replace(/^#/, "") || location.search);
   // 認証モード: 共有トークン(t) / コート別(tid+court+ct, 試験運用 #229)
   var TOKEN = params.get("t") || "";
   var TID = params.get("tid") || "", COURT = params.get("court") || "", CT = params.get("ct") || "";
   var PERCOURT = !!(TID && COURT && CT);
-  var HAS_AUTH = !!(TOKEN || PERCOURT);
+  var HAS_AUTH = false;
   function authQS() {
-    return PERCOURT
-      ? ("tid=" + encodeURIComponent(TID) + "&court=" + encodeURIComponent(COURT) + "&ct=" + encodeURIComponent(CT))
-      : ("t=" + encodeURIComponent(TOKEN));
+    return "";
   }
   function authBody(b) {
-    b = b || {};
-    if (PERCOURT) { b.tid = TID; b.court = COURT; b.ct = CT; } else { b.t = TOKEN; }
-    return b;
+    return b || {};
   }
   var root = document.getElementById("root");
   var toastEl = document.getElementById("toast");
@@ -177,10 +175,8 @@
   var lastMatches = [];
   var editingMid = 0;     // 入力中(確認パネルを開いている)試合id。自動更新の再描画から保護 (#240)
   var latestState = null; // 直近に取得した状態 (編集終了後の追いつき描画に使用)
-  // 会場パスコード (#261): 要求ONの大会で、報告前に一度だけ入力。端末に記憶し以後省略。
-  var PASSKEY = "ktta_ref_pass_" + (TOKEN || (TID + "_" + COURT));
+  // 会場パスコードはページを閉じれば破棄する。localStorageへ保存しない。
   var passcode = "";
-  try { passcode = localStorage.getItem(PASSKEY) || ""; } catch (e) {}
   // オフライン送信キュー (#231): 回線断でも報告を貯め、復旧時に自動送信 (op_idで冪等)
   var QKEY = "ktta_ref_queue_v1";
   function loadQ() { try { return JSON.parse(localStorage.getItem(QKEY) || "[]"); } catch (e) { return []; } }
@@ -258,8 +254,7 @@
     if (nameEl) nameEl.textContent = (t.name || "大会") + (PERCOURT ? "　【コート" + COURT + " 専用】" : "");
     root.innerHTML = '<div class="pass-gate">'
       + '<h2>会場パスコードを入力</h2>'
-      + '<p>本部から会場で伝えられた数字を入力してください。<br>'
-      + '同じ端末では、次回から自動で省略されます。</p>'
+      + '<p>本部から会場で伝えられた数字を入力してください。</p>'
       + '<input id="passInput" class="pass-input" inputmode="numeric" autocomplete="off" '
       +   'maxlength="12" placeholder="パスコード">'
       + '<button id="passBtn" class="b b-ok">入力する</button>'
@@ -279,7 +274,6 @@
           btn.disabled = false; btn.textContent = "入力する";
           if (res.ok && res.j && res.j.ok) {
             passcode = code;
-            try { localStorage.setItem(PASSKEY, code); } catch (e) {}
             toast("確認しました。", "ok");
             load();
           } else {
@@ -524,7 +518,7 @@
     document.getElementById("send-" + m.id).onclick = function () { submit(m, slot); };
   }
 
-  // 結果送信 (認証は body に含める: 共有=t / コート別=tid+court+ct, 会場パスコード=passcode #261)
+  // 結果送信はHttpOnly審判セッションで認証する。会場パスコードは保存せず、このタブのメモリだけに置く。
   function sendFinish(mid, body) {
     var payload = authBody(Object.assign({}, body));
     if (passcode) payload.passcode = passcode;   // #261 会場パスコードを同送
@@ -573,7 +567,7 @@
       // 会場パスコード未確定で弾かれた場合 (#261): 破棄せず保持し、再入力後に再送
       if (res && res.status === 403 && res.j && res.j.passcode_error) {
         flushing = false;
-        passcode = ""; try { localStorage.removeItem(PASSKEY); } catch (e) {}
+        passcode = "";
         load();   // → パスコード入力ゲートを表示
         return;
       }
@@ -652,7 +646,7 @@
         if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = "この結果で報告"; }
         // 会場パスコードが違う/変更された (#261): 記憶を消して再入力ゲートへ
         if (res.status === 403 && res.j && res.j.passcode_error) {
-          passcode = ""; try { localStorage.removeItem(PASSKEY); } catch (e) {}
+          passcode = "";
           toast("会場パスコードが正しくありません。再入力してください。", "err");
           load();
           return;
@@ -679,7 +673,7 @@
     flushQueue();  // 取得のついでに貯めた報告を送信
     if (loading) return;
     loading = true;
-    fetch("/api/ref/state?" + authQS()).then(function (r) {
+    fetch("/api/ref/state", { credentials: "same-origin" }).then(function (r) {
       setNet(true);
       if (r.status === 403) { return r.json().then(function (j) { showError((j && j.error) || "リンクが無効です。"); throw "stop"; }); }
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -701,9 +695,27 @@
 
   window.addEventListener("online", function () { setNet(true); load(); });
   window.addEventListener("offline", function () { setNet(false); });
+  function boot() {
+    if (!(TOKEN || PERCOURT)) { showError("リンクにトークンがありません。本部から配布されたリンクを使ってください。"); return; }
+    var bootstrap = PERCOURT
+      ? { tid: TID, court: COURT, ct: CT }
+      : { t: TOKEN };
+    fetch("/api/ref/session", {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bootstrap),
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (r) {
+        if (!r.ok) { showError((r.j && r.j.error) || "リンクが無効です。"); return; }
+        HAS_AUTH = true;
+        TOKEN = ""; TID = ""; CT = "";
+        // URL、履歴、共有時の参照元に能力トークンを残さない。
+        try { history.replaceState({}, document.title, location.pathname); } catch (e) {}
+        load();
+      }).catch(function () { showError("認証に失敗しました。通信を確認して再読み込みしてください。"); });
+  }
   setNet(navigator.onLine);
-  load();
-  setInterval(load, 12000);  // 自動更新 (コートの入れ替わりを反映)
+  boot();
+  setInterval(function() { if (HAS_AUTH) load(); }, 12000);  // セッション交換後だけ自動更新
 })();
 </script>
 </body>

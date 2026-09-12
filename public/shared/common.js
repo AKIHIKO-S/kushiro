@@ -95,13 +95,11 @@
 
   // ── APIクライアント ──
   const api = {
-    adminKey: localStorage.getItem("tt_admin_key") || "",
-    setAdminKey(k) { this.adminKey = k; localStorage.setItem("tt_admin_key", k); },
+    // 値は認証済み状態だけを表すマーカー。鍵・パスワード・トークンは保持しない。
+    adminKey: "",
     baseUrl: "",
     _headers() {
-      const h = { "Content-Type": "application/json" };
-      if (this.adminKey) h["X-Admin-Key"] = this.adminKey;
-      return h;
+      return { "Content-Type": "application/json" };
     },
     onConflict: null,   // 同時編集の衝突(409 conflict)を受けた時にアプリが差し込むフック
     async _json(r) {
@@ -113,30 +111,43 @@
       return j;
     },
     async get(url) {
-      // 管理キーを付与 (ADMIN_KEY 設定時に /api/admin/* 等の GET が 401 になる不具合を修正)。
-      // 閲覧/審判ページは adminKey 未設定なので X-Admin-Key は付かない (_headers 参照)。
-      const r = await fetch(this.baseUrl + url, { headers: this._headers() });
+      const r = await fetch(this.baseUrl + url, { headers: this._headers(), credentials: "same-origin" });
       return r.json();
     },
     async post(url, data) {
       const r = await fetch(this.baseUrl + url, {
-        method: "POST", headers: this._headers(),
+        method: "POST", headers: this._headers(), credentials: "same-origin",
         body: JSON.stringify(data || {})
       });
       return this._json(r);
     },
     async put(url, data) {
       const r = await fetch(this.baseUrl + url, {
-        method: "PUT", headers: this._headers(),
+        method: "PUT", headers: this._headers(), credentials: "same-origin",
         body: JSON.stringify(data || {})
       });
       return this._json(r);
     },
     async del(url) {
       const r = await fetch(this.baseUrl + url, {
-        method: "DELETE", headers: this._headers()
+        method: "DELETE", headers: this._headers(), credentials: "same-origin"
       });
       return this._json(r);
+    },
+    async loginAdmin(key, operator) {
+      const r = await fetch(this.baseUrl + "/api/auth/admin/session", {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+        body: JSON.stringify({ key: key || "", operator: operator || "" }),
+      });
+      const j = await this._json(r);
+      this.adminKey = r.ok && j && j.ok ? "session" : "";
+      return j;
+    },
+    async refreshSession() {
+      const r = await fetch(this.baseUrl + "/api/auth/session", { credentials: "same-origin" });
+      const j = await r.json().catch(() => ({}));
+      this.adminKey = j && (j.principal_type === "admin" || j.principal_type === "owner") ? "session" : "";
+      return j;
     },
   };
 

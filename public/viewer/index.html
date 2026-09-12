@@ -3355,22 +3355,21 @@ const EN = {
 // ═══════════════════════════════════════════════════════
 // ═══ 監督・顧問モード (#285) ════════════════════════════
 const CO = {
- code: "", coach: null,
+ coach: null,
  _es: null, _sseLastMsg: 0,   // 進行SSE (#264 パターン)
- _hdr() { return { "Content-Type": "application/json", "X-Coach-Code": CO.code }; },
- async _get(url) { try { return await fetch(url, { headers: { "X-Coach-Code": CO.code } }).then(r => r.json()); } catch (e) { return {}; } },
- async _post(url, body) { try { return await fetch(url, { method: "POST", headers: CO._hdr(), body: JSON.stringify(body || {}) }).then(r => r.json()); } catch (e) { return {}; } },
- async _del(url) { try { return await fetch(url, { method: "DELETE", headers: { "X-Coach-Code": CO.code } }).then(r => r.json()); } catch (e) { return {}; } },
+ _hdr() { return { "Content-Type": "application/json" }; },
+ async _get(url) { try { return await fetch(url, { credentials:"same-origin" }).then(r => r.json()); } catch (e) { return {}; } },
+ async _post(url, body) { try { return await fetch(url, { method: "POST", headers: CO._hdr(), credentials:"same-origin", body: JSON.stringify(body || {}) }).then(r => r.json()); } catch (e) { return {}; } },
+ async _del(url) { try { return await fetch(url, { method: "DELETE", credentials:"same-origin" }).then(r => r.json()); } catch (e) { return {}; } },
  async render() {
  const main = document.getElementById("coachMain"); if (!main) return;
  // 同時に複数回呼ばれても最新の描画だけを反映する (タブ切替→hashchangeで二重起動し
  // パネルが重複するのを防止)。クリアは await の後に行う。
  const gen = (CO._renderGen = (CO._renderGen || 0) + 1);
- if (!CO.code) CO.code = localStorage.getItem("kttaCoachCode") || "";
- if (CO.code && !CO.coach) {
+ if (!CO.coach) {
  const me = await CO._get("/api/coach/me");
  if (gen !== CO._renderGen) return;
- if (me && me.id) CO.coach = me; else { CO.code = ""; localStorage.removeItem("kttaCoachCode"); }
+ if (me && me.id) CO.coach = me;
  }
  const content = CO.coach ? await CO._panel() : CO._loginCard();
  if (gen !== CO._renderGen) return;   // 新しい描画が開始されていたら破棄
@@ -3382,9 +3381,9 @@ const CO = {
  inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
  const go = async () => {
  const code = inp.value.trim().toLowerCase(); if (!code) return toast("コードを入力してください", "err");
- const r = await fetch("/api/coach/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) }).then(x => x.json()).catch(() => ({}));
+ const r = await fetch("/api/auth/coach/session", { method: "POST", headers: { "Content-Type": "application/json" }, credentials:"same-origin", body: JSON.stringify({ code }) }).then(x => x.json()).catch(() => ({}));
  if (!r.ok) return toast(r.error || "コードが確認できませんでした。配布された監督コードをもう一度確認して入力してください", "err");
- CO.code = code; CO.coach = r.coach; localStorage.setItem("kttaCoachCode", code); CO.render();
+ CO.coach = r.coach; CO.render();
  };
  return h("div", { className: "card", style: { maxWidth: "460px", margin: "8px auto", padding: "18px" } },
  h("div", { className: "card-title", style: { marginBottom: "4px" } }, "監督・顧問ログイン"),
@@ -3404,7 +3403,7 @@ const CO = {
  h("div", {}, h("div", { className: "card-title", style: { fontSize: "17px" } }, CO.coach.name + "（監督・顧問）"),
  CO.coach.member_name ? h("div", { className: "text-xs", style: { color: "#0f766e", fontWeight: 700 } }, (CO.coach.member_role || "顧問") + "：" + CO.coach.member_name + " として利用中") : null,
  h("div", { className: "text-sm text-sub" }, "マイ選手 " + players.length + " / " + cap + " 人")),
- h("button", { className: "btn btn-sm btn-ghost", onClick: () => { CO.code = ""; CO.coach = null; localStorage.removeItem("kttaCoachCode"); CO._stopDash(); CO.render(); } }, "ログアウト")));
+ h("button", { className: "btn btn-sm btn-ghost", onClick: async () => { await fetch("/api/auth/session", { method:"DELETE", credentials:"same-origin" }); CO.coach = null; CO._stopDash(); CO.render(); } }, "ログアウト")));
  // 本部からのお知らせ (#290)
  const anns = (ann && ann.announcements) || [];
  if (anns.length) {
@@ -3498,7 +3497,7 @@ const CO = {
  const w = window.open("", "_blank");
  if (w) { try { w.document.write("<!doctype html><meta charset='utf-8'><title>読み込み中</title><body style='font-family:sans-serif;padding:24px;color:#475569'>結果まとめを作成中です...</body>"); } catch (e) {} }
  try {
- const html = await fetch("/api/coach/results?tournament_id=" + encodeURIComponent(tid), { headers: { "X-Coach-Code": CO.code } }).then(r => r.text());
+ const html = await fetch("/api/coach/results?tournament_id=" + encodeURIComponent(tid), { credentials:"same-origin" }).then(r => r.text());
  if (w) { w.document.open(); w.document.write(html); w.document.close(); }
  } catch (e) { if (w) w.close(); toast("出力に失敗しました", "err"); }
  } }, "印刷 / 保存 (A4)")));
@@ -4195,9 +4194,13 @@ const MP = {
  _sseLastMsg: 0,      // 直近SSEメッセージ時刻 (ポーリング省略判定用)
 
  async init() {
- MP.playerId = localStorage.getItem("tt_player_id") || null;
  if (MP.poller) clearInterval(MP.poller);
-
+ MP.poller = null;
+ try {
+ const session = await api.get("/api/auth/session");
+ MP.playerId = session?.authenticated && session?.principal_type === "player"
+   ? session.principal_id : null;
+ } catch (_) { MP.playerId = null; }
  if (!MP.playerId) {
  MP.renderRegister();
  } else {
@@ -4211,81 +4214,57 @@ const MP = {
  },
 
  // ── 選手番号登録画面 ──
- async renderRegister(prefilled) {
+ async renderRegister() {
  const main = document.getElementById("myportalMain");
  clear(main);
 
  const card = h("div", { className: "card fi" },
  h("div", { className: "card-head" },
- h("div", { className: "card-title" }, "マイ番号を登録"),
+ h("div", { className: "card-title" }, "マイページにログイン"),
  ),
  h("div", { className: "text-sm text-sub mb-3" },
- "あなたが大会にエントリーしているなら、自分の名前を検索して選んでください。"),
+ "本部から受け取った選手番号と本人確認コードを入力してください。"),
  h("div", { className: "field" },
- h("label", { className: "field-label" }, "選手名・所属で検索"),
- h("input", { className: "input", id: "mpSearchInput",
- placeholder: "例: 山田 太郎、高校", autocomplete: "off",
- value: prefilled || "" }),
+ h("label", { className: "field-label" }, "選手番号"),
+ h("input", { className: "input", id: "mpPlayerId",
+ placeholder: "例: 123456", autocomplete: "username", inputMode: "numeric" }),
  ),
- h("div", { id: "mpSearchResults" }),
+ h("div", { className: "field" },
+ h("label", { className: "field-label" }, "本人確認コード"),
+ h("input", { className: "input", id: "mpAccessCode", type: "password",
+ placeholder: "本部から発行されたコード", autocomplete: "current-password" }),
+ ),
+ h("button", { className: "btn btn-ok", type: "button", id: "mpLoginBtn" }, "ログイン"),
  h("div", { className: "text-xs text-sub mt-3" },
- "ヒント: 一度登録すると、このスマホで自動的にあなたの試合状況が表示されます。"),
+ "コードが分からない場合は、大会本部に再発行を依頼してください。"),
  );
  main.appendChild(card);
-
- const input = document.getElementById("mpSearchInput");
- const results = document.getElementById("mpSearchResults");
- let timer;
- input.addEventListener("input", () => {
- clearTimeout(timer);
- timer = setTimeout(async () => {
- const q = input.value.trim();
- clear(results);
- if (!q) return;
- const players = await api.get("/api/public/players?search=" + encodeURIComponent(q));
- if (!players.length) {
- results.appendChild(h("div", { className: "empty-state" },
- "該当する選手が見つかりませんでした。姓と名の間の空白を外す・ひらがなで試すなど、表記を変えてお試しください"));
- return;
- }
- players.slice(0, 10).forEach(p => {
- results.appendChild(h("div", {
- className: "player-card",
- "aria-label": (p.name || "選手") + " を選択",
- ...V._kbtn(() => MP.selectPlayer(p.id, p.name)),
- style: { marginBottom: "6px" }
- },
- h("div", { className: "player-avatar " +
- (p.gender === "female" ? "female" : "") },
- (p.name || "?")[0]),
- h("div", { className: "player-info" },
- h("div", { className: "player-name" }, p.name),
- h("div", { className: "player-meta" },
- p.team || "",
- p.furigana ? " / " + p.furigana : "")),
- ));
- });
- }, 250);
- });
- input.focus();
- },
-
- async selectPlayer(id, name) {
- if (!confirm(`「${name}」として登録します。よろしいですか？`)) return;
- MP.playerId = id;
- localStorage.setItem("tt_player_id", id);
- // ブラウザ通知の許可を要求
+ const login = async () => {
+ const playerId = document.getElementById("mpPlayerId")?.value.trim();
+ const code = document.getElementById("mpAccessCode")?.value.trim();
+ if (!playerId || !code) return toast("選手番号と本人確認コードを入力してください。", "err");
+ const btn = document.getElementById("mpLoginBtn");
+ if (btn) { btn.disabled = true; btn.textContent = "確認中…"; }
+ try {
+ const r = await api.post("/api/auth/player/session", { player_id: playerId, code });
+ if (r?.error) throw new Error(r.error);
  if ("Notification" in window && Notification.permission === "default") {
- try { await Notification.requestPermission(); } catch {}
+ try { await Notification.requestPermission(); } catch (_) {}
  }
- MP.notifEnabled = ("Notification" in window) && Notification.permission === "granted";
- if (MP.notifEnabled) MP.setupPush();
  await MP.init();
+ } catch (e) {
+ toast(e.message || "選手番号または本人確認コードを確認してください。", "err");
+ if (btn) { btn.disabled = false; btn.textContent = "ログイン"; }
+ }
+ };
+ document.getElementById("mpLoginBtn")?.addEventListener("click", login);
+ document.getElementById("mpAccessCode")?.addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+ document.getElementById("mpPlayerId")?.focus();
  },
 
- logout() {
+ async logout() {
  if (!confirm("登録を解除しますか？")) return;
- localStorage.removeItem("tt_player_id");
+ try { await api.del("/api/auth/session"); } catch (_) {}
  MP.playerId = null;
  if (MP.poller) clearInterval(MP.poller);
  MP._closeOpsStream();
@@ -4295,10 +4274,9 @@ const MP = {
  async fetch() {
  if (!MP.playerId) return;
  try {
- const r = await api.get("/api/public/players/" + MP.playerId + "/live-status");
+ const r = await api.get("/api/player/me/live-status");
  if (r.error) {
- // 選手削除等
- localStorage.removeItem("tt_player_id");
+ // セッション失効・選手削除等
  MP.playerId = null;
  return MP.init();
  }
@@ -4399,7 +4377,7 @@ const MP = {
  });
  }
  await api.post("/api/push/subscribe",
- { player_id: MP.playerId, subscription: sub.toJSON ? sub.toJSON() : sub });
+ { subscription: sub.toJSON ? sub.toJSON() : sub });
  MP._pushReady = true;
  return true;
  } catch (e) { console.warn("push setup failed", e); return false; }
