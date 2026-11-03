@@ -13,7 +13,7 @@
 | 申込者 | 申込番号トークン(SHA-256ハッシュ保存・平文返却のみ)→HttpOnlyセッション | **自分の申込のみ**閲覧・締切前の修正(電話/メールは伏せ字表示・空欄=変更なし、生年月日は返さない、締切後は連絡先のみ) |
 | 公開(viewer) | なし | 対戦結果・順位表など PII を除いた閲覧データのみ |
 
-- 申込の修正履歴(`entry_changes`)には連絡先の値を残さず項目名のみ。入金メモ(`pay_note`)は申込PIIの purge 対象。
+- 申込の修正履歴(`entry_changes`)には連絡先の値を残さず項目名のみ。過去の入金メモ(`pay_note`、2026-11-03で入力機能は廃止)は申込PIIの purge 対象。
 - 未認証応答は `sanitizeTournamentPublic` で `referee_token`/`passcode`/`entry_gas_url` を除去。
 - 公開順位表(団体リーグ)の `tie_results` は必要フィールドのみ射影し個人名を漏らさない。
 - 出力は `lib/text.js` で escape、CSP・`X-Robots-Tag: noindex`。アップロードは xlsx/csv/pdf/画像のみ(SVG除外)・20MB。

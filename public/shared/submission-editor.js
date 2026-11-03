@@ -69,7 +69,7 @@
     var p = "e" + idx + ".";
     var L = view.form.labels || {};
     var head = '<div class="se-ehead"><b>' + esc(e.event) + "</b>" +
-      '<span class="se-fee">' + (e.cancelled ? "取消" : yen(e.fee)) + "</span></div>";
+      '<span class="se-fee">' + (e.cancelled ? "取消" : "") + "</span></div>";
     if (!e.editable) {
       return '<div class="se-entry se-locked">' + head + '<div class="se-hint">' +
         esc(e.lock_reason || (e.cancelled ? "取り消し済みです" : "変更できません")) + "</div></div>";
@@ -80,7 +80,7 @@
     var body = "";
     if (same.length > 1) {
       body += input(p + "event", "種目", e.event, {
-        options: same.map(function (x) { return { value: x.name, label: x.name + "（" + yen(x.fee) + (x.fee_unit === "person" ? "/人" : "") + "）" }; }),
+        options: same.map(function (x) { return { value: x.name, label: x.name }; }),
         hint: "同じ形式の種目にだけ変更できます。形式が違う種目は、取り消して申し込み直してください",
       });
     }
@@ -112,7 +112,6 @@
     return '<div class="se-entry">' + head + body + "</div>";
   }
 
-  function feeText(ev) { return yen(ev.fee) + (ev.fee_unit === "person" ? "/人" : ""); }
 
   // 追加する種目1つぶんの入力欄。キーは a{n}. で始め、既存の出場(e{n}.)と混ざらないようにする。
   function addBlock(view, ev, n) {
@@ -139,7 +138,7 @@
       body += playerExtra(p + "x.", view, {});
     }
     return '<div class="se-entry se-new" data-addblock="' + n + '" data-event="' + esc(ev.name) + '">' +
-      '<div class="se-ehead"><b>' + esc(ev.name) + '<span class="se-tag">追加</span></b><span class="se-fee">' + feeText(ev) + "</span></div>" +
+      '<div class="se-ehead"><b>' + esc(ev.name) + '<span class="se-tag">追加</span></b></div>' +
       body + '<button type="button" class="se-rm" data-addrm="' + n + '">この追加をやめる</button></div>';
   }
 
@@ -202,8 +201,8 @@
     if (addable.length) {
       html += '<div data-addlist></div>' + '<div class="se-fld se-addpick"><label>種目を追加する</label><select data-addpick>' +
         '<option value="">追加する種目を選んでください</option>' +
-        addable.map(function (x) { return '<option value="' + esc(x.name) + '">' + esc(x.name) + "（" + feeText(x) + "）</option>"; }).join("") +
-        "</select><div class=\"se-hint\">選んだ種目の入力欄が上に出ます。参加料は保存したときの料金で付きます。</div></div>";
+        addable.map(function (x) { return '<option value="' + esc(x.name) + '">' + esc(x.name) + "</option>"; }).join("") +
+        "</select><div class=\"se-hint\">選んだ種目の入力欄が上に出ます。</div></div>";
     } else {
       html += '<div class="se-hint">' + (admin ? "追加できる種目がありません（組合せ作成後の種目は「表を編集」で行ってください）。"
         : "締切後・組合せ作成後は種目を追加できません。大会本部へご連絡ください。") + "</div>";
@@ -216,7 +215,7 @@
       (view.options || []).forEach(function (o) { q[o.key] = o.qty; });
       html += '<section class="se-sec"><h4>お弁当・懇親会など</h4>';
       html += defs.map(function (d) {
-        return input("o." + d.key, d.label + "（" + yen(d.price) + "/" + (d.unit || "") + "）", q[d.key] || 0,
+        return input("o." + d.key, d.label + (d.unit ? "（" + d.unit + "）" : ""), q[d.key] || 0,
           { type: "number", min: 0, max: d.max || 999, disabled: !view.can_edit_options });
       }).join("");
       if (!view.can_edit_options) html += '<div class="se-hint">' + esc(view.closed_reason || "受付が終わっています") + "。数の変更は大会本部へご連絡ください。</div>";

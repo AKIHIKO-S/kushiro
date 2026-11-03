@@ -1,10 +1,10 @@
-// 申込の後日修正(申込者・本部)と、参加料の集計・入金記録・料金改定の回帰テスト。
+// 申込の後日修正(申込者・本部)と、別団体からの重複申込の注意マーカーの回帰テスト。
 //
 // 守らせる不変条件:
 //   ① 申込用紙にある項目(連絡先・選手・区分/種目・団体メンバー・オプション)は後から直せる
 //   ② 申込者は締切前・組合せ作成前だけ。本部は締切後も直せるが、組合せ作成後は表の側で直す
 //   ③ 料金は「申込時の金額で固定」。種目・区分・人数が変わった行だけ、その時点の料金で付け直す
-//   ④ 料金を後から変えても既存の申込は変わらず、差額として見え、本部の一括適用で初めて変わる
+//   ④ 別の団体から同じ人物・同じ組が同じ種目に申し込まれたら注意の印を出す(入金・料金改定は扱わない)
 //   ⑤ 履歴には誰が・何を変えたかが残り、連絡先の値そのものは残さない
 //   ⑥ シートへ送る形は古い GAS に新規申込として二重登録されない形(最上位に team_name を置かない)
 // 実行: node --test test/entry-edit-fee.test.js
@@ -195,46 +195,62 @@ test("他人の申込の出場は指定できない", () => {
   assert.match(ng.error, /含まれない/);
 });
 
-test("参加料の集計: 請求額・取消・入金・未収", () => {
-  const { t, sid, byEv } = setup();
-  db.editSubmission(sid, { entries: [{ entrant_id: byEv("男子ダブルス").entry_id, cancel: true }] });
-  let f = db.getFeeSummary(t.id);
-  assert.strictEqual(f.totals.submissions, 1);
-  assert.strictEqual(f.totals.billed, 5300);
-  assert.strictEqual(f.totals.cancelled, 1);
-  assert.strictEqual(f.totals.cancelled_amount, 1000);
-  assert.strictEqual(f.totals.outstanding, 5300);
-  const p = db.setSubmissionPayment(sid, { status: "partial", amount: 3000, note: "当日受付" });
-  assert.ok(!p.error, p.error);
-  f = db.getFeeSummary(t.id);
-  assert.strictEqual(f.totals.paid, 3000);
-  assert.strictEqual(f.totals.outstanding, 2300);
-  assert.strictEqual(f.rows[0].pay_status_label, "一部入金");
-  const full = db.setSubmissionPayment(sid, { status: "paid" });
-  assert.strictEqual(full.paid_amount, 5300, "入金済で額を省けば請求額で記録");
-  assert.strictEqual(db.getFeeSummary(t.id).totals.outstanding, 0);
-  assert.match(db.setSubmissionPayment(sid, { status: "x" }).error, /入金状況/);
-  const ev = f.by_event.find(r => r.event === "団体戦");
-  assert.strictEqual(ev.amount, 3000);
+// 別団体から同じ人物・組の注意マーカー(オーナー要望 2026-11-03)。同じ団体の二重申込は従来の重複検出が受け持つ。
+function otherTeam(t, team, entries) {
+  const r = db.createTeamEntry(t.id, { team_name: team, contact_name: "別担当", contact_tel: "0154-99-0000", entries },
+    "op-" + Math.random().toString(36).slice(2));
+  assert.ok(!r.error, r.error);
+  return r;
+}
+const crossOf = (t, name, ev) => db.getEntries(t.id).filter(e => e.entry_event === ev && (e.p1_name || "").replace(/\s/g, "") === name.replace(/\s/g, ""));
+
+test("別団体の同一人物: 漢字とふりがなが一致=強い印、ふりがな欠け=要確認、読みが違えば出さない", () => {
+  const { t } = setup();
+  const ev = "一般女子シングルス";
+  otherTeam(t, "甲クラブ", [{ event: ev, type: "singles", name: "重複 花子", furigana: "ちょうふく はなこ", team: "甲クラブ" },
+    { event: ev, type: "singles", name: "同名 一子", furigana: "どうめい いちこ", team: "甲クラブ" },
+    { event: ev, type: "singles", name: "読違 二子", furigana: "よみちがい ふたこ", team: "甲クラブ" }]);
+  otherTeam(t, "乙クラブ", [{ event: ev, type: "singles", name: "重複　花子", furigana: "チョウフク ハナコ", team: "乙クラブ" },
+    { event: ev, type: "singles", name: "同名 一子", team: "乙クラブ" },
+    { event: ev, type: "singles", name: "読違 二子", furigana: "よみちがえ ふたこ", team: "乙クラブ" }]);
+  const a = crossOf(t, "重複花子", ev);
+  assert.strictEqual(a.length, 2);
+  assert.ok(a.every(e => e.cross_dup.length === 1 && e.cross_dup[0].level === "strong" && e.cross_dup[0].kind === "person"));
+  assert.deepStrictEqual(a.map(e => e.cross_dup[0].other_team).sort(), ["乙クラブ", "甲クラブ"]);
+  const b = crossOf(t, "同名一子", ev);
+  assert.ok(b.every(e => e.cross_dup.length === 1 && e.cross_dup[0].level === "name_only"));
+  assert.ok(crossOf(t, "読違二子", ev).every(e => !e.cross_dup.length), "読みが違えば別人として出さない");
+  const list = db.getSubmissionList(t.id);
+  assert.ok(list.rows.filter(r => r.team_name !== "試験クラブ").every(r => r.cross_dup === 2));
+  assert.strictEqual(list.rows.find(r => r.team_name === "試験クラブ").cross_dup, 0);
 });
 
-test("料金改定: 既存の申込は変わらず差額として見え、一括適用で初めて変わる", () => {
-  const { t, sid } = setup();
-  const evs = EVENTS.map(e => e.name === "一般男子シングルス" ? { ...e, fee: 900 } : e);
-  db.updateEntrySettings(t.id, { event_config: evs });
-  let f = db.getFeeSummary(t.id);
-  assert.strictEqual(f.totals.billed, 6300, "既存は申込時の額のまま");
-  assert.strictEqual(f.totals.reprice_submissions, 1);
-  assert.strictEqual(f.totals.reprice_diff, 200);
-  const dry = db.repriceSubmissions(t.id, { dry_run: true });
-  assert.strictEqual(dry.items.length, 1);
-  assert.strictEqual(db.getFeeSummary(t.id).totals.billed, 6300, "試算では変わらない");
-  const ap = db.repriceSubmissions(t.id, {});
-  assert.strictEqual(ap.applied, 1);
-  f = db.getFeeSummary(t.id);
-  assert.strictEqual(f.totals.billed, 6500);
-  assert.strictEqual(f.totals.reprice_submissions, 0);
-  assert.ok(db.listEntryChanges(t.id).some(c => c.kind === "reprice" && c.submission_id === sid));
+test("別団体の同じ組(順不同)は組として1つの印。片方取消・同じ団体・別種目では出さない", () => {
+  const { t } = setup();
+  const ev = "男子ダブルス";
+  // 試験クラブの「架空 次郎 / 架空 三郎」と同じ2人を、順番を入れ替えて別団体から
+  const r = otherTeam(t, "丙クラブ", [{ event: ev, type: "doubles", name1: "架空 三郎", name2: "架空 次郎", team1: "丙クラブ", team2: "丙クラブ" },
+    { event: "一般男子シングルス", type: "singles", name: "単独 選手", team: "丙クラブ" }]);
+  const pairs = db.getEntries(t.id).filter(e => e.entry_event === ev);
+  assert.strictEqual(pairs.length, 2);
+  pairs.forEach(e => {
+    assert.strictEqual(e.cross_dup.length, 1, "組として1つ(人物2人分を重ねない)");
+    assert.strictEqual(e.cross_dup[0].kind, "pair");
+  });
+  // 別種目に同じ人がいても出さない(種目単位で見る)
+  assert.ok(db.getEntries(t.id).filter(e => e.entry_event === "一般男子シングルス").every(e => !e.cross_dup.length));
+  // 片方を取り消せば消える
+  const v = db.getSubmissionEditView(r.submission_id, { admin: true });
+  db.editSubmission(r.submission_id, { entries: [{ entrant_id: v.entries.find(e => e.event === ev).entry_id, cancel: true }] }, { admin: true });
+  assert.ok(db.getEntries(t.id).filter(e => e.entry_event === ev).every(e => !e.cross_dup.length));
+});
+
+test("同じ団体の中で同じ人がいても別団体の印は出さない(旧字・空白の違いも同じ団体として畳む)", () => {
+  const { t } = setup();
+  const ev = "一般女子シングルス";
+  otherTeam(t, "髙橋クラブ", [{ event: ev, type: "singles", name: "同団 体子", furigana: "どうだん たいこ", team: "髙橋クラブ" }]);
+  otherTeam(t, "高橋 クラブ", [{ event: ev, type: "singles", name: "同団 体子", furigana: "どうだん たいこ", team: "高橋 クラブ" }]);
+  assert.ok(crossOf(t, "同団体子", ev).every(e => !e.cross_dup.length));
 });
 
 test("シートへ送る形: 古いGASに新規申込として拾われない形で、申込の全行を持つ", () => {
@@ -299,7 +315,7 @@ test("種目の追加: 同じ内容の重複・定員超過・締切後(申込�
   assert.ok(v.form.events.find(e => e.name === "一般女子シングルス").add_lock, "申込者の画面では追加不可と分かる");
 });
 
-test("本部が出場者を直接直す・消すと、申込の変更履歴に残り金額も揃う。申込外の出場は対象外", () => {
+test("本部が出場者を直接直す・消すと、申込の変更履歴に残り件数も揃う。申込外の出場は対象外", () => {
   const { t, sid, byEv } = setup();
   const s = byEv("一般男子シングルス");
   const cur = db.getEntrant(s.entry_id);
@@ -318,7 +334,8 @@ test("本部が出場者を直接直す・消すと、申込の変更履歴に�
   const rd = db.recordAdminEntrantChange(d, null);
   assert.strictEqual(rd.kind, "delete");
   const v = db.getSubmissionEditView(sid, { admin: true });
-  assert.strictEqual(v.submission.total_amount, 6300 - 1000);
+  assert.strictEqual(v.counts.live, 2, "消した出場は申込の件数から外れる");
+  assert.strictEqual(v.money, undefined, "金額は画面に出さない");
   assert.deepStrictEqual(db.buildSheetUpdatePayload(sid, "").removed_refs, [d.id.slice(0, 8)]);
   // 申込に属さない出場
   const loose = db.createEntrant({ tournament_id: t.id, event: "一般男子シングルス", name: "手入力 選手", team: "x" });

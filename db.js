@@ -9914,15 +9914,12 @@ function getSubmissionEditView(submissionId, opts) {
       team_name: sub.team_name || "", contact_name: sub.contact_name || "", ...contact,
       supervisor: subExtra.supervisor || "", advisor: subExtra.advisor || "", coach: subExtra.coach || "",
       answers: subExtra.answers || {},
-      total_amount: money.billed,
-      pay_status: sub.pay_status || "unpaid", pay_status_label: _PAY_STATUS[sub.pay_status || "unpaid"] || "未入金",
-      paid_amount: sub.paid_amount || 0, paid_at: sub.paid_at || "",
-      pay_note: opts.admin ? (sub.pay_note || "") : undefined,
       sheet_status: sub.gas_status || "", sheet_upd_status: sub.sheet_upd_status || "",
       sheet_upd_detail: opts.admin ? (sub.sheet_upd_detail || "") : undefined,
     },
     tournament: { id: t.id, name: t.name, date: t.date },
-    entries, options, money,
+    entries, options,
+    counts: { live: money.live, cancelled: money.cancelled, people: money.people },
     // 申込者側で今できること(締切後は連絡先だけ直せる)
     can_edit_options: opts.admin ? true : !closed,
     closed_reason: closed || "",
@@ -10045,9 +10042,9 @@ function _diffSummary(diff) {
   return Object.keys(diff).map(k => {
     const d = diff[k];
     if (k === "extra") return "学年・回答を変更";
-    if (k === "fee") return `参加料 ¥${d.from} → ¥${d.to}`;
+    if (k === "fee") return "";   // 金銭は運営アプリでは扱わない(記録は残すが文面には出さない)
     return `${_ENTRY_FIELD_LABELS[k] || k} ${d.from || "(空)"} → ${d.to || "(空)"}`;
-  }).join("、");
+  }).filter(Boolean).join("、");
 }
 
 // 変更履歴1件の要約(シートの変更履歴・管理画面の履歴で共通)。連絡先は項目名だけで値は出さない。
@@ -10357,8 +10354,6 @@ function buildSheetUpdatePayload(submissionId, group) {
       extra: subExtra.answers || {},
       total_amount: money.billed, entries_count: money.live, people: money.people,
       option_items: options,
-      pay_status_label: _PAY_STATUS[sub.pay_status || "unpaid"] || "未入金",
-      paid_amount: sub.paid_amount || 0,
     },
     update_entries: ents.map(e => _entrantToPayloadEntry(e, t, cfgMap)),
     // シートにまだ行が無くてよい出場(修正画面で追加した分)と、本部が削除した出場。
@@ -10436,148 +10431,29 @@ function recordSheetUpdate(submissionId, relay) {
     .run(ok ? (relay.missing && relay.missing.length ? "partial" : "ok") : "failed", parts.join(" / ").slice(0, 500), String(submissionId));
 }
 
-// 入金の記録(本部のみ)。
-function setSubmissionPayment(submissionId, data) {
-  data = data || {};
-  const sub = submissionStmts.getById.get(String(submissionId || ""));
-  if (!sub) return { error: "申込が見つかりません" };
-  const status = String(data.status || "");
-  if (!_PAY_STATUS[status]) return { error: "入金状況が正しくありません" };
-  let amount = data.amount === "" || data.amount == null ? null : parseInt(data.amount);
-  if (amount != null && (isNaN(amount) || amount < 0 || amount > 10000000)) return { error: "入金額が正しくありません" };
-  if (amount == null) amount = status === "paid" ? (sub.total_amount || 0) : status === "unpaid" ? 0 : (sub.paid_amount || 0);
-  const paidAt = _str(data.paid_at, 20) || (status === "unpaid" ? "" : _nowJST().slice(0, 10));
-  const note = data.note !== undefined ? _str(data.note, 300) : (sub.pay_note || "");
-  const group = uid();
-  const t = stmts.getTournament.get(sub.tournament_id);
-  sqlite.transaction(() => {
-    sqlite.prepare(`UPDATE entry_submissions SET pay_status=?, paid_amount=?, paid_at=?, pay_note=?,
-      updated_at=datetime('now','localtime'), sheet_upd_status=? WHERE id=?`)
-      .run(status, amount, paidAt, note, t && t.entry_gas_url ? "pending" : (sub.sheet_upd_status || ""), sub.id);
-    _recordEntryChange({
-      tournament_id: sub.tournament_id, submission_id: sub.id, kind: "payment",
-      before: { status: sub.pay_status || "unpaid", amount: sub.paid_amount || 0 },
-      after: { status, amount }, reason: "", actor: "admin", change_group: group,
-    });
-  })();
-  return { ok: true, group, submission_id: sub.id, pay_status: status, paid_amount: amount, paid_at: paidAt, tournament: t };
-}
-
-// 大会の参加料集計(申込受付中から締めまで同じ画面で見る)。
-function getFeeSummary(tournamentId) {
+// 申込の一覧(本部の「申込の一覧」画面)。金銭の収受は運営アプリでは扱わない(オーナー方針 2026-11-03)ので、
+// 件数・修正・シート反映・別団体との重複だけを返す。
+function getSubmissionList(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
-  const cfgMap = _eventCfgOf(t);
-  const fr = _feeResolver(t);
   const subs = submissionStmts.listByTournament.all(t.id);
-  const all = sqlite.prepare(`SELECT * FROM entrants WHERE tournament_id=?`).all(t.id);
-  const bySub = {};
-  const orphan = [];
-  all.forEach(e => {
-    if (e.submission_id && subs.find(s => s.id === e.submission_id)) (bySub[e.submission_id] = bySub[e.submission_id] || []).push(e);
-    else orphan.push(e);
-  });
+  const all = sqlite.prepare(`SELECT id, submission_id, status, is_doubles, partner_name, team_members FROM entrants WHERE tournament_id=?`).all(t.id);
+  let cross = {};
+  try { cross = findCrossGroupDuplicates(t.id); } catch (err) { console.error("cross dup:", err.message); }
   const rows = subs.map(s => {
-    const m = _submissionMoney(t, s, bySub[s.id] || [], fr, cfgMap);
-    const paid = s.paid_amount || 0;
-    const st = s.pay_status || "unpaid";
+    const ents = all.filter(e => e.submission_id === s.id);
+    const live = ents.filter(e => !["cancelled", "rejected"].includes(e.status || "confirmed"));
     return {
       submission_id: s.id, team_name: s.team_name || "", contact_name: s.contact_name || "",
       created_at: s.created_at, updated_at: s.updated_at || "",
-      entries: m.live, cancelled: m.cancelled, people: m.people,
-      billed: m.billed, current_price_total: m.current, options_total: m.options_total,
-      reprice_count: m.reprice.length + (m.options_reprice ? 1 : 0),
-      pay_status: st, pay_status_label: _PAY_STATUS[st] || st, paid_amount: paid, paid_at: s.paid_at || "",
-      balance: st === "refunded" ? 0 : m.billed - paid,
+      entries: live.length, cancelled: ents.length - live.length,
+      cross_dup: live.reduce((n, e) => n + ((cross[e.id] || []).length ? 1 : 0), 0),
       sheet_status: s.gas_status || "", sheet_upd_status: s.sheet_upd_status || "",
       sheet_upd_detail: s.sheet_upd_detail || "",
     };
   }).sort((a, b) => String(a.team_name).localeCompare(String(b.team_name), "ja"));
-  // 種目別
-  const ev = {};
-  all.forEach(e => {
-    const k = e.event || "(種目なし)";
-    const r = ev[k] = ev[k] || { event: k, entries: 0, amount: 0, cancelled: 0, cancelled_amount: 0 };
-    const st = e.status || "confirmed";
-    if (st === "cancelled" || st === "rejected") { r.cancelled++; r.cancelled_amount += e.fee || 0; }
-    else { r.entries++; r.amount += e.fee || 0; }
-  });
-  const orphanMoney = _submissionMoney(t, null, orphan, fr, cfgMap);
-  const sum = (k) => rows.reduce((s, r) => s + (r[k] || 0), 0);
-  const optionsTotal = sum("options_total");
-  const totals = {
-    submissions: rows.length,
-    entries: sum("entries") + orphanMoney.live,
-    people: sum("people") + orphanMoney.people,
-    cancelled: sum("cancelled") + orphanMoney.cancelled,
-    cancelled_amount: Object.values(ev).reduce((s, r) => s + r.cancelled_amount, 0),
-    billed: sum("billed") + orphanMoney.billed,
-    entry_fees: Object.values(ev).reduce((s, r) => s + r.amount, 0),
-    options_total: optionsTotal,
-    paid: rows.reduce((s, r) => s + (r.pay_status === "refunded" ? 0 : r.paid_amount), 0),
-    outstanding: rows.reduce((s, r) => s + Math.max(0, r.balance), 0),
-    overpaid: rows.reduce((s, r) => s + Math.max(0, -r.balance), 0),
-    pay_counts: Object.fromEntries(Object.keys(_PAY_STATUS).map(k => [k, rows.filter(r => r.pay_status === k).length])),
-    reprice_submissions: rows.filter(r => r.reprice_count > 0).length,
-    reprice_diff: rows.reduce((s, r) => s + (r.current_price_total - r.billed), 0),
-  };
-  return {
-    ok: true,
-    tournament: { id: t.id, name: t.name, date: t.date, gas: !!t.entry_gas_url },
-    totals, rows,
-    by_event: Object.values(ev).sort((a, b) => a.event.localeCompare(b.event, "ja")),
-    // 申込フォームを通らずに入った名簿(Excel取込・本部の手入力)。入金管理の対象外として分けて出す。
-    unlinked: { entries: orphanMoney.live, amount: orphanMoney.billed },
-  };
-}
-
-// 料金改定の一括適用。dry_run なら差額だけ返す。submission_ids 省略=差のある全申込。
-function repriceSubmissions(tournamentId, opts) {
-  opts = opts || {};
-  const t = stmts.getTournament.get(tournamentId);
-  if (!t) return { error: "大会が見つかりません" };
-  const cfgMap = _eventCfgOf(t);
-  const fr = _feeResolver(t);
-  const want = Array.isArray(opts.submission_ids) && opts.submission_ids.length ? new Set(opts.submission_ids.map(String)) : null;
-  const subs = submissionStmts.listByTournament.all(t.id).filter(s => !want || want.has(s.id));
-  const items = [];
-  subs.forEach(s => {
-    const ents = sqlite.prepare(`SELECT * FROM entrants WHERE submission_id=?`).all(s.id);
-    const m = _submissionMoney(t, s, ents, fr, cfgMap);
-    if (!m.reprice.length && !m.options_reprice) return;
-    items.push({ submission_id: s.id, team_name: s.team_name || "", from: m.billed, to: m.current,
-      entries: m.reprice, options: m.options_reprice });
-  });
-  if (opts.dry_run) return { ok: true, dry_run: true, items, diff_total: items.reduce((s, x) => s + x.to - x.from, 0) };
-  const groups = [];
-  sqlite.transaction(() => {
-    items.forEach(it => {
-      const group = uid();
-      it.entries.forEach(r => {
-        updateEntrant(r.entrant_id, { fee: r.to });
-        _recordEntryChange({ tournament_id: t.id, submission_id: it.submission_id, entrant_id: r.entrant_id,
-          event: r.event, kind: "reprice", before: { fee: r.from }, after: { fee: r.to },
-          reason: _str(opts.reason, 200) || "料金改定の適用", actor: "admin", change_group: group });
-      });
-      if (it.options) {
-        const s = submissionStmts.getById.get(it.submission_id);
-        let cur = []; try { cur = JSON.parse(s.options_json || "[]") || []; } catch (_) { cur = []; }
-        const q = {}; cur.forEach(o => { q[o.key] = o.qty; });
-        const pr = priceEntryOptions(t, q);
-        if (!pr.error) {
-          sqlite.prepare(`UPDATE entry_submissions SET options_json=? WHERE id=?`).run(JSON.stringify(pr.items), it.submission_id);
-          _recordEntryChange({ tournament_id: t.id, submission_id: it.submission_id, kind: "reprice",
-            before: { fee: it.options.from }, after: { fee: it.options.to, summary: "オプション単価" },
-            reason: _str(opts.reason, 200) || "料金改定の適用", actor: "admin", change_group: group });
-        }
-      }
-      _recalcSubmissionTotal(it.submission_id);
-      sqlite.prepare(`UPDATE entry_submissions SET updated_at=datetime('now','localtime'), sheet_upd_status=? WHERE id=?`)
-        .run(t.entry_gas_url ? "pending" : "", it.submission_id);
-      groups.push({ submission_id: it.submission_id, group });
-    });
-  })();
-  return { ok: true, applied: items.length, diff_total: items.reduce((s, x) => s + x.to - x.from, 0), items, groups, tournament: t };
+  return { ok: true, tournament: { id: t.id, name: t.name, date: t.date, gas: !!t.entry_gas_url }, rows,
+    unlinked: all.filter(e => !e.submission_id || !subs.find(s => s.id === e.submission_id)).length };
 }
 
 function createEntry(tournamentId, data) {
@@ -11537,8 +11413,11 @@ function getEntries(tournamentId, statusFilter) {
   // 支部を「DB通り」に出すための補完: entrant.region が空なら連携先の選手DBの branch を引く。
   const _brStmt = sqlite.prepare("SELECT branch FROM players WHERE id=?");
   const _plBranch = (pid) => { if (!pid) return ""; try { const r = _brStmt.get(pid); return (r && r.branch) || ""; } catch (e) { return ""; } };
+  let cross = {};
+  try { cross = findCrossGroupDuplicates(tournamentId); } catch (err) { console.error("cross dup:", err.message); }
   return sqlite.prepare(sql).all(...params).map(e => ({
     id: e.id,                                   // entrant id (status/seed 操作のキー)
+    cross_dup: cross[e.id] || [],               // 別団体から同じ人物・組(注意マーカー)
     name: e.display_name || e.name,             // 表示名(ダブルスは「選手1 / 選手2」)
     p1_name: e.name,                            // 選手1の氏名のみ(ダブルス行を別々に描くため)
     display_short: e.display_short,
@@ -11567,6 +11446,84 @@ function getEntries(tournamentId, statusFilter) {
     submission_id: e.submission_id || "",
     player_id: e.player_id,
   }));
+}
+
+// 別々の団体から、同じ種目へ同じ人物・同じダブルスの組が申し込まれていないかを調べる。
+// 「団体」は申込の団体名(申込原本が無い出場は所属)。同じ団体の中の二重申込は受付時の重複防止と
+// 品質チェック(duplicate_entry)の担当なので、ここでは扱わない。
+// 同じ人物の判定は選手DBの名寄せと同じく「漢字氏名(空白除去・旧字を新字へ畳む)+ふりがな」の両方一致。
+// ふりがなが片方でも無いときは裏が取れないので、漢字一致だけの「要確認」(level=name_only)として出す。
+// 取消・却下の出場は数えない。返り値: { entrant_id: [{kind, level, event, name, other_team, other_entrant_id}] }
+function findCrossGroupDuplicates(tournamentId) {
+  const rows = sqlite.prepare(`SELECT e.*, s.team_name AS sub_team FROM entrants e
+    LEFT JOIN entry_submissions s ON s.id = e.submission_id
+    WHERE e.tournament_id = ? AND COALESCE(e.status,'confirmed') NOT IN ('cancelled','rejected')`).all(tournamentId);
+  const nk = (n) => _foldNameVariants(_normName(n));
+  const groupOf = (e) => _foldNameVariants(_normName(e.submission_id ? (e.sub_team || e.team) : e.team));
+  // 1出場から人物を取り出す(団体戦はメンバー名だけ。ふりがなは無い)
+  const persons = (e) => {
+    if (e.is_doubles && e.partner_name) {
+      return [{ name: e.name, furi: e.furigana }, { name: e.partner_name, furi: e.partner_furigana }];
+    }
+    const mem = entrantMembers(e);
+    if (mem && mem.length) return mem.map(m => ({ name: m, furi: "" }));
+    return [{ name: e.name, furi: e.furigana }];
+  };
+  const out = {};
+  const add = (id, item) => {
+    const list = out[id] = out[id] || [];
+    if (!list.some(x => x.kind === item.kind && x.other_entrant_id === item.other_entrant_id && x.name === item.name)) list.push(item);
+  };
+  const byEvent = {};
+  rows.forEach(e => { (byEvent[e.event] = byEvent[e.event] || []).push(e); });
+  Object.keys(byEvent).forEach(ev => {
+    const list = byEvent[ev];
+    // 人物
+    const byName = {};
+    list.forEach(e => persons(e).forEach(p => {
+      const k = nk(p.name);
+      if (k.length < 2) return;
+      (byName[k] = byName[k] || []).push({ e, name: normalizeName(p.name), furi: _normFuri(p.furi) });
+    }));
+    // 組(ダブルスの2人。順不同)
+    const byPair = {};
+    list.forEach(e => {
+      if (!(e.is_doubles && e.partner_name)) return;
+      const k = [nk(e.name), nk(e.partner_name)].sort().join("+");
+      (byPair[k] = byPair[k] || []).push(e);
+    });
+    const pairHit = new Set();
+    Object.keys(byPair).forEach(k => {
+      const g = byPair[k];
+      for (let i = 0; i < g.length; i++) for (let j = 0; j < g.length; j++) {
+        if (i === j || groupOf(g[i]) === groupOf(g[j])) continue;
+        const a = g[i], b = g[j];
+        const furiOk = (x, y) => _normFuri(x) && _normFuri(y) ? _normFuri(x) === _normFuri(y) : null;
+        // 組の2人それぞれのふりがなを、名前の対応で突き合わせる
+        const am = { [nk(a.name)]: a.furigana, [nk(a.partner_name)]: a.partner_furigana };
+        const bm = { [nk(b.name)]: b.furigana, [nk(b.partner_name)]: b.partner_furigana };
+        const checks = Object.keys(am).map(n => furiOk(am[n], bm[n]));
+        if (checks.some(c => c === false)) continue;     // 読みが違う=別人
+        add(a.id, { kind: "pair", level: checks.every(c => c === true) ? "strong" : "name_only", event: ev,
+          name: `${normalizeName(a.name)} / ${normalizeName(a.partner_name)}`,
+          other_team: b.sub_team || b.team || "", other_entrant_id: b.id });
+        pairHit.add(a.id + "|" + b.id);
+      }
+    });
+    Object.keys(byName).forEach(k => {
+      const g = byName[k];
+      for (let i = 0; i < g.length; i++) for (let j = 0; j < g.length; j++) {
+        const a = g[i], b = g[j];
+        if (a.e.id === b.e.id || groupOf(a.e) === groupOf(b.e)) continue;
+        if (pairHit.has(a.e.id + "|" + b.e.id)) continue;   // 組として出したものは人物では重ねない
+        let level = "name_only";
+        if (a.furi && b.furi) { if (a.furi !== b.furi) continue; level = "strong"; }
+        add(a.e.id, { kind: "person", level, event: ev, name: a.name,
+          other_team: b.e.sub_team || b.e.team || "", other_entrant_id: b.e.id });
+      }
+    });
+  });
+  return out;
 }
 
 // entrants の承認状態を遷移 (申込の正本は entrants / Phase1)。
@@ -14516,7 +14473,7 @@ module.exports = {
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel,
   applicantReplaceEntrant, applicantCancelEntrant, applicantReplaceEntrantBySubmission, applicantCancelEntrantBySubmission, listEntryChanges,
-  getSubmissionEditView, editSubmission, recordAdminEntrantChange, buildSheetUpdatePayload, recordSheetUpdate, setSubmissionPayment, getFeeSummary, repriceSubmissions,
+  findCrossGroupDuplicates, getSubmissionEditView, editSubmission, recordAdminEntrantChange, buildSheetUpdatePayload, recordSheetUpdate, getSubmissionList,
   copyEntrySettings, listEntrySettingSources,
   recordGasRelay, getGasSyncState, getSubmissionForResend,
   resolveEntryOptions, sanitizeEntryOptions, priceEntryOptions,

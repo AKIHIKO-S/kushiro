@@ -1308,7 +1308,7 @@ app.post("/api/applicant/submission", requireSession(["applicant"]), async (req,
     sheet_ok: sheet ? !!sheet.ok : null, view: db.getSubmissionEditView(req.auth.principal_id, { admin: false }) });
 });
 
-// 本部による修正・入金・参加料集計
+// 本部による修正
 app.get("/api/submissions/:sid/edit-view", requireAdmin, (req, res) => {
   const r = db.getSubmissionEditView(req.params.sid, { admin: true });
   if (r.error) return res.status(404).json(r);
@@ -1326,13 +1326,6 @@ app.put("/api/submissions/:sid", requireAdmin, async (req, res) => {
     view: db.getSubmissionEditView(req.params.sid, { admin: true }) });
 });
 
-app.post("/api/submissions/:sid/payment", requireAdmin, async (req, res) => {
-  const r = db.setSubmissionPayment(req.params.sid, req.body || {});
-  if (r.error) return res.status(400).json({ error: r.error });
-  const sheet = await relaySheetUpdate(r.tournament, r.submission_id, r.group);
-  res.json({ ok: true, pay_status: r.pay_status, paid_amount: r.paid_amount, paid_at: r.paid_at, sheet });
-});
-
 // 今の内容でシートを書き直す(修正の反映に失敗していたとき用)。変更履歴は追記しない。
 app.post("/api/submissions/:sid/sheet-resend", requireAdmin, async (req, res) => {
   const v = db.getSubmissionEditView(req.params.sid, { admin: true });
@@ -1344,30 +1337,11 @@ app.post("/api/submissions/:sid/sheet-resend", requireAdmin, async (req, res) =>
   res.json({ ok: true, sheet });
 });
 
-app.get("/api/tournaments/:id/fee-summary", requireAdmin, (req, res) => {
-  const r = db.getFeeSummary(req.params.id);
+// 申込の一覧(件数・修正・シート反映・別団体との重複)。金銭の収受は扱わない。
+app.get("/api/tournaments/:id/submissions", requireAdmin, (req, res) => {
+  const r = db.getSubmissionList(req.params.id);
   if (r.error) return res.status(404).json(r);
   res.json(r);
-});
-
-// 料金改定を既存の申込へ適用する。dry_run で差額を確認してから適用する前提。
-app.post("/api/tournaments/:id/fee-reprice", requireAdmin, async (req, res) => {
-  const b = req.body || {};
-  const r = db.repriceSubmissions(req.params.id, {
-    submission_ids: Array.isArray(b.submission_ids) ? b.submission_ids.map(String) : undefined,
-    dry_run: b.dry_run !== false, reason: b.reason,
-  });
-  if (r.error) return res.status(400).json({ error: r.error });
-  if (r.dry_run) return res.json(r);
-  // シートへは1件ずつ(GASは直列でしか捌けない)。時間で打ち切り、残りは画面の再送で拾う。
-  const started = Date.now();
-  let sent = 0, failed = 0;
-  for (const g of r.groups || []) {
-    if (Date.now() - started > 40000) break;
-    const s = await relaySheetUpdate(r.tournament, g.submission_id, g.group);
-    if (s) { sent++; if (!s.ok) failed++; }
-  }
-  res.json({ ok: true, applied: r.applied, diff_total: r.diff_total, items: r.items, sheet_sent: sent, sheet_failed: failed });
 });
 
 // 変更履歴(管理画面の申込管理で表示)

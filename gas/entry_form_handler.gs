@@ -846,7 +846,7 @@ function distributeEntries(ss, data) {
 // ════════════════════════════════════════════
 // KTTA Platform で申込を直したとき(申込者が申込番号から / 本部が管理画面から)、
 // 「その申込の今の姿」がまるごと届く。差分ではなく全体なので、同じものを何度受けても結果は同じ。
-//   ・申込台帳: 申込IDで行を探し、団体名・責任者・連絡先・金額・入金状況を書き換える
+//   ・申込台帳: 申込IDで行を探し、団体名・責任者・連絡先・種目数・人数を書き換える
 //   ・種目シート: エントリーIDで行を探して書き換える。取り消した出場は「状態」列に 取消 と書く
 //     (行は消さない。人が消したかシステムが消したか分からなくなるため)
 //   ・変更履歴シート: 何を誰がなぜ変えたかを1行ずつ追記する
@@ -913,7 +913,7 @@ function _applyUpdate(ss, data) {
       return { key: "__opt__" + o.key, label: String(o.label || o.key) + "(" + String(o.unit || "") + ")" };
     }));
     const ledgerCols = uniqueLabels(LEDGER_HEADERS.concat(optCols.map(function (c) { return c.label; })), schemaColumns(data, "ledger"));
-    const extraHeads = ["入金状況", "入金額", COL_MODIFIED];
+    const extraHeads = [COL_MODIFIED];
     const map = ensureColumns(sh, LEDGER_HEADERS.concat(optCols.map(function (c) { return c.label; }))
       .concat(ledgerCols.map(function (c) { return c.label; })).concat(extraHeads));
     const width = sh.getLastColumn();
@@ -930,8 +930,6 @@ function _applyUpdate(ss, data) {
     const subData = { team_name: sub.team_name, contact_name: sub.contact_name, contact_tel: sub.contact_tel,
       contact_email: sub.contact_email, supervisor: sub.supervisor, advisor: sub.advisor, coach: sub.coach, extra: sub.extra || {} };
     ledgerCols.forEach(function (c) { put(c.label, submissionValue(subData, c.key)); });
-    put("入金状況", sub.pay_status_label || "");
-    put("入金額", sub.paid_amount || 0);
     put(COL_MODIFIED, stamp);
     sh.getRange(ledgerRow, 1, 1, width).setValues([row]);
   }
@@ -1069,7 +1067,8 @@ function _liveRows(sh) {
 // ════════════════════════════════════════════
 // 運営ボード(受付状況をシート1枚で見る)
 // ════════════════════════════════════════════
-// 申込・修正が届くたびに作り直す。本部が知りたい順(全体→種目の埋まり具合→未収→要確認→直近の変更)に並べる。
+// 申込・修正が届くたびに作り直す。本部が知りたい順(全体→種目の埋まり具合→別団体との重複→要確認→直近の変更)に並べる。
+// 金銭の収受(入金・未収)は運営アプリでもシートでも扱わない(オーナー方針 2026-11-03)。
 // 出場数・定員・締切は KTTA Platform が form_schema.events / deadline で送ってくる最新の値を使い、
 // メニューから作り直すときのために「_ボード設定」シートへ大会ごとに控える(人は触らない)。
 // 1つのシートで複数大会を受けている場合は、最後に届いた大会を表示する(種目シートに大会の列が無いため)。
@@ -1122,7 +1121,47 @@ function _boardConf(ss, data) {
   return best;
 }
 
-function _yenNum(v) { const n = parseInt(String(v == null ? "" : v).replace(/[^\d-]/g, ""), 10); return isNaN(n) ? 0 : n; }
+// 照合キー: 空白除去・旧字を新字へ(運営アプリの名寄せと同じ畳み込み)。ふりがなはカタカナ→ひらがな・長音/中黒除去。
+const _BOARD_VARIANT = { "髙":"高","﨑":"崎","邊":"辺","邉":"辺","澤":"沢","齋":"斎","齊":"斉","濵":"浜","濱":"浜","廣":"広",
+  "冨":"富","惠":"恵","栁":"柳","桒":"桑","眞":"真","萬":"万","條":"条","圀":"国","兒":"児","德":"徳",
+  "靑":"青","靏":"鶴","渕":"淵","槗":"橋" };
+function _nameKey(s) {
+  let out = "";
+  String(s == null ? "" : s).replace(/[\s　]+/g, "").split("").forEach(function (ch) { out += _BOARD_VARIANT[ch] || ch; });
+  return out;
+}
+function _furiKey(s) {
+  return String(s == null ? "" : s)
+    .replace(/[ァ-ヶ]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0x60); })
+    .replace(/[\s　ー・･]+/g, "");
+}
+
+// 別団体から同じ人物・同じダブルスの組が同じ種目へ申し込まれていないか。
+// 団体は選手の「チーム名」で見る(種目シートに申込団体の列が無いため)。人物は漢字氏名+ふりがなの両方一致、
+// ふりがな列が無い/空のときは漢字一致だけで「(ふりがな未確認)」として出す。
+function _crossCheck(sheetName, r, ev, ref, seen, cross) {
+  const div = String(r.get("区分") || "");
+  const flag = function (key, label, team, furiKnown) {
+    const prev = seen[key];
+    if (!prev) { seen[key] = { team: team, ref: ref }; return; }
+    if (prev.ref === ref || _nameKey(prev.team) === _nameKey(team)) return;
+    cross.push([ev, div, label + (furiKnown ? "" : "（ふりがな未確認）"), team, prev.team, ref, prev.ref]);
+  };
+  if (sheetName === SHEETS.DOUBLES) {
+    const a = _nameKey(r.get("氏名1")), b = _nameKey(r.get("氏名2"));
+    if (!a || !b) return;
+    const fa = _furiKey(r.get("ふりがな1")), fb = _furiKey(r.get("ふりがな2"));
+    const pa = a + "/" + fa, pb = b + "/" + fb;
+    flag("pair|" + ev + "|" + [pa, pb].sort().join("+"), r.get("氏名1") + " / " + r.get("氏名2"),
+      String(r.get("チーム名1") || "") + (r.get("チーム名2") && r.get("チーム名2") !== r.get("チーム名1") ? "・" + r.get("チーム名2") : ""), !!(fa && fb));
+    return;
+  }
+  if (sheetName === SHEETS.TEAM) return;   // 団体戦はメンバーが同じチームの行に並ぶので人物の重複は見ない
+  const nm = _nameKey(r.get("氏名"));
+  if (!nm) return;
+  const fu = _furiKey(r.get("ふりがな"));
+  flag("p|" + ev + "|" + nm + "|" + fu, r.get("氏名"), String(r.get("チーム名") || ""), !!fu);
+}
 
 function buildOpsBoard(ss, data) {
   const conf = _boardConf(ss, data);
@@ -1131,25 +1170,15 @@ function buildOpsBoard(ss, data) {
   const evNames = {};
   (conf.events || []).forEach(function (e) { if (e && e.name) evNames[e.name] = e; });
 
-  // ─ 申込台帳(この大会・併合で0円にした行は数えない) ─
+  // ─ 申込台帳(この大会・併合でまとめた後の行は数えない)。金銭の収受は扱わない(オーナー方針) ─
   const ledger = _sheetRows(ss.getSheetByName(SHEETS.LEDGER)).filter(function (r) {
     return String(r.get("tournament_id") || "") === tid && !String(r.get(COL_MERGED_INTO) || "");
-  });
-  let billed = 0, paid = 0, due = 0;
-  const unpaid = [];
-  ledger.forEach(function (r) {
-    const total = _yenNum(r.get("合計金額")), got = _yenNum(r.get("入金額"));
-    const st = String(r.get("入金状況") || "未入金");
-    billed += total; paid += got;
-    if (st !== "返金済" && total - got > 0) {
-      due += total - got;
-      unpaid.push([r.get("団体名"), r.get("申込責任者"), r.get("電話番号"), total, got, total - got, r.get("受付日時")]);
-    }
   });
 
   // ─ 種目シート(エントリーIDで1出場と数える。団体は1チーム=複数行) ─
   const live = {}, cancelled = {}, people = {};
   const dupKey = {}, dups = [];
+  const seen = {}, cross = [];   // 別団体から同じ人物・組: 種目|氏名(|ふりがな) → 最初に見た行
   [SHEETS.TEAM, SHEETS.DOUBLES, SHEETS.MIXED, SHEETS.SINGLES].forEach(function (n) {
     _sheetRows(ss.getSheetByName(n)).forEach(function (r, i) {
       const ev = String(r.get("種目") || "");
@@ -1160,6 +1189,7 @@ function buildOpsBoard(ss, data) {
       (bucket[ev] = bucket[ev] || {})[ref] = true;
       if (gone) return;
       people[ev] = (people[ev] || 0) + (n === SHEETS.DOUBLES ? 2 : 1);
+      _crossCheck(n, r, ev, ref, seen, cross);
       // 同じ種目に同じ氏名(と所属)が別の出場として2回 = 申込の重複を疑う
       const names = n === SHEETS.DOUBLES ? [r.get("氏名1"), r.get("氏名2")] : [r.get("氏名")];
       names.forEach(function (nm, k) {
@@ -1210,15 +1240,16 @@ function buildOpsBoard(ss, data) {
   out.push(pad([(conf.tournament_name || "") + " 運営ボード"])); fmt.push({ row: 1, kind: "title" });
   out.push(pad(["更新 " + Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd HH:mm") + (deadlineText ? "　締切 " + deadlineText : "")]));
   sec("全体");
-  head(["申込", "出場", "請求額", "入金済", "未収", "取消", "未収の団体"]);
-  out.push(pad([ledger.length, liveTotal, billed, paid, due, cancelTotal, unpaid.length])); fmt.push({ row: out.length, kind: "yen", cols: [3, 4, 5] });
+  head(["申込", "出場", "取消", "別団体と重複", "同じ団体で2回", "", ""]);
+  out.push(pad([ledger.length, liveTotal, cancelTotal, cross.length, dups.length]));
+  if (cross.length) fmt.push({ row: out.length, kind: "warn" });
   sec("種目別の埋まり具合");
   head(["種目", "出場", "人数", "定員", "残り", "取消", "状態"]);
   evRows.forEach(function (r) { out.push(pad(r)); if (r[6]) fmt.push({ row: out.length, kind: "warn" }); });
-  sec("未収の団体（" + unpaid.length + "件・" + due.toLocaleString("ja-JP") + "円）");
-  head(["団体名", "申込責任者", "電話番号", "請求額", "入金額", "残額", "受付日時"]);
-  if (!unpaid.length) out.push(pad(["未収はありません"]));
-  unpaid.forEach(function (r) { out.push(pad(r)); fmt.push({ row: out.length, kind: "yen", cols: [4, 5, 6] }); });
+  sec("【注意】別の団体から同じ人物・同じ組（" + cross.length + "件）");
+  head(["種目", "区分", "氏名・組", "こちらの団体", "もう一方の団体", "エントリーID", "エントリーID"]);
+  if (!cross.length) out.push(pad(["ありません"]));
+  cross.forEach(function (r) { out.push(pad(r)); fmt.push({ row: out.length, kind: "warn" }); });
   sec("要確認（同じ種目に同じ氏名・所属が2回）");
   head(["種目", "氏名", "所属", "エントリーID", "エントリーID", "", ""]);
   if (!dups.length) out.push(pad(["ありません"]));
@@ -1243,7 +1274,7 @@ function buildOpsBoard(ss, data) {
     });
     sh.setColumnWidth(1, 200); sh.setColumnWidth(2, 130); sh.setColumnWidth(5, 220);
   } catch (fmtErr) { console.error("運営ボードの書式設定失敗:", fmtErr); }
-  return { ok: true, rows: out.length, unpaid: unpaid.length, duplicates: dups.length };
+  return { ok: true, rows: out.length, duplicates: dups.length, cross: cross.length };
 }
 
 function menuBuildOpsBoard() {
@@ -2412,7 +2443,7 @@ function menuShowHelp() {
     "  _種目_*: 種目別 選手リスト (手動生成)\n" +
     "  領収書一覧: 全団体の領収書 (一括発行)\n" +
     "  領収書(個別発行): 手動入力 → 1枚発行\n" +
-    "  運営ボード: 申込・入金・未収・種目の埋まり具合・重複の疑い・直近の変更 (申込や修正のたびに自動更新)\n\n" +
+    "  運営ボード: 申込・種目の埋まり具合・別団体からの重複・同じ団体の重複・直近の変更 (申込や修正のたびに自動更新)\n\n" +
     "■ 受信の確かめかた\n" +
     "  申込を受け取ると、シートに書いた内容を読み返して確認します。\n" +
     "  確認できたときだけ申込者へ「受け付けました」を送ります。\n" +

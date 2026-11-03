@@ -799,7 +799,8 @@ test("修正: 氏名・連絡先の変更で、元の行が書き換わり履歴
   const lh = lg._grid[0].map(String);
   assert.strictEqual(lg.getLastRow(), 2);
   assert.strictEqual(lg._grid[1][lh.indexOf("申込責任者")], "担当 二郎");
-  assert.ok(lh.includes("入金状況") && lh.includes("最終修正"));
+  assert.ok(lh.includes("最終修正"));
+  assert.ok(!lh.includes("入金状況") && !lh.includes("入金額"), "入金の列は作らない(金銭の収受は扱わない)");
 
   const hist = env.sheets["変更履歴"];
   assert.ok(hist && hist.getLastRow() >= 2, "変更履歴が残る");
@@ -836,7 +837,7 @@ test("修正: 取り消した出場は行を消さず「状態=取消」、種�
   assert.strictEqual(dbl.getLastRow(), 2, "行は残る");
   assert.strictEqual(liveRows(dbl).length, 0, "取消として扱われる");
   const lh = env.sheets["申込台帳"]._grid[0].map(String);
-  assert.strictEqual(env.sheets["申込台帳"]._grid[1][lh.indexOf("合計金額")], db.getSubmissionEditView(s.sid, { admin: true }).money.billed);
+  assert.strictEqual(env.sheets["申込台帳"]._grid[1][lh.indexOf("合計金額")], db.buildSheetUpdatePayload(s.sid, "").submission.total_amount);
 });
 
 test("修正: 団体メンバーが増えれば行を足し、減れば余りを取消にする", () => {
@@ -931,7 +932,7 @@ test("修正: 併合された申込は元の行に全体を書き、後の行は
   assert.strictEqual(res.ok, true, JSON.stringify(res));
   assert.strictEqual(res.merged_rows, 1);
   const lh = lg._grid[0].map(String);
-  const total = db.getSubmissionEditView(s.sid, { admin: true }).submission.total_amount;
+  const total = db.buildSheetUpdatePayload(s.sid, "").submission.total_amount;
   assert.strictEqual(lg._grid[1][lh.indexOf("合計金額")], total, "元の行に申込全体の金額");
   assert.strictEqual(lg._grid[2][lh.indexOf("合計金額")], 0, "後の行は0円(二重に数えない)");
   assert.strictEqual(lg._grid[2][lh.indexOf("併合先申込ID")], s.payload.op_id);
@@ -941,7 +942,7 @@ test("修正: 併合された申込は元の行に全体を書き、後の行は
 const boardText = (env) => env.sheets["運営ボード"]._grid.map(r => r.map(v => String(v == null ? "" : v)).join("|")).join("\n");
 const boardRow = (env, first) => env.sheets["運営ボード"]._grid.find(r => String(r[0]) === first);
 
-test("運営ボード: 申込が届くと全体・種目別(定員)・未収が1枚にまとまる", () => {
+test("運営ボード: 申込が届くと全体・種目別(定員)が1枚にまとまり、金銭の欄は無い", () => {
   const s = makeEditableSubmission();
   db.updateEntrySettings(s.tour.id, { entry_deadline: "2099-12-31",
     event_config: [
@@ -957,26 +958,24 @@ test("運営ボード: 申込が届くと全体・種目別(定員)・未収が1
   const txt = boardText(env);
   assert.match(txt, /修正反映大会 運営ボード/);
   assert.match(txt, /締切 2099-12-31 23:59（あと\d+日）/);
-  // 全体: 申込1・出場3(団体は1チーム=1出場)・請求=合計金額・未収=請求
+  // 全体: 申込1・出場3(団体は1チーム=1出場)・取消0・別団体と重複0・同じ団体で2回0
   const head = env.sheets["運営ボード"]._grid.findIndex(r => r[0] === "申込" && r[1] === "出場");
   const tot = env.sheets["運営ボード"]._grid[head + 1];
-  assert.deepStrictEqual(tot.slice(0, 2), [1, 3]);
-  assert.strictEqual(tot[2], s.payload.total_amount);
-  assert.strictEqual(tot[4], s.payload.total_amount, "入金前は全額が未収");
+  assert.deepStrictEqual(tot.slice(0, 5), [1, 3, 0, 0, 0]);
+  assert.doesNotMatch(txt, /入金|未収|請求/, "金銭の収受は扱わない(オーナー方針)");
   // 種目別: 男子シングルスは定員2に対して1、団体戦は人数3
   const ms = boardRow(env, "男子シングルス");
   assert.deepStrictEqual(ms.slice(0, 5), ["男子シングルス", 1, 1, 2, 1]);
   assert.strictEqual(ms[6], "", "定員2の残り1は「残りわずか」にしない(1割以下だけ)");
   assert.deepStrictEqual(boardRow(env, "団体戦").slice(0, 3), ["団体戦", 1, 3]);
   assert.strictEqual(boardRow(env, "男子ダブルス")[2], 2, "ダブルスは2人");
-  assert.ok(boardRow(env, "修正クラブ"), "未収の団体に載る");
+  assert.match(txt, /別の団体から同じ人物・同じ組（0件）/);
 });
 
-test("運営ボード: 入金・取消の修正で未収と出場が更新され、直近の変更が出る", () => {
+test("運営ボード: 取消の修正で出場が更新され、直近の変更が出る", () => {
   const s = makeEditableSubmission();
   const env = makeEnv({});
   env.post(s.payload);
-  db.setSubmissionPayment(s.sid, { status: "paid" });
   const e = db.editSubmission(s.sid, { entries: [{ entrant_id: s.byEv("男子シングルス").entry_id, cancel: true }], reason: "けが" }, { actor: "admin" });
   assert.ok(e.ok, e.error);
   const res = env.post(db.buildSheetUpdatePayload(s.sid, e.group));
@@ -984,8 +983,7 @@ test("運営ボード: 入金・取消の修正で未収と出場が更新され
   const g = env.sheets["運営ボード"]._grid;
   const head = g.findIndex(r => r[0] === "申込" && r[1] === "出場");
   assert.strictEqual(g[head + 1][1], 2, "取消は出場から外れる");
-  assert.strictEqual(g[head + 1][5], 1, "取消1");
-  assert.ok(boardText(env).includes("未収はありません") || g[head + 1][4] >= 0);
+  assert.strictEqual(g[head + 1][2], 1, "取消1");
   assert.match(boardText(env), /けが/, "直近の変更に理由が出る");
   assert.deepStrictEqual(boardRow(env, "男子シングルス").slice(0, 2), ["男子シングルス", 0]);
 });
@@ -1000,6 +998,31 @@ test("運営ボード: 同じ種目に同じ氏名・所属が別の出場で2�
   const txt = boardText(env);
   const sec = txt.split("要確認")[1] || "";
   assert.match(sec.split("直近の変更")[0], /男子シングルス\|架空太郎\|修正クラブ/);
+});
+
+test("運営ボード: 別の団体から同じ人物・同じ組(順不同)が届くと【注意】に出る。同じチーム名なら出さない", () => {
+  const s = makeEditableSubmission();
+  const env = makeEnv({});
+  env.post(s.payload);
+  const other = { ...s.payload, op_id: "op-cross-board", team_name: "別の会",
+    entries: [
+      { event: "男子シングルス", type: "singles", name: "架空　太郎", team: "別の会", entry_id: "cross0001-s" },
+      { event: "男子ダブルス", type: "doubles", name1: "架空 三郎", name2: "架空 次郎", team1: "別の会", team2: "別の会", entry_id: "cross0002-d" },
+      // 同じチーム名の別出場は「要確認(同じ団体)」側の担当で、別団体の印は出さない
+      { event: "高校男子シングルス", type: "singles", name: "同一 所属", team: "修正クラブ", entry_id: "cross0003-a" },
+    ] };
+  assert.strictEqual(env.post(other).ok, true);
+  const third = { ...s.payload, op_id: "op-cross-3", team_name: "修正クラブ",
+    entries: [{ event: "高校男子シングルス", type: "singles", name: "同一 所属", team: "修正クラブ", entry_id: "cross0004-b" }] };
+  assert.strictEqual(env.post(third).ok, true);
+  const txt = boardText(env);
+  const sec = (txt.split("【注意】")[1] || "").split("要確認")[0];
+  assert.match(txt, /別の団体から同じ人物・同じ組（2件）/);
+  assert.match(sec, /男子シングルス\|[^|]*\|架空　太郎（ふりがな未確認）\|別の会\|修正クラブ/);
+  assert.match(sec, /男子ダブルス\|[^|]*\|架空 三郎 \/ 架空 次郎（ふりがな未確認）\|別の会\|修正クラブ/);
+  assert.doesNotMatch(sec, /同一 所属/);
+  const head = env.sheets["運営ボード"]._grid.findIndex(r => r[0] === "申込" && r[1] === "出場");
+  assert.strictEqual(env.sheets["運営ボード"]._grid[head + 1][3], 2);
 });
 
 test("運営ボード: 設定が届いていない状態のメニュー実行は作らずに理由を返す", () => {

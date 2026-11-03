@@ -2528,7 +2528,7 @@ function buildApplicantStatusHTML() {
       <span class="badge b-warn">確認中</span> = 本部で確認中 ／
       <span class="badge b-err">無効</span> = 受付対象外。<br>
       申込締切前・組合せ作成前であれば、下の「申込内容を修正する」から<b>選手・種目・連絡先・お弁当などの数</b>を直せ、<b>種目の追加</b>もできます（申込番号は今のまま）。
-      締切後は連絡先だけ直せます。それ以外は大会本部へご連絡ください。参加料は申込時の金額のままで、種目や人数を変えた分だけ付け直します。
+      締切後は連絡先だけ直せます。それ以外は大会本部へご連絡ください。
     </div>
     <div style="text-align:center;margin-bottom:16px;">
       <button type="button" class="btn" id="editOpen">申込内容を修正する</button>

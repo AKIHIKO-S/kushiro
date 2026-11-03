@@ -3532,7 +3532,7 @@ const A = {
    openModal("参加区分の設定: " + (ev.name || ""), body, foot);
  },
 
- // 申込後の変更履歴(申込者・本部による修正、取消、入金、料金改定)。
+ // 申込後の変更履歴(申込者・本部による修正、取消、種目追加。入金・料金改定は過去の記録のみ表示)。
  // 「言った/言わない」を避けるため、誰が・いつ・何を・なぜ を残している。連絡先は項目名だけ。
  async openEntryChanges(t) {
    const r = await api.get(`/api/tournaments/${t.id}/entry-changes`);
@@ -3547,7 +3547,7 @@ const A = {
      body.appendChild(h("div", { className: "text-sm text-sub", style: { padding: "18px 4px", lineHeight: "1.8" } },
        "まだ変更はありません。",
        h("br"),
-       "申込者は控えメールの申込番号から、締切前に限り申込内容を修正できます。本部は「申込・参加料」から締切後も修正できます。"));
+       "申込者は控えメールの申込番号から、締切前に限り申込内容を修正できます。本部は「申込の一覧」から締切後も修正できます。"));
    } else {
      const tbl = h("table", { className: "tbl", style: { minWidth: "720px" } });
      tbl.appendChild(h("thead", {}, h("tr", {},
@@ -3580,74 +3580,57 @@ const A = {
      h("button", { className: "btn btn-ghost", onClick: (e) => e.target.closest(".modal-bg")?.remove() }, "閉じる"), { size: "lg" });
  },
 
- // 申込・参加料: 申込ごとの請求額(取消を除く)・入金・残額を一覧し、修正と入金記録をここから行う。
- // 料金は申込時の金額で固定。料金設定を後から変えた場合は「料金改定の適用」で差額を確認してから反映する。
- async openFeeLedger(t) {
-   const yen = (n) => "¥" + (parseInt(n) || 0).toLocaleString("ja-JP");
+ // 申込の一覧: 申込ごとの出場件数・別団体との重複・シート反映を一覧し、修正をここから行う。
+ // 金銭の収受(参加料・入金)は協会が別で管理するので扱わない(オーナー方針 2026-11-03)。
+ async openSubmissionList(t) {
    const body = h("div", {});
    let bg = null;
    const SHEET = { ok: ["反映済", "#166534"], partial: ["一部", "#92400e"], failed: ["失敗", "#991b1b"], pending: ["未反映", "#92400e"] };
-   const PAYC = { unpaid: "#991b1b", partial: "#92400e", paid: "#166534", refunded: "#334155" };
-   // 絞り込み(再読込しても保つ)。当日受付では「未収だけ」「団体名で探す」が最も使われる
+   // 絞り込み(再読込しても保つ)。当日受付では「団体名で探す」が最も使われる
    let q = "", filt = "all";
-   const FILTERS = [["all", "すべて"], ["due", "未収あり"], ["paid", "入金済"], ["sheet", "シート未反映"]];
+   const FILTERS = [["all", "すべて"], ["cross", "別団体と重複"], ["sheet", "シート未反映"]];
    const sheetNg = (r) => r.sheet_upd_status === "failed" || r.sheet_upd_status === "partial" || r.sheet_upd_status === "pending";
    const match = (r) => {
      if (q && !((r.team_name || "") + " " + (r.contact_name || "")).includes(q)) return false;
-     if (filt === "due") return r.balance > 0;
-     if (filt === "paid") return r.pay_status === "paid";
+     if (filt === "cross") return r.cross_dup > 0;
      if (filt === "sheet") return sheetNg(r);
      return true;
    };
-   // 会計・受付用のCSV(Excelで開けるようBOM付き)。電話・メールは含めない
+   // 受付用のCSV(Excelで開けるようBOM付き)。電話・メールは含めない
    const csvOf = (d) => {
      const cell = (v) => { const x = String(v == null ? "" : v); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
-     const head = ["団体名", "申込責任者", "出場", "取消", "請求額", "入金状況", "入金額", "入金日", "残額", "受付", "最終修正"];
-     const lines = [head].concat(d.rows.map(r => [r.team_name, r.contact_name, r.entries, r.cancelled || 0, r.billed,
-       r.pay_status_label, r.paid_amount || 0, r.paid_at || "", r.balance, r.created_at || "", r.updated_at || ""]));
-     return "\ufeff" + lines.map(l => l.map(cell).join(",")).join("\r\n");
+     const head = ["団体名", "申込責任者", "出場", "取消", "別団体と重複", "受付", "最終修正"];
+     const lines = [head].concat(d.rows.map(r => [r.team_name, r.contact_name, r.entries, r.cancelled || 0, r.cross_dup || 0,
+       r.created_at || "", r.updated_at || ""]));
+     return "﻿" + lines.map(l => l.map(cell).join(",")).join("\r\n");
    };
-   let lastData = null;
    const load = async () => {
      body.replaceChildren(h("div", { className: "text-sub", style: { padding: "12px" } }, "読み込み中…"));
-     const d = await api.get(`/api/tournaments/${t.id}/fee-summary`);
+     const d = await api.get(`/api/tournaments/${t.id}/submissions`);
      if (!d || d.error) { body.replaceChildren(h("div", { className: "text-sm", style: { color: "#b91c1c" } }, (d && d.error) || "読み込めませんでした")); return; }
-     lastData = d;
-     const T = d.totals;
-     const tile = (label, val, sub) => h("div", { style: { border: "1px solid #e5e7eb", borderRadius: "8px", padding: "10px 12px", background: "#fff", minWidth: "0" } },
-       h("div", { className: "text-xs text-sub" }, label),
-       h("div", { style: { fontSize: "20px", fontWeight: "800", fontVariantNumeric: "tabular-nums" } }, val),
-       sub ? h("div", { className: "text-xs text-sub" }, sub) : null);
-     const tiles = h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: "8px", marginBottom: "12px" } },
-       tile("申込", T.submissions + "件", `出場 ${T.entries}件・のべ${T.people}人`),
-       tile("請求額(取消を除く)", yen(T.billed), `参加料 ${yen(T.entry_fees)}${T.options_total ? "・オプション " + yen(T.options_total) : ""}`),
-       tile("入金済", yen(T.paid), `入金済${T.pay_counts.paid || 0}・一部${T.pay_counts.partial || 0}・未${T.pay_counts.unpaid || 0}`),
-       tile("未収", yen(T.outstanding), T.overpaid ? "過入金 " + yen(T.overpaid) : ""),
-       tile("取消", T.cancelled + "件", yen(T.cancelled_amount) + " は請求から除外"));
-     const parts = [tiles];
-     if (T.reprice_submissions) {
-       parts.push(h("div", { style: { padding: "9px 12px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: "8px", marginBottom: "12px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" } },
-         h("span", { className: "text-sm" }, `料金設定が申込時と違う申込が ${T.reprice_submissions}件あります（今の料金だと差額 ${T.reprice_diff >= 0 ? "+" : ""}${yen(T.reprice_diff)}）。請求額は申込時の金額のままです。`),
-         h("button", { className: "btn btn-sm", onClick: () => repriceFlow() }, "料金改定を適用する…")));
-     }
-     if (d.unlinked && d.unlinked.entries) {
-       parts.push(h("div", { className: "text-xs text-sub", style: { marginBottom: "10px" } },
-         `申込フォームを通らずに登録された出場 ${d.unlinked.entries}件（${yen(d.unlinked.amount)}）は入金管理の対象外です（請求額には含めています）。`));
-     }
-     // 絞り込み・CSV・まとめて再送
+     const parts = [];
+     const crossRows = d.rows.filter(r => r.cross_dup > 0);
      const ngRows = d.rows.filter(sheetNg);
+     const live = d.rows.reduce((s, r) => s + (r.entries || 0), 0);
+     parts.push(h("div", { className: "text-sm", style: { marginBottom: "10px" } },
+       `申込 ${d.rows.length}件・出場 ${live}件`,
+       crossRows.length ? h("span", { style: { color: "#991b1b", fontWeight: "700", marginLeft: "10px" } }, `別団体と重複の疑い ${crossRows.length}団体`) : null));
+     if (d.unlinked) {
+       parts.push(h("div", { className: "text-xs text-sub", style: { marginBottom: "10px" } },
+         `申込フォームを通らずに登録された出場が ${d.unlinked}件あります（この一覧には出ません）。`));
+     }
      const search = h("input", { className: "input", type: "search", placeholder: "団体名・責任者で探す", value: q,
        style: { flex: "1 1 180px", minWidth: "0" } });
      const tbWrap = h("div", {});
      search.addEventListener("input", () => { q = search.value.trim(); drawRows(); });
      const chips = h("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
        ...FILTERS.map(([v, l]) => h("button", { className: "btn btn-sm" + (filt === v ? "" : " btn-ghost"), onClick: () => { filt = v; load(); } },
-         l + (v === "due" ? `（${d.rows.filter(r => r.balance > 0).length}）` : v === "sheet" && ngRows.length ? `（${ngRows.length}）` : ""))));
+         l + (v === "cross" && crossRows.length ? `（${crossRows.length}）` : v === "sheet" && ngRows.length ? `（${ngRows.length}）` : ""))));
      parts.push(h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "8px" } },
        search, chips,
        h("button", { className: "btn btn-sm btn-ghost", onClick: () => {
          const blob = new Blob([csvOf(d)], { type: "text/csv" });
-         const a = h("a", { href: URL.createObjectURL(blob), download: `${t.name}_申込と入金.csv` });
+         const a = h("a", { href: URL.createObjectURL(blob), download: `${t.name}_申込一覧.csv` });
          document.body.appendChild(a); a.click(); a.remove();
        } }, "CSVで保存"),
        (d.tournament.gas && ngRows.length) ? h("button", { className: "btn btn-sm", onClick: async (e) => {
@@ -3661,113 +3644,44 @@ const A = {
          load();
        } }, `未反映 ${ngRows.length}件をまとめて再送`) : null));
      parts.push(tbWrap);
-     const drawRows = () => tbWrap.replaceChildren(rowsTable(d));
-     // 申込ごとの表
-     const rowsTable = (d) => {
-     const tbl = h("table", { className: "tbl", style: { minWidth: "760px" } });
-     tbl.appendChild(h("thead", {}, h("tr", {},
-       h("th", {}, "団体"), h("th", { style: { textAlign: "right" } }, "出場"), h("th", { style: { textAlign: "right" } }, "請求額"),
-       h("th", {}, "入金"), h("th", { style: { textAlign: "right" } }, "残額"), d.tournament.gas ? h("th", {}, "シート") : null, h("th", {}, ""))));
-     const tb = h("tbody", {});
-     const shownRows = d.rows.filter(match);
-     shownRows.forEach(r => {
-       const sh = SHEET[r.sheet_upd_status];
-       tb.appendChild(h("tr", {},
-         h("td", { className: "text-sm" }, h("b", {}, r.team_name || "(団体名なし)"), h("div", { className: "text-xs text-sub" }, (r.contact_name || "") + (r.updated_at ? "・修正 " + r.updated_at : ""))),
-         h("td", { className: "text-sm", style: { textAlign: "right" } }, r.entries + "件" + (r.cancelled ? `（取消${r.cancelled}）` : "")),
-         h("td", { className: "text-sm", style: { textAlign: "right", fontVariantNumeric: "tabular-nums" } }, yen(r.billed),
-           r.reprice_count ? h("div", { className: "text-xs", style: { color: "#92400e" } }, "今の料金 " + yen(r.current_price_total)) : null),
-         h("td", { className: "text-sm" }, h("span", { style: { color: PAYC[r.pay_status] || "#334155", fontWeight: "700" } }, r.pay_status_label),
-           r.paid_amount ? h("div", { className: "text-xs text-sub" }, yen(r.paid_amount) + (r.paid_at ? "・" + r.paid_at : "")) : null),
-         h("td", { className: "text-sm", style: { textAlign: "right", fontVariantNumeric: "tabular-nums", color: r.balance > 0 ? "#991b1b" : r.balance < 0 ? "#92400e" : "" } }, yen(r.balance)),
-         d.tournament.gas ? h("td", { className: "text-xs", title: r.sheet_upd_detail || "" },
-           sh ? h("span", { style: { color: sh[1], fontWeight: "700" } }, sh[0]) : "—",
-           (r.sheet_upd_status === "failed" || r.sheet_upd_status === "partial" || r.sheet_upd_status === "pending")
-             ? h("button", { className: "btn btn-sm btn-ghost", style: { marginLeft: "4px" }, onClick: async (e) => {
-                 e.target.disabled = true;
-                 const x = await api.post(`/api/submissions/${r.submission_id}/sheet-resend`, {});
-                 toast(x.error ? x.error : "シートを今の内容で書き直しました", x.error ? "err" : "ok");
-                 load();
-               } }, "再送") : null) : null,
-         h("td", { style: { whiteSpace: "nowrap" } },
-           h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openSubmissionEdit(t, r.submission_id, load) }, "修正"),
-           h("button", { className: "btn btn-sm btn-ghost", onClick: () => payFlow(r) }, "入金"),
-           // 当日受付の定番操作: 請求額ちょうどを受け取った
-           (r.balance > 0 && r.pay_status !== "paid") ? h("button", { className: "btn btn-sm", title: `請求額 ${yen(r.billed)} を入金済にします`, onClick: async (e) => {
-             e.target.disabled = true;
-             const x = await api.post(`/api/submissions/${r.submission_id}/payment`, { status: "paid", amount: r.billed });
-             if (x.error) { e.target.disabled = false; return toast(x.error, "err"); }
-             toast(`${r.team_name || "申込"}を入金済（${yen(r.billed)}）にしました。直すときは「入金」から`, "ok");
-             load();
-           } }, "全額入金") : null)));
-     });
-     if (!d.rows.length) tb.appendChild(h("tr", {}, h("td", { colSpan: 7, className: "text-sub text-sm" }, "申込フォームからの申込はまだありません")));
-     else if (!shownRows.length) tb.appendChild(h("tr", {}, h("td", { colSpan: 7, className: "text-sub text-sm" }, "条件に合う申込はありません")));
-     tbl.appendChild(tb);
-     return h("div", { style: { overflowX: "auto" } }, tbl);
+     const rowsTable = () => {
+       const tbl = h("table", { className: "tbl", style: { minWidth: "600px" } });
+       tbl.appendChild(h("thead", {}, h("tr", {},
+         h("th", {}, "団体"), h("th", { style: { textAlign: "right" } }, "出場"), h("th", {}, "注意"),
+         d.tournament.gas ? h("th", {}, "シート") : null, h("th", {}, ""))));
+       const tb = h("tbody", {});
+       const shownRows = d.rows.filter(match);
+       shownRows.forEach(r => {
+         const sh = SHEET[r.sheet_upd_status];
+         tb.appendChild(h("tr", {},
+           h("td", { className: "text-sm" }, h("b", {}, r.team_name || "(団体名なし)"), h("div", { className: "text-xs text-sub" }, (r.contact_name || "") + (r.updated_at ? "・修正 " + r.updated_at : ""))),
+           h("td", { className: "text-sm", style: { textAlign: "right" } }, r.entries + "件" + (r.cancelled ? `（取消${r.cancelled}）` : "")),
+           h("td", { className: "text-xs" }, r.cross_dup
+             ? h("span", { style: { color: "#991b1b", fontWeight: "700" }, title: "出場一覧の赤い印で相手の団体と種目を確認できます" }, `別団体と重複 ${r.cross_dup}件`)
+             : "—"),
+           d.tournament.gas ? h("td", { className: "text-xs", title: r.sheet_upd_detail || "" },
+             sh ? h("span", { style: { color: sh[1], fontWeight: "700" } }, sh[0]) : "—",
+             sheetNg(r)
+               ? h("button", { className: "btn btn-sm btn-ghost", style: { marginLeft: "4px" }, onClick: async (e) => {
+                   e.target.disabled = true;
+                   const x = await api.post(`/api/submissions/${r.submission_id}/sheet-resend`, {});
+                   toast(x.error ? x.error : "シートを今の内容で書き直しました", x.error ? "err" : "ok");
+                   load();
+                 } }, "再送") : null) : null,
+           h("td", { style: { whiteSpace: "nowrap" } },
+             h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openSubmissionEdit(t, r.submission_id, load) }, "修正"))));
+       });
+       if (!d.rows.length) tb.appendChild(h("tr", {}, h("td", { colSpan: 5, className: "text-sub text-sm" }, "申込フォームからの申込はまだありません")));
+       else if (!shownRows.length) tb.appendChild(h("tr", {}, h("td", { colSpan: 5, className: "text-sub text-sm" }, "条件に合う申込はありません")));
+       tbl.appendChild(tb);
+       return h("div", { style: { overflowX: "auto" } }, tbl);
      };
+     const drawRows = () => tbWrap.replaceChildren(rowsTable());
      drawRows();
-     // 種目別
-     const et = h("table", { className: "tbl", style: { marginTop: "14px", minWidth: "420px" } });
-     et.appendChild(h("thead", {}, h("tr", {}, h("th", {}, "種目"), h("th", { style: { textAlign: "right" } }, "出場"), h("th", { style: { textAlign: "right" } }, "参加料"), h("th", { style: { textAlign: "right" } }, "取消"))));
-     const etb = h("tbody", {});
-     d.by_event.forEach(e => etb.appendChild(h("tr", {},
-       h("td", { className: "text-sm" }, e.event),
-       h("td", { className: "text-sm", style: { textAlign: "right" } }, e.entries + "件"),
-       h("td", { className: "text-sm", style: { textAlign: "right", fontVariantNumeric: "tabular-nums" } }, yen(e.amount)),
-       h("td", { className: "text-xs text-sub", style: { textAlign: "right" } }, e.cancelled ? `${e.cancelled}件（${yen(e.cancelled_amount)}）` : "—"))));
-     et.appendChild(etb);
-     parts.push(h("details", { style: { marginTop: "10px" } }, h("summary", { className: "text-sm", style: { cursor: "pointer", fontWeight: "700" } }, "種目別の内訳"), h("div", { style: { overflowX: "auto" } }, et)));
      body.replaceChildren(...parts);
    };
 
-   // 入金の記録
-   const payFlow = (r) => {
-     const st = h("select", { className: "input" },
-       ...[["unpaid", "未入金"], ["partial", "一部入金"], ["paid", "入金済"], ["refunded", "返金済"]].map(([v, l]) => h("option", { value: v, selected: v === r.pay_status ? "" : null }, l)));
-     const amt = h("input", { className: "input", type: "number", min: "0", value: r.paid_amount || "", placeholder: "入金済なら空欄で請求額 " + yen(r.billed) });
-     const at = h("input", { className: "input", type: "date", value: r.paid_at || "" });
-     const note = h("input", { className: "input", placeholder: "例: 当日受付で現金" });
-     const fld = (l, el) => h("div", { style: { marginBottom: "10px" } }, h("div", { className: "text-xs text-sub", style: { marginBottom: "4px" } }, l), el);
-     const b2 = h("div", {}, h("div", { className: "text-sm", style: { marginBottom: "10px" } }, `${r.team_name}　請求額 ${yen(r.billed)}`),
-       fld("入金状況", st), fld("入金額", amt), fld("入金日", at), fld("メモ（本部のみ）", note));
-     let m2 = null;
-     m2 = openModal("入金の記録", b2, h("div", { className: "flex gap-2" },
-       h("button", { className: "btn btn-ghost", onClick: () => m2.remove() }, "やめる"),
-       h("button", { className: "btn", onClick: async () => {
-         const x = await api.post(`/api/submissions/${r.submission_id}/payment`,
-           { status: st.value, amount: amt.value, paid_at: at.value, note: note.value || undefined });
-         if (x.error) return toast(x.error, "err");
-         toast("入金を記録しました", "ok"); m2.remove(); load();
-       } }, "記録する")));
-   };
-
-   // 料金改定の適用(差額の確認→適用)
-   const repriceFlow = async () => {
-     const pv = await api.post(`/api/tournaments/${t.id}/fee-reprice`, { dry_run: true });
-     if (pv.error) return toast(pv.error, "err");
-     const list = h("div", { style: { maxHeight: "50vh", overflow: "auto" } },
-       ...(pv.items || []).map(it => h("div", { className: "text-sm", style: { padding: "6px 0", borderBottom: "1px solid #eee" } },
-         h("b", {}, it.team_name || "(団体名なし)"), `　${yen(it.from)} → ${yen(it.to)}`,
-         h("div", { className: "text-xs text-sub" }, (it.entries || []).map(e => `${e.event} ${yen(e.from)}→${yen(e.to)}`).join("、")))));
-     const reason = h("input", { className: "input", placeholder: "例: 要項改定（参加料変更）のため" });
-     let m3 = null;
-     m3 = openModal("料金改定の適用", h("div", {},
-       h("div", { className: "text-sm", style: { marginBottom: "8px", lineHeight: "1.7" } },
-         `${(pv.items || []).length}件の申込を今の料金設定に合わせます。差額の合計 ${pv.diff_total >= 0 ? "+" : ""}${yen(pv.diff_total)}。変更は履歴に残り、シートにも反映します。`),
-       list, h("div", { style: { marginTop: "10px" } }, h("div", { className: "text-xs text-sub", style: { marginBottom: "4px" } }, "理由"), reason)),
-       h("div", { className: "flex gap-2" },
-         h("button", { className: "btn btn-ghost", onClick: () => m3.remove() }, "やめる"),
-         h("button", { className: "btn", disabled: !(pv.items || []).length ? "" : null, onClick: async (e) => {
-           e.target.disabled = true;
-           const x = await api.post(`/api/tournaments/${t.id}/fee-reprice`, { dry_run: false, reason: reason.value });
-           if (x.error) { e.target.disabled = false; return toast(x.error, "err"); }
-           toast(`${x.applied}件に適用しました` + (x.sheet_failed ? `（シート反映失敗 ${x.sheet_failed}件）` : ""), x.sheet_failed ? "err" : "ok");
-           m3.remove(); load();
-         } }, "適用する")));
-   };
-
-   bg = openModal(`申込・参加料 — ${t.name}`, body, h("div", { className: "flex gap-2" },
+   bg = openModal(`申込の一覧 — ${t.name}`, body, h("div", { className: "flex gap-2" },
      h("button", { className: "btn btn-ghost", onClick: () => A.openEntryChanges(t) }, "変更履歴"),
      h("button", { className: "btn btn-ghost", onClick: () => bg.remove() }, "閉じる")), { size: "lg" });
    load();
@@ -3781,7 +3695,7 @@ const A = {
    const box = h("div", {});
    const info = h("div", { className: "text-sm", style: { marginBottom: "12px", lineHeight: "1.7" } },
      `受付 ${v.submission.created_at || ""}`, v.submission.updated_at ? `・最終修正 ${v.submission.updated_at}` : "",
-     h("br"), `請求額 ${window.KTTASubEditor.yen(v.money.billed)}（出場 ${v.money.live}件${v.money.cancelled ? "・取消 " + v.money.cancelled + "件" : ""}）`);
+     h("br"), `出場 ${v.counts.live}件・のべ${v.counts.people}人${v.counts.cancelled ? "・取消 " + v.counts.cancelled + "件" : ""}`);
    const form = h("div", {});
    box.append(info, form);
    window.KTTASubEditor.render(form, v, { admin: true });
@@ -5961,7 +5875,7 @@ const A = {
  let activeTab = "all";
  // ソート/フィルタ状態と、生成済みトーナメント表との突合(種目→配置済みentrant idの集合)
  let sortKey = null, sortDir = 1;
- let fltText = "", fltStatus = "all", fltGender = "all", fltShibu = "all", fltUnplaced = false;
+ let fltText = "", fltStatus = "all", fltGender = "all", fltShibu = "all", fltUnplaced = false, fltCross = false;
  let placedByEvent = {};   // event → Set(entrant_id) (bracket_round=1のリーフ)
  const compareBar = h("div", { style: { marginBottom: "10px" } });
  const qualityBar = h("div", { style: { marginBottom: "12px" } });
@@ -5980,6 +5894,7 @@ const A = {
    if (fltGender !== "all") rows = rows.filter(e => (e.gender || "male") === fltGender);
    if (fltShibu !== "all") rows = rows.filter(e => (e.region || "") === fltShibu);
    if (fltUnplaced) rows = rows.filter(e => placedByEvent[e.entry_event] && !placedByEvent[e.entry_event].has(e.id));
+   if (fltCross) rows = rows.filter(e => e.cross_dup && e.cross_dup.length);
    if (sortKey) {
      const val = (e) => sortKey === "name" ? (e.furigana || e.name || "")
        : sortKey === "team" ? (e.team || "")
@@ -6177,6 +6092,19 @@ const A = {
            nameLine(e.partner_name, e.partner_furigana, !!e.partner_player_id, true),
            members)
        : h("td", { className: "font-bold" }, nameLine(e.p1_name || e.name, e.furigana, !!e.player_id, false), members);
+     // 別の団体から同じ人物・同じ組が同じ種目に申し込まれている(二重申込の疑い)。
+     // ふりがなまで一致=赤、片方にふりがなが無く漢字だけ一致=橙(同姓同名の別人かもしれない)。
+     if (e.cross_dup && e.cross_dup.length) {
+       const strong = e.cross_dup.some(c => c.level === "strong");
+       nameCell.appendChild(h("div", {
+         title: e.cross_dup.map(c => `${c.kind === "pair" ? "同じ組" : c.name}: ${c.other_team || "(所属なし)"} からも申込あり（${c.event}）`).join("\n"),
+         style: { marginTop: "3px" } },
+         h("span", { style: { display: "inline-block", fontSize: "10.5px", fontWeight: 700, padding: "1px 7px", borderRadius: "9px",
+           background: strong ? "#fee2e2" : "#ffedd5", color: strong ? "#991b1b" : "#9a3412" } },
+           strong ? "別団体と重複" : "別団体に同名（要確認）"),
+         h("span", { className: "text-xs text-sub", style: { fontWeight: 400, marginLeft: "5px" } },
+           [...new Set(e.cross_dup.map(c => c.other_team || "(所属なし)"))].join("・"))));
+     }
      // 所属: ダブルスは選手1/選手2の所属を別々に必ず表記
      const teamCell = (e.is_doubles && e.partner_name)
        ? h("td", { className: "text-xs" },
@@ -6286,8 +6214,14 @@ const A = {
      }
    } catch (e) { /* 品質チェックは任意。失敗しても一覧は表示する */ }
    const pend = entries.filter(e => (e.entry_status || "confirmed") === "pending").length;
-   summary.textContent = `申込 ${entries.length}件 ・ 種目 ${eventsList().length} ・ 承認待ち ${pend}`
-     + (issueTotal ? ` ・ 要確認 ${issueTotal}` : "");
+   const crossN = entries.filter(e => e.cross_dup && e.cross_dup.length).length;
+   summary.replaceChildren(`申込 ${entries.length}件 ・ 種目 ${eventsList().length} ・ 承認待ち ${pend}`
+     + (issueTotal ? ` ・ 要確認 ${issueTotal}` : ""),
+     crossN ? h("label", { style: { marginLeft: "10px", color: "#991b1b", fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: "4px", alignItems: "center" },
+       title: "別の団体から同じ人物・同じ組が申し込まれているもの" },
+       (() => { const c = h("input", { type: "checkbox" }); c.checked = fltCross;
+         c.addEventListener("change", () => { fltCross = c.checked; renderTable(); }); return c; })(),
+       `別団体と重複の疑い ${crossN}件だけ表示`) : null);
    refreshShibu();
    if (activeTab !== "all" && !eventsList().includes(activeTab)) activeTab = "all";
    renderQuality(); renderTabs(); renderCompare(); renderTable();
@@ -6311,10 +6245,10 @@ const A = {
    mkSel([["all", "性別: 全て"], ["male", "男子"], ["female", "女子"], ["mixed", "混合"]], (v) => { fltGender = v; renderTable(); }),
    shibuSel,
    h("button", { className: "btn btn-sm btn-ghost",
-     title: "申込ごとの請求額・入金・残額。申込内容の修正と入金の記録もここから",
-     onClick: () => A.openFeeLedger(t) }, "申込・参加料"),
+     title: "申込ごとの出場件数・別団体との重複・シート反映。申込内容の修正もここから",
+     onClick: () => A.openSubmissionList(t) }, "申込の一覧"),
    h("button", { className: "btn btn-sm btn-ghost",
-     title: "申込後の修正・取消・入金・料金改定の記録",
+     title: "申込後の修正・取消・種目追加の記録",
      onClick: () => A.openEntryChanges(t) }, "変更履歴"),
    h("span", { className: "text-xs text-sub" }, "列見出しクリックで並び替え"));
  const ssNote = h("div", { className: "text-xs text-sub", style: { margin: "0 0 8px", padding: "7px 10px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: "7px", lineHeight: "1.6" } },

@@ -773,7 +773,7 @@ test("(ad) 申込の後日修正・入金・参加料集計: 申込者は自分�
 
   // 未認証は入れない
   assert.strictEqual((await fetch(BASE + "/api/applicant/edit-view")).status, 401, "申込者セッション無しは401");
-  assert.ok([401, 503].includes((await fetch(BASE + `/api/tournaments/${t.id}/fee-summary`)).status), "集計は管理キー必須");
+  assert.ok([401, 503].includes((await fetch(BASE + `/api/tournaments/${t.id}/submissions`)).status), "申込の一覧は管理キー必須");
 
   const login = await fetch(BASE + "/api/auth/applicant/session", { method: "POST", headers: jhead, body: JSON.stringify({ token: sub.applicant_token }) });
   const ck = { ...jhead, Cookie: (login.headers.get("set-cookie") || "").split(";")[0], Origin: BASE };
@@ -787,13 +787,14 @@ test("(ad) 申込の後日修正・入金・参加料集計: 申込者は自分�
   const saved = await fetch(BASE + "/api/applicant/submission", { method: "POST", headers: ck,
     body: JSON.stringify({ entries: [{ entrant_id: ent.entry_id, event: "高校男子シングルス", name: "架空 二郎" }], reason: "記入ミス" }) }).then(r => r.json());
   assert.ok(saved.ok, JSON.stringify(saved));
-  assert.strictEqual(saved.view.money.billed, 500, "種目を変えた行だけ今の料金で付け直す");
+  assert.strictEqual(saved.view.counts.live, 1);
+  assert.strictEqual(saved.view.money, undefined, "金額は画面に出さない(金銭の収受は扱わない)");
   const added = await fetch(BASE + "/api/applicant/submission", { method: "POST", headers: ck,
     body: JSON.stringify({ add: [{ event: "男子シングルス", name: "架空 追加", team: "架空クラブ" }] }) }).then(r => r.json());
   assert.ok(added.ok, JSON.stringify(added));
-  assert.strictEqual(added.view.money.billed, 1200, "修正画面から種目を追加でき、料金が付く");
+  assert.strictEqual(added.view.counts.live, 2, "修正画面から種目を追加できる");
   assert.strictEqual(added.view.entries.length, 2);
-  // 本部が出場者を直接消すと履歴に残り、請求額も揃う
+  // 本部が出場者を直接消すと履歴に残る
   const addedEnt = added.view.entries.find(e => e.name === "架空 追加");
   const del = await fetch(BASE + `/api/entrants/${addedEnt.entry_id}`, { method: "DELETE", headers: akhead });
   assert.strictEqual(del.status, 200);
@@ -807,13 +808,14 @@ test("(ad) 申込の後日修正・入金・参加料集計: 申込者は自分�
   const adm = await adminPut(`/api/submissions/${sid}`, { entries: [{ entrant_id: ent.entry_id, name: "架空 三郎" }], reason: "電話依頼" });
   assert.ok(adm.ok, JSON.stringify(adm));
 
-  const pay = await adminPost(`/api/submissions/${sid}/payment`, { status: "paid" });
-  assert.strictEqual(pay.paid_amount, 500, "入金済で金額省略なら請求額");
-  const fs2 = await fetch(BASE + `/api/tournaments/${t.id}/fee-summary`, { headers: akhead }).then(r => r.json());
-  assert.strictEqual(fs2.totals.billed, 500);
-  assert.strictEqual(fs2.totals.outstanding, 0);
+  const payRes = await fetch(BASE + `/api/submissions/${sid}/payment`, { method: "POST", headers: akhead, body: JSON.stringify({ status: "paid" }) });
+  assert.ok(payRes.status >= 400, "入金記録のAPIは廃止(金銭の収受は扱わない)");
+  const list = await fetch(BASE + `/api/tournaments/${t.id}/submissions`, { headers: akhead }).then(r => r.json());
+  assert.strictEqual(list.rows.length, 1);
+  assert.strictEqual(list.rows[0].entries, 1);
+  assert.ok(!/billed|paid_amount|balance/.test(JSON.stringify(list)), "一覧に金額を出さない");
   const ch = await fetch(BASE + `/api/tournaments/${t.id}/entry-changes`, { headers: akhead }).then(r => r.json());
-  assert.ok(ch.items.some(i => i.kind === "edit" && i.actor === "applicant") && ch.items.some(i => i.kind === "payment"), "履歴に残る");
+  assert.ok(ch.items.some(i => i.kind === "edit" && i.actor === "applicant"), "履歴に残る");
   assert.ok(ch.items.some(i => i.kind === "add") && ch.items.some(i => i.kind === "delete" && i.actor === "admin"), "追加・本部の削除も履歴に残る");
   assert.ok(!JSON.stringify(ch).includes("0154-12-3456"), "履歴に連絡先の値は残さない");
 });
