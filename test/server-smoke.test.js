@@ -776,7 +776,10 @@ test("(ad) 申込の後日修正・入金・参加料集計: 申込者は自分�
   assert.ok([401, 503].includes((await fetch(BASE + `/api/tournaments/${t.id}/fee-summary`)).status), "集計は管理キー必須");
 
   const login = await fetch(BASE + "/api/auth/applicant/session", { method: "POST", headers: jhead, body: JSON.stringify({ token: sub.applicant_token }) });
-  const ck = { ...jhead, Cookie: (login.headers.get("set-cookie") || "").split(";")[0] };
+  const ck = { ...jhead, Cookie: (login.headers.get("set-cookie") || "").split(";")[0], Origin: BASE };
+  const noOrigin = { ...ck }; delete noOrigin.Origin;
+  assert.strictEqual((await fetch(BASE + "/api/applicant/submission", { method: "POST", headers: noOrigin, body: "{}" })).status, 403,
+    "Cookieで動く修正は同一サイトからのみ(CSRF対策)");
   const view = await fetch(BASE + "/api/applicant/edit-view", { headers: ck }).then(r => r.json());
   const vs = JSON.stringify(view);
   assert.ok(!vs.includes("0154-12-3456") && !vs.includes("tanto@example.com"), "申込者の修正画面に連絡先の生値を出さない");
