@@ -662,6 +662,8 @@ function doPost(e) {
     catch (aggErr) { console.error("集計用シート再計算失敗:", aggErr); }
     try { generateEventLists(); }
     catch (evErr) { console.error("種目別リスト生成失敗:", evErr); }
+    try { buildOpsBoard(ss, data); }
+    catch (boardErr) { console.error("運営ボード更新失敗:", boardErr); }
 
     // 記録が確認できたときだけ op_id を確定する。未確認のまま確定すると、
     // 再送で埋め直す道を自分で塞いでしまう。
@@ -1035,6 +1037,8 @@ function _applyUpdate(ss, data) {
   catch (aggErr) { console.error("集計用シート再計算失敗:", aggErr); }
   try { generateEventLists(); }
   catch (evErr) { console.error("種目別リスト生成失敗:", evErr); }
+  try { buildOpsBoard(ss, data); }
+  catch (boardErr) { console.error("運営ボード更新失敗:", boardErr); }
 
   return { ok: true, verified: true, action: "update", ledger_row: ledgerRow || null,
     updated_rows: updated, appended_rows: appended, cancelled_rows: cancelled, missing: missing,
@@ -1059,6 +1063,192 @@ function _liveRows(sh) {
     .map(function (r) {
       return { get: function (label, nth) { const i = idx(label, nth); return i < 0 ? "" : r[i]; } };
     });
+}
+
+
+// ════════════════════════════════════════════
+// 運営ボード(受付状況をシート1枚で見る)
+// ════════════════════════════════════════════
+// 申込・修正が届くたびに作り直す。本部が知りたい順(全体→種目の埋まり具合→未収→要確認→直近の変更)に並べる。
+// 出場数・定員・締切は KTTA Platform が form_schema.events / deadline で送ってくる最新の値を使い、
+// メニューから作り直すときのために「_ボード設定」シートへ大会ごとに控える(人は触らない)。
+// 1つのシートで複数大会を受けている場合は、最後に届いた大会を表示する(種目シートに大会の列が無いため)。
+
+const BOARD_SHEET = "運営ボード";
+const BOARD_CONF_SHEET = "_ボード設定";
+const BOARD_W = 7;
+
+function _sheetRows(sh) {
+  if (!sh || sh.getLastRow() < 2) return [];
+  const width = Math.max(1, sh.getLastColumn());
+  const vals = sh.getRange(1, 1, sh.getLastRow(), width).getValues();
+  const head = vals[0].map(function (v) { return String(v == null ? "" : v).trim(); });
+  const idx = function (label, nth) {
+    let k = 0;
+    for (let i = 0; i < head.length; i++) if (head[i] === label && k++ === (nth || 0)) return i;
+    return -1;
+  };
+  const st = idx(COL_STATE);
+  return vals.slice(1).map(function (r) {
+    return {
+      state: st < 0 ? "" : String(r[st] || ""),
+      get: function (label, nth) { const i = idx(label, nth); return i < 0 ? "" : r[i]; },
+    };
+  });
+}
+
+// 大会の種目設定(定員・料金)と締切を控える/読む。
+function _boardConf(ss, data) {
+  let sh = ss.getSheetByName(BOARD_CONF_SHEET);
+  const rows = sh && sh.getLastRow() >= 1 ? sh.getRange(1, 1, sh.getLastRow(), 3).getValues() : [];
+  const schema = data && data.form_schema;
+  const tid = String((schema && schema.tournament_id) || (data && data.tournament_id) || "").trim();
+  if (tid && schema && Array.isArray(schema.events)) {
+    const conf = { tournament_id: tid, tournament_name: String(data.tournament_name || ""),
+      events: schema.events, deadline: schema.deadline || "" };
+    if (!sh) { sh = ss.insertSheet(BOARD_CONF_SHEET); try { sh.hideSheet(); } catch (e) { /* 表示のままでも害はない */ } }
+    let at = 0;
+    rows.forEach(function (r, i) { if (String(r[0]) === tid) at = i + 1; });
+    if (!at) at = rows.length + 1;
+    sh.getRange(at, 1, 1, 3).setValues([[tid, JSON.stringify(conf), new Date()]]);
+    return conf;
+  }
+  // 申込データが無い(メニューから)ときは、最後に更新された大会
+  let best = null, bestAt = 0;
+  rows.forEach(function (r) {
+    const t = r[2] instanceof Date ? r[2].getTime() : 0;
+    if (!best || t >= bestAt) { try { best = JSON.parse(String(r[1] || "")); bestAt = t; } catch (e) { /* 壊れた行は飛ばす */ } }
+  });
+  return best;
+}
+
+function _yenNum(v) { const n = parseInt(String(v == null ? "" : v).replace(/[^\d-]/g, ""), 10); return isNaN(n) ? 0 : n; }
+
+function buildOpsBoard(ss, data) {
+  const conf = _boardConf(ss, data);
+  if (!conf) return { ok: false, reason: "大会の設定がまだ届いていません" };
+  const tid = conf.tournament_id;
+  const evNames = {};
+  (conf.events || []).forEach(function (e) { if (e && e.name) evNames[e.name] = e; });
+
+  // ─ 申込台帳(この大会・併合で0円にした行は数えない) ─
+  const ledger = _sheetRows(ss.getSheetByName(SHEETS.LEDGER)).filter(function (r) {
+    return String(r.get("tournament_id") || "") === tid && !String(r.get(COL_MERGED_INTO) || "");
+  });
+  let billed = 0, paid = 0, due = 0;
+  const unpaid = [];
+  ledger.forEach(function (r) {
+    const total = _yenNum(r.get("合計金額")), got = _yenNum(r.get("入金額"));
+    const st = String(r.get("入金状況") || "未入金");
+    billed += total; paid += got;
+    if (st !== "返金済" && total - got > 0) {
+      due += total - got;
+      unpaid.push([r.get("団体名"), r.get("申込責任者"), r.get("電話番号"), total, got, total - got, r.get("受付日時")]);
+    }
+  });
+
+  // ─ 種目シート(エントリーIDで1出場と数える。団体は1チーム=複数行) ─
+  const live = {}, cancelled = {}, people = {};
+  const dupKey = {}, dups = [];
+  [SHEETS.TEAM, SHEETS.DOUBLES, SHEETS.MIXED, SHEETS.SINGLES].forEach(function (n) {
+    _sheetRows(ss.getSheetByName(n)).forEach(function (r, i) {
+      const ev = String(r.get("種目") || "");
+      if (!ev || (Object.keys(evNames).length && !evNames[ev])) return;
+      const ref = String(r.get(COL_ENTRY_REF) || "") || (n + "#" + i);
+      const gone = r.state.indexOf("取消") === 0;
+      const bucket = gone ? cancelled : live;
+      (bucket[ev] = bucket[ev] || {})[ref] = true;
+      if (gone) return;
+      people[ev] = (people[ev] || 0) + (n === SHEETS.DOUBLES ? 2 : 1);
+      // 同じ種目に同じ氏名(と所属)が別の出場として2回 = 申込の重複を疑う
+      const names = n === SHEETS.DOUBLES ? [r.get("氏名1"), r.get("氏名2")] : [r.get("氏名")];
+      names.forEach(function (nm, k) {
+        nm = String(nm || "").replace(/[\s　]+/g, "");
+        if (!nm || n === SHEETS.TEAM) return;
+        const team = String((n === SHEETS.DOUBLES ? r.get("チーム名" + (k + 1)) : r.get("チーム名")) || "").replace(/[\s　]+/g, "");
+        const key = ev + "|" + nm + "|" + team;
+        if (dupKey[key] && dupKey[key] !== ref) dups.push([ev, nm, team, dupKey[key], ref]);
+        else dupKey[key] = ref;
+      });
+    });
+  });
+  const count = function (m, ev) { return m[ev] ? Object.keys(m[ev]).length : 0; };
+  const evList = Object.keys(evNames).length ? Object.keys(evNames)
+    : Object.keys(live).concat(Object.keys(cancelled)).filter(function (v, i, a) { return a.indexOf(v) === i; });
+  let liveTotal = 0, cancelTotal = 0;
+  const evRows = evList.map(function (ev) {
+    const n = count(live, ev), c = count(cancelled, ev);
+    liveTotal += n; cancelTotal += c;
+    const cap = parseInt((evNames[ev] || {}).capacity, 10) || 0;
+    let note = "";
+    // 残りわずか = 定員の1割以下(定員が小さい種目で「残り1」を毎回赤くしない)
+    if (cap) note = n >= cap ? "満員" : (cap - n <= Math.floor(cap * 0.1) ? "残りわずか" : "");
+    return [ev, n, people[ev] || 0, cap || "", cap ? Math.max(0, cap - n) : "", c || "", note];
+  });
+
+  // ─ 締切までの日数 ─
+  let deadlineText = "";
+  if (conf.deadline) {
+    const d = new Date(String(conf.deadline).replace(" ", "T") + (String(conf.deadline).length <= 10 ? "T23:59:59+09:00" : ":00+09:00"));
+    if (!isNaN(d.getTime())) {
+      const days = Math.ceil((d.getTime() - Date.now()) / 86400000);
+      deadlineText = conf.deadline + (days > 0 ? "（あと" + days + "日）" : "（締切済み）");
+    }
+  }
+
+  // ─ 直近の変更 ─
+  const hist = _sheetRows(ss.getSheetByName("変更履歴"))
+    .filter(function (r) { return !conf.tournament_name || String(r.get("大会名") || "") === conf.tournament_name; })
+    .slice(-10).reverse()
+    .map(function (r) { return [r.get("変更日時"), r.get("団体名"), r.get("種目"), r.get("変更者"), r.get("内容"), r.get("理由"), ""]; });
+
+  // ─ 組み立て(1枚の2次元配列にして一度に書く) ─
+  const out = [], fmt = [];
+  const pad = function (row) { row = row.slice(0, BOARD_W); while (row.length < BOARD_W) row.push(""); return row; };
+  const sec = function (title) { out.push(pad([""])); out.push(pad([title])); fmt.push({ row: out.length, kind: "sec" }); };
+  const head = function (cols) { out.push(pad(cols)); fmt.push({ row: out.length, kind: "head" }); };
+  out.push(pad([(conf.tournament_name || "") + " 運営ボード"])); fmt.push({ row: 1, kind: "title" });
+  out.push(pad(["更新 " + Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd HH:mm") + (deadlineText ? "　締切 " + deadlineText : "")]));
+  sec("全体");
+  head(["申込", "出場", "請求額", "入金済", "未収", "取消", "未収の団体"]);
+  out.push(pad([ledger.length, liveTotal, billed, paid, due, cancelTotal, unpaid.length])); fmt.push({ row: out.length, kind: "yen", cols: [3, 4, 5] });
+  sec("種目別の埋まり具合");
+  head(["種目", "出場", "人数", "定員", "残り", "取消", "状態"]);
+  evRows.forEach(function (r) { out.push(pad(r)); if (r[6]) fmt.push({ row: out.length, kind: "warn" }); });
+  sec("未収の団体（" + unpaid.length + "件・" + due.toLocaleString("ja-JP") + "円）");
+  head(["団体名", "申込責任者", "電話番号", "請求額", "入金額", "残額", "受付日時"]);
+  if (!unpaid.length) out.push(pad(["未収はありません"]));
+  unpaid.forEach(function (r) { out.push(pad(r)); fmt.push({ row: out.length, kind: "yen", cols: [4, 5, 6] }); });
+  sec("要確認（同じ種目に同じ氏名・所属が2回）");
+  head(["種目", "氏名", "所属", "エントリーID", "エントリーID", "", ""]);
+  if (!dups.length) out.push(pad(["ありません"]));
+  dups.forEach(function (r) { out.push(pad(r)); fmt.push({ row: out.length, kind: "warn" }); });
+  sec("直近の変更（新しい順・10件まで）");
+  head(["変更日時", "団体名", "種目", "変更者", "内容", "理由", ""]);
+  if (!hist.length) out.push(pad(["変更はまだありません"]));
+  hist.forEach(function (r) { out.push(pad(r)); });
+
+  let sh = ss.getSheetByName(BOARD_SHEET);
+  if (!sh) sh = ss.insertSheet(BOARD_SHEET);
+  sh.clear();
+  sh.getRange(1, 1, out.length, BOARD_W).setValues(out);
+  try {
+    fmt.forEach(function (f) {
+      const rg = sh.getRange(f.row, 1, 1, BOARD_W);
+      if (f.kind === "title") rg.setFontSize(14).setFontWeight("bold");
+      else if (f.kind === "sec") rg.setFontWeight("bold").setBackground("#f1ece2");
+      else if (f.kind === "head") rg.setFontWeight("bold").setFontColor("#555555");
+      else if (f.kind === "warn") rg.setBackground("#fdecea");
+      else if (f.kind === "yen") f.cols.forEach(function (c) { sh.getRange(f.row, c).setNumberFormat("#,##0\"円\""); });
+    });
+    sh.setColumnWidth(1, 200); sh.setColumnWidth(2, 130); sh.setColumnWidth(5, 220);
+  } catch (fmtErr) { console.error("運営ボードの書式設定失敗:", fmtErr); }
+  return { ok: true, rows: out.length, unpaid: unpaid.length, duplicates: dups.length };
+}
+
+function menuBuildOpsBoard() {
+  const r = buildOpsBoard(SpreadsheetApp.getActiveSpreadsheet(), null);
+  SpreadsheetApp.getUi().alert(r.ok ? "運営ボードを更新しました。" : "運営ボードを作れませんでした: " + r.reason);
 }
 
 // ════════════════════════════════════════════
@@ -2162,6 +2352,7 @@ function _initManualReceiptSheet(sh) {
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("KTTA Platform")
+    .addItem("運営ボード 更新", "menuBuildOpsBoard")
     .addItem("集計用シート 再計算", "menuRebuildAggregate")
     .addItem("種目別 選手リスト 生成", "menuGenerateEventLists")
     .addSeparator()
@@ -2220,7 +2411,8 @@ function menuShowHelp() {
     "  集計用: 団体別 種目別人数+合計金額 (自動再計算)\n" +
     "  _種目_*: 種目別 選手リスト (手動生成)\n" +
     "  領収書一覧: 全団体の領収書 (一括発行)\n" +
-    "  領収書(個別発行): 手動入力 → 1枚発行\n\n" +
+    "  領収書(個別発行): 手動入力 → 1枚発行\n" +
+    "  運営ボード: 申込・入金・未収・種目の埋まり具合・重複の疑い・直近の変更 (申込や修正のたびに自動更新)\n\n" +
     "■ 受信の確かめかた\n" +
     "  申込を受け取ると、シートに書いた内容を読み返して確認します。\n" +
     "  確認できたときだけ申込者へ「受け付けました」を送ります。\n" +

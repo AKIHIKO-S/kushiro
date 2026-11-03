@@ -11941,6 +11941,12 @@ function buildFormSchema(tournament) {
     generated_at: new Date().toISOString(),
     tournament_id: (tournament && tournament.id) || "",
     columns: { ledger, player },
+    // シートの「運営ボード」が種目の埋まり具合と締切までの日数を出すための設定(個人情報は含まない)
+    events: evCfg.filter(c => c && c.name).map(c => ({
+      name: String(c.name), type: c.type || "singles",
+      capacity: parseInt(c.capacity) || 0, fee: parseInt(c.fee) || 0, fee_unit: c.fee_unit === "person" ? "person" : "entry",
+    })),
+    deadline: entryDeadlineAt(tournament) || "",
   };
 }
 
