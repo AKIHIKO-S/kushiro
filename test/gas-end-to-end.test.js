@@ -734,3 +734,147 @@ test("entry_categories と性別つき種目名を両方持つ場合は併記し
   assert.strictEqual(divVal, "Aブロック（一般男子）", "区分ラベルに性別を併記する: " + divVal);
   assert.match(divVal, /男/, "集計用シートの男女カウント(/男/.test)が引き続き拾える文字列である");
 });
+
+// ── 申込後の修正(action=update) ───────────────────────────────
+// 本体で申込を直すと「その申込の今の姿」が届く。GAS は申込ID・エントリーIDで行を探して書き換え、
+// 取り消した出場は消さずに「状態=取消」と残し、変更履歴シートに1行ずつ追記する。
+function makeEditableSubmission() {
+  const t = db.createTournament({ name: "修正反映大会", date: "2027-07-01", venue: "会場" });
+  db.updateEntrySettings(t.id, {
+    entries_open: 1,
+    event_config: [
+      { name: "男子シングルス", type: "singles", fee: 700 },
+      { name: "高校男子シングルス", type: "singles", fee: 500 },
+      { name: "男子ダブルス", type: "doubles", fee: 1000 },
+      { name: "団体戦", type: "team", fee: 1000, fee_unit: "person", per_team: 6, per_team_min: 3 },
+    ],
+  });
+  const tour = db.getTournament(t.id);
+  const opId = "op-upd-" + Math.random().toString(36).slice(2);
+  const form = {
+    tournament_id: tour.id, tournament_name: tour.name,
+    team_name: "修正クラブ", contact_name: "担当 一郎", contact_tel: "0154-00-1111", contact_email: "a@example.com",
+    entries: [
+      { event: "男子シングルス", type: "singles", name: "架空 太郎", team: "修正クラブ" },
+      { event: "男子ダブルス", type: "doubles", name1: "架空 次郎", name2: "架空 三郎", team1: "修正クラブ", team2: "修正クラブ" },
+      { event: "団体戦", type: "team", team_name: "修正A", members: ["甲 一", "乙 二", "丙 三"] },
+    ],
+  };
+  const r = db.createTeamEntry(tour.id, form, opId);
+  assert.ok(!r.error, r.error);
+  const payload = { ...form, form_schema: db.buildFormSchema(tour), op_id: opId, total_amount: r.total_amount,
+    option_items: r.options || [] };
+  payload.entries = payload.entries.map(e => ({ ...e }));
+  r.created_entries.forEach(ce => { payload.entries[ce.entry_index].entry_id = ce.entry_id; });
+  const view = db.getSubmissionEditView(r.submission_id, { admin: true });
+  const byEv = (ev) => view.entries.find(e => e.event === ev);
+  return { tour, payload, sid: r.submission_id, byEv };
+}
+const liveRows = (sh) => {
+  const head = sh._grid[0].map(String);
+  const st = head.indexOf("状態");
+  return sh._grid.slice(1).filter(r => st < 0 || String(r[st] || "").indexOf("取消") !== 0);
+};
+
+test("修正: 氏名・連絡先の変更で、元の行が書き換わり履歴が残る(行は増えない)", () => {
+  const s = makeEditableSubmission();
+  const env = makeEnv({});
+  assert.strictEqual(env.post(s.payload).ok, true);
+  const e = db.editSubmission(s.sid, {
+    contact: { contact_name: "担当 二郎" },
+    entries: [{ entrant_id: s.byEv("男子シングルス").entry_id, name: "架空 四郎" }],
+    reason: "記入ミス",
+  }, { actor: "admin" });
+  assert.ok(e.ok, e.error);
+  const res = env.post(db.buildSheetUpdatePayload(s.sid, e.group));
+  assert.strictEqual(res.ok, true, JSON.stringify(res));
+  assert.ok(res.updated_rows >= 1);
+  assert.deepStrictEqual(res.missing, []);
+
+  const sg = env.sheets["シングルス"];
+  assert.strictEqual(sg.getLastRow(), 2, "行は増えない");
+  const head = sg._grid[0].map(String);
+  assert.strictEqual(sg._grid[1][head.indexOf("氏名")], "架空 四郎");
+  const lg = env.sheets["申込台帳"];
+  const lh = lg._grid[0].map(String);
+  assert.strictEqual(lg.getLastRow(), 2);
+  assert.strictEqual(lg._grid[1][lh.indexOf("申込責任者")], "担当 二郎");
+  assert.ok(lh.includes("入金状況") && lh.includes("最終修正"));
+
+  const hist = env.sheets["変更履歴"];
+  assert.ok(hist && hist.getLastRow() >= 2, "変更履歴が残る");
+  const hh = hist._grid[0].map(String);
+  assert.ok(hist._grid.slice(1).some(r => r[hh.indexOf("理由")] === "記入ミス"));
+  assert.ok(hist._grid.slice(1).every(r => r[hh.indexOf("変更者")] === "本部"));
+});
+
+test("修正: 同じ変更を再送しても履歴は二重にならず、結果も同じ", () => {
+  const s = makeEditableSubmission();
+  const env = makeEnv({});
+  env.post(s.payload);
+  const e = db.editSubmission(s.sid, { entries: [{ entrant_id: s.byEv("男子シングルス").entry_id, name: "架空 五郎" }] }, { actor: "applicant" });
+  const p = db.buildSheetUpdatePayload(s.sid, e.group);
+  env.post(p);
+  const n = env.sheets["変更履歴"].getLastRow();
+  const res2 = env.post(p);
+  assert.strictEqual(res2.ok, true);
+  assert.strictEqual(res2.duplicate_history, true);
+  assert.strictEqual(env.sheets["変更履歴"].getLastRow(), n, "履歴は増えない");
+  assert.strictEqual(env.sheets["シングルス"].getLastRow(), 2, "行も増えない");
+});
+
+test("修正: 取り消した出場は行を消さず「状態=取消」、種目別の数からも外れる", () => {
+  const s = makeEditableSubmission();
+  const env = makeEnv({});
+  env.post(s.payload);
+  const e = db.editSubmission(s.sid, { entries: [{ entrant_id: s.byEv("男子ダブルス").entry_id, cancel: true }] }, { actor: "admin" });
+  assert.ok(e.ok, e.error);
+  const res = env.post(db.buildSheetUpdatePayload(s.sid, e.group));
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.cancelled_rows, 1);
+  const dbl = env.sheets["ダブルス"];
+  assert.strictEqual(dbl.getLastRow(), 2, "行は残る");
+  assert.strictEqual(liveRows(dbl).length, 0, "取消として扱われる");
+  const lh = env.sheets["申込台帳"]._grid[0].map(String);
+  assert.strictEqual(env.sheets["申込台帳"]._grid[1][lh.indexOf("合計金額")], db.getSubmissionEditView(s.sid, { admin: true }).money.billed);
+});
+
+test("修正: 団体メンバーが増えれば行を足し、減れば余りを取消にする", () => {
+  const s = makeEditableSubmission();
+  const env = makeEnv({});
+  env.post(s.payload);
+  const tm = s.byEv("団体戦");
+  let e = db.editSubmission(s.sid, { entries: [{ entrant_id: tm.entry_id, members: ["甲 一", "乙 二", "丙 三", "丁 四"] }] }, { actor: "admin" });
+  assert.ok(e.ok, e.error);
+  let res = env.post(db.buildSheetUpdatePayload(s.sid, e.group));
+  assert.strictEqual(res.appended_rows, 1);
+  assert.strictEqual(liveRows(env.sheets["団体"]).length, 4);
+  e = db.editSubmission(s.sid, { entries: [{ entrant_id: tm.entry_id, members: ["甲 一", "乙 二", "丙 三"] }] }, { actor: "admin" });
+  res = env.post(db.buildSheetUpdatePayload(s.sid, e.group));
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(liveRows(env.sheets["団体"]).length, 3, "余った1行は取消");
+  assert.strictEqual(env.sheets["団体"].getLastRow(), 5, "行自体は消さない");
+});
+
+test("修正: シートに元の申込が無ければ失敗を返し、勝手に追記しない", () => {
+  const s = makeEditableSubmission();
+  const env = makeEnv({});                       // 元の申込を送っていない
+  const e = db.editSubmission(s.sid, { entries: [{ entrant_id: s.byEv("男子シングルス").entry_id, name: "架空 六郎" }] }, { actor: "admin" });
+  const res = env.post(db.buildSheetUpdatePayload(s.sid, e.group));
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /見つかりません/);
+  assert.ok(res.missing.length >= 1);
+  assert.ok(!env.sheets["シングルス"] || env.sheets["シングルス"].getLastRow() <= 1, "追記しない");
+});
+
+test("修正: 古いGASに届いても新規申込として二重登録されない(必須項目不足で断られる)", () => {
+  const s = makeEditableSubmission();
+  const env = makeEnv({});
+  env.post(s.payload);
+  const e = db.editSubmission(s.sid, { entries: [{ entrant_id: s.byEv("男子シングルス").entry_id, name: "架空 七郎" }] }, { actor: "admin" });
+  const p = db.buildSheetUpdatePayload(s.sid, e.group);
+  const old = { ...p }; delete old.action;       // action を知らない旧GASの見え方
+  const res = env.post(old);
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(env.sheets["申込台帳"].getLastRow(), 2, "台帳に行が増えない");
+});

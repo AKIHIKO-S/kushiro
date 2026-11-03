@@ -2492,7 +2492,7 @@ function buildApplicantStatusHTML() {
   <div class="head">
     <div class="kicker">釧路卓球協会</div>
     <h1>申込内容の確認</h1>
-    <div class="sub">申込番号を入力すると、お申込の内容と状態を確認できます（閲覧のみ）。</div>
+    <div class="sub">申込番号を入力すると、お申込の内容と状態を確認・修正できます。</div>
   </div>
 
   <div class="card">
@@ -2527,8 +2527,24 @@ function buildApplicantStatusHTML() {
       <b>状態について：</b> <span class="badge b-ok">受付済</span> = 受付完了 ／
       <span class="badge b-warn">確認中</span> = 本部で確認中 ／
       <span class="badge b-err">無効</span> = 受付対象外。<br>
-      申込内容の<b>修正・取消</b>が必要な場合は、お手数ですが大会本部までご連絡ください
-      （このページからは変更できません）。
+      申込締切前・組合せ作成前であれば、下の「申込内容を修正する」から<b>選手・種目・連絡先・お弁当などの数</b>を直せます。
+      締切後は連絡先だけ直せます。それ以外は大会本部へご連絡ください。参加料は申込時の金額のままで、種目や人数を変えた分だけ付け直します。
+    </div>
+    <div style="text-align:center;margin-bottom:16px;">
+      <button type="button" class="btn" id="editOpen">申込内容を修正する</button>
+    </div>
+  </div>
+
+  <div id="editPane" class="hidden">
+    <div class="card">
+      <h2 style="font-size:18px;margin:0 0 4px;">申込内容の修正</h2>
+      <div class="note" style="margin-bottom:12px;">変えたい所だけ書き換えて「保存する」を押してください。保存すると大会本部へ通知されます。</div>
+      <div id="editBody"></div>
+      <div class="merr" id="editErr"></div>
+      <div class="mfoot">
+        <button type="button" class="btn ghost" id="editCancel">やめる</button>
+        <button type="button" class="btn" id="editSave">保存する</button>
+      </div>
     </div>
   </div>
 
@@ -2537,6 +2553,7 @@ function buildApplicantStatusHTML() {
   </div>
 </div>
 
+<script src="/shared/submission-editor.js"></script>
 <script>
   function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
     return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c];});}
@@ -2691,6 +2708,45 @@ function buildApplicantStatusHTML() {
       })
       .catch(function(){setMsg("通信エラーが発生しました。時間をおいて再度お試しください。");});
   }
+
+  // ── 申込全体の修正(連絡先・種目・選手・オプション) ──────────────
+  function reloadMe(){
+    return fetch("/api/applicant/me").then(function(r){return r.json();}).then(function(j){ if(!j.error)render(j); });
+  }
+  function openFullEdit(){
+    var err=document.getElementById("editErr"); err.textContent="";
+    fetch("/api/applicant/edit-view").then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+      .then(function(x){
+        if(!x.ok||x.j.error){ setMsg(esc(x.j.error||"修正画面を開けませんでした。")); return; }
+        window.KTTASubEditor.injectCss();
+        window.KTTASubEditor.render(document.getElementById("editBody"), x.j, { admin:false });
+        show("result",false); show("editPane",true);
+        window.scrollTo(0,0);
+      })
+      .catch(function(){ setMsg("通信エラーが発生しました。時間をおいて再度お試しください。"); });
+  }
+  function closeFullEdit(){ show("editPane",false); show("result",true); }
+  function saveFullEdit(){
+    var btn=document.getElementById("editSave"), err=document.getElementById("editErr");
+    var body=window.KTTASubEditor.collect(document.getElementById("editBody"));
+    if(!body){ err.textContent="変更された項目がありません。"; return; }
+    btn.disabled=true; btn.textContent="保存中…"; err.textContent="";
+    fetch("/api/applicant/submission",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+      .then(function(x){
+        btn.disabled=false; btn.textContent="保存する";
+        if(!x.ok||x.j.error){ err.textContent=x.j.error||"保存できませんでした"; return; }
+        return reloadMe().then(function(){
+          closeFullEdit();
+          document.getElementById("msg").innerHTML='<div class="card"><div class="msg" style="background:var(--ok-bg);color:var(--ok)">修正を保存しました。大会本部へ通知しました。</div></div>';
+          window.scrollTo(0,0);
+        });
+      })
+      .catch(function(){ btn.disabled=false; btn.textContent="保存する"; err.textContent="通信エラーが発生しました。"; });
+  }
+  document.getElementById("editOpen").addEventListener("click",openFullEdit);
+  document.getElementById("editCancel").addEventListener("click",closeFullEdit);
+  document.getElementById("editSave").addEventListener("click",saveFullEdit);
 
   // 表の中のボタン(onclick)から呼べるように公開する。この画面は即席のIIFEで包まれているため。
   window.openEdit=openEdit;

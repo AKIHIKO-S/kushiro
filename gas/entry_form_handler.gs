@@ -527,6 +527,11 @@ function doPost(e) {
       return _json({ ok: false, error: "JSON 解析失敗" });
     }
 
+    // 申込後の修正(KTTA Platform から「申込の今の姿」が届く)。新規申込の検証・追記とは別の道。
+    if (data && data.action === "update") {
+      return _json(_applyUpdate(SpreadsheetApp.getActiveSpreadsheet(), data));
+    }
+
     // バリデーション
     const required = ["tournament_name", "team_name", "contact_name", "contact_tel", "contact_email"];
     for (const k of required) {
@@ -693,99 +698,96 @@ function entryRef(en) {
   return id ? id.slice(0, 8) : "";
 }
 
+// 選手単位の追加列(ふりがな・学年・性別・選手ごとの自由項目)をフォーム定義から取得する。
+// 固定列の顔ぶれがシートごとに違うため、ラベルの衝突解決はシート別に行う。
+function _colSets(data) {
+  const pCols = schemaColumns(data, "player");
+  const dblCols1 = uniqueLabels(DOUBLES_HEADERS,
+    pCols.map(function (c) { return { key: c.key, label: c.label + "1" }; }));
+  return {
+    team: uniqueLabels(TEAM_HEADERS, pCols),
+    sgl: uniqueLabels(SINGLES_HEADERS, pCols),
+    mix: uniqueLabels(MIXED_HEADERS, pCols),
+    // ダブルスは1行にペア2名が入るので、選手1の列 → 選手2の列 の順で並べる。
+    dbl1: dblCols1,
+    dbl2: uniqueLabels(
+      DOUBLES_HEADERS.concat(dblCols1.map(function (c) { return c.label; })),
+      pCols.map(function (c) { return { key: c.key, label: c.label + "2" }; })),
+  };
+}
+
+// 申込1行(種目1件)をシートの何行にどう書くかを組み立てる。新規の追記と、後日の修正での
+// 書き換えが同じ組み立てを使う(片方だけ列がずれる、を起こさないため)。
+// 返り値: [{sheet, headers, base, cols, obj}]。団体はメンバー1人=1行、ミックスは1人=1行。
+function _rowSpecsFor(en, teamName, cs) {
+  const kind = classifyEntry(en);
+  const division = resolveDivision(en);
+  const out = [];
+  const spec = function (sheet, headers, base, cols, fill) {
+    const obj = {};
+    cols.forEach(function (c) { obj[c.label] = fill(c); });
+    out.push({ sheet: sheet, headers: headers, base: base, cols: cols, obj: obj });
+  };
+  if (kind === "team") {
+    // 団体: 各メンバーを 1 行ずつ(members_detail がない場合は members の文字列配列から)
+    const members = en.members_detail || [];
+    const fallback = (en.members || []).map(function (name) { return { name: name }; });
+    const list = members.length ? members : fallback;
+    list.forEach(function (m) {
+      if (!m || !m.name) return;
+      spec(SHEETS.TEAM, TEAM_HEADERS,
+        [entryRef(en), en.event || "", division || "一般", m.name, m.age || "", m.team || teamName],
+        cs.team, function (c) { return memberValue(m, c.key); });
+    });
+  } else if (kind === "doubles") {
+    // ダブルス: 1 ペア = 1 行
+    const obj = {};
+    cs.dbl1.forEach(function (c) { obj[c.label] = playerValue(en, 0, c.key); });
+    cs.dbl2.forEach(function (c) { obj[c.label] = playerValue(en, 1, c.key); });
+    out.push({ sheet: SHEETS.DOUBLES, headers: DOUBLES_HEADERS, cols: cs.dbl1.concat(cs.dbl2), obj: obj, base: [
+      entryRef(en), en.event || "", division,
+      en.name1 || "", en.age1 || "", en.name2 || "", en.age2 || "",
+      en.team1 || en.team || teamName, en.team2 || en.team || teamName,
+    ] });
+  } else if (kind === "mixed") {
+    // ミックス: ペアの 2 名をそれぞれ別行に展開
+    if (en.name1) spec(SHEETS.MIXED, MIXED_HEADERS,
+      [entryRef(en), en.event || "", "男子", en.name1, en.age1 || "", en.team1 || en.team || teamName],
+      cs.mix, function (c) { return playerValue(en, 0, c.key); });
+    if (en.name2) spec(SHEETS.MIXED, MIXED_HEADERS,
+      [entryRef(en), en.event || "", "女子", en.name2, en.age2 || "", en.team2 || en.team || teamName],
+      cs.mix, function (c) { return playerValue(en, 1, c.key); });
+  } else if (kind === "singles") {
+    if (en.name) spec(SHEETS.SINGLES, SINGLES_HEADERS,
+      [entryRef(en), en.event || "", division, en.name, en.age || "", en.team || teamName],
+      cs.sgl, function (c) { return playerValue(en, null, c.key); });
+  }
+  return out;
+}
+
+const _SHEET_HEADERS = {};
+_SHEET_HEADERS[SHEETS.TEAM] = TEAM_HEADERS;
+_SHEET_HEADERS[SHEETS.DOUBLES] = DOUBLES_HEADERS;
+_SHEET_HEADERS[SHEETS.MIXED] = MIXED_HEADERS;
+_SHEET_HEADERS[SHEETS.SINGLES] = SINGLES_HEADERS;
+
 function distributeEntries(ss, data) {
   // 実際に書く直前に用意する(遅延作成)。その大会に無い種目のシートは作られないので、
   // 集計シートに空シートが並ばない。ensureAllSheets と条件がずれても、
   // シート無しで appendRow を呼んで申込1件を丸ごと失うことがない。
   const _cache = {};
-  const lazy = (name, headers) => () => _cache[name] || (_cache[name] = getOrCreateSheet(ss, name, headers));
-  const teamSh = lazy(SHEETS.TEAM, TEAM_HEADERS);
-  const dblSh = lazy(SHEETS.DOUBLES, DOUBLES_HEADERS);
-  const mixSh = lazy(SHEETS.MIXED, MIXED_HEADERS);
-  const sglSh = lazy(SHEETS.SINGLES, SINGLES_HEADERS);
+  const sheetOf = function (name) { return _cache[name] || (_cache[name] = getOrCreateSheet(ss, name, _SHEET_HEADERS[name])); };
   const bentoSh = ss.getSheetByName(SHEETS.BENTO);
-
-  // 選手単位の追加列(ふりがな・学年・性別・選手ごとの自由項目)をフォーム定義から取得する。
-  // 固定列の顔ぶれがシートごとに違うため、ラベルの衝突解決はシート別に行う。
-  const pCols = schemaColumns(data, "player");
-  const teamCols = uniqueLabels(TEAM_HEADERS, pCols);
-  const sglCols = uniqueLabels(SINGLES_HEADERS, pCols);
-  const mixCols = uniqueLabels(MIXED_HEADERS, pCols);
-  // ダブルスは1行にペア2名が入るので、選手1の列 → 選手2の列 の順で並べる。
-  const dblCols1 = uniqueLabels(DOUBLES_HEADERS,
-    pCols.map(function (c) { return { key: c.key, label: c.label + "1" }; }));
-  const dblCols2 = uniqueLabels(
-    DOUBLES_HEADERS.concat(dblCols1.map(function (c) { return c.label; })),
-    pCols.map(function (c) { return { key: c.key, label: c.label + "2" }; }));
+  const cs = _colSets(data);
 
   data.entries.forEach(en => {
     const kind = classifyEntry(en);
-    const division = resolveDivision(en);
     const teamName = data.team_name || "";
 
-    if (kind === "team") {
-      // 団体: 各メンバーを 1 行ずつ
-      const members = en.members_detail || [];
-      // members_detail がない場合は members (文字列配列) からも対応
-      const fallback = (en.members || []).map(name => ({ name }));
-      const list = members.length ? members : fallback;
-      list.forEach(m => {
-        if (!m.name) return;
-        const obj = {};
-        teamCols.forEach(function (c) { obj[c.label] = memberValue(m, c.key); });
-        appendRowWithExtras(teamSh(), TEAM_HEADERS, [
-          entryRef(en),
-          en.event || "",
-          division || "一般",
-          m.name,
-          m.age || "",
-          m.team || teamName,
-        ], teamCols, obj);
+    if (kind === "team" || kind === "doubles" || kind === "mixed" || kind === "singles") {
+      _rowSpecsFor(en, teamName, cs).forEach(function (sp) {
+        appendRowWithExtras(sheetOf(sp.sheet), sp.headers, sp.base, sp.cols, sp.obj);
       });
-    } else if (kind === "doubles") {
-      // ダブルス: 1 ペア = 1 行
-      const obj = {};
-      dblCols1.forEach(function (c) { obj[c.label] = playerValue(en, 0, c.key); });
-      dblCols2.forEach(function (c) { obj[c.label] = playerValue(en, 1, c.key); });
-      appendRowWithExtras(dblSh(), DOUBLES_HEADERS, [
-        entryRef(en),
-        en.event || "",
-        division,
-        en.name1 || "",
-        en.age1 || "",
-        en.name2 || "",
-        en.age2 || "",
-        en.team1 || en.team || teamName,
-        en.team2 || en.team || teamName,
-      ], dblCols1.concat(dblCols2), obj);
-    } else if (kind === "mixed") {
-      // ミックス: ペアの 2 名をそれぞれ別行に展開
-      if (en.name1) {
-        const o1 = {};
-        mixCols.forEach(function (c) { o1[c.label] = playerValue(en, 0, c.key); });
-        appendRowWithExtras(mixSh(), MIXED_HEADERS,
-          [entryRef(en), en.event || "", "男子", en.name1, en.age1 || "", en.team1 || en.team || teamName], mixCols, o1);
-      }
-      if (en.name2) {
-        const o2 = {};
-        mixCols.forEach(function (c) { o2[c.label] = playerValue(en, 1, c.key); });
-        appendRowWithExtras(mixSh(), MIXED_HEADERS,
-          [entryRef(en), en.event || "", "女子", en.name2, en.age2 || "", en.team2 || en.team || teamName], mixCols, o2);
-      }
-    } else if (kind === "singles") {
-      // シングルス: 専用シートに記録
-      if (en.name) {
-        const obj = {};
-        sglCols.forEach(function (c) { obj[c.label] = playerValue(en, null, c.key); });
-        appendRowWithExtras(sglSh(), SINGLES_HEADERS, [
-          entryRef(en),
-          en.event || "",
-          division,
-          en.name,
-          en.age || "",
-          en.team || teamName,
-        ], sglCols, obj);
-      }
     } else if (kind === "bento") {
       // 弁当: 個数 = en.count、または 1
       const count = parseInt(en.count) || 1;
@@ -835,6 +837,178 @@ function distributeEntries(ss, data) {
       }
     }
   }
+}
+
+// ════════════════════════════════════════════
+// 申込後の修正の反映 (action=update)
+// ════════════════════════════════════════════
+// KTTA Platform で申込を直したとき(申込者が申込番号から / 本部が管理画面から)、
+// 「その申込の今の姿」がまるごと届く。差分ではなく全体なので、同じものを何度受けても結果は同じ。
+//   ・申込台帳: 申込IDで行を探し、団体名・責任者・連絡先・金額・入金状況を書き換える
+//   ・種目シート: エントリーIDで行を探して書き換える。取り消した出場は「状態」列に 取消 と書く
+//     (行は消さない。人が消したかシステムが消したか分からなくなるため)
+//   ・変更履歴シート: 何を誰がなぜ変えたかを1行ずつ追記する
+// 見つからない行は勝手に追記しない(古い申込は行を特定できず、二重になるため)。missing で返す。
+
+const COL_STATE = "状態";
+const COL_MODIFIED = "最終修正";
+const CHANGE_HEADERS = ["変更日時", "変更ID", "大会名", "団体名", "申込ID", "エントリーID", "種目", "変更者", "内容", "理由"];
+
+// 行の書き換え。固定列は位置で、追加列は見出しで書く(appendRowWithExtras と同じ規則)。
+function _writeRowAt(sh, rowNum, sp, state, stamp) {
+  const headers = sp.headers.concat(sp.cols.map(function (c) { return c.label; })).concat([COL_STATE, COL_MODIFIED]);
+  const map = ensureColumns(sh, headers);
+  const width = Math.max(sh.getLastColumn(), sp.base.length, 1);
+  const row = sh.getRange(rowNum, 1, 1, width).getValues()[0];
+  sp.base.forEach(function (v, i) { if (i < width) row[i] = v; });
+  sp.cols.forEach(function (c) { const col = map[c.label]; if (col && col <= width) row[col - 1] = sp.obj[c.label]; });
+  row[map[COL_STATE] - 1] = state;
+  row[map[COL_MODIFIED] - 1] = stamp;
+  sh.getRange(rowNum, 1, 1, width).setValues([row]);
+}
+
+function _markRow(sh, rowNum, state, stamp) {
+  const map = ensureColumns(sh, [COL_STATE, COL_MODIFIED]);
+  sh.getRange(rowNum, map[COL_STATE]).setValue(state);
+  sh.getRange(rowNum, map[COL_MODIFIED]).setValue(stamp);
+}
+
+// エントリーID(先頭列)が ref の行番号を、4つの種目シートから探す。
+function _rowsByRef(ss, ref) {
+  const out = [];
+  if (!ref) return out;
+  [SHEETS.TEAM, SHEETS.DOUBLES, SHEETS.MIXED, SHEETS.SINGLES].forEach(function (n) {
+    const sh = ss.getSheetByName(n);
+    if (!sh || sh.getLastRow() < 2) return;
+    const vals = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
+    vals.forEach(function (v, i) { if (String(v[0] || "").trim() === ref) out.push({ sheet: n, row: i + 2 }); });
+  });
+  return out;
+}
+
+function _applyUpdate(ss, data) {
+  const sub = data.submission || {};
+  const entries = Array.isArray(data.update_entries) ? data.update_entries : [];
+  const changeId = String(data.change_id || "").trim();
+  const stamp = new Date();
+  const cs = _colSets(data);
+  const missing = [];
+  let updated = 0, appended = 0, cancelled = 0;
+
+  // ─── 1. 申込台帳 ───
+  const ledgerRow = _findEntryIdRow(ss, String(sub.ledger_key || "").trim());
+  if (ledgerRow) {
+    const sh = ss.getSheetByName(SHEETS.LEDGER);
+    const optItems = Array.isArray(sub.option_items) ? sub.option_items : [];
+    const optCols = uniqueLabels(LEDGER_HEADERS, optItems.map(function (o) {
+      return { key: "__opt__" + o.key, label: String(o.label || o.key) + "(" + String(o.unit || "") + ")" };
+    }));
+    const ledgerCols = uniqueLabels(LEDGER_HEADERS.concat(optCols.map(function (c) { return c.label; })), schemaColumns(data, "ledger"));
+    const extraHeads = ["入金状況", "入金額", COL_MODIFIED];
+    const map = ensureColumns(sh, LEDGER_HEADERS.concat(optCols.map(function (c) { return c.label; }))
+      .concat(ledgerCols.map(function (c) { return c.label; })).concat(extraHeads));
+    const width = sh.getLastColumn();
+    const row = sh.getRange(ledgerRow, 1, 1, width).getValues()[0];
+    const put = function (label, v) { const c = map[label]; if (c && c <= width) row[c - 1] = v; };
+    put("団体名", cellValue(sub.team_name || ""));
+    put("申込責任者", cellValue(sub.contact_name || ""));
+    put("電話番号", cellValue(sub.contact_tel || ""));
+    put("メールアドレス", cellValue(sub.contact_email || ""));
+    put("申込種目数", sub.entries_count || 0);
+    put("参加人数(述べ)", sub.people || 0);
+    put("合計金額", sub.total_amount || 0);
+    optCols.forEach(function (c, i) { put(c.label, optItems[i] ? optItems[i].qty : ""); });
+    const subData = { team_name: sub.team_name, contact_name: sub.contact_name, contact_tel: sub.contact_tel,
+      contact_email: sub.contact_email, supervisor: sub.supervisor, advisor: sub.advisor, coach: sub.coach, extra: sub.extra || {} };
+    ledgerCols.forEach(function (c) { put(c.label, submissionValue(subData, c.key)); });
+    put("入金状況", sub.pay_status_label || "");
+    put("入金額", sub.paid_amount || 0);
+    put(COL_MODIFIED, stamp);
+    sh.getRange(ledgerRow, 1, 1, width).setValues([row]);
+  }
+
+  // ─── 2. 種目シート ───
+  const sheetCache = {};
+  const sheetOf = function (name) { return sheetCache[name] || (sheetCache[name] = getOrCreateSheet(ss, name, _SHEET_HEADERS[name])); };
+  let foundAny = false;
+  entries.forEach(function (en) {
+    const ref = entryRef(en);
+    const found = _rowsByRef(ss, ref);
+    if (!found.length) { if (ref) missing.push(ref); return; }
+    foundAny = true;
+    if (en.status === "cancelled" || en.status === "rejected") {
+      found.forEach(function (f) { _markRow(ss.getSheetByName(f.sheet), f.row, "取消", stamp); cancelled++; });
+      return;
+    }
+    const specs = _rowSpecsFor(en, sub.team_name || "", cs);
+    const target = specs.length ? specs[0].sheet : "";
+    const same = found.filter(function (f) { return f.sheet === target; });
+    // 種目の形式が変わって別シートに移った行は、元のシートに 取消(移動) と残す
+    found.filter(function (f) { return f.sheet !== target; }).forEach(function (f) {
+      _markRow(ss.getSheetByName(f.sheet), f.row, "取消(種目変更)", stamp); cancelled++;
+    });
+    specs.forEach(function (sp, i) {
+      if (i < same.length) { _writeRowAt(sheetOf(sp.sheet), same[i].row, sp, "", stamp); updated++; }
+      else {
+        const sh = sheetOf(sp.sheet);
+        appendRowWithExtras(sh, sp.headers, sp.base, sp.cols, sp.obj);
+        _markRow(sh, sh.getLastRow(), "", stamp);
+        appended++;
+      }
+    });
+    // 団体メンバーが減ったときの余った行
+    same.slice(specs.length).forEach(function (f) { _markRow(ss.getSheetByName(f.sheet), f.row, "取消(修正で除外)", stamp); cancelled++; });
+  });
+
+  if (!ledgerRow && !foundAny) {
+    return { ok: false, verified: false,
+      error: "シートに元の申込が見つかりません(未反映の申込を先に再送してください)", missing: missing };
+  }
+
+  // ─── 3. 変更履歴 ───
+  const hist = getOrCreateSheet(ss, "変更履歴", CHANGE_HEADERS);
+  let already = false;
+  if (changeId && hist.getLastRow() >= 2) {
+    hist.getRange(2, 2, hist.getLastRow() - 1, 1).getValues().forEach(function (v) {
+      if (String(v[0] || "").trim() === changeId) already = true;
+    });
+  }
+  if (!already) {
+    (Array.isArray(data.changes) ? data.changes : []).forEach(function (c) {
+      hist.appendRow([stamp, changeId, data.tournament_name || "", cellValue(sub.team_name || ""),
+        sub.ledger_key || "", c.entry_id ? String(c.entry_id).slice(0, 8) : "", c.event || "",
+        c.actor || "", cellValue(c.summary || ""), cellValue(c.reason || "")]);
+    });
+  }
+
+  try { if (_legacySummaryWanted(ss)) rebuildAggregate(ss, data.tournament_name); }
+  catch (aggErr) { console.error("集計用シート再計算失敗:", aggErr); }
+  try { generateEventLists(); }
+  catch (evErr) { console.error("種目別リスト生成失敗:", evErr); }
+
+  return { ok: true, verified: true, action: "update", ledger_row: ledgerRow || null,
+    updated_rows: updated, appended_rows: appended, cancelled_rows: cancelled, missing: missing,
+    duplicate_history: already };
+}
+
+// 種目シートの読み取り(見出しで列を引く)。先頭にエントリーID列を足した後も位置がずれないように。
+// 「状態」が 取消 で始まる行は除く。
+function _liveRows(sh) {
+  if (!sh || sh.getLastRow() < 2) return [];
+  const width = Math.max(1, sh.getLastColumn());
+  const vals = sh.getRange(1, 1, sh.getLastRow(), width).getValues();
+  const head = vals[0].map(function (v) { return String(v == null ? "" : v).trim(); });
+  const idx = function (label, nth) {
+    let k = 0;
+    for (let i = 0; i < head.length; i++) if (head[i] === label && k++ === (nth || 0)) return i;
+    return -1;
+  };
+  const st = idx(COL_STATE);
+  return vals.slice(1)
+    .filter(function (r) { return st < 0 || String(r[st] || "").indexOf("取消") !== 0; })
+    .map(function (r) {
+      return { get: function (label, nth) { const i = idx(label, nth); return i < 0 ? "" : r[i]; } };
+    });
 }
 
 // ════════════════════════════════════════════
@@ -1481,9 +1655,8 @@ function _buildStats(tournamentId) {
   ];
   let totalEntries = 0;
   sheetsCheck.forEach(([sn, label]) => {
-    const s = ss.getSheetByName(sn);
-    if (s && s.getLastRow() >= 2) {
-      const count = s.getLastRow() - 1;
+    const count = _liveRows(ss.getSheetByName(sn)).length;
+    if (count) {
       byEvent[label] = count;
       totalEntries += count;
     }
@@ -1638,56 +1811,25 @@ function generateEventLists() {
   // 簡易: 申込台帳の各行で 団体名 と 受付日時 を保持し、その後の処理は シートそのものから読む
   // 各 entry シートから「チーム名」または「申込団体」が分からない場合は空欄
 
-  // 団体シート: [種目, 区分, 氏名, 年齢, チーム名]
-  const tSh = ss.getSheetByName(SHEETS.TEAM);
-  if (tSh && tSh.getLastRow() >= 2) {
-    tSh.getRange(2, 1, tSh.getLastRow() - 1, 5).getValues().forEach(r => {
-      pushRow(r[0], {
-        kind: "団体",
-        division: r[1], name: r[2], age: r[3],
-        team: r[4],
-      });
+  // 各シートは見出しで読む(先頭にエントリーID列があるため位置で読むとずれる)。取消の行は数えない。
+  _liveRows(ss.getSheetByName(SHEETS.TEAM)).forEach(function (r) {
+    pushRow(r.get("種目"), { kind: "団体", division: r.get("区分"), name: r.get("氏名"), age: r.get("年齢"), team: r.get("チーム名") });
+  });
+  _liveRows(ss.getSheetByName(SHEETS.DOUBLES)).forEach(function (r) {
+    const t1 = r.get("チーム名1"), t2 = r.get("チーム名2");
+    pushRow(r.get("種目"), {
+      kind: "ダブルス", division: r.get("区分"),
+      name: (r.get("氏名1") || "") + (r.get("氏名2") ? " / " + r.get("氏名2") : ""),
+      age: (r.get("年齢", 0) || "") + (r.get("年齢", 1) ? " / " + r.get("年齢", 1) : ""),
+      team: (t1 || "") + (t2 && t2 !== t1 ? " / " + t2 : ""),
     });
-  }
-
-  // ダブルスシート: [種目, 区分, 氏名1, 年齢1, 氏名2, 年齢2, チーム1, チーム2]
-  const dSh = ss.getSheetByName(SHEETS.DOUBLES);
-  if (dSh && dSh.getLastRow() >= 2) {
-    dSh.getRange(2, 1, dSh.getLastRow() - 1, 8).getValues().forEach(r => {
-      // 1ペアを「ペア」として 1 行で記録
-      pushRow(r[0], {
-        kind: "ダブルス",
-        division: r[1],
-        name: (r[2] || "") + (r[4] ? " / " + r[4] : ""),
-        age: (r[3] || "") + (r[5] ? " / " + r[5] : ""),
-        team: (r[6] || "") + (r[7] && r[7] !== r[6] ? " / " + r[7] : ""),
-      });
-    });
-  }
-
-  // ミックスシート: [種目, 性別, 氏名, 年齢, チーム名]
-  const mSh = ss.getSheetByName(SHEETS.MIXED);
-  if (mSh && mSh.getLastRow() >= 2) {
-    mSh.getRange(2, 1, mSh.getLastRow() - 1, 5).getValues().forEach(r => {
-      pushRow(r[0], {
-        kind: "ミックス",
-        division: r[1], name: r[2], age: r[3],
-        team: r[4],
-      });
-    });
-  }
-
-  // シングルスシート: [種目, 区分, 氏名, 年齢, チーム名]
-  const sSh = ss.getSheetByName(SHEETS.SINGLES);
-  if (sSh && sSh.getLastRow() >= 2) {
-    sSh.getRange(2, 1, sSh.getLastRow() - 1, 5).getValues().forEach(r => {
-      pushRow(r[0], {
-        kind: "シングルス",
-        division: r[1], name: r[2], age: r[3],
-        team: r[4],
-      });
-    });
-  }
+  });
+  _liveRows(ss.getSheetByName(SHEETS.MIXED)).forEach(function (r) {
+    pushRow(r.get("種目"), { kind: "ミックス", division: r.get("性別"), name: r.get("氏名"), age: r.get("年齢"), team: r.get("チーム名") });
+  });
+  _liveRows(ss.getSheetByName(SHEETS.SINGLES)).forEach(function (r) {
+    pushRow(r.get("種目"), { kind: "シングルス", division: r.get("区分"), name: r.get("氏名"), age: r.get("年齢"), team: r.get("チーム名") });
+  });
 
   // 各種目ごとにシート作成
   const eventNames = Object.keys(byEvent).sort((a, b) => a.localeCompare(b, "ja"));

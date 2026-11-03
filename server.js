@@ -456,7 +456,7 @@ const DIAG = {
 };
 function auditResource(req) {
   const p = String(req.path || "");
-  const m = p.match(/^\/api\/(?:public\/)?(tournaments|players|matches|entrants|applicant|coach)(?:\/([^/]+))?/);
+  const m = p.match(/^\/api\/(?:public\/)?(tournaments|players|matches|entrants|applicant|coach|submissions)(?:\/([^/]+))?/);
   return m ? { type: m[1], id: String(m[2] || "").slice(0, 128) } : { type: "api", id: "" };
 }
 function auditRoute(req) {
@@ -1013,8 +1013,16 @@ async function relayEntryToGasOnce(gasUrl, payload) {
       return { ok: false, status: resp.status, error: String(body.error || "GASが失敗を返しました"),
         problems: Array.isArray(body.problems) ? body.problems : undefined, retryable: false };
     }
-    return { ok: true, status: resp.status, verified: body.verified !== false,
+    const out = { ok: true, status: resp.status, verified: body.verified !== false,
       duplicate: !!body.duplicate, ledger_row: body.ledger_row || null };
+    // 申込後の修正(action=update)の結果。どの行を書き換え、どれがシートに無かったかを管理画面に出す
+    if (body.action === "update") {
+      out.updated_rows = body.updated_rows || 0;
+      out.appended_rows = body.appended_rows || 0;
+      out.cancelled_rows = body.cancelled_rows || 0;
+      out.missing = Array.isArray(body.missing) ? body.missing.slice(0, 50) : [];
+    }
+    return out;
   } catch (e) {
     const isTimeout = e && e.name === "AbortError";
     return { ok: false, error: isTimeout ? "timeout" : String(e && e.message || e), retryable: true };
@@ -1229,6 +1237,7 @@ app.post("/api/applicant/entrants/:id/replace", requireSession(["applicant"]), a
       });
     }
   } catch (e) { recordError(e, req, res, 0); }
+  await relaySheetUpdate(r.tournament, req.auth.principal_id, "");
   res.json(db.getSubmissionById(req.auth.principal_id));
 });
 
@@ -1245,7 +1254,120 @@ app.post("/api/applicant/entrants/:id/cancel", requireSession(["applicant"]), as
       });
     }
   } catch (e) { recordError(e, req, res, 0); }
+  await relaySheetUpdate(r.tournament, req.auth.principal_id, "");
   res.json(db.getSubmissionById(req.auth.principal_id));
+});
+
+// ── 申込後の修正(申込者・本部共通) ─────────────────────────────
+// 修正したら「その申込の今の姿」をシートへ送る。シートに書けなくても修正自体は成立させ、
+// 結果を申込原本に刻む(管理画面の「シート」列と再送ボタンがそれを読む)。
+async function relaySheetUpdate(tournament, submissionId, group) {
+  if (!tournament || !tournament.entry_gas_url) return null;
+  let parsed = null;
+  try { parsed = new URL(tournament.entry_gas_url); } catch { parsed = null; }
+  if (!parsed || parsed.protocol !== "https:" || parsed.hostname !== "script.google.com") return null;
+  const payload = db.buildSheetUpdatePayload(submissionId, group || "");
+  if (payload.error) return { ok: false, error: payload.error };
+  const relay = await relayEntryToGas(tournament.entry_gas_url, payload);
+  db.recordSheetUpdate(submissionId, relay);
+  return relay;
+}
+
+async function notifyEdit(req, r) {
+  try {
+    if (mailer.isEnabled() && r.tournament && r.changes && r.changes.length) {
+      await mailer.sendEntryChangeNotification({
+        tournament: r.tournament, kind: "edit", actor: r.actor,
+        lines: r.changes.map(c => (c.event ? c.event + ": " : "") + c.summary),
+        reason: r.reason || "", adminUrl: `${appOriginOf(req)}/admin#tournament/${r.tournament.id}`,
+      });
+    }
+  } catch (e) { recordError(e, req, null, 0); }
+}
+
+// 申込者の修正画面用。連絡先は伏せ字で返し、生年月日は返さない(申込番号が漏れた場合の被害を抑える)。
+app.get("/api/applicant/edit-view", requireSession(["applicant"]), (req, res) => {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const r = db.getSubmissionEditView(req.auth.principal_id, { admin: false });
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
+});
+
+app.post("/api/applicant/submission", requireSession(["applicant"]), async (req, res) => {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const b = req.body || {};
+  const r = db.editSubmission(req.auth.principal_id,
+    { contact: b.contact, options: b.options, entries: b.entries, reason: b.reason }, { actor: "applicant" });
+  if (r.error) return res.status(400).json({ error: r.error });
+  let sheet = null;
+  if (!r.unchanged) {
+    sheet = await relaySheetUpdate(r.tournament, r.submission_id, r.group);
+    await notifyEdit(req, r);
+  }
+  res.json({ ok: true, unchanged: !!r.unchanged, changes: r.changes || [],
+    sheet_ok: sheet ? !!sheet.ok : null, view: db.getSubmissionEditView(req.auth.principal_id, { admin: false }) });
+});
+
+// 本部による修正・入金・参加料集計
+app.get("/api/submissions/:sid/edit-view", requireAdmin, (req, res) => {
+  const r = db.getSubmissionEditView(req.params.sid, { admin: true });
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
+});
+
+app.put("/api/submissions/:sid", requireAdmin, async (req, res) => {
+  const b = req.body || {};
+  const r = db.editSubmission(req.params.sid,
+    { contact: b.contact, options: b.options, entries: b.entries, reason: b.reason }, { actor: "admin" });
+  if (r.error) return res.status(400).json({ error: r.error });
+  let sheet = null;
+  if (!r.unchanged) sheet = await relaySheetUpdate(r.tournament, r.submission_id, r.group);
+  res.json({ ok: true, unchanged: !!r.unchanged, changes: r.changes || [], sheet,
+    view: db.getSubmissionEditView(req.params.sid, { admin: true }) });
+});
+
+app.post("/api/submissions/:sid/payment", requireAdmin, async (req, res) => {
+  const r = db.setSubmissionPayment(req.params.sid, req.body || {});
+  if (r.error) return res.status(400).json({ error: r.error });
+  const sheet = await relaySheetUpdate(r.tournament, r.submission_id, r.group);
+  res.json({ ok: true, pay_status: r.pay_status, paid_amount: r.paid_amount, paid_at: r.paid_at, sheet });
+});
+
+// 今の内容でシートを書き直す(修正の反映に失敗していたとき用)。変更履歴は追記しない。
+app.post("/api/submissions/:sid/sheet-resend", requireAdmin, async (req, res) => {
+  const v = db.getSubmissionEditView(req.params.sid, { admin: true });
+  if (v.error) return res.status(404).json(v);
+  const t = db.getTournament(v.submission.tournament_id);
+  if (!requireGasUrl(t, res)) return;
+  const sheet = await relaySheetUpdate(t, req.params.sid, "");
+  if (!sheet || !sheet.ok) return res.status(400).json({ error: (sheet && sheet.error) || "反映できませんでした", sheet });
+  res.json({ ok: true, sheet });
+});
+
+app.get("/api/tournaments/:id/fee-summary", requireAdmin, (req, res) => {
+  const r = db.getFeeSummary(req.params.id);
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
+});
+
+// 料金改定を既存の申込へ適用する。dry_run で差額を確認してから適用する前提。
+app.post("/api/tournaments/:id/fee-reprice", requireAdmin, async (req, res) => {
+  const b = req.body || {};
+  const r = db.repriceSubmissions(req.params.id, {
+    submission_ids: Array.isArray(b.submission_ids) ? b.submission_ids.map(String) : undefined,
+    dry_run: b.dry_run !== false, reason: b.reason,
+  });
+  if (r.error) return res.status(400).json({ error: r.error });
+  if (r.dry_run) return res.json(r);
+  // シートへは1件ずつ(GASは直列でしか捌けない)。時間で打ち切り、残りは画面の再送で拾う。
+  const started = Date.now();
+  let sent = 0, failed = 0;
+  for (const g of r.groups || []) {
+    if (Date.now() - started > 40000) break;
+    const s = await relaySheetUpdate(r.tournament, g.submission_id, g.group);
+    if (s) { sent++; if (!s.ok) failed++; }
+  }
+  res.json({ ok: true, applied: r.applied, diff_total: r.diff_total, items: r.items, sheet_sent: sent, sheet_failed: failed });
 });
 
 // 変更履歴(管理画面の申込管理で表示)
@@ -1288,6 +1410,8 @@ async function resendOne(tournament, submissionId) {
   if (Array.isArray(src.option_items) && src.option_items.length) relayPayload.option_items = src.option_items;
   const relay = await relayEntryToGas(tournament.entry_gas_url, relayPayload);
   db.recordGasRelay(submissionId, relay);
+  // 受付後に修正されている申込は、原本を入れただけでは古い内容のままなので今の姿で上書きする
+  if (relay.ok && src.submission.updated_at) await relaySheetUpdate(tournament, submissionId, "");
   return { ok: !!relay.ok, relay, team_name: src.submission.team_name };
 }
 

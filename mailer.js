@@ -398,13 +398,17 @@ async function sendEntryChangeNotification(opts) {
   const b = opts.before || {};
   const a = opts.after || null;
   const isCancel = opts.kind === "cancel";
-  const title = isCancel ? "出場の取消" : "出場選手の変更";
-  const detail = isCancel
+  const isEdit = opts.kind === "edit";
+  const title = isCancel ? "出場の取消" : isEdit ? "申込内容の修正" : "出場選手の変更";
+  // 修正は複数項目をまとめて直せるので、変更点を1行ずつ並べる(連絡先は項目名だけで値は載せない)
+  const detail = isEdit
+    ? (Array.isArray(opts.lines) ? opts.lines : []).slice(0, 30).join(" / ")
+    : isCancel
     ? `${b.event || ""}: ${b.name || ""}${b.team ? "（" + b.team + "）" : ""} が取り消されました`
     : `${b.event || ""}: ${b.target || b.name || ""} → ${(a && (a.target || a.name)) || ""}`;
   const subject = `【${t.name || "大会"}】${title}がありました`;
   const text = [
-    `申込者による${title}がありました。`,
+    `${opts.actor === "admin" ? "本部" : "申込者"}による${title}がありました。`,
     ``,
     `■ 大会: ${t.name || ""}${t.date ? "（" + t.date + "）" : ""}`,
     `■ 内容: ${detail}`,
