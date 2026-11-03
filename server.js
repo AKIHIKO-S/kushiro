@@ -1297,7 +1297,7 @@ app.post("/api/applicant/submission", requireSession(["applicant"]), async (req,
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   const b = req.body || {};
   const r = db.editSubmission(req.auth.principal_id,
-    { contact: b.contact, options: b.options, entries: b.entries, reason: b.reason }, { actor: "applicant" });
+    { contact: b.contact, options: b.options, entries: b.entries, add: b.add, reason: b.reason }, { actor: "applicant" });
   if (r.error) return res.status(400).json({ error: r.error });
   let sheet = null;
   if (!r.unchanged) {
@@ -1318,7 +1318,7 @@ app.get("/api/submissions/:sid/edit-view", requireAdmin, (req, res) => {
 app.put("/api/submissions/:sid", requireAdmin, async (req, res) => {
   const b = req.body || {};
   const r = db.editSubmission(req.params.sid,
-    { contact: b.contact, options: b.options, entries: b.entries, reason: b.reason }, { actor: "admin" });
+    { contact: b.contact, options: b.options, entries: b.entries, add: b.add, reason: b.reason }, { actor: "admin" });
   if (r.error) return res.status(400).json({ error: r.error });
   let sheet = null;
   if (!r.unchanged) sheet = await relaySheetUpdate(r.tournament, r.submission_id, r.group);
@@ -1337,7 +1337,7 @@ app.post("/api/submissions/:sid/payment", requireAdmin, async (req, res) => {
 app.post("/api/submissions/:sid/sheet-resend", requireAdmin, async (req, res) => {
   const v = db.getSubmissionEditView(req.params.sid, { admin: true });
   if (v.error) return res.status(404).json(v);
-  const t = db.getTournament(v.submission.tournament_id);
+  const t = db.getTournament(v.tournament.id);
   if (!requireGasUrl(t, res)) return;
   const sheet = await relaySheetUpdate(t, req.params.sid, "");
   if (!sheet || !sheet.ok) return res.status(400).json({ error: (sheet && sheet.error) || "反映できませんでした", sheet });
@@ -2735,8 +2735,15 @@ app.put("/api/entrants/:id", requireAdmin, (req, res) => {
   if (cur && occStale(cur, req.body)) return sendConflict(res, cur);
   const e = db.updateEntrant(req.params.id, stripOcc(req.body) || {});
   if (!e) return res.status(404).json({ error: "エントリーが見つかりません" });
+  relayAdminEntrantChange(db.recordAdminEntrantChange(cur, e));
   res.json(e);
 });
+// 申込に属する出場を本部が直したら、変更履歴に残したうえでシートへ送る。画面を待たせないよう
+// 応答とは切り離す(結果は申込原本の「シート」欄に残り、失敗は参加料画面から再送できる)。
+function relayAdminEntrantChange(rec) {
+  if (!rec || !rec.tournament) return;
+  relaySheetUpdate(rec.tournament, rec.submission_id, rec.group).catch(e => recordError(e, null, null, 0));
+}
 // 枠の編集グリッドのDB検索編集: 既存 entrant のメンバー(本人/相方)を選手マスタにリンク上書き。
 app.post("/api/entrants/:id/member-from-player", requireAdmin, (req, res) => {
   const b = req.body || {};
@@ -2753,6 +2760,7 @@ app.delete("/api/entrants/:id", requireAdmin, (req, res) => {
     return sendBracketConflict(res, e.tournament_id, e.event);
   }
   db.deleteEntrant(req.params.id);
+  relayAdminEntrantChange(e ? db.recordAdminEntrantChange(e, null) : null);
   res.json({ ok: true, bracket_rev: e ? db.bracketRev(e.tournament_id, e.event) : null });
 });
 // マスタDBへのリンク
@@ -4929,8 +4937,10 @@ app.put("/api/tournaments/:id/entries/:pid/status", requireAdmin, (req, res) => 
   if (!["pending", "confirmed", "rejected"].includes(status)) {
     return res.status(400).json({ error: "status は pending/confirmed/rejected" });
   }
+  const before = db.getEntrant(req.params.pid);
   const r = db.setEntrantStatus(req.params.pid, status);
   if (r.error) return res.status(404).json(r);
+  if (before) relayAdminEntrantChange(db.recordAdminEntrantChange(before, db.getEntrant(req.params.pid)));
   res.json(r);
 });
 app.put("/api/tournaments/:id/entries/:pid/seed", requireAdmin, (req, res) => {
@@ -4968,8 +4978,10 @@ app.post("/api/admin/purge-submission-pii", requireOwner, (req, res) => {
   res.json(r);
 });
 app.post("/api/tournaments/:id/entries/:pid/fix", requireAdmin, (req, res) => {
+  const before = db.getEntrant(req.params.pid);
   const r = db.fixEntrant(req.params.pid, req.body || {});
   if (r.error) return res.status(400).json(r);
+  if (before) relayAdminEntrantChange(db.recordAdminEntrantChange(before, db.getEntrant(req.params.pid)));
   res.json(r);
 });
 app.post("/api/tournaments/:id/entry-issues/bulk-fix", requireAdmin, (req, res) => {

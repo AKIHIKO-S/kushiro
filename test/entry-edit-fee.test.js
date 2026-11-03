@@ -259,3 +259,84 @@ test("変化が無い保存は何も記録しない", () => {
   assert.ok(r.unchanged);
   assert.strictEqual(db.listEntryChanges(t.id).length, 0);
 });
+
+// ── 種目の追加・本部の直接編集・併合された申込 ──
+test("申込者は修正画面から種目を追加できる。申込番号は増えず、料金と履歴が付く", () => {
+  const { t, sid } = setup();
+  const tok = require("better-sqlite3")(process.env.DB_PATH).prepare("SELECT token_hash FROM entry_submissions WHERE id=?").get(sid).token_hash;
+  const r = db.editSubmission(sid, { add: [{ event: "一般女子シングルス", name: "架空 花子", team: "試験クラブ", fee: 1 }] });
+  assert.ok(!r.error, r.error);
+  assert.strictEqual(r.total_amount, 6300 + 700, "料金はサーバーが決める(画面の fee は使わない)");
+  const v = db.getSubmissionEditView(sid, { admin: true });
+  assert.ok(v.entries.some(e => e.event === "一般女子シングルス" && e.name === "架空 花子"));
+  const tok2 = require("better-sqlite3")(process.env.DB_PATH).prepare("SELECT token_hash FROM entry_submissions WHERE id=?").get(sid).token_hash;
+  assert.strictEqual(tok2, tok, "申込番号は変わらない");
+  const ch = db.listEntryChanges(t.id).find(c => c.kind === "add");
+  assert.ok(ch && /架空 花子/.test(ch.summary));
+  const p = db.buildSheetUpdatePayload(sid, r.group);
+  const added = v.entries.find(e => e.event === "一般女子シングルス");
+  assert.deepStrictEqual(p.added_refs, [added.entry_id.slice(0, 8)]);
+});
+
+test("種目の追加: 同じ内容の重複・定員超過・締切後(申込者)は断り、本部は締切後も追加できる", () => {
+  const { t, sid } = setup();
+  let r = db.editSubmission(sid, { add: [{ event: "一般男子シングルス", name: "架空 太郎", team: "試験クラブ" }] });
+  assert.match(r.error || "", /既に同じ内容/);
+  r = db.editSubmission(sid, { add: [{ event: "高校男子シングルス", name: "架空 一", team: "試験クラブ" }] });
+  assert.ok(!r.error, r.error);
+  r = db.editSubmission(sid, { add: [{ event: "高校男子シングルス", name: "架空 二", team: "試験クラブ" }] });
+  assert.ok(r.error, "定員1を超える追加は断る");
+  r = db.editSubmission(sid, { add: [{ event: "存在しない種目", name: "x" }] });
+  assert.match(r.error, /ありません/);
+  r = db.editSubmission(sid, { add: [{ event: "一般女子シングルス", name: "" }] });
+  assert.match(r.error, /氏名/);
+  db.updateEntrySettings(t.id, { entries_open: 0 });
+  r = db.editSubmission(sid, { add: [{ event: "一般女子シングルス", name: "架空 三子", team: "試験クラブ" }] });
+  assert.ok(r.error, "締切後の申込者は追加できない");
+  r = db.editSubmission(sid, { add: [{ event: "一般女子シングルス", name: "架空 三子", team: "試験クラブ" }] }, { actor: "admin" });
+  assert.ok(!r.error, r.error);
+  const v = db.getSubmissionEditView(sid);
+  assert.ok(v.form.events.find(e => e.name === "一般女子シングルス").add_lock, "申込者の画面では追加不可と分かる");
+});
+
+test("本部が出場者を直接直す・消すと、申込の変更履歴に残り金額も揃う。申込外の出場は対象外", () => {
+  const { t, sid, byEv } = setup();
+  const s = byEv("一般男子シングルス");
+  const cur = db.getEntrant(s.entry_id);
+  const upd = db.updateEntrant(s.entry_id, { surname: "架空", given_name: "改名" });
+  const rec = db.recordAdminEntrantChange(cur, upd);
+  assert.ok(rec && rec.kind === "edit");
+  let ch = db.listEntryChanges(t.id).find(c => c.change_group === rec.group);
+  assert.strictEqual(ch.actor, "admin");
+  assert.match(ch.summary, /架空 改名/);
+  // 席順だけの変更は記録しない
+  const cur2 = db.getEntrant(s.entry_id);
+  assert.strictEqual(db.recordAdminEntrantChange(cur2, db.updateEntrant(s.entry_id, { seed: 3 })), null);
+  // 削除
+  const d = db.getEntrant(byEv("男子ダブルス").entry_id);
+  db.deleteEntrant(d.id);
+  const rd = db.recordAdminEntrantChange(d, null);
+  assert.strictEqual(rd.kind, "delete");
+  const v = db.getSubmissionEditView(sid, { admin: true });
+  assert.strictEqual(v.submission.total_amount, 6300 - 1000);
+  assert.deepStrictEqual(db.buildSheetUpdatePayload(sid, "").removed_refs, [d.id.slice(0, 8)]);
+  // 申込に属さない出場
+  const loose = db.createEntrant({ tournament_id: t.id, event: "一般男子シングルス", name: "手入力 選手", team: "x" });
+  assert.strictEqual(db.recordAdminEntrantChange(loose, db.updateEntrant(loose.id, { surname: "手入力", given_name: "改" })), null);
+});
+
+test("併合された申込は台帳の申込IDを全部覚え、元の申込の行を正にする", () => {
+  const { t, sid } = setup();
+  const sub0 = require("better-sqlite3")(process.env.DB_PATH).prepare("SELECT op_id FROM entry_submissions WHERE id=?").get(sid);
+  const r2 = db.createTeamEntry(t.id, {
+    team_name: "試験クラブ", contact_name: "担当 一郎", contact_tel: "0154-11-2233", contact_email: "tanto@example.com",
+    entries: [
+      { event: "一般男子シングルス", type: "singles", name: "架空 太郎", team: "試験クラブ" },
+      { event: "一般女子シングルス", type: "singles", name: "架空 追加", team: "試験クラブ" },
+    ],
+  }, "op-second");
+  assert.ok(r2.merged, "一部重複の再送は元の申込へ併合される");
+  const p = db.buildSheetUpdatePayload(sid, "");
+  assert.strictEqual(p.submission.ledger_key, sub0.op_id, "元の申込の行を正にする");
+  assert.deepStrictEqual(p.submission.ledger_keys, [sub0.op_id, "op-second"]);
+});

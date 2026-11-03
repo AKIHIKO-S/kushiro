@@ -849,9 +849,11 @@ function distributeEntries(ss, data) {
 //     (行は消さない。人が消したかシステムが消したか分からなくなるため)
 //   ・変更履歴シート: 何を誰がなぜ変えたかを1行ずつ追記する
 // 見つからない行は勝手に追記しない(古い申込は行を特定できず、二重になるため)。missing で返す。
+// 例外は修正画面で追加した種目(added_refs)だけで、これは初回の反映で行を作る。
 
 const COL_STATE = "状態";
 const COL_MODIFIED = "最終修正";
+const COL_MERGED_INTO = "併合先申込ID";
 const CHANGE_HEADERS = ["変更日時", "変更ID", "大会名", "団体名", "申込ID", "エントリーID", "種目", "変更者", "内容", "理由"];
 
 // 行の書き換え。固定列は位置で、追加列は見出しで書く(appendRowWithExtras と同じ規則)。
@@ -865,6 +867,11 @@ function _writeRowAt(sh, rowNum, sp, state, stamp) {
   row[map[COL_STATE] - 1] = state;
   row[map[COL_MODIFIED] - 1] = stamp;
   sh.getRange(rowNum, 1, 1, width).setValues([row]);
+}
+
+function _stateOf(sh, rowNum) {
+  const map = ensureColumns(sh, [COL_STATE]);
+  return String(sh.getRange(rowNum, map[COL_STATE], 1, 1).getValues()[0][0] || "");
 }
 
 function _markRow(sh, rowNum, state, stamp) {
@@ -927,14 +934,48 @@ function _applyUpdate(ss, data) {
     sh.getRange(ledgerRow, 1, 1, width).setValues([row]);
   }
 
+  // 併合された申込: 2件目以降の台帳行は、金額・人数を元の申込の行へまとめたので 0 にし、
+  // どの行へまとめたかを残す(合計金額の列を足しても二重に数えない)。
+  const otherKeys = (Array.isArray(sub.ledger_keys) ? sub.ledger_keys : [])
+    .map(function (k) { return String(k || "").trim(); })
+    .filter(function (k) { return k && k !== String(sub.ledger_key || "").trim(); });
+  let mergedRows = 0;
+  const lsh = otherKeys.length ? ss.getSheetByName(SHEETS.LEDGER) : null;
+  if (lsh) {
+    const lmap = ensureColumns(lsh, LEDGER_HEADERS.concat([COL_MODIFIED, COL_MERGED_INTO]));
+    otherKeys.forEach(function (k) {
+      const r = _findEntryIdRow(ss, k);
+      if (!r || r === ledgerRow) return;
+      ["申込種目数", "参加人数(述べ)", "合計金額"].forEach(function (label) { if (lmap[label]) lsh.getRange(r, lmap[label]).setValue(0); });
+      lsh.getRange(r, lmap[COL_MERGED_INTO]).setValue(String(sub.ledger_key || ""));
+      lsh.getRange(r, lmap[COL_MODIFIED]).setValue(stamp);
+      mergedRows++;
+    });
+  }
+
   // ─── 2. 種目シート ───
   const sheetCache = {};
   const sheetOf = function (name) { return sheetCache[name] || (sheetCache[name] = getOrCreateSheet(ss, name, _SHEET_HEADERS[name])); };
   let foundAny = false;
+  const addedRefs = {};
+  (Array.isArray(data.added_refs) ? data.added_refs : []).forEach(function (r) { addedRefs[String(r)] = true; });
   entries.forEach(function (en) {
     const ref = entryRef(en);
     const found = _rowsByRef(ss, ref);
-    if (!found.length) { if (ref) missing.push(ref); return; }
+    const live = en.status !== "cancelled" && en.status !== "rejected";
+    if (!found.length) {
+      // 修正画面で追加した種目は、ここで初めてシートに行を作る
+      if (ref && addedRefs[ref] && live) {
+        _rowSpecsFor(en, sub.team_name || "", cs).forEach(function (sp) {
+          const sh = sheetOf(sp.sheet);
+          appendRowWithExtras(sh, sp.headers, sp.base, sp.cols, sp.obj);
+          _markRow(sh, sh.getLastRow(), "", stamp);
+          appended++;
+        });
+        foundAny = true;
+      } else if (ref) missing.push(ref);
+      return;
+    }
     foundAny = true;
     if (en.status === "cancelled" || en.status === "rejected") {
       found.forEach(function (f) { _markRow(ss.getSheetByName(f.sheet), f.row, "取消", stamp); cancelled++; });
@@ -958,6 +999,15 @@ function _applyUpdate(ss, data) {
     });
     // 団体メンバーが減ったときの余った行
     same.slice(specs.length).forEach(function (f) { _markRow(ss.getSheetByName(f.sheet), f.row, "取消(修正で除外)", stamp); cancelled++; });
+  });
+  // 本部が削除した出場
+  (Array.isArray(data.removed_refs) ? data.removed_refs : []).forEach(function (ref) {
+    _rowsByRef(ss, String(ref)).forEach(function (f) {
+      const sh = ss.getSheetByName(f.sheet);
+      const st = _stateOf(sh, f.row);
+      if (st.indexOf("取消") === 0) return;
+      _markRow(sh, f.row, "取消(削除)", stamp); cancelled++; foundAny = true;
+    });
   });
 
   if (!ledgerRow && !foundAny) {
@@ -988,7 +1038,7 @@ function _applyUpdate(ss, data) {
 
   return { ok: true, verified: true, action: "update", ledger_row: ledgerRow || null,
     updated_rows: updated, appended_rows: appended, cancelled_rows: cancelled, missing: missing,
-    duplicate_history: already };
+    merged_rows: mergedRows, duplicate_history: already };
 }
 
 // 種目シートの読み取り(見出しで列を引く)。先頭にエントリーID列を足した後も位置がずれないように。

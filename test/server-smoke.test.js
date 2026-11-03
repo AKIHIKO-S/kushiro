@@ -788,6 +788,15 @@ test("(ad) 申込の後日修正・入金・参加料集計: 申込者は自分�
     body: JSON.stringify({ entries: [{ entrant_id: ent.entry_id, event: "高校男子シングルス", name: "架空 二郎" }], reason: "記入ミス" }) }).then(r => r.json());
   assert.ok(saved.ok, JSON.stringify(saved));
   assert.strictEqual(saved.view.money.billed, 500, "種目を変えた行だけ今の料金で付け直す");
+  const added = await fetch(BASE + "/api/applicant/submission", { method: "POST", headers: ck,
+    body: JSON.stringify({ add: [{ event: "男子シングルス", name: "架空 追加", team: "架空クラブ" }] }) }).then(r => r.json());
+  assert.ok(added.ok, JSON.stringify(added));
+  assert.strictEqual(added.view.money.billed, 1200, "修正画面から種目を追加でき、料金が付く");
+  assert.strictEqual(added.view.entries.length, 2);
+  // 本部が出場者を直接消すと履歴に残り、請求額も揃う
+  const addedEnt = added.view.entries.find(e => e.name === "架空 追加");
+  const del = await fetch(BASE + `/api/entrants/${addedEnt.entry_id}`, { method: "DELETE", headers: akhead });
+  assert.strictEqual(del.status, 200);
 
   // 締切後: 申込者は選手を直せない、本部は直せる
   await adminPut(`/api/tournaments/${t.id}/entry-settings`, { entries_open: 0 });
@@ -805,5 +814,6 @@ test("(ad) 申込の後日修正・入金・参加料集計: 申込者は自分�
   assert.strictEqual(fs2.totals.outstanding, 0);
   const ch = await fetch(BASE + `/api/tournaments/${t.id}/entry-changes`, { headers: akhead }).then(r => r.json());
   assert.ok(ch.items.some(i => i.kind === "edit" && i.actor === "applicant") && ch.items.some(i => i.kind === "payment"), "履歴に残る");
+  assert.ok(ch.items.some(i => i.kind === "add") && ch.items.some(i => i.kind === "delete" && i.actor === "admin"), "追加・本部の削除も履歴に残る");
   assert.ok(!JSON.stringify(ch).includes("0154-12-3456"), "履歴に連絡先の値は残さない");
 });

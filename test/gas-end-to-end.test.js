@@ -878,3 +878,61 @@ test("修正: 古いGASに届いても新規申込として二重登録されな
   assert.strictEqual(res.ok, false);
   assert.strictEqual(env.sheets["申込台帳"].getLastRow(), 2, "台帳に行が増えない");
 });
+
+test("修正: 修正画面で追加した種目は初回の反映で行を作り、再送しても増えない", () => {
+  const s = makeEditableSubmission();
+  const env = makeEnv({});
+  env.post(s.payload);
+  const e = db.editSubmission(s.sid, { add: [{ event: "高校男子シングルス", name: "架空 追加", team: "修正クラブ" }] }, { actor: "admin" });
+  assert.ok(e.ok, e.error);
+  const p = db.buildSheetUpdatePayload(s.sid, e.group);
+  const res = env.post(p);
+  assert.strictEqual(res.ok, true, JSON.stringify(res));
+  assert.strictEqual(res.appended_rows, 1);
+  assert.deepStrictEqual(res.missing, []);
+  const sg = env.sheets["シングルス"];
+  assert.strictEqual(liveRows(sg).length, 2);
+  const again = env.post(db.buildSheetUpdatePayload(s.sid, ""));
+  assert.strictEqual(again.appended_rows, 0);
+  assert.strictEqual(liveRows(sg).length, 2, "再送で二重にならない");
+});
+
+test("修正: 本部が削除した出場はシートで「取消(削除)」になる", () => {
+  const s = makeEditableSubmission();
+  const env = makeEnv({});
+  env.post(s.payload);
+  const d = db.getEntrant(s.byEv("男子シングルス").entry_id);
+  db.deleteEntrant(d.id);
+  const rec = db.recordAdminEntrantChange(d, null);
+  const res = env.post(db.buildSheetUpdatePayload(s.sid, rec.group));
+  assert.strictEqual(res.ok, true, JSON.stringify(res));
+  const sg = env.sheets["シングルス"];
+  const head = sg._grid[0].map(String);
+  assert.strictEqual(sg._grid[1][head.indexOf("状態")], "取消(削除)");
+  assert.strictEqual(liveRows(sg).length, 0);
+});
+
+test("修正: 併合された申込は元の行に全体を書き、後の行は0円にして併合先を残す", () => {
+  const s = makeEditableSubmission();
+  const env = makeEnv({});
+  env.post(s.payload);
+  // 一部重複の再送(=併合)。シートには新しい申込IDの行として届いた想定
+  const form2 = { ...s.payload, op_id: "op-merge-2",
+    entries: [{ event: "男子シングルス", type: "singles", name: "架空 太郎", team: "修正クラブ" },
+      { event: "高校男子シングルス", type: "singles", name: "架空 併合", team: "修正クラブ" }] };
+  const r2 = db.createTeamEntry(s.tour.id, form2, "op-merge-2");
+  assert.ok(r2.merged);
+  const p2 = { ...form2, total_amount: r2.total_amount, option_items: [] };
+  p2.entries = form2.entries.slice(1).map(e => ({ ...e, entry_id: r2.created_entries[0].entry_id }));
+  assert.strictEqual(env.post(p2).ok, true);
+  const lg = env.sheets["申込台帳"];
+  assert.strictEqual(lg.getLastRow(), 3);
+  const res = env.post(db.buildSheetUpdatePayload(s.sid, ""));
+  assert.strictEqual(res.ok, true, JSON.stringify(res));
+  assert.strictEqual(res.merged_rows, 1);
+  const lh = lg._grid[0].map(String);
+  const total = db.getSubmissionEditView(s.sid, { admin: true }).submission.total_amount;
+  assert.strictEqual(lg._grid[1][lh.indexOf("合計金額")], total, "元の行に申込全体の金額");
+  assert.strictEqual(lg._grid[2][lh.indexOf("合計金額")], 0, "後の行は0円(二重に数えない)");
+  assert.strictEqual(lg._grid[2][lh.indexOf("併合先申込ID")], s.payload.op_id);
+});

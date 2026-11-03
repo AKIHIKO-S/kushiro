@@ -112,6 +112,61 @@
     return '<div class="se-entry">' + head + body + "</div>";
   }
 
+  function feeText(ev) { return yen(ev.fee) + (ev.fee_unit === "person" ? "/人" : ""); }
+
+  // 追加する種目1つぶんの入力欄。キーは a{n}. で始め、既存の出場(e{n}.)と混ざらないようにする。
+  function addBlock(view, ev, n) {
+    var p = "a" + n + ".";
+    var L = view.form.labels || {};
+    var body = "";
+    if (ev.categories && ev.categories.length) body += input(p + "division", "区分", "", { options: ev.categories, blank: true });
+    if (ev.type === "team") {
+      body += input(p + "team_name", "チーム名", (view.submission && view.submission.team_name) || "");
+      body += input(p + "members", "メンバー（1行に1人）", "", { textarea: true, rows: 5,
+        hint: ev.per_team ? ("最大" + ev.per_team + "人" + (ev.per_team_min ? "・最少" + ev.per_team_min + "人" : "")) : "" });
+    } else if (ev.type === "doubles" || ev.type === "mixed") {
+      [1, 2].forEach(function (k) {
+        body += '<div class="se-slot"><div class="se-slot-h">選手' + k + "</div>" +
+          input(p + "name" + k, "氏名", "") +
+          (shown(view.form.fields, "furigana") ? input(p + "furigana" + k, L.furigana || "ふりがな", "") : "") +
+          input(p + "team" + k, L.player_team || "所属", (view.submission && view.submission.team_name) || "") +
+          playerExtra(p + "pl" + (k - 1) + ".", view, {}) + "</div>";
+      });
+    } else {
+      body += input(p + "name", "氏名", "");
+      if (shown(view.form.fields, "furigana")) body += input(p + "furigana", L.furigana || "ふりがな", "");
+      body += input(p + "team", L.player_team || "所属", (view.submission && view.submission.team_name) || "");
+      body += playerExtra(p + "x.", view, {});
+    }
+    return '<div class="se-entry se-new" data-addblock="' + n + '" data-event="' + esc(ev.name) + '">' +
+      '<div class="se-ehead"><b>' + esc(ev.name) + '<span class="se-tag">追加</span></b><span class="se-fee">' + feeText(ev) + "</span></div>" +
+      body + '<button type="button" class="se-rm" data-addrm="' + n + '">この追加をやめる</button></div>';
+  }
+
+  function wireAdd(container, view) {
+    var pick = container.querySelector("[data-addpick]");
+    var list = container.querySelector("[data-addlist]");
+    if (!pick || !list) return;
+    var seq = 0;
+    pick.addEventListener("change", function () {
+      var ev = (view.form.events || []).filter(function (x) { return x.name === pick.value; })[0];
+      pick.value = "";
+      if (!ev) return;
+      var range = container.ownerDocument.createRange();
+      range.selectNodeContents(list);
+      list.appendChild(range.createContextualFragment(addBlock(view, ev, seq++)));
+      var blk = list.lastElementChild;
+      var first = blk && blk.querySelector("input,select,textarea");
+      if (first) first.focus();
+    });
+    list.addEventListener("click", function (e) {
+      var n = e.target && e.target.getAttribute && e.target.getAttribute("data-addrm");
+      if (n == null) return;
+      var blk = list.querySelector('[data-addblock="' + n + '"]');
+      if (blk) blk.parentNode.removeChild(blk);
+    });
+  }
+
   function render(container, view, opts) {
     opts = opts || {};
     var admin = !!opts.admin;
@@ -143,7 +198,17 @@
 
     html += '<section class="se-sec"><h4>出場種目</h4>';
     html += (view.entries || []).map(function (e, i) { return entryBlock(view, e, i); }).join("");
-    html += '<div class="se-hint">種目の追加は、申込フォームから新しくお申し込みください。</div></section>';
+    var addable = (view.form.events || []).filter(function (x) { return !x.add_lock; });
+    if (addable.length) {
+      html += '<div data-addlist></div>' + '<div class="se-fld se-addpick"><label>種目を追加する</label><select data-addpick>' +
+        '<option value="">追加する種目を選んでください</option>' +
+        addable.map(function (x) { return '<option value="' + esc(x.name) + '">' + esc(x.name) + "（" + feeText(x) + "）</option>"; }).join("") +
+        "</select><div class=\"se-hint\">選んだ種目の入力欄が上に出ます。参加料は保存したときの料金で付きます。</div></div>";
+    } else {
+      html += '<div class="se-hint">' + (admin ? "追加できる種目がありません（組合せ作成後の種目は「表を編集」で行ってください）。"
+        : "締切後・組合せ作成後は種目を追加できません。大会本部へご連絡ください。") + "</div>";
+    }
+    html += "</section>";
 
     var defs = view.form.option_defs || [];
     if (defs.length) {
@@ -160,6 +225,7 @@
 
     html += '<section class="se-sec">' + input("reason", "修正の理由（任意）", "", { placeholder: admin ? "例: 電話で依頼あり" : "例: 記入ミスのため" }) + "</section>";
     mount(container, '<div class="se">' + html + "</div>");
+    wireAdd(container, view);
     container._seView = view;
     container._seInitial = collectRaw(container);
   }
@@ -169,6 +235,7 @@
     var els = container.querySelectorAll("[data-k]");
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
+      if (/^a\d+\./.test(el.getAttribute("data-k"))) continue;
       out[el.getAttribute("data-k")] = el.type === "checkbox" ? !!el.checked : String(el.value == null ? "" : el.value).trim();
     }
     return out;
@@ -238,6 +305,31 @@
       entries.push(r);
     });
     if (entries.length) { payload.entries = entries; any = true; }
+
+    var adds = [];
+    var blocks = container.querySelectorAll("[data-addblock]");
+    for (var b = 0; b < blocks.length; b++) {
+      var blk = blocks[b], ap = "a" + blk.getAttribute("data-addblock") + ".";
+      var a = { event: blk.getAttribute("data-event") }, ex = {};
+      var els = blk.querySelectorAll("[data-k]");
+      for (var q = 0; q < els.length; q++) {
+        var el = els[q], sub = el.getAttribute("data-k").slice(ap.length);
+        var v = el.type === "checkbox" ? !!el.checked : String(el.value == null ? "" : el.value).trim();
+        if (sub === "members") a.members = v.split(/\r?\n/).map(function (x) { return x.trim(); }).filter(Boolean);
+        else if (sub.indexOf("x.") === 0) {
+          var xk = sub.slice(2);
+          if (xk.indexOf("ans.") === 0) { ex.answers = ex.answers || {}; ex.answers[xk.slice(4)] = v; } else ex[xk] = v;
+        } else if (/^pl[01]\./.test(sub)) {
+          var pi = parseInt(sub.charAt(2), 10), pk = sub.slice(4);
+          ex.players = ex.players || [{}, {}];
+          if (pk.indexOf("ans.") === 0) { ex.players[pi].answers = ex.players[pi].answers || {}; ex.players[pi].answers[pk.slice(4)] = v; }
+          else ex.players[pi][pk] = v;
+        } else a[sub] = v;
+      }
+      if (Object.keys(ex).length) a.extra_json = ex;
+      adds.push(a);
+    }
+    if (adds.length) { payload.add = adds; any = true; }
     return any ? payload : null;
   }
 
@@ -249,6 +341,9 @@
     ".se-check{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;min-height:44px;cursor:pointer}.se-check input{width:20px;height:20px;margin:0}" +
     ".se-entry{border:1px solid var(--line,#e4dccb);border-radius:10px;padding:12px;margin-bottom:10px;background:#fff}.se-locked{opacity:.75}" +
     ".se-ehead{display:flex;justify-content:space-between;gap:8px;margin-bottom:8px}.se-fee{font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap}" +
+    ".se-new{border-color:var(--ink-2,#6c6153)}.se-tag{display:inline-block;margin-left:8px;font-size:11px;font-weight:800;padding:1px 7px;border-radius:999px;background:var(--line,#e4dccb)}" +
+    ".se-rm{margin-top:4px;min-height:44px;padding:0 12px;border:1px solid var(--line,#e4dccb);border-radius:8px;background:#fff;font:inherit;font-size:13px;cursor:pointer;color:inherit}" +
+    ".se-addpick select{border-style:dashed}" +
     ".se-slot{border-top:1px dashed var(--line,#e4dccb);padding-top:8px;margin-top:6px}.se-slot-h{font-size:12px;font-weight:800;margin-bottom:6px}";
   function injectCss(doc) {
     doc = doc || root.document;
