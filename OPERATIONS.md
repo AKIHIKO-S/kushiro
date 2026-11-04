@@ -375,6 +375,25 @@ sudo -u ktta bash -c '. /etc/ktta.env; /opt/ktta/deploy/backup.sh && /opt/ktta/d
   管理画面「🔒 システム管理（オーナー）」→ バックアップ/復元 → **「ファイルから復元（アップロード）」** で
   その `.db.gz` を取り込めば復旧する(ローカルにスナップショットが無くてもよい)。CLI なら restore.sh にパス指定も可。
 
+#### Cloudflare R2 へ毎晩積み上げる(2026-11 追加・お名前RS解約後はこちらが主)
+お名前RS(2001827)の解約に備え、別事業者の Cloudflare R2(バケット `ktta-backups`・アジア太平洋)へ
+最新の `ktta-*.db.gz` を毎晩1件ずつ**追加のみ**で送る(`deploy/offsite-r2.sh`)。rsync ミラーと違い遠隔から消さない。
+古い世代は R2 の保持ルール(`db/` 配下を180日で自動削除)で整理する。容量は1日約0.5MB=180日で約90MB(R2無料枠10GB内)。
+
+```bash
+# 1) Cloudflare で R2 の鍵を発行(オーナー): R2 → API トークンを管理 → 作成
+#    権限「オブジェクトの読み取りと書き込み」・対象バケット ktta-backups のみ
+# 2) VM で初回設定(鍵はここで画面入力。チャットや GitHub には書かない)
+sudo bash /opt/ktta/deploy/offsite-r2-setup.sh
+# 3) cron(ktta)に追記: RSミラーの成否に関係なく R2 へも送る
+0 3 * * * cd / && /opt/ktta/deploy/backup.sh && { /opt/ktta/deploy/offsite-sync.sh >> /var/data/backups/offsite.log 2>&1; /opt/ktta/deploy/offsite-r2.sh >> /var/data/backups/offsite-r2.log 2>&1; }
+# 4) 確認
+sudo -u ktta -H rclone lsl r2:ktta-backups/db/ | tail
+```
+- **災害復旧**: `rclone copy r2:ktta-backups/db/<ファイル名> .` か Cloudflare の画面から `.db.gz` を取得し、
+  上と同じく「ファイルから復元（アップロード）」で取り込む。
+- お名前RSを解約したら、cron から `offsite-sync.sh` の部分を外す。
+
 ### 復元 (restore.sh を使う。パスは自動解決)
 ```bash
 sudo /opt/ktta/deploy/restore.sh --list                 # 一覧(/var/data/backups を参照)
