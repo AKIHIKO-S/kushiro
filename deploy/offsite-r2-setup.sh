@@ -27,19 +27,31 @@ CONF_DIR="$KTTA_HOME/.config/rclone"
 CONF="$CONF_DIR/rclone.conf"
 
 echo
-echo "Cloudflare の画面に出ている3つの値を貼り付けてください(画面には表示されません)。"
-read -r -p  "1) S3 クライアント用のエンドポイント(https://....r2.cloudflarestorage.com): " ENDPOINT
-read -r -s -p "2) アクセスキー ID: " AKID; echo
-read -r -s -p "3) シークレットアクセスキー: " SECRET; echo
+echo "Cloudflare の画面に出ている3つの値を、1つずつ「1回だけ」貼り付けて Enter を押してください。"
+echo "(鍵は画面に表示されません。矢印キーは押さないでください。間違えたら同じ質問がもう一度出ます)"
 
-case "$ENDPOINT" in
-  https://*.r2.cloudflarestorage.com|https://*.r2.cloudflarestorage.com/) ;;
-  *) echo "エンドポイントの形が違います(https://<アカウントID>.r2.cloudflarestorage.com)。中止。"; exit 1 ;;
-esac
-ENDPOINT="${ENDPOINT%/}"
-if [ -z "$AKID" ] || [ -z "$SECRET" ]; then
-  echo "鍵が空です。中止。"; exit 1
-fi
+# 貼り付け時に混ざる空白・改行・矢印キー等の制御文字を除いてから形を検査する。
+# R2 の鍵はアクセスキーIDが16進32桁、シークレットが16進64桁。
+clean() { printf '%s' "$1" | LC_ALL=C tr -cd '0-9A-Za-z:/._-'; }
+
+while :; do
+  read -r -p "1) S3 クライアント用のエンドポイント(https://....r2.cloudflarestorage.com): " ENDPOINT
+  ENDPOINT="$(clean "$ENDPOINT")"; ENDPOINT="${ENDPOINT%/}"
+  if [[ "$ENDPOINT" =~ ^https://[0-9a-f]{32}\.r2\.cloudflarestorage\.com$ ]]; then break; fi
+  echo "   形が違います(https://<英数字32桁>.r2.cloudflarestorage.com)。もう一度どうぞ。"
+done
+while :; do
+  read -r -s -p "2) アクセスキー ID: " AKID; echo
+  AKID="$(clean "$AKID")"
+  if [[ "$AKID" =~ ^[0-9a-f]{32}$ ]]; then echo "   受け付けました(32桁)"; break; fi
+  echo "   形が違います(英数字32桁のはずが ${#AKID} 桁)。1回だけ貼り付けてください。"
+done
+while :; do
+  read -r -s -p "3) シークレットアクセスキー: " SECRET; echo
+  SECRET="$(clean "$SECRET")"
+  if [[ "$SECRET" =~ ^[0-9a-f]{64}$ ]]; then echo "   受け付けました(64桁)"; break; fi
+  echo "   形が違います(英数字64桁のはずが ${#SECRET} 桁)。1回だけ貼り付けてください。"
+done
 
 install -d -m 700 -o ktta -g ktta "$CONF_DIR"
 umask 077
