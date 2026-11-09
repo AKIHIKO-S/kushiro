@@ -343,6 +343,8 @@ OFFSITE_CMD='oci os object put -bn ktta-backups --force --file'
 env を source してから実行する。
 
 #### お名前ドットコム(レンタルサーバー SSH/SFTP)へ毎晩退避する手順
+※ 2026-11-09 に cron から外した(RS契約は 2026-12-31 で終了)。現行の遠隔退避は下の R2。以下は当時の手順の記録。
+
 Oracle無料枠VMの回収に備え、別事業者(お名前ドットコム)へ DB を毎晩ミラーする。専用スクリプト
 `deploy/offsite-sync.sh`(ローカルの30日ローテ済バックアップを rsync ミラー。空ソース時は中止する安全ガード付き)を使う。
 
@@ -385,14 +387,14 @@ sudo -u ktta bash -c '. /etc/ktta.env; /opt/ktta/deploy/backup.sh && /opt/ktta/d
 #    権限「オブジェクトの読み取りと書き込み」・対象バケット ktta-backups のみ
 # 2) VM で初回設定(鍵はここで画面入力。チャットや GitHub には書かない)
 sudo bash /opt/ktta/deploy/offsite-r2-setup.sh
-# 3) cron(ktta)に追記: RSミラーの成否に関係なく R2 へも送る
-0 3 * * * cd / && /opt/ktta/deploy/backup.sh && { /opt/ktta/deploy/offsite-sync.sh >> /var/data/backups/offsite.log 2>&1; /opt/ktta/deploy/offsite-r2.sh >> /var/data/backups/offsite-r2.log 2>&1; }
+# 3) cron(ktta)に登録: 毎晩バックアップ後に R2 へ送る(VMの時計はUTCなので日本時間12:00)
+0 3 * * * cd / && /opt/ktta/deploy/backup.sh && /opt/ktta/deploy/offsite-r2.sh >> /var/data/backups/offsite-r2.log 2>&1
 # 4) 確認
 sudo -u ktta -H rclone lsl r2:ktta-backups/db/ | tail
 ```
 - **災害復旧**: `rclone copy r2:ktta-backups/db/<ファイル名> .` か Cloudflare の画面から `.db.gz` を取得し、
   上と同じく「ファイルから復元（アップロード）」で取り込む。
-- お名前RSを解約したら、cron から `offsite-sync.sh` の部分を外す。
+- お名前RSへの送信(`offsite-sync.sh`)は 2026-11-09 に cron から外した。遠隔の退避先は R2 のみ。
 
 ### 復元 (restore.sh を使う。パスは自動解決)
 ```bash
