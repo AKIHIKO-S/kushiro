@@ -2400,6 +2400,56 @@ try {
 </html>`;
 }
 
+// 申込集計モードの公開の入口。閲覧画面を閉じている間、直打ち・古いリンクの行き先になる。
+function buildEntryLandingHTML(tournaments) {
+  const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const jpDate = (d) => {
+    const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})/.exec(String(d || ""));
+    return m ? `${m[1]}年${+m[2]}月${+m[3]}日` : String(d || "");
+  };
+  const rows = (tournaments || []).map((t) => {
+    const meta = [jpDate(t.date) || "日程未定", t.venue].filter(Boolean).join("・");
+    return `<li><div class="info"><div class="name">${esc(t.name)}</div><div class="meta">${esc(meta)}</div>` +
+      (t.entry_deadline ? `<div class="due">申込締切 ${esc(jpDate(t.entry_deadline))}</div>` : "") +
+      `</div><a class="go" href="/entry/${encodeURIComponent(t.id)}">申し込む</a></li>`;
+  }).join("");
+  return `<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大会の申込 | 釧路卓球協会</title>
+<style>
+  :root{--bg:#fff;--ink:#211b15;--ink-2:#6c6153;--red:#c01526;--line:#e4dccb;
+    --gothic:'Hiragino Sans','BIZ UDPGothic','Yu Gothic UI','Meiryo',system-ui,sans-serif;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--gothic);font-size:16px;line-height:1.6;padding:28px 16px 56px;}
+  .wrap{max-width:640px;margin:0 auto;}
+  h1{font-size:24px;margin:0 0 6px;}
+  .note{color:var(--ink-2);font-size:14px;margin:0 0 22px;}
+  ul{list-style:none;margin:0;padding:0;border-top:1px solid var(--line);}
+  li{display:flex;gap:14px;align-items:center;justify-content:space-between;padding:16px 0;border-bottom:1px solid var(--line);}
+  .info{min-width:0;}
+  .name{font-weight:700;overflow-wrap:anywhere;}
+  .meta{font-size:13px;color:var(--ink-2);}
+  .due{font-size:13px;color:var(--red);}
+  .go{flex:none;display:inline-flex;align-items:center;min-height:44px;padding:0 16px;background:var(--red);color:#fff;text-decoration:none;font-weight:700;border-radius:6px;}
+  .empty{padding:22px 0;border-bottom:1px solid var(--line);color:var(--ink-2);}
+  .sub{margin-top:22px;font-size:14px;}
+  .sub a{color:var(--red);display:inline-block;padding:10px 0;}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>大会の申込</h1>
+  <p class="note">現在、このページでは大会の申込のみご案内しています。組合せや試合結果の掲載は休止しています。</p>
+  ${rows ? `<ul>${rows}</ul>` : `<div class="empty">現在受付中の大会はありません。</div>`}
+  <p class="sub"><a href="/entry/status">申込内容の確認・修正はこちら</a></p>
+</main>
+</body>
+</html>`;
+}
+
 // ─────────────────────────────────────────────────────────────
 // 申込者本人の閲覧ページ。申込番号はURLに含めず、同一オリジンでHttpOnlyセッションへ交換する。
 // ─────────────────────────────────────────────────────────────
@@ -2765,4 +2815,5 @@ function buildApplicantStatusHTML() {
 module.exports = {
   buildEntryFormHTML,
   buildApplicantStatusHTML,
+  buildEntryLandingHTML,
 };

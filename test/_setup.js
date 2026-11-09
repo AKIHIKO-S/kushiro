@@ -10,3 +10,5 @@ const os = require("os");
 if (!process.env.SNAPSHOT_DIR) {
   process.env.SNAPSHOT_DIR = path.join(os.tmpdir(), "ktta-test-snap-" + process.pid);
 }
+// 既定は申込集計モードだが、既存の回帰テストは全機能を対象にする。モード自体の検査は app-mode.test.js が子サーバの env で指定する。
+if (!process.env.KTTA_APP_MODE) process.env.KTTA_APP_MODE = "full";

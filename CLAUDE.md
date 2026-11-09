@@ -77,6 +77,7 @@ standalone/  オフライン単機運用ラッパ (start.command/.bat)
 - アップロード(multer): xlsx/csv/pdf/画像のみ(SVG除外=XSS), 20MB, /tmp。
 - graceful shutdown(lib/lifecycle): SIGTERMでSSEを明示close→再接続を促す。
 - 診断: `/api/diagnostics`(メモリ/ディスク/エラー履歴)。
+- **申込集計モード** (`app-mode.js`・既定 ON): `app_kv.app_mode`(オーナー画面で切替)／環境変数 `KTTA_APP_MODE` が優先。API は許可リスト方式で、新規ルートはリストに載せるまで entry モードでは 404。リストを変えたら `test/fixtures/app-mode-entry-routes.json` も更新。管理画面は `A.entryOnly` と `.em-hide`。テストは `_setup.js` で full 固定。手順は OPERATIONS.md §4.8。
 
 ## 規約
 

@@ -37,6 +37,7 @@ function runChild(cmd, args, { env, timeoutMs = 30000, maxOut = 32 * 1024 * 1024
 }
 const compression = require("compression");
 const multer = require("multer");
+const appMode = require("./app-mode");
 const QRCode = require("qrcode");     // ローカルQR生成(会場オフラインで外部QRサービスに依存しないLAN接続案内用)
 const db = require("./db");
 const reports = require("./reports");
@@ -807,6 +808,26 @@ function plainActor(value, fallback) {
   const s = String(value || "").trim().slice(0, 32);
   return /^[A-Za-z0-9_-]{3,32}$/.test(s) ? s : fallback;
 }
+// 申込集計モード: 残す入口以外を閉じる。認証より前で判定し、誰が来ても同じ応答にする。
+function currentAppMode() { return appMode.resolveMode(process.env.KTTA_APP_MODE, db.kvGet(appMode.KV_KEY)); }
+const ENTRY_LANDING = "/entry";
+app.use((req, res, next) => {
+  if (currentAppMode() !== "entry") return next();
+  // Express の経路は大文字小文字を区別しないので、ゲート側も区別しない(/API/... のすり抜け防止)
+  if (/^\/api\//i.test(req.path)) {
+    if (appMode.isApiAllowedInEntryMode(req.method, req.path)) return next();
+    return res.status(404).json({ error: "この機能は、申込集計モードの間は使えません", app_mode: "entry" });
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && appMode.isHiddenPageInEntryMode(req.path)) {
+    return res.redirect(302, ENTRY_LANDING);
+  }
+  next();
+});
+
+app.get("/api/app-mode", (req, res) => {
+  res.json({ mode: currentAppMode(), locked: appMode.MODES.includes(process.env.KTTA_APP_MODE) });
+});
+
 app.get("/api/auth/session", (req, res) => {
   const s = sessionOf(req);
   if (!s) return res.json({ authenticated: false });
@@ -4045,6 +4066,16 @@ app.post("/api/admin/snapshots/restore", requireOwner, (req, res) => {
 // ─── オーナー (上級管理者) 専用ルート ───────────────────────────
 // 鍵検証だけを行う(UIのロック解除に使用)。成功で操作可能を示す。
 app.get("/api/owner/verify", requireOwner, (req, res) => res.json({ ok: true }));
+app.put("/api/owner/app-mode", requireOwner, (req, res) => {
+  const mode = String((req.body && req.body.mode) || "");
+  if (!appMode.MODES.includes(mode)) return res.status(400).json({ error: "mode は full / entry のどちらかです" });
+  if (appMode.MODES.includes(process.env.KTTA_APP_MODE)) {
+    return res.status(409).json({ error: "サーバーの環境変数 KTTA_APP_MODE で固定されているため、ここでは切り替えられません" });
+  }
+  db.kvSet(appMode.KV_KEY, mode);
+  auditOwner(req, "app_mode", mode);
+  res.json({ mode });
+});
 // オーナー機能が構成されているか(鍵不要・真偽のみ)。UIが入口を出すかの判定用。鍵自体は漏らさない。
 app.get("/api/owner/configured", (req, res) => res.json({ configured: !!OWNER_KEY }));
 // オーナー監査ログ。
@@ -5290,6 +5321,12 @@ app.get("/forms/largeball-alljapan2026", (req, res) => {
 
 // ── Phase4: 申込者本人の閲覧ページ /entry/status?token=… ───
 // 申込番号(トークン)で自分の申込内容を確認する(閲覧のみ)。:id ルートより前に置く。
+// 申込集計モードの公開の入口。受付中の大会だけを案内する。通常モードでは閲覧画面があるのでそちらへ。
+app.get("/entry", (req, res) => {
+  if (currentAppMode() !== "entry") return res.redirect(302, "/viewer");
+  res.type("html").send(entryForm.buildEntryLandingHTML(db.getOpenTournaments()));
+});
+
 app.get("/entry/status", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
@@ -5344,7 +5381,10 @@ app.get(["/viewer", "/viewer/*"], (req, res) => {
   res.sendFile(path.join(publicDir, "viewer", "index.html"));
 });
 app.get("/", (req, res) => { res.redirect("/viewer"); });
-app.get("*", _serveVersionedHtml(path.join(publicDir, "viewer", "index.html")));
+app.get("*", (req, res, next) => {   // 未知のURLは閲覧画面に落とす。申込集計モードでは閲覧画面が無いので申込案内へ
+  if (currentAppMode() === "entry") return res.redirect(302, ENTRY_LANDING);
+  next();
+}, _serveVersionedHtml(path.join(publicDir, "viewer", "index.html")));
 
 // ═══ グローバル エラーハンドラ ═══
 // 未捕捉のエラーを DIAG に記録 + 500 を返す

@@ -1250,6 +1250,12 @@
  .pdist-chip.l{ background:#fdecee; color:#9c0f1c; border-color:#f3d3d6; }
  .pdist-label.w{ color:#1a7a45; } .pdist-label.l{ color:#c01526; }
  .pstat-bar i.hi{ background:#1a7a45; } .pstat-rp.hi{ color:#1a7a45; }
+/* 申込集計モード: 閉じた機能の入口を出さない(切替は オーナー管理 → 運営アプリのモード) */
+html[data-app-mode="entry"] .tab[data-tab="operations"],
+html[data-app-mode="entry"] .tab[data-tab="bracket-mgmt"],
+html[data-app-mode="entry"] .tab[data-tab="api"],
+html[data-app-mode="entry"] .tab[data-tab="coaches"],
+html[data-app-mode="entry"] .em-hide { display: none !important; }
 </style>
 </head>
 <body>
@@ -1268,9 +1274,9 @@
  <span class="admin-badge">ADMIN</span>
  </div>
  <div class="admin-actions">
- <a href="/viewer" target="_blank" class="btn btn-ghost"
+ <a href="/viewer" target="_blank" class="btn btn-ghost em-hide"
     style="background:rgba(255,255,255,.08); color:#fff; border-color:transparent">閲覧</a>
- <a href="/viewer/live/" target="_blank" class="btn btn-ghost"
+ <a href="/viewer/live/" target="_blank" class="btn btn-ghost em-hide"
     style="background:rgba(255,255,255,.08); color:#fff; border-color:transparent">観戦</a>
  <button class="settings-icon" onclick="A.openSettings()" title="設定" aria-label="設定">⚙</button>
  </div>
@@ -1370,7 +1376,7 @@
  <div class="card-head">
  <div class="card-title">大会一覧</div>
  <div class="flex gap-2">
- <button class="btn btn-sm btn-ghost" onclick="A.blankBracketModal()" title="人数を入れるだけで罫線だけの空トーナメント表(Excel)を出力">白紙トーナメント表</button>
+ <button class="btn btn-sm btn-ghost em-hide" onclick="A.blankBracketModal()" title="人数を入れるだけで罫線だけの空トーナメント表(Excel)を出力">白紙トーナメント表</button>
  <button class="btn btn-sm" onclick="A.newTournament()">+ 新規大会</button>
  </div>
  </div>
@@ -1489,16 +1495,16 @@
  <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border)">
  <label class="field-label">JSON読み込み</label>
  <input type="file" id="jsonFile" accept=".json" class="input">
- <button class="btn mt-2" onclick="A.importJSON()">JSONから復元</button>
+ <button class="btn mt-2 em-hide" onclick="A.importJSON()">JSONから復元</button>
  </div>
  </div>
 
  <div class="card">
  <div class="card-head"><div class="card-title">エクスポート</div></div>
- <p class="text-sm text-sub mb-3">名簿・試合結果をCSVで書き出せます。</p>
+ <p class="text-sm text-sub mb-3">名簿<span class="em-hide">・試合結果</span>をCSVで書き出せます。</p>
  <div class="flex gap-2 flex-wrap">
  <button class="btn btn-ghost" onclick="A.exportPlayersCSV()">選手 CSV</button>
- <button class="btn btn-ghost" onclick="A.exportMatchesCSV()">試合 CSV</button>
+ <button class="btn btn-ghost em-hide" onclick="A.exportMatchesCSV()">試合 CSV</button>
  </div>
  <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border)">
  <label class="field-label">全データ書き出し・バックアップ・全削除（上級）</label>
@@ -1508,7 +1514,7 @@
  </div>
  </div>
 
- <div class="card" style="margin-top:16px">
+ <div class="card em-hide" style="margin-top:16px">
  <div class="card-head"><div class="card-title">登録団体マスタ（取込で団体を選手にしない）</div></div>
  <p class="text-sm text-sub mb-3">ここに登録した団体（クラブ・学校）名は、トーナメント表の取込で<strong>選手名として取り込まれず所属（チーム名）扱い</strong>になります。特にダブルスの相方欄に団体名が入る誤取込を防ぎます。</p>
  <div class="flex gap-2 flex-wrap" style="margin-bottom:10px">
@@ -1639,6 +1645,8 @@ window.addEventListener("unhandledrejection", (e) => {
 // ─── 管理アプリ ─────────────────────────────────────
 const A = {
  activeTab: "tournaments",
+ entryOnly: false,   // 申込集計モード。サーバの /api/app-mode が正本
+ appModeLocked: false,
  state: { tournaments: [], players: [], currentTournament: null },
 
  // 外部埋込・共有用の本番 origin (HTTPS 必須)
@@ -1701,6 +1709,16 @@ const A = {
  document.getElementById("apiBase").textContent = origin;
  document.getElementById("apiBase2").textContent = origin;
 
+ // 画面を組み立てる前にモードを確定する(閉じた機能の入口を一瞬でも出さないため)
+ try {
+   const m = await fetch("/api/app-mode", { credentials: "same-origin" }).then(r => r.json());
+   A.entryOnly = m.mode === "entry";
+   A.appModeLocked = !!m.locked;
+   document.documentElement.dataset.appMode = m.mode;
+   // <option> は CSS で隠せないブラウザがあるので実体を外す
+   if (A.entryOnly) document.querySelector('#tab-players option[value="rating"]')?.remove();
+ } catch (e) {}
+
  // HttpOnlyセッションを先に復元する。管理キーはブラウザへ保存しない。
  try { await api.refreshSession(); } catch (e) {}
  if (!api.adminKey) {
@@ -1737,6 +1755,11 @@ const A = {
  },
 
  showTab(name, skipHash) {
+ // 申込集計モードで閉じた画面へURL直打ち・履歴で来たら、エラーにせず申込一覧へ案内する
+ if (A.entryOnly && ["operations", "entrants", "bracket-mgmt", "api", "coaches"].includes(name)) {
+   toast("この画面は申込集計モードの間はお休みです。申込一覧を表示しました", "ok");
+   name = "entries"; skipHash = false;
+ }
  A.activeTab = name;
  // 進行管理タブから離れる時はポーリング停止＋SSEも閉じる
  // (#190 ポーリング残り / SSEを閉じないと裏で ops 受信→hiddenな #opMain へ再描画し続ける #264)
@@ -1781,7 +1804,7 @@ const A = {
  ]);
  A.state.tournaments = tournaments || [];
  A.state.players = players || [];
- A.loadPushPlayers();   // マイ番号(プッシュ)登録選手 (#288) — 失敗してもUIは継続
+ if (!A.entryOnly) A.loadPushPlayers();   // マイ番号(プッシュ)登録選手 (#288) — 失敗してもUIは継続
  if (A.activeTab === "tournaments") A.renderTournaments();
  if (A.activeTab === "players") A.renderPlayers();
  } catch (e) { console.error(e); }
@@ -1931,7 +1954,7 @@ const A = {
    A.openPublicOriginConfig(); } },
  "公開URLを設定"),
  ),
- h("div", { className: "card", style: { padding: "14px", marginBottom: "14px" } },
+ A.entryOnly ? null : h("div", { className: "card", style: { padding: "14px", marginBottom: "14px" } },
  h("div", { className: "card-title", style: { marginBottom: "10px" } }, "電子印鑑 (領収書用)"),
  h("img", { id: "sealPreview", src: "/shared/assets/seal.png",
  style: { maxHeight: "80px", display: "block", marginBottom: "8px",
@@ -1958,7 +1981,7 @@ const A = {
  h("div", { className: "text-xs text-sub mt-2" },
  "領収書出力時に右下に押印画像として印字されます。背景透過 PNG を推奨。"),
  ),
- h("div", { className: "card", style: { padding: "14px", marginBottom: "14px" } },
+ A.entryOnly ? null : h("div", { className: "card", style: { padding: "14px", marginBottom: "14px" } },
  h("div", { className: "card-title", style: { marginBottom: "10px" } }, "協会ロゴ (領収書ヘッダ用)"),
  h("img", { id: "logoPreview", src: "/shared/assets/icon-192.png",
  style: { maxHeight: "80px", display: "block", marginBottom: "8px",
@@ -2051,11 +2074,11 @@ const A = {
  style: { background: "#fef2f2", color: "#7f1d1d", borderColor: "#fca5a5" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
    A.openOwnerPanel(); } }, "システム管理（オーナー）"),
- h("button", { className: "btn btn-sm",
+ A.entryOnly ? null : h("button", { className: "btn btn-sm",
  style: { background: "#eff6ff", color: "#1e40af", borderColor: "#93c5fd" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
    A.openLanConnect(); } }, "会場の他の端末をつなぐ"),
- h("button", { className: "btn btn-sm",
+ A.entryOnly ? null : h("button", { className: "btn btn-sm",
  style: { background: "#f0fdf4", color: "#15803d", borderColor: "#86efac" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
    A.openPushManager(); } }, "プッシュ通知 / マイ選手"),
@@ -2445,7 +2468,7 @@ const A = {
  });
 
  // 3. 印鑑画像 (確認は難しいので存在チェックは別途)
- items.push({
+ if (!A.entryOnly) items.push({
  ok: true,  // 領収書発行時に検証されるので、ここでは notice のみ
  label: "電子印鑑画像 (任意・領収書用)",
  detail: "領収書を発行する場合は下記「電子印鑑」でアップロードしてください",
@@ -2835,17 +2858,29 @@ const A = {
    h("strong", {}, String(players.length)), " 名"),
  h("span", { className: "text-sm" }, "団体: ",
    h("strong", {}, String(teams))),
- h("span", { className: "text-sm" }, "試合: ",
+ A.entryOnly ? null : h("span", { className: "text-sm" }, "試合: ",
    h("strong", {}, String((t.matches || []).length))),
  ),
  ));
 
+ // 申込集計モード: 申込の確認と集計だけを前に出し、組合せ・進行の導線は作らない
+ if (A.entryOnly) panel.appendChild(h("div", { className: "card" },
+ h("div", { className: "card-head" }, h("div", { className: "card-title" }, "申込の確認と集計")),
+ h("div", { className: "flex gap-2 flex-wrap" },
+ h("button", { className: "btn btn-sm", onClick: () => { A._entriesTid = t.id; A.showTab("entries"); } }, "出場者の一覧"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openSubmissionList(t) }, "申込の一覧"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openEntryChanges(t) }, "変更履歴"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.fetchGasStats(t) }, "シートの集計を取得"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.downloadApplicantsXlsx(t) }, "申込一覧をExcel"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.downloadAggregation(t) }, "集計表をExcel"),
+ )));
+
  // ─── 大会運営ガイド (5ステップの導線) #195 ───
- panel.appendChild(A.renderFlowGuide(t));
+ if (!A.entryOnly) panel.appendChild(A.renderFlowGuide(t));
 
  // ─── トーナメント表 (Excel/PDF 取込) ───
  // 申込・名簿・領収書・集計は GAS 側で処理。本システムは試合運営に特化。
- panel.appendChild(h("div", { className: "card" },
+ if (!A.entryOnly) panel.appendChild(h("div", { className: "card" },
  h("div", { className: "card-head" },
  h("div", { className: "card-title" }, "トーナメント表 (取込)"),
  h("div", { className: "flex gap-2 flex-wrap" },
@@ -2860,7 +2895,7 @@ const A = {
  ));
 
  // ─── 進行管理 ───
- panel.appendChild(h("div", { className: "card" },
+ if (!A.entryOnly) panel.appendChild(h("div", { className: "card" },
  h("div", { className: "card-head" },
  h("div", { className: "card-title" }, "進行管理 (LIVE)"),
  h("div", { className: "flex gap-2 flex-wrap" },
@@ -2889,14 +2924,14 @@ const A = {
  ));
 
  // ─── ★ Step 1-3 統合: 申込フォーム / 抽選番号 / 名簿 ───
- panel.appendChild(A.renderEntrantsSection(t));
+ if (!A.entryOnly) panel.appendChild(A.renderEntrantsSection(t));
 
  // ─── 申込フォーム (公開URL + 設定) ───
  panel.appendChild(h("div", { className: "card",
    style: { background: "linear-gradient(135deg,#fef3c7 0%,#fef9c3 100%)",
             borderLeft: "4px solid #fbbf24" } },
- h("div", { className: "card-head" },
- h("div", { className: "card-title", style: { color: "#78350f" } },
+ h("div", { className: "card-head", style: { flexWrap: "wrap", gap: "8px" } },
+ h("div", { className: "card-title", style: { color: "#78350f", whiteSpace: "nowrap" } },
    "公開申込フォーム"),
  h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm",
@@ -2928,7 +2963,7 @@ const A = {
  ));
 
  // ─── 試合一覧 (折りたたみ・補助) ───
- if (t.matches && t.matches.length) {
+ if (!A.entryOnly && t.matches && t.matches.length) {
    panel.appendChild(A.renderMatchListSection(t));
  }
  },
@@ -6065,9 +6100,9 @@ const A = {
    tbl.appendChild(h("thead", {}, h("tr", {},
      sth("status", "状態"), sth("name", "氏名", "ふりがな順で並び替え"), sth("team", "所属"), sth("region", "支部"),
      h("th", {}, "連絡先"),
-     h("th", {}, "区分"), sth("event", "種目"), sth("seed", "シード"),
-     sth("er", "登場R", "登場ラウンド(スーパーシード): 1=1回戦から / R=R回戦から登場(予選免除)"),
-     sth("applied", "申込日"), sth("placed", "表", "生成済みトーナメント表に配置されているか"),
+     h("th", {}, "区分"), sth("event", "種目"), A.entryOnly ? null : sth("seed", "シード"),
+     A.entryOnly ? null : sth("er", "登場R", "登場ラウンド(スーパーシード): 1=1回戦から / R=R回戦から登場(予選免除)"),
+     sth("applied", "申込日"), A.entryOnly ? null : sth("placed", "表", "生成済みトーナメント表に配置されているか"),
      h("th", {}, "操作"))));
    const tbody = h("tbody", {});
    rows.forEach(e => {
@@ -6129,12 +6164,12 @@ const A = {
            title: (item.issues || []).map(is => is.label).join(" / ") + "  (クリックで推定値修正)",
            onClick: () => fixOne(item) }, "要確認") : null),
        h("td", {}, e.entry_event || "未定"),
-       h("td", {}, h("input", { type: "number", className: "input-sm", style: { width: "62px" },
+       A.entryOnly ? null : h("td", {}, h("input", { type: "number", className: "input-sm", style: { width: "62px" },
          value: e.seed || 0,
          onChange: async (ev) => { try {
            await api.put(`/api/tournaments/${t.id}/entries/${e.id}/seed`, { seed: parseInt(ev.target.value) || 0 });
            toast("シード更新", "ok"); updatePreview(); } catch (err) { toast("失敗", "err"); } } })),
-       h("td", {}, h("select", { className: "input-sm", style: { width: "118px" },
+       A.entryOnly ? null : h("td", {}, h("select", { className: "input-sm", style: { width: "118px" },
          title: "登場回戦(スーパーシード): 罫線が大きいほど後の回戦から登場。1=1回戦から(通常)。R≧3 はスーパーシード相当。標準配置の生成に反映。",
          onChange: async (ev) => { try {
            const r = parseInt(ev.target.value) || 1;
@@ -6144,7 +6179,7 @@ const A = {
            { value: String(r), selected: (parseInt(e.entry_round) || 1) === r ? "" : null },
            r === 1 ? "1回戦から(通常)" : r + "回戦から" + (r >= 3 ? "（SS）" : ""))))),
        h("td", { className: "text-xs text-sub" }, e.applied_at ? String(e.applied_at).split(" ")[0] : "未登録"),
-       h("td", {}, (() => {   // 生成済みトーナメント表との対比
+       A.entryOnly ? null : h("td", {}, (() => {   // 生成済みトーナメント表との対比
          const set = placedByEvent[e.entry_event];
          if (!set) return h("span", { className: "text-xs text-sub" }, "表なし");
          return set.has(e.id)
@@ -6194,7 +6229,7 @@ const A = {
    try { entries = await api.get(`/api/tournaments/${t.id}/entries`) || []; } catch (e) { entries = []; }
    // 生成済みトーナメント表との突合: 1回戦リーフの entrant_id を種目別に集合化
    placedByEvent = {};
-   try {
+   if (!A.entryOnly) try {
      // fingerprint ETagはスロット編集では変わらないため、常に最新を引くようキャッシュバスターを付ける
      const ms = await api.get(`/api/public/tournaments/${t.id}/matches?ts=` + Date.now()) || [];
      (Array.isArray(ms) ? ms : []).forEach(m => {
@@ -6794,7 +6829,9 @@ const A = {
  // メニュー(生成/編集/プレビュー/表削除/出場者削除)は最上部に置く(オーナー要望 2026-07-17)。
  // 旧「生成済みの表を編集」は統合エディタ(sheetBtn)に一本化(オーナー要望 2026-07-18)。
  const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } }, sheetBtn, genBtn, previewBtn, clearBracketsBtn, bulkDelBtn);
- const body = h("div", {}, summary, gasBar, compareBar, qualityBar, tabStrip, btnBar, previewBox, filterBar, ssNote, tableWrap);
+ const body = A.entryOnly
+   ? h("div", {}, summary, gasBar, qualityBar, tabStrip, filterBar, tableWrap)
+   : h("div", {}, summary, gasBar, compareBar, qualityBar, tabStrip, btnBar, previewBox, filterBar, ssNote, tableWrap);
  if (opts && opts.panel) {
    // 専用ページ(タブ)描画: モーダルを開かず、高さ制限も外して画面全体で見せる
    tableWrap.style.maxHeight = "";
@@ -7082,7 +7119,7 @@ const A = {
  h("select", { className: "input", id: "etLevel" },
  ...levelOpts.map(([v, l]) =>
  h("option", { value: v, selected: (t.level || "district") === v ? "" : null }, l))),
- h("div", { className: "text-xs text-sub", style: { marginTop: "3px" } },
+ h("div", { className: "text-xs text-sub em-hide", style: { marginTop: "3px" } },
  "全道/全国は選手DBの戦績に反映されません（独立運用・大会内では通常どおり進行）")),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "会場"),
@@ -7091,10 +7128,10 @@ const A = {
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "概要"),
  h("textarea", { id: "etDesc", rows: 2 }, t.description || "")),
- h("label", { className: "check-row", style: { marginTop: "12px" } },
+ h("label", { className: "check-row em-hide", style: { marginTop: "12px" } },
  h("input", { id: "etPublicView", type: "checkbox", checked: Number(t.public_view_enabled) === 1 ? "" : null }),
  h("span", {}, "この大会の進行・組合せを公開する")),
- h("div", { className: "text-xs text-sub", style: { marginTop: "4px" } },
+ h("div", { className: "text-xs text-sub em-hide", style: { marginTop: "4px" } },
  "公開しない限り、閲覧URLを直接開いても名簿・試合・組合せは表示されません。"),
  );
  const foot = h("button", { className: "btn", onClick: async () => {
@@ -8176,8 +8213,8 @@ const A = {
  (A.state.pushPlayers && A.state.pushPlayers.has(p.id)) ? h("span", { className: "pdb-push",
    title: "この選手はマイ番号(プッシュ通知)を登録済み。呼出時に通知が届きます。" }, "通知ON") : null,
  ),
- stats.length ? h("div", { className: "pdb-stats" }, ...stats) : null,
- total > 0 ? h("div", { className: "pdb-winrate-bar", title: "勝率 " + winRate + "%" },
+ (stats.length && !A.entryOnly) ? h("div", { className: "pdb-stats" }, ...stats) : null,
+ (total > 0 && !A.entryOnly) ? h("div", { className: "pdb-winrate-bar", title: "勝率 " + winRate + "%" },
    h("span", { style: { width: winRate + "%" } })) : null,
  ),
  h("div", { className: "pdb-actions",
@@ -8686,7 +8723,7 @@ const A = {
    "所属履歴は、選手を保存してから登録できます"),
 
  // ─── 通算戦績 (読み取り専用・自動集計) ───
- !isNew && totalM > 0 ? h("div", { className: "field" },
+ !A.entryOnly && !isNew && totalM > 0 ? h("div", { className: "field" },
  h("label", { className: "field-label" }, "通算戦績 (試合データから自動集計)"),
  h("div", { style: { display: "flex", gap: "10px", alignItems: "center",
    padding: "10px 12px", background: "#f8fafc", borderRadius: "6px" } },
@@ -8699,6 +8736,7 @@ const A = {
      background: "var(--state-done)" } })),
  )) : null,
 
+ A.entryOnly ? null :
  // ─── 大会レベル別 戦績 (地区・市民/オープンのみ) ───
  // 全道/全国は選手DBの戦績に出さない(オーナー方針・地区のみ)。データ層 getPlayerLevelStats も
  // NOT IN ('hokkaido','national') で除外済みのため、national/hokkaido は常に空=描画され得ないデッド
@@ -8731,7 +8769,7 @@ const A = {
      "この選手に統合された旧登録の氏名です（過去大会・旧表記との照合用）。統合の取り消しはオーナーの「選手マージ履歴」から。")) : null,
 
  // ─── 対戦相手別の成績 (H2H・運営照会用) ───
- (opponents && opponents.length) ? h("div", { className: "field" },
+ (!A.entryOnly && opponents && opponents.length) ? h("div", { className: "field" },
    h("label", { className: "field-label" }, "対戦相手別の成績 (" + opponents.length + "名)"),
    h("div", { style: { display: "flex", flexDirection: "column", gap: "4px", maxHeight: "220px", overflow: "auto" } },
      ...opponents.map(o => h("div", { style: { display: "flex", justifyContent: "space-between",
@@ -8744,7 +8782,7 @@ const A = {
          h("span", { style: { color: "#b91c1c" } }, o.losses + "敗"))))) ) : null,
 
  // ─── 入賞歴 (achievements) ───
- !isNew ? h("div", { className: "field" },
+ A.entryOnly ? null : !isNew ? h("div", { className: "field" },
  h("label", { className: "field-label" }, "入賞歴 / 戦績"),
  h("div", { className: "ach-list", id: "achList" },
    ...(achievements.length
@@ -8782,10 +8820,10 @@ const A = {
    "入賞歴は、選手を保存してから登録できます"),
 
  // ── 数値で見る成績 (閲覧と同一の拡充スタッツ #210) ──
- !isNew ? TT.playerStatsSection(p) : null,
+ !A.entryOnly && !isNew ? TT.playerStatsSection(p) : null,
 
  // ─── 個別戦績 (試合) の手動入力・削除 ───
- !isNew ? h("div", { className: "field" },
+ A.entryOnly ? null : !isNew ? h("div", { className: "field" },
  h("label", { className: "field-label" }, "個別戦績 (試合の勝敗)・手動入力・削除"),
  h("div", { className: "ach-list", id: "matchRecList" },
    h("div", { style: { fontSize: "12px", color: "#a8a29e", padding: "6px" } }, "読込中...")),
@@ -8818,7 +8856,7 @@ const A = {
  );
  // 既存選手なら試合一覧を非同期ロード
  if (!isNew && p.id) {
-   setTimeout(() => { A._loadAffiliations(p.id); A._loadMatchRecords(p.id); }, 120);
+   setTimeout(() => { A._loadAffiliations(p.id); if (!A.entryOnly) A._loadMatchRecords(p.id); }, 120);
  }
  const foot = h("button", { className: "btn", onClick: async () => {
  const data = {
@@ -9230,6 +9268,18 @@ const A = {
    const body = h("div", {},
      h("div", { className: "text-xs", style: { background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: "8px", padding: "8px 10px", color: "#7f1d1d", lineHeight: 1.6, marginBottom: "12px" } },
        "上級管理者専用。全データのPIIを動かす/取り返しのつかない操作を含みます。操作は監査ログに記録されます。"),
+     card("運営アプリのモード",
+       (A.entryOnly ? "今は「申込集計モード」です。組合せ・試合・観戦・表彰・統計の画面と、公開の閲覧画面を閉じています。データは消えていません。"
+         : "今は「通常モード」です。全機能を使えます。") +
+       (A.appModeLocked ? "（サーバーの設定で固定されているため、ここでは切り替えられません）" : ""),
+       A.appModeLocked ? [] : [h("button", { className: "btn btn-sm", onClick: async () => {
+         const next = A.entryOnly ? "full" : "entry";
+         const label = next === "entry" ? "申込集計モード" : "通常モード";
+         if (!window.confirm(`${label}に切り替えます。公開画面にもすぐ反映されます。よろしいですか？`)) return;
+         const r = await A.ownerFetch("/api/owner/app-mode", { method: "PUT", body: { mode: next } });
+         if (!r.ok) return toast((r.json && r.json.error) || "切り替えに失敗しました", "err");
+         location.href = "/admin";   // 開いている画面ごと新しいモードで組み直す
+       } }, A.entryOnly ? "通常モードに戻す" : "申込集計モードにする")]),
      card("バックアップ / 復元", "今のデータをまるごと控え(バックアップ)として保存・PCへ保存・元に戻す。", [
        h("button", { className: "btn btn-sm", onClick: () => { document.querySelector(".modal-bg")?.remove(); A.openBackups(); } }, "開く")]),
      card("データをまるごとPCに保存（バックアップ用）", "今のデータをまるごと1つのファイルにしてPCに保存します（連絡先などの個人情報も含む手元の控えです）。", [
@@ -15172,12 +15222,12 @@ const EnT = {
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "種目"),
  h("input", { className: "input", id: "enEvent", value: e.event || "" })),
- h("div", { className: "field" },
+ h("div", { className: "field em-hide" },
  h("label", { className: "field-label" }, "シード番号"),
  h("input", { className: "input", id: "enSeed", type: "number", value: e.seed || 0 })),
  ),
  h("div", { className: "two-col" },
- h("div", { className: "field" },
+ h("div", { className: "field em-hide" },
  h("label", { className: "field-label" }, "ブロック"),
  h("input", { className: "input", id: "enBlock", value: e.block || "" })),
  h("div", { className: "field" },
