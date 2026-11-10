@@ -41,6 +41,7 @@ const multer = require("multer");
 const appMode = require("./app-mode");
 const QRCode = require("qrcode");     // ローカルQR生成(会場オフラインで外部QRサービスに依存しないLAN接続案内用)
 const db = require("./db");
+const { normalizeEmail, validEmail, validPassword, boundedPassword } = require("./lib/operator-accounts");
 const reports = require("./reports");
 const importQuality = require("./tools/import_quality");   // 取込プレビューの品質警告(notices)を全経路へ後付け
 const rosterReader = require("./tools/roster_reader");       // ブック内の名簿と突合し取りこぼし/過大/表記揺れを検出
@@ -549,7 +550,8 @@ function cookieValue(req, key) {
 }
 function sessionOf(req) {
   if (req.kttaSession !== undefined) return req.kttaSession;
-  req.kttaSession = db.getAuthSession(cookieValue(req, SESSION_COOKIE)) || null;
+  const token = cookieValue(req, SESSION_COOKIE);
+  req.kttaSession = db.getAuthSession(token) || db.operatorAccounts.session(token);
   return req.kttaSession;
 }
 function setSessionCookie(res, token, expiresAt) {
@@ -759,8 +761,8 @@ function requireReferee(req, res, next) {
 
 // ── 軽量レート制限 (公開申込のスパム/DoS 対策, 依存追加なし) ──
 // IP ごとに windowMs 内 max 回まで。メモリ上の簡易実装。
-function rateLimit({ windowMs = 60000, max = 20, message = "リクエストが多すぎます。しばらく待って再試行してください。" } = {}) {
-  const hits = new Map(); // ip -> [timestamps]
+function rateLimit({ windowMs = 60000, max = 20, message = "リクエストが多すぎます。しばらく待って再試行してください。", keyFor = clientIp } = {}) {
+  const hits = new Map();
   // 定期的に古いエントリを掃除 (メモリリーク防止)
   setInterval(() => {
     const cutoff = Date.now() - windowMs;
@@ -770,16 +772,16 @@ function rateLimit({ windowMs = 60000, max = 20, message = "リクエストが�
     }
   }, windowMs).unref();
   return (req, res, next) => {
-    const ip = clientIp(req);   // trust proxy 準拠の req.ip (生ヘッダ偽装に依存しない / #7)
+    const key = keyFor(req);
     const now = Date.now();
     const cutoff = now - windowMs;
-    const arr = (hits.get(ip) || []).filter(t => t > cutoff);
-    arr.push(now);
-    hits.set(ip, arr);
-    if (arr.length > max) {
+    const arr = (hits.get(key) || []).filter(t => t > cutoff);
+    if (arr.length >= max) {
       res.setHeader("Retry-After", Math.ceil(windowMs / 1000));
       return res.status(429).json({ error: message });
     }
+    arr.push(now);
+    hits.set(key, arr);
     next();
   };
 }
@@ -830,12 +832,15 @@ app.get("/api/app-mode", (req, res) => {
 });
 
 app.get("/api/auth/session", (req, res) => {
+  res.set("Cache-Control", "no-store");
   const s = sessionOf(req);
   if (!s) return res.json({ authenticated: false });
   res.json({ authenticated: true, principal_type: s.principal_type, principal_id: s.principal_id, expires_at: s.expires_at });
 });
 app.delete("/api/auth/session", requireSession(["admin", "owner", "coach", "applicant", "player", "referee"]), (req, res) => {
-  db.destroyAuthSession(cookieValue(req, SESSION_COOKIE));
+  const token = cookieValue(req, SESSION_COOKIE);
+  if (sessionOf(req).id) db.destroyAuthSession(token);
+  else db.operatorAccounts.logout(token);
   clearSessionCookie(res);
   res.json({ ok: true });
 });
@@ -846,6 +851,77 @@ app.post("/api/auth/admin/session", rateLimit({ windowMs: 60000, max: 8, message
   createBrowserSession(req, res, "admin", actor, {}, 60 * 60 * 8);
   res.json({ ok: true, principal_type: "admin", principal_id: actor });
 });
+
+const operatorLoginLimit = rateLimit({ windowMs: 60_000, max: 8 });
+const operatorEmailLimit = rateLimit({ windowMs: 5 * 60_000, max: 15, keyFor: req =>
+  crypto.createHash("sha256").update(normalizeEmail(req.body?.email).slice(0, 254)).digest("hex") });
+app.post("/api/auth/admin/password", requireSameOrigin, operatorLoginLimit, operatorEmailLimit, async (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  const { email, password } = req.body || {};
+  const address = normalizeEmail(email);
+  const denied = () => res.status(401).json({ error: "メールアドレスまたはパスワードを確認してください" });
+  if (!validEmail(address) || !boundedPassword(password) || !password) return denied();
+  try {
+    const login = await db.operatorAccounts.login(address, password);
+    if (login.busy) return res.status(429).json({ error: "時間をおいて、もう一度お試しください" });
+    if (!login.id) return denied();
+    const previous = cookieValue(req, SESSION_COOKIE);
+    if (previous) {
+      if (sessionOf(req)?.id) db.destroyAuthSession(previous);
+      else db.operatorAccounts.logout(previous);
+    }
+    setSessionCookie(res, login.token, login.expires_at);
+    setPrincipal(req, "admin", login.id);
+    res.json({ ok: true, principal_type: "admin", principal_id: login.id });
+  } catch (error) { next(error); }
+});
+app.post("/api/auth/admin/activate", requireSameOrigin, rateLimit({ max: 8 }), async (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  const { token, password } = req.body || {};
+  if (!validPassword(password)) return res.status(400).json({ error: "パスワードは15文字以上、128文字以内で入力してください" });
+  try {
+    const result = await db.operatorAccounts.accept(token, password);
+    if (result.busy) return res.status(429).json({ error: "時間をおいて、もう一度お試しください" });
+    if (!result.id) return res.status(400).json({ error: "設定リンクが無効です。オーナーに再発行を依頼してください" });
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/owner/operators", requireOwnerStrict, (req, res) => {
+  res.set("Cache-Control", "no-store").json({ accounts: db.operatorAccounts.list() });
+});
+app.post("/api/owner/operators/invite", requireSameOrigin, requireOwnerStrict, rateLimit({ max: 6 }), async (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  const email = normalizeEmail(req.body?.email);
+  if (!validEmail(email)) return res.status(400).json({ error: "有効なメールアドレスを入力してください" });
+  const configured = (process.env.PUBLIC_BASE_URL || "").trim();
+  let url;
+  try {
+    url = new URL(IS_PROD ? configured : appOriginOf(req));
+    if (IS_PROD && (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash)) throw new Error();
+  } catch {
+    return res.status(503).json({ error: "招待に使う管理画面のHTTPS URLが未設定です" });
+  }
+  if (!mailer.isEnabled()) return res.status(503).json({ error: "招待メールの送信設定が必要です" });
+  try {
+    const invite = db.operatorAccounts.issue(email);
+    try {
+      const link = new URL("/admin/", url);
+      link.hash = "operator-invite=" + invite.token;
+      await mailer.sendOperatorInvite(email, link.href);
+    } catch {
+      db.operatorAccounts.cancelInvite(invite.token);
+      return res.status(502).json({ error: "メールを送信できませんでした。送信設定を確認して再発行してください" });
+    }
+    res.status(201).json({ ok: true });
+  } catch (error) { next(error); }
+});
+app.post("/api/owner/operators/:id/disable", requireSameOrigin, requireOwnerStrict, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!db.operatorAccounts.disable(req.params.id)) return res.status(404).json({ error: "アカウントが見つかりません" });
+  res.json({ ok: true });
+});
+
 app.post("/api/auth/owner/session", rateLimit({ windowMs: 60000, max: 8, message: "試行回数が多すぎます。しばらく待ってください。" }), (req, res) => {
   const key = String((req.body || {}).key || "");
   if (!OWNER_KEY || !safeEqualStr(key, OWNER_KEY)) return res.status(401).json({ error: "オーナーキーが正しくありません" });

@@ -772,13 +772,18 @@
   function openModal(title, bodyEl, footEl, opts) {
     opts = opts || {};
     const bg = h("div", { className: "modal-bg" });
+    const previousFocus = document.activeElement;
+    const dismiss = () => {
+      bg.remove();
+      if (opts.trapFocus && previousFocus?.isConnected) previousFocus.focus();
+    };
     // a11y: ダイアログとして意味付け(role/aria-modal/ラベル)。tabindex=-1 で開いた直後に
     //       プログラム的フォーカスを当て、スクリーンリーダーがダイアログを認識できるようにする。
     const box = h("div", { className: "modal-box fi" + (opts.size === "lg" ? " modal-lg" : ""),
       role: "dialog", "aria-modal": "true", "aria-label": (typeof title === "string" && title) ? title : "ダイアログ", tabindex: "-1" });
     const head = h("div", { className: "modal-head" },
       h("div", { className: "modal-title" }, title),
-      h("button", { className: "modal-close", "aria-label": "閉じる", onClick: () => bg.remove(), innerHTML: "×" })
+      h("button", { className: "modal-close", "aria-label": "閉じる", onClick: dismiss, innerHTML: "×" })
     );
     const body = h("div", { className: "modal-body" });
     if (bodyEl) body.appendChild(bodyEl);
@@ -789,7 +794,18 @@
       box.appendChild(foot);
     }
     bg.appendChild(box);
-    bg.addEventListener("click", e => { if (e.target === bg) bg.remove(); });
+    bg.addEventListener("click", e => { if (e.target === bg) dismiss(); });
+    if (opts.trapFocus) box.addEventListener("keydown", e => {
+      if (e.key === "Escape") { e.preventDefault(); dismiss(); return; }
+      if (e.key !== "Tab") return;
+      const controls = Array.from(box.querySelectorAll("a[href], button, input, select, textarea, summary"))
+        .filter(el => !el.disabled && el.getClientRects().length > 0);
+      const index = controls.indexOf(document.activeElement);
+      if (controls.length && (index < 0 || e.shiftKey && index === 0 || !e.shiftKey && index === controls.length - 1)) {
+        e.preventDefault();
+        controls[e.shiftKey ? controls.length - 1 : 0].focus();
+      }
+    });
     document.body.appendChild(bg);
     // 開いた直後にダイアログへフォーカス移動(キーボード/SR利用者がモーダル内から操作開始できる)。
     try { box.focus(); } catch (e) {}

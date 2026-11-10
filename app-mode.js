@@ -19,6 +19,7 @@ const ENTRY_MODE_API = [
   // 認証(監督・選手・審判の入口は閉じる)と本体の保守
   [/^\/api\/auth\/session$/],
   [/^\/api\/auth\/(admin|owner|applicant)\/session$/],
+  [/^\/api\/auth\/admin\/(password|activate)$/, ["POST"]],
   [/^\/api\/app-mode$/],
   [/^\/api\/health$/],
   [/^\/api\/diagnostics(\/clear)?$/],

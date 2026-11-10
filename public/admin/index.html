@@ -1146,6 +1146,8 @@
  .t-card, .pdb-acc, .pdb-acc-head, .pdb-acc-body, .pdb-card, .player-row, .tournament-row,
  .match-form, .match-list-item, .autoc-list, .op-progress-top, .op-stat, .op-tools-body,
  .es-stat, .ach-item, .ev-progress, .card, .modal-box{ background:#eef2f7; border-color:var(--border); }
+ .operator-auth-field { margin: 0 0 14px; }
+ .operator-auth-field .input { min-height: 44px; font-size: 16px; }
  .pdb-acc-head:hover, .player-row:hover, .tournament-row:hover, .match-list-item:hover{ background:#e6ebf2; }
  .es-chip, .table-chip, .table-chips, .autoc-item{ background:#f4f7fb; border-color:var(--border); }
  .autoc-item:hover, .es-chip:hover, .table-chip:hover{ background:#e6ebf2; }
@@ -1643,6 +1645,13 @@ window.addEventListener("unhandledrejection", (e) => {
 });
 
 // ─── 管理アプリ ─────────────────────────────────────
+function takeOperatorInvite() {
+  const token = /^#operator-invite=([A-Za-z0-9_-]{43})$/.exec(location.hash)?.[1];
+  if (token) history.replaceState(null, "", location.pathname + location.search);
+  return token;
+}
+const initialOperatorInvite = takeOperatorInvite();
+
 const A = {
  activeTab: "tournaments",
  entryOnly: false,   // 申込集計モード。サーバの /api/app-mode が正本
@@ -1721,16 +1730,21 @@ const A = {
 
  // HttpOnlyセッションを先に復元する。管理キーはブラウザへ保存しない。
  try { await api.refreshSession(); } catch (e) {}
- if (!api.adminKey) {
- setTimeout(() => A.openSettings(true), 300);
- }
+ if (initialOperatorInvite) A.openLogin(initialOperatorInvite);
+ else if (!api.adminKey) A.openLogin();
 
  document.querySelectorAll(".tab").forEach(t => {
  t.addEventListener("click", () => A.showTab(t.dataset.tab));
  });
 
  // ハッシュ履歴ルーティング (戻るで直前のページへ)
- window.addEventListener("hashchange", () => A.handleHash());
+ window.addEventListener("hashchange", () => {
+   const token = takeOperatorInvite();
+   if (token) {
+     document.querySelector(".modal-bg")?.remove();
+     A.openLogin(token);
+   } else A.handleHash();
+ });
 
  await A.reload();
  // 初期表示: ハッシュがあれば復元
@@ -1900,7 +1914,62 @@ const A = {
  },
 
  // ─── 設定モーダル ────────────────────────────────
- openSettings(firstRun) {
+ openLogin(inviteToken, message) {
+ const field = (label, attrs) => {
+   const input = h("input", { className: "input", required: true, "aria-describedby": "adminLoginFeedback", ...attrs });
+   return [input, h("div", { className: "operator-auth-field" }, h("label", { className: "field-label", for: attrs.id }, label), input)];
+ };
+ const [email, emailField] = field("メールアドレス", { id: "adminLoginEmail", name: "username", type: "email", autocomplete: "username", autocapitalize: "none", maxlength: 254 });
+ const [password, passField] = field("パスワード", { id: "adminLoginPassword", name: "password", type: "password", autocomplete: inviteToken ? "new-password" : "current-password", maxlength: 256 });
+ const [confirm, confirmField] = field("パスワードの確認", { id: "adminLoginConfirm", type: "password", autocomplete: "new-password", maxlength: 256 });
+ const [key, keyField] = field("管理キー", { id: "legacyLoginKey", type: "password", autocomplete: "off" });
+ const feedback = h("p", { id: "adminLoginFeedback", role: "status", className: "text-sm", style: { overflowWrap: "anywhere" } }, message || "");
+ const submit = h("button", { type: "submit", className: "btn", style: { width: "100%", minHeight: "44px" } },
+   inviteToken ? "パスワードを設定" : "ログイン");
+ const legacySubmit = h("button", { type: "submit", className: "btn btn-ghost", style: { minHeight: "44px" } }, "管理キーでログイン");
+ let busy = false;
+ let modal;
+ const run = async (event, legacy = false) => {
+   event.preventDefault();
+   if (busy) return;
+   feedback.textContent = "";
+   if (inviteToken && password.value !== confirm.value) {
+     confirm.setAttribute("aria-invalid", "true");
+     feedback.textContent = "確認用のパスワードが一致しません。";
+     confirm.focus();
+     return;
+   }
+   confirm.removeAttribute("aria-invalid");
+   busy = submit.disabled = legacySubmit.disabled = true;
+   feedback.textContent = "確認中…";
+   try {
+     const result = legacy ? await api.loginAdmin(key.value, modal.querySelector("#legacyLoginOperator").value)
+       : inviteToken ? await api.post("/api/auth/admin/activate", { token: inviteToken, password: password.value })
+       : await api.post("/api/auth/admin/password", { email: email.value, password: password.value });
+     if (!result?.ok) { feedback.textContent = result?.error || "操作を完了できませんでした。"; return; }
+     if (inviteToken) { modal.remove(); A.openLogin(null, "パスワードを設定しました。ログインしてください。"); }
+     else location.reload();
+   } catch { feedback.textContent = "通信できませんでした。もう一度お試しください。"; }
+   finally { busy = submit.disabled = legacySubmit.disabled = false; }
+ };
+ const form = h("form", { onSubmit: run },
+   inviteToken ? h("p", { className: "text-sm text-sub" }, "15文字以上、128文字以内で設定してください。") : emailField,
+   passField, inviteToken ? confirmField : null, submit);
+ const legacy = inviteToken ? null : h("details", { style: { marginTop: "14px" } },
+   h("summary", { className: "text-sm", style: { cursor: "pointer", padding: "12px 0" } }, "従来の管理キーを使う"),
+   h("form", { onSubmit: event => run(event, true) }, keyField,
+     h("div", { className: "operator-auth-field" },
+       h("label", { className: "field-label", for: "legacyLoginOperator" }, "操作担当コード（任意）"),
+       h("input", { className: "input", id: "legacyLoginOperator", maxlength: 32, autocomplete: "off" })),
+     legacySubmit));
+ modal = openModal(inviteToken ? "パスワードを設定" : "運営ログイン",
+   h("div", {}, form, legacy, feedback,
+     inviteToken ? null : h("p", { className: "text-xs text-sub" }, "パスワードの再設定は、オーナーへご依頼ください。")),
+   null, { trapFocus: true });
+ (inviteToken ? password : email).focus();
+ },
+ openSettings() {
+ if (!api.adminKey) return A.openLogin();
  // ─── 本番運用準備チェック ───
  const checks = A.runReadinessChecks();
  const checkSection = h("div", { className: "card",
@@ -1925,24 +1994,7 @@ const A = {
  });
 
  const body = h("div", {},
- firstRun ? h("div", { className: "badge badge-warn mb-3", style: { display: "block" } },
- "初回設定：管理キーを入力してください（サーバー側で管理キーを設定していない場合は空欄のままでOK）") : null,
  checkSection,
- h("div", { className: "card", style: { padding: "14px", marginBottom: "14px" } },
- h("div", { className: "card-title", style: { marginBottom: "10px" } }, "管理キー"),
- h("div", { className: "field" },
- h("label", { className: "field-label" }, "管理キー（パスワード）"),
- h("input", { className: "input", id: "settingsKey", type: "password",
- placeholder: "管理キーを入力", value: "", autocomplete: "current-password" }),
- ),
- h("div", { className: "field" },
- h("label", { className: "field-label" }, "操作担当コード（監査用）"),
- h("input", { className: "input", id: "settingsOperator", autocomplete: "username",
- placeholder: "例: staff-01（氏名は入力しない）" }),
- ),
- h("div", { className: "text-xs text-sub" },
- "入力した管理キーはサーバーで照合し、このブラウザには読み出せないログインCookieだけを保存します。"),
- ),
  h("div", { className: "card", style: { padding: "14px", marginBottom: "14px" } },
  h("div", { className: "card-title", style: { marginBottom: "10px" } }, "本番公開URL"),
  h("div", { className: "text-sm mb-2",
@@ -2091,12 +2143,12 @@ const A = {
  );
  const foot = h("div", { className: "flex gap-2" },
  h("button", { className: "btn", onClick: async () => {
- const k = document.getElementById("settingsKey").value;
- const r = await api.loginAdmin(k, document.getElementById("settingsOperator")?.value || "");
- if (!r || r.error) return toast((r && r.error) || "ログインに失敗しました", "err");
- toast("ログインしました", "ok");
- document.querySelector(".modal-bg")?.remove();
- } }, "保存"),
+   try {
+     const r = await fetch("/api/auth/session", { method: "DELETE", credentials: "same-origin" });
+     if (r.ok || r.status === 401) return location.reload();
+   } catch {}
+   toast("ログアウトできませんでした。通信状況を確認してください。", "err");
+ } }, "ログアウト"),
  h("button", { className: "btn btn-ghost",
  onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"),
  );
@@ -9277,7 +9329,14 @@ const A = {
  },
  // オーナーキーのロック解除。未解除/失効ならモーダルで入力→/api/owner/verify。成功で true。
  async ensureOwner() {
-   try { if ((await A.ownerFetch("/api/owner/verify")).ok) return true; } catch (e) {}
+   try {
+     const result = await A.ownerFetch("/api/owner/verify");
+     if (result.ok) return true;
+     if (result.status === 503) {
+       toast("オーナー機能は未設定です。サーバー管理者に設定をご依頼ください。", "err");
+       return false;
+     }
+   } catch (e) {}
    return await new Promise((resolve) => {
      const keyInput = h("input", { className: "input", type: "password", placeholder: "オーナーキー", autocomplete: "off" });
      const opInput = h("input", { className: "input", placeholder: "操作担当コード（氏名は入力しない）" });
@@ -9305,6 +9364,63 @@ const A = {
    });
  },
  // 上級管理者ホーム(普段は隠す)。危険操作の集約先。
+ async openOperatorAccounts() {
+   const list = h("ul", { className: "stack", style: { listStyle: "none", padding: "0", margin: "0" } });
+   const feedback = h("p", { className: "text-sm", role: "status" }, "読み込み中…");
+   const email = h("input", { id: "operatorInviteEmail", className: "input", type: "email", maxlength: 254, required: true, autocomplete: "off" });
+   const send = h("button", { type: "submit", className: "btn", style: { minHeight: "44px" } }, "招待メールを送る");
+   const labels = { active: "利用中", invited: "招待済み", pending: "設定待ち", disabled: "停止中" };
+   let busy = false;
+   const change = async (path, data, success) => {
+     if (busy) return;
+     busy = send.disabled = true;
+     feedback.textContent = "処理中…";
+     try {
+       const r = await A.ownerFetch(path, { method: "POST", body: data });
+       if (!r.ok) { feedback.textContent = r.json?.error || "操作できませんでした。"; return; }
+       feedback.textContent = success;
+       if (data.email === email.value.trim()) email.value = "";
+       await load();
+     } catch { feedback.textContent = "通信できませんでした。"; }
+     finally { busy = send.disabled = false; }
+   };
+   const load = async () => {
+     try {
+       const r = await A.ownerFetch("/api/owner/operators");
+       if (!r.ok) { feedback.textContent = r.json?.error || "アカウントを取得できませんでした。"; return; }
+       list.replaceChildren();
+       for (const account of r.json.accounts) {
+         const disabled = account.status === "disabled";
+         const label = disabled ? "再招待" : account.status === "active" ? "再設定メール" : "招待を再送";
+         const retry = h("button", { className: "btn btn-sm btn-ghost", style: { minHeight: "44px" },
+           "aria-label": account.email + " の" + label, onClick: () => {
+             if (!window.confirm(account.email + " に設定メールを送りますか？")) return;
+             change("/api/owner/operators/invite", { email: account.email }, "設定メールを送りました。");
+           } }, label);
+         const stop = h("button", { className: "btn btn-sm btn-ghost", style: { minHeight: "44px" },
+           "aria-label": account.email + " を停止", onClick: () => {
+             if (!window.confirm(account.email + " の利用を停止しますか？ ログイン中の端末もログアウトします。")) return;
+             change("/api/owner/operators/" + encodeURIComponent(account.id) + "/disable", {}, "アカウントを停止しました。");
+           } }, "停止");
+         list.append(h("li", { style: { padding: "10px 0", borderBottom: "1px solid var(--border)" } },
+           h("div", { style: { overflowWrap: "anywhere" } }, account.email),
+           h("div", { className: "text-xs text-sub" }, labels[account.status]),
+           h("div", { className: "flex gap-2 flex-wrap" }, retry, disabled ? null : stop)));
+       }
+       if (!r.json.accounts.length) list.append(h("li", { className: "text-sm text-sub" }, "まだ個別アカウントはありません。"));
+       if (feedback.textContent === "読み込み中…") feedback.textContent = "";
+     } catch { feedback.textContent = "アカウントを取得できませんでした。"; }
+   };
+   const form = h("form", { onSubmit: e => {
+     e.preventDefault();
+     const address = email.value.trim();
+     if (!window.confirm(address + " に設定メールを送りますか？")) return;
+     change("/api/owner/operators/invite", { email: address }, "招待メールを送りました。");
+   } }, h("div", { className: "operator-auth-field" }, h("label", { for: email.id, className: "field-label" }, "招待するメールアドレス"), email), send);
+   openModal("運営アカウント", h("div", {}, form, feedback,
+     h("h3", { className: "text-sm", style: { margin: "16px 0 0" } }, "アカウント一覧"), list), null, { trapFocus: true });
+   await load();
+ },
  async openOwnerPanel() {
    if (!(await A.ensureOwner())) return;
    const card = (title, desc, btns) => h("div", { style: { border: "1px solid var(--border)", borderRadius: "10px", padding: "12px", marginBottom: "10px" } },
@@ -9314,6 +9430,10 @@ const A = {
    const body = h("div", {},
      h("div", { className: "text-xs", style: { background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: "8px", padding: "8px 10px", color: "#7f1d1d", lineHeight: 1.6, marginBottom: "12px" } },
        "上級管理者専用。全データのPIIを動かす/取り返しのつかない操作を含みます。操作は監査ログに記録されます。"),
+     card("運営アカウント", "個別アカウントの招待・パスワード再設定・利用停止", [
+       h("button", { className: "btn btn-sm", onClick: () => {
+         document.querySelector(".modal-bg")?.remove(); A.openOperatorAccounts();
+       } }, "運営アカウントを管理")]),
      card("運営アプリのモード",
        (A.entryOnly ? "今は「申込集計モード」です。組合せ・試合・観戦・表彰・統計の画面と、公開の閲覧画面を閉じています。データは消えていません。"
          : "今は「通常モード」です。全機能を使えます。") +

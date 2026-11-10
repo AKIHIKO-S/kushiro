@@ -14487,6 +14487,7 @@ module.exports = {
   getPushSubscribersDetailed, deletePushSubscriptionsForPlayer,
   // 認証セッション・本人確認コード・個人情報を含まないアクセス監査
   createAuthSession, getAuthSession, destroyAuthSession,
+  operatorAccounts: require("./lib/operator-accounts").createOperatorAccounts(DB_PATH),
   issuePlayerAccessCode, verifyPlayerAccessCode, logAccessAudit, listAccessAudit,
   // DB スナップショット (バックアップ/復元)
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, restoreFromUpload, hasOngoingTournament,
