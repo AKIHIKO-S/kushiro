@@ -6,6 +6,7 @@
 const XLSX = require("xlsx");
 const fs = require("fs");
 const path = require("path");
+const { isConfirmedEntry } = require("./lib/entry-summary");
 
 // 種目分類のヘルパー
 function classifyEvent(eventName) {
@@ -125,7 +126,7 @@ function buildAggregation(tournament, entrants, fees) {
   // 却下/受付待ち(rejected/pending 等)の申込は請求対象外。confirmed のみ集計・領収書に計上する。
   // 抽選番号付与(autoAssignDrawNumbers)・チームリーグ生成と同じ判定で、料金系だけが status を無視して
   // 却下分まで過大計上していた非対称を解消する。entrants の既定 status は 'confirmed'(自動承認)。
-  entrants = (entrants || []).filter(e => (e.status || "confirmed") === "confirmed");
+  entrants = (entrants || []).filter(isConfirmedEntry);
   // 団体名でグルーピング (チーム名 ≒ 申込団体名 として扱う)
   const byTeam = new Map();
   entrants.forEach(e => {

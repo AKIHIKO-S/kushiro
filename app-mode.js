@@ -45,6 +45,8 @@ const ENTRY_MODE_API = [
   [new RegExp(`^${T}/sync/now$`)],
   [new RegExp(`^${T}/(submissions|entry-changes|gas-stats|applicants|applicants\\.xlsx|aggregation\\.xlsx)$`)],
   [new RegExp(`^${T}/gas-sync(/.*)?$`)],
+  [new RegExp(`^${T}/desk/manual$`), ["GET", "HEAD", "POST"]],
+  [new RegExp(`^${T}/reception\\.html$`), ["GET", "HEAD"]],
   [new RegExp(`^${T}/entry-settings(/.*)?$`)],
   [new RegExp(`^${T}/entry-form(\\.html|-config)$`)],
   [new RegExp(`^${T}/entries$`)],

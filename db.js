@@ -7,6 +7,8 @@ const crypto = require("crypto");
 const fs = require("fs");
 const { mulberry32, shuffle, randomSeed } = require("./lib/rng");
 const TTTieOrder = require("./public/shared/tie-order");   // 団体戦オーダー検証 (admin と同一実装)
+const appMode = require("./app-mode");
+const { summarizeEntries, isConfirmedEntry } = require("./lib/entry-summary");
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "tournament.db");
 // 新規に指定されたDB_PATHまで「空DBの破損」と扱うと、同じスナップショット置き場の
@@ -9346,8 +9348,10 @@ function getGasSyncState(tournamentId) {
   const configured = !!(t.entry_gas_url && String(t.entry_gas_url).trim());
   const rows = sqlite.prepare(
     `SELECT id, team_name, contact_name, contact_email, created_at,
-            COALESCE(gas_status,'') gas_status, COALESCE(gas_at,'') gas_at, COALESCE(gas_detail,'') gas_detail
-       FROM entry_submissions WHERE tournament_id=? ORDER BY created_at ASC`).all(String(tournamentId));
+            COALESCE(gas_status,'') gas_status, COALESCE(gas_at,'') gas_at, COALESCE(gas_detail,'') gas_detail,
+            op_id, ledger_keys
+       FROM entry_submissions WHERE tournament_id=? AND COALESCE(gas_status,'') <> 'skipped'
+       ORDER BY created_at ASC`).all(String(tournamentId));
   const counts = { ok: 0, failed: 0, unknown: 0 };
   rows.forEach(r => {
     if (r.gas_status === "ok") counts.ok++;
@@ -9357,7 +9361,7 @@ function getGasSyncState(tournamentId) {
   return {
     configured, total: rows.length, counts,
     pending: rows.filter(r => r.gas_status !== "ok"),
-    items: rows,
+    items: rows.map(({ op_id, ledger_keys, ...row }) => ({ ...row, sheet_key: _ledgerKeysOf({ op_id, ledger_keys })[0] || "" })),
   };
 }
 
@@ -9374,8 +9378,13 @@ function getSubmissionForResend(submissionId) {
   return {
     ok: true,
     submission: sub,
-    payload,
-    op_id: sub.op_id || "",
+    payload: {
+      ...payload,
+      contact_name: payload.contact_name || payload.contact?.name || sub.contact_name,
+      contact_tel: payload.contact_tel || payload.contact?.tel || sub.contact_tel,
+      contact_email: payload.contact_email || payload.contact?.email || sub.contact_email,
+    },
+    op_id: _ledgerKeysOf(sub)[0] || "",
     total_amount: sub.total_amount != null ? sub.total_amount : null,
     option_items: options,
   };
@@ -9526,9 +9535,17 @@ function _checkApplicantEditable(token, entrantId, submissionId) {
 function _ledgerKeysOf(sub) {
   let keys = [];
   try { keys = sub && sub.ledger_keys ? (JSON.parse(sub.ledger_keys) || []) : []; } catch (_) { keys = []; }
-  keys = keys.map(k => String(k || "")).filter(Boolean);
+  keys = (Array.isArray(keys) ? keys : []).map(k => String(k || "").trim()).filter(Boolean);
   if (sub && sub.op_id && !keys.includes(sub.op_id)) keys.push(sub.op_id);
   return keys;
+}
+
+function publicEntryOperationId(tournamentId, requestId) {
+  const raw = String(requestId || "").trim();
+  // 既存の申込は再送時も旧キーを維持し、新規キーは大会ごとに名前空間を分ける。
+  if (raw && submissionStmts.getByOpId.get(tournamentId, raw)) return raw;
+  const key = raw ? crypto.createHash("sha256").update(raw).digest("hex") : crypto.randomUUID();
+  return `entry:${tournamentId}:${key}`;
 }
 
 function _recordEntryChange(row) {
@@ -9825,6 +9842,57 @@ function _maskTel(s) {
 function _maskEmail(s) {
   const m = String(s || "").match(/^(.)[^@]*(@.*)$/);
   return m ? m[1] + "***" + m[2] : "";
+}
+
+function getManualSubmissionView(tournamentId) {
+  const t = stmts.getTournament.get(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  const fc = resolveFieldConfig(t);
+  return {
+    entries: [], can_edit_options: true,
+    form: {
+      fields: fc.fields,
+      labels: Object.fromEntries(Object.keys(fc.fields).map(k => [k, fieldLabelOf(fc, k)])),
+      option_defs: resolveEntryOptions(t),
+      events: Object.entries(_eventCfgOf(t)).map(([name, c]) => ({
+        name, type: c.type || "singles", add_lock: _adminEditLock(t, name),
+        per_team: c.per_team, per_team_min: c.per_team_min,
+        categories: (Array.isArray(c.entry_categories) ? c.entry_categories : []).map(x => ({ value: x.value || x.label, label: x.short || x.label || x.value })),
+      })),
+    },
+  };
+}
+
+function createManualSubmission(tournamentId, patch, opId) {
+  const t = stmts.getTournament.get(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  if (["cancelled", "completed"].includes(t.status)) return { error: "中止・終了した大会には登録できません" };
+  const contact = patch.contact || {};
+  const teamName = _str(contact.team_name, 200);
+  if (!teamName) return { error: "団体名を入力してください" };
+  if (contact.contact_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(_str(contact.contact_email))) return { error: "メールアドレスの形式が正しくありません" };
+  if (contact.contact_tel && !/^[0-9+\-() ]+$/.test(_str(contact.contact_tel, 50))) return { error: "電話番号は数字とハイフンで入力してください" };
+  if (!Array.isArray(patch.add) || !patch.add.length || patch.add.length > 100) return { error: "出場を1件以上、100件以内で追加してください" };
+  const cfgMap = _eventCfgOf(t);
+  const entries = [];
+  for (const input of patch.add) {
+    const parsed = _normalizeAddEntry(cfgMap, input);
+    if (parsed.error) return parsed;
+    const e = parsed.entry;
+    const lock = _adminEditLock(t, e.event);
+    if (lock) return { error: lock };
+    e.team = e.team || teamName;
+    if (e.type === "doubles" || e.type === "mixed") {
+      e.team1 = e.team1 || teamName;
+      e.team2 = e.team2 || teamName;
+    }
+    entries.push(e);
+  }
+  return createTeamEntry(tournamentId, {
+    team_name: teamName, contact_name: contact.contact_name, contact_tel: contact.contact_tel,
+    contact_email: contact.contact_email, supervisor: contact.supervisor, advisor: contact.advisor,
+    coach: contact.coach, extra: contact.answers, options: patch.options, entries, source: "admin",
+  }, "manual:" + opId, { allow_closed: true, skip_sheet: true, explicit_additions: true });
 }
 
 // 申込1件を「今の姿」で計算する(請求額・現行料金での額・人数)。集計と画面で共通に使う。
@@ -10196,7 +10264,7 @@ function editSubmission(submissionId, patch, opts) {
         nx.answers[k] = typeof v === "string" ? v.slice(0, 300) : v;
       });
     }
-    if (!nx.contact_name) return { error: "申込責任者の氏名を入力してください" };
+    if (!nx.contact_name && !(actor === "admin" && sub.source === "admin")) return { error: "申込責任者の氏名を入力してください" };
     if (nx.contact_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nx.contact_email)) return { error: "メールアドレスの形式が正しくありません" };
     if (nx.contact_tel && !/^[0-9+\-() ]+$/.test(nx.contact_tel)) return { error: "電話番号は数字とハイフンで入力してください" };
     if (actor !== "admin") {
@@ -10323,6 +10391,7 @@ function editSubmission(submissionId, patch, opts) {
 function buildSheetUpdatePayload(submissionId, group) {
   const sub = submissionStmts.getById.get(String(submissionId || ""));
   if (!sub) return { error: "申込が見つかりません" };
+  if (sub.gas_status === "skipped") return { skipped: true };
   const t = stmts.getTournament.get(sub.tournament_id);
   if (!t) return { error: "大会が見つかりません" };
   const cfgMap = _eventCfgOf(t);
@@ -10437,7 +10506,7 @@ function getSubmissionList(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
   const subs = submissionStmts.listByTournament.all(t.id);
-  const all = sqlite.prepare(`SELECT id, submission_id, status, is_doubles, partner_name, team_members FROM entrants WHERE tournament_id=?`).all(t.id);
+  const all = sqlite.prepare(`SELECT id, submission_id, status, team FROM entrants WHERE tournament_id=?`).all(t.id);
   let cross = {};
   try { cross = findCrossGroupDuplicates(t.id); } catch (err) { console.error("cross dup:", err.message); }
   const rows = subs.map(s => {
@@ -10446,13 +10515,14 @@ function getSubmissionList(tournamentId) {
     return {
       submission_id: s.id, team_name: s.team_name || "", contact_name: s.contact_name || "",
       created_at: s.created_at, updated_at: s.updated_at || "",
-      entries: live.length, cancelled: ents.length - live.length,
+      entries: live.filter(isConfirmedEntry).length, pending: live.filter(e => e.status === "pending").length,
+      cancelled: ents.length - live.length,
       cross_dup: live.reduce((n, e) => n + ((cross[e.id] || []).length ? 1 : 0), 0),
       sheet_status: s.gas_status || "", sheet_upd_status: s.sheet_upd_status || "",
       sheet_upd_detail: s.sheet_upd_detail || "",
     };
   }).sort((a, b) => String(a.team_name).localeCompare(String(b.team_name), "ja"));
-  return { ok: true, tournament: { id: t.id, name: t.name, date: t.date, gas: !!t.entry_gas_url }, rows,
+  return { ok: true, tournament: { id: t.id, name: t.name, date: t.date, gas: !!t.entry_gas_url }, rows, totals: summarizeEntries(all),
     unlinked: all.filter(e => !e.submission_id || !subs.find(s => s.id === e.submission_id)).length };
 }
 
@@ -10658,6 +10728,7 @@ function _nowJST() {
 function entryDeadlineAt(t) {
   const d = String((t && t.entry_deadline) || "").trim();
   if (!d) return "";
+  if (appMode.resolveMode(process.env.KTTA_APP_MODE, kvGet(appMode.KV_KEY)) === "entry") return d + " 23:59";
   const tm = String((t && t.entry_deadline_time) || "").trim();
   return d + " " + (/^\d{1,2}:\d{2}$/.test(tm) ? (tm.length === 4 ? "0" + tm : tm) : "23:59");
 }
@@ -10665,6 +10736,7 @@ function entryDeadlineAt(t) {
 function entryDeadlineLabel(t) {
   const d = String((t && t.entry_deadline) || "").trim();
   if (!d) return "";
+  if (appMode.resolveMode(process.env.KTTA_APP_MODE, kvGet(appMode.KV_KEY)) === "entry") return d;
   const tm = String((t && t.entry_deadline_time) || "").trim();
   return /^\d{1,2}:\d{2}$/.test(tm) ? d + " " + tm : d;
 }
@@ -10813,6 +10885,7 @@ function _enforceEntryLimits(t, entries) {
 // 受付が閉じている理由(日本語)。開いていれば null。
 function _entryClosedReason(t) {
   if (!t) return "大会が見つかりません";
+  if (["cancelled", "completed"].includes(t.status)) return "この大会の申込は終了しました";
   if (!t.entries_open) return "現在この大会は申込を受け付けていません";
   const limit = entryDeadlineAt(t);
   if (limit && _nowJST() > limit) {
@@ -11164,6 +11237,7 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
   // entrant 作成 + tournament_players + 申込原本 を1トランザクションで原子的に行う。
   // 途中で例外が出ても全てロールバックし「entrant だけ残って原本/トークンが無い」不整合を防ぐ
   // (Phase4 review: createTeamEntry 非原子性 / 漏れゼロ方針)。
+  const mixedDuplicate = new Error("登録済みの出場が含まれています。追加・修正は申込番号から行ってください。");
   const persist = sqlite.transaction(() => {
     for (let _srcIdx = 0; _srcIdx < entries.length; _srcIdx++) {
       const ent = entries[_srcIdx];
@@ -11263,7 +11337,7 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
         if (exists) {
           dupSkipped++;
           // 既存 entrant が属する申込原本を併合先として控える(部分再送のトークン分裂を防ぐ)。
-          if (!existingSubId && exists.submission_id) existingSubId = exists.submission_id;
+          if (!opts.explicit_additions && !existingSubId && exists.submission_id) existingSubId = exists.submission_id;
           if (intoSub) dupEntries.push(evName);
           continue;
         }
@@ -11291,6 +11365,8 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
         if (p) tpEntries.push({ player_id: p.id, event: evName });
       }
     }
+
+    if (opts.explicit_additions && dupSkipped && createdEntrants.length) throw mixedDuplicate;
 
     // tournament_players へ記録 (重複は ON CONFLICT で更新)
     for (const tp of tpEntries) {
@@ -11343,26 +11419,25 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
       mergedInto = mergeTarget.id;
     } else if (createdEntrants.length > 0) {
       // 新規申込: 申込番号(トークン)発行 + 申込原本を保存。subExtra は persist 外で組み済み。
-      token = _genApplicantToken();
+      token = opts.skip_sheet ? "" : _genApplicantToken();
       const safePayload = {
         team_name: formData.team_name || "",
         contact, note: noteBase, submitted_at: submittedAt,
         supervisor: subExtra.supervisor, advisor: subExtra.advisor, coach: subExtra.coach,  // 監査用に原本にも残す
         extra: subExtra.answers,
         spam_skipped: spamSkipped, dup_skipped: dupSkipped,   // 監査用: 落とした件数の内訳 (#12)
-        entries: entries.map(e => ({
-          event: e.event, type: e.type || "singles",
-          name: e.name, name1: e.name1, name2: e.name2,
-          team: e.team, team1: e.team1, team2: e.team2, team_name: e.team_name,
-          members: Array.isArray(e.members) ? e.members : undefined,
-          division: e.division, fee: e.fee,
-          extra: (e.extra_json && typeof e.extra_json === "object") ? e.extra_json : undefined,
-        })),
+        entries: pricedEntries.map(({ entry_index, ...saved }) => {
+          const e = entries[entry_index];
+          return {
+            ...saved, division: e.division, furigana: e.furigana, furigana1: e.furigana1, furigana2: e.furigana2,
+            extra: (e.extra_json && typeof e.extra_json === "object") ? e.extra_json : undefined,
+          };
+        }),
       };
       submissionStmts.insert.run({
         id: submissionId,
         tournament_id: tournamentId,
-        token_hash: _hashToken(token),
+        token_hash: token ? _hashToken(token) : "",
         op_id: opId || "",
         contact_name: contact.name, contact_email: contact.email, contact_tel: contact.tel,
         team_name: formData.team_name || "",
@@ -11374,11 +11449,16 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
         extra_json: subExtraStr,
         options_json: optionPricing.items.length ? JSON.stringify(optionPricing.items) : "",
       });
-      submissionStmts.addToken.run(_hashToken(token), submissionId);     // トークン→原本
+      if (token) submissionStmts.addToken.run(_hashToken(token), submissionId);
+      if (opts.skip_sheet) sqlite.prepare("UPDATE entry_submissions SET gas_status='skipped' WHERE id=?").run(submissionId);
       if (opId) sqlite.prepare(`UPDATE entry_submissions SET ledger_keys=? WHERE id=?`).run(JSON.stringify([opId]), submissionId);
     }
   });
-  persist();
+  try { persist(); }
+  catch (e) {
+    if (e !== mixedDuplicate) throw e;
+    return { error: e.message, validation: true };
+  }
 
   return {
     ok: true,
@@ -12250,9 +12330,8 @@ function getOpenTournaments() {
   return sqlite.prepare(`
     SELECT * FROM tournaments
     WHERE entries_open = 1
-      AND (entry_deadline = '' OR entry_deadline >= date('now','localtime'))
     ORDER BY date ASC, created_at DESC
-  `).all().map(t => ({
+  `).all().filter(t => !_entryClosedReason(t)).map(t => ({
     ...t,
     entry_events: t.entry_events ? safeJSON(t.entry_events, []) : [],
   }));
@@ -14471,7 +14550,8 @@ module.exports = {
   // Phase4: 申込者本人の閲覧トークン + データ品質
   getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
-  getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel,
+  getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel, entryClosedReason: _entryClosedReason,
+  getManualSubmissionView, createManualSubmission, publicEntryOperationId,
   applicantReplaceEntrant, applicantCancelEntrant, applicantReplaceEntrantBySubmission, applicantCancelEntrantBySubmission, listEntryChanges,
   findCrossGroupDuplicates, getSubmissionEditView, editSubmission, recordAdminEntrantChange, buildSheetUpdatePayload, recordSheetUpdate, getSubmissionList,
   copyEntrySettings, listEntrySettingSources,

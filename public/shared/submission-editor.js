@@ -23,7 +23,7 @@
   // 入力欄1つ。data-k に収集キーを持たせ、収集は DOM から行う(状態を二重に持たない)。
   function input(key, label, value, opts) {
     opts = opts || {};
-    var attrs = ' data-k="' + esc(key) + '"' + (opts.disabled ? " disabled" : "");
+    var attrs = ' data-k="' + esc(key) + '" aria-label="' + esc(label) + '"' + (opts.disabled ? " disabled" : "");
     var ctl;
     if (opts.checkbox) {
       return '<label class="se-check"><input type="checkbox"' + attrs + (value ? " checked" : "") + "> " + esc(label) + "</label>";
@@ -199,7 +199,7 @@
     html += (view.entries || []).map(function (e, i) { return entryBlock(view, e, i); }).join("");
     var addable = (view.form.events || []).filter(function (x) { return !x.add_lock; });
     if (addable.length) {
-      html += '<div data-addlist></div>' + '<div class="se-fld se-addpick"><label>種目を追加する</label><select data-addpick>' +
+      html += '<div data-addlist></div>' + '<div class="se-fld se-addpick"><label>種目を追加する</label><select data-addpick aria-label="種目を追加する">' +
         '<option value="">追加する種目を選んでください</option>' +
         addable.map(function (x) { return '<option value="' + esc(x.name) + '">' + esc(x.name) + "</option>"; }).join("") +
         "</select><div class=\"se-hint\">選んだ種目の入力欄が上に出ます。</div></div>";
@@ -222,7 +222,7 @@
       html += "</section>";
     }
 
-    html += '<section class="se-sec">' + input("reason", "修正の理由（任意）", "", { placeholder: admin ? "例: 電話で依頼あり" : "例: 記入ミスのため" }) + "</section>";
+    if (!opts.manual) html += '<section class="se-sec">' + input("reason", "修正の理由（任意）", "", { placeholder: admin ? "例: 電話で依頼あり" : "例: 記入ミスのため" }) + "</section>";
     mount(container, '<div class="se">' + html + "</div>");
     wireAdd(container, view);
     container._seView = view;

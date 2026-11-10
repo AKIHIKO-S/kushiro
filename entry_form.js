@@ -1174,6 +1174,7 @@ ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v
   </div>
 </div>
 ${closedNotice}
+<p><a href="/entry/status?tournament=${encodeURIComponent(tournament.id)}" target="_top" style="display:inline-flex;align-items:center;min-height:44px;color:var(--red)">申込済みの方：申込番号で追加・修正する</a></p>
 
 <form id="entryForm" onsubmit="return submitForm(event)">
 
@@ -2071,7 +2072,7 @@ function ttHash(str) {
 function ttOpId(data) {
   var copy = {};
   Object.keys(data || {}).forEach(function (k) {
-    if (k === "cf_turnstile_token" || k === "hp_url") return;   // 送信のたびに変わる/意味を持たない
+    if (k === "cf_turnstile_token" || k === "hp_url" || k === "submitted_at") return;
     copy[k] = data[k];
   });
   return "entry-" + TOURNAMENT_ID + "-" + ttHash(JSON.stringify(copy));
@@ -2109,15 +2110,17 @@ async function submitForm(e) {
     if (timer) clearTimeout(timer);
     const txt = await resp.text();
     let result;
-    try { result = JSON.parse(txt); } catch { result = { ok: resp.ok, raw: txt }; }
-    if (result.ok || resp.ok || resp.status === 201) {
+    try { result = JSON.parse(txt); } catch { result = null; }
+    const platform = SUBMIT_URL.includes("/submit-team-entry");
+    const receipt = result && (result.applicant_token || result.already_registered || result.replayed);
+    if (resp.ok && result?.ok === true && (!platform || receipt)) {
       // ★ 送信成功 → LINE 共有用コピーカードを表示
       const summary = buildSummaryText(data);
       // Phase4: 申込番号(トークン)。本人が後から /entry/status で申込内容を確認できる。
       const token = result.applicant_token || "";
       let appOrigin = ""; try { appOrigin = new URL(SUBMIT_URL).origin; } catch (_) {}
       // 申込番号をURLへ入れると履歴・アクセスログへ残るため、確認ページは番号入力式にする。
-      const statusUrl = token ? appOrigin + "/entry/status" : "";
+      const statusUrl = token ? appOrigin + "/entry/status?tournament=" + encodeURIComponent(TOURNAMENT_ID) : "";
       const tokenBlock = token ? (
         '<div class="ticket">' +
           '<div class="ticket-label">申込番号</div>' +
@@ -2184,8 +2187,9 @@ async function submitForm(e) {
       ttScrollTop();
       setTimeout(ttPostHeight, 0);
     } else {
-      showMessage("送信できませんでした: " + (result.error || ("サーバー応答 " + resp.status)) +
-        "。入力内容をご確認のうえ、もう一度お試しください。", "err");
+      showMessage(result?.error
+        ? "送信できませんでした: " + result.error
+        : "受付できたか確認できませんでした。入力は残っています。控えを確認し、必要なら同じ内容で再送してください。", "err");
     }
   } catch (err) {
     if (timer) clearTimeout(timer);
@@ -2542,7 +2546,7 @@ function buildApplicantStatusHTML() {
   <div class="head">
     <div class="kicker">釧路卓球協会</div>
     <h1>申込内容の確認</h1>
-    <div class="sub">申込番号を入力すると、お申込の内容と状態を確認・修正できます。</div>
+    <div class="sub">申込番号を入力すると、前回の申込を確認し、出場種目の追加や内容の修正ができます。</div>
   </div>
 
   <div class="card">
@@ -2581,7 +2585,7 @@ function buildApplicantStatusHTML() {
       締切後は連絡先だけ直せます。それ以外は大会本部へご連絡ください。
     </div>
     <div style="text-align:center;margin-bottom:16px;">
-      <button type="button" class="btn" id="editOpen">申込内容を修正する</button>
+      <button type="button" class="btn" id="editOpen">申込内容を追加・修正する</button>
     </div>
   </div>
 
@@ -2746,7 +2750,8 @@ function buildApplicantStatusHTML() {
     if(!token){setMsg("申込番号を入力してください。");return;}
     show("result",false);
     setMsg("");
-    fetch("/api/auth/applicant/session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:token})})
+    var tournamentId=new URLSearchParams(location.search).get("tournament")||"";
+    fetch("/api/auth/applicant/session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:token,tournament_id:tournamentId})})
       .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
       .then(function(x){
         if(!x.ok||x.j.error){setMsg(esc(x.j.error||"申込が見つかりませんでした。番号をご確認ください。"));return;}

@@ -9,6 +9,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const crypto = require("crypto");
+const { isConfirmedEntry, summarizeEntries } = require("./lib/entry-summary");
 const { spawn } = require("child_process");
 // 子プロセス実行に上限を課す (#20): タイムアウトで SIGKILL し、stdout 肥大も打ち切る。
 // 不正/巨大な xlsx・pdf でパーサがハング/暴走しても、リクエストとサーバ全体を巻き込まない。
@@ -864,8 +865,11 @@ app.post("/api/auth/coach/session", (req, res) => {
     member_name: coach.member_name || "", member_role: coach.member_role || "" } });
 });
 app.post("/api/auth/applicant/session", applicantLookupRateLimit, (req, res) => {
-  const sub = db.getSubmissionByToken(String((req.body || {}).token || ""));
-  if (sub.error || !sub.ok || !sub.tournament) return res.status(404).json({ error: "申込が見つかりません" });
+  const body = req.body || {};
+  const sub = db.getSubmissionByToken(String(body.token || ""));
+  if (sub.error || !sub.ok || !sub.tournament || (body.tournament_id && body.tournament_id !== sub.tournament.id)) {
+    return res.status(404).json({ error: "申込が見つかりません。大会と申込番号をご確認ください。" });
+  }
   // getSubmissionByTokenは表示用へ投影済みなので、申込IDだけを改めてトークンから取得する専用関数を使わない。
   // entry_idからは所有性を復元できないため、DB側でトークン照合したIDを返す小さな経路を利用する。
   const source = db.resolveSubmissionToken(String((req.body || {}).token || ""));
@@ -1030,8 +1034,8 @@ async function relayEntryToGasOnce(gasUrl, payload) {
         : "GASがJSON以外を返しました";
       return { ok: false, status: resp.status, error: hint, retryable: false, snippet: String(text).slice(0, 200) };
     }
-    if (body.ok === false) {
-      return { ok: false, status: resp.status, error: String(body.error || "GASが失敗を返しました"),
+    if (body.ok !== true) {
+      return { ok: false, status: resp.status, error: String(body.error || "GASが反映成功を確認できる応答を返しませんでした"),
         problems: Array.isArray(body.problems) ? body.problems : undefined, retryable: false };
     }
     const out = { ok: true, status: resp.status, verified: body.verified !== false,
@@ -1135,20 +1139,19 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
       const tournament = db.getTournament(req.params.id);
       // op_id(X-Op-Id ヘッダ / body)を渡し、メモリキャッシュ非ヒット(再起動後など)でも
       // DBレベルで replay 判定する (Phase4残: 真のDB冪等)。
-      const opId = req.get("X-Op-Id") || (payload && payload.op_id) || "";
+      const opId = db.publicEntryOperationId(req.params.id, req.get("X-Op-Id") || payload.op_id);
       // enforce:true = 公開フォーム経路は field_config の必須項目をサーバ側で強制(クライアント不信)。
-      const r = db.createTeamEntry(req.params.id, payload, opId, { enforce: true });
+      const r = db.createTeamEntry(req.params.id, { ...payload, source: "form" }, opId, { enforce: true, explicit_additions: true });
 
-      // 必須項目エラー(validation)は GAS 中継せず即返す。中継すると不完全データがスプレッドシートに
-      // 記録され、かつ GAS 成功で握り潰されて「成功」誤表示になる(F1)。検証NGは申込者に修正させる。
-      if (r.error && r.validation) {
+      // Platformで成立していない受付はシートへ送らない。
+      if (r.error) {
         return res.status(400).json({ error: r.error });
       }
 
       // GAS 連携が設定されていればサーバー側から中継 (スプレッドシート反映、best-effort)。
       // server→GAS は CORS 制約なし。ブラウザ直POSTの誤エラーを解消する要。
       let gasRelay = null;
-      if (tournament && tournament.entry_gas_url
+      if (r.entry_count > 0 && tournament && tournament.entry_gas_url
           && /^https:\/\/script\.google\.com\//.test(tournament.entry_gas_url)) {
         // op_id を body に載せて中継する(op_id は X-Op-Id ヘッダ由来で payload に無いため、
         // これを渡さないと GAS 側の op_id 冪等が発火しない=再送でシート重複)。
@@ -1157,7 +1160,7 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
         // 旧バージョンの GAS は未知キーを無視するだけなので、この同梱は後方互換。
         // 金額はサーバが確定した値だけを送る。クライアントが送ってきた total_amount で
         // シートを書くと、フォームの計算違いや改造がそのまま台帳に載るため。
-        const relayPayload = { ...payload, form_schema: db.buildFormSchema(tournament) };
+        const relayPayload = { ...payload, action: "create", tournament_id: tournament.id, tournament_name: tournament.name, form_schema: db.buildFormSchema(tournament) };
         if (opId) relayPayload.op_id = opId;
         // 控えメールをこちらから送る構成なら、GAS 側には送らせない(申込者に同じ内容が2通届く)。
         // 残すのはこちら側にする: 控えに申込番号が入っていて、申込後の選手差し替え画面で使うため。
@@ -1170,12 +1173,7 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
           // 集計シートの各行にエントリーIDを載せる。シートの行から申込・選手を一意に辿れるようにする。
           // 重複でスキップされた行があると位置がずれるので、作成時に控えた位置(entry_index)で戻す。
           if (Array.isArray(r.created_entries) && Array.isArray(relayPayload.entries)) {
-            relayPayload.entries = relayPayload.entries.map(e => ({ ...e }));   // 元payloadを壊さない
-            r.created_entries.forEach(ce => {
-              if (!ce || ce.entry_id == null) return;
-              const t = relayPayload.entries[ce.entry_index];
-              if (t) t.entry_id = ce.entry_id;
-            });
+            relayPayload.entries = r.created_entries.map(ce => ({ ...payload.entries[ce.entry_index], entry_id: ce.entry_id }));
           }
         }
         gasRelay = await relayEntryToGas(tournament.entry_gas_url, relayPayload);
@@ -1195,12 +1193,6 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
         }
       }
 
-      // 受付成立 = 自サーバー保存 または GAS中継 の少なくとも一方が成功。
-      // GAS主運用(自サーバーが受理しない構成)でも、スプレッドシートへ届けば成功扱い。
-      if (r.error && !(gasRelay && gasRelay.ok)) {
-        return res.status(400).json({ error: r.error, gas: gasRelay });
-      }
-
       // ── 控えメール送信 (実際に申込が作成された時のみ。全件スクリーニング除外なら送らない=いたずらメール防止) ──
       const mailResults = { confirmation: null, admin: null };
       const created = !r.error && r.entrant_ids && r.entrant_ids.length > 0;
@@ -1216,7 +1208,7 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
         mailResults.admin = adminRes.status === "fulfilled"
           ? adminRes.value : { ok: false, error: String(adminRes.reason) };
       }
-      const base = r.error ? { ok: true, saved_to: "gas_only" } : r;
+      const { contact: _contact, ...base } = r;
       // 公開(CORS全開放)レスポンスには成否boolのみ返す。SMTP生エラー/GAS生応答などの
       // 内部詳細は外部へ出さない(#15)。申込番号(applicant_token)は本人閲覧に必要なため base に残す。
       const mailSafe = {
@@ -1289,6 +1281,10 @@ async function relaySheetUpdate(tournament, submissionId, group) {
   if (!parsed || parsed.protocol !== "https:" || parsed.hostname !== "script.google.com") return null;
   const payload = db.buildSheetUpdatePayload(submissionId, group || "");
   if (payload.error) return { ok: false, error: payload.error };
+  if (payload.skipped) return null;
+  if (payload.tournament_id !== tournament.id || !payload.submission.ledger_key) {
+    return { ok: false, error: "大会またはシートの照合キーを確認できません" };
+  }
   const relay = await relayEntryToGas(tournament.entry_gas_url, payload);
   db.recordSheetUpdate(submissionId, relay);
   return relay;
@@ -1365,6 +1361,22 @@ app.get("/api/tournaments/:id/submissions", requireAdmin, (req, res) => {
   res.json(r);
 });
 
+app.get("/api/tournaments/:id/desk/manual", requireAdmin, (req, res) => {
+  const view = db.getManualSubmissionView(req.params.id);
+  res.setHeader("Cache-Control", "no-store");
+  res.status(view.error ? 404 : 200).json(view);
+});
+
+app.post("/api/tournaments/:id/desk/manual", requireAdmin, (req, res) => {
+  const body = req.body || {};
+  const opId = String(body.request_id || "");
+  if (!/^[a-z0-9-]{16,64}$/i.test(opId)) return res.status(400).json({ error: "登録操作を識別できません。画面を開き直してください。" });
+  const r = db.createManualSubmission(req.params.id, body, opId);
+  if (r.error) return res.status(400).json({ error: r.error });
+  if (!r.submission_id) return res.status(409).json({ error: r.already_registered ? "すでに登録済みの出場です" : "登録できる出場がありません" });
+  res.status(r.replayed ? 200 : 201).json({ ok: true, submission_id: r.submission_id, replayed: !!r.replayed });
+});
+
 // 変更履歴(管理画面の申込管理で表示)
 app.get("/api/tournaments/:id/entry-changes", requireAdmin, (req, res) => {
   res.json({ items: db.listEntryChanges(req.params.id, req.query.limit) });
@@ -1399,14 +1411,20 @@ app.get("/api/tournaments/:id/gas-sync", requireAdmin, (req, res) => {
 async function resendOne(tournament, submissionId) {
   const src = db.getSubmissionForResend(submissionId);
   if (src.error) return { ok: false, error: src.error };
-  const relayPayload = { ...src.payload, form_schema: db.buildFormSchema(tournament) };
+  if (src.submission.tournament_id !== tournament.id) return { ok: false, error: "この大会の申込ではありません" };
+  if (src.submission.gas_status === "skipped") return { ok: false, error: "この申込はシート反映の対象外です" };
+  if (!src.op_id) return { ok: false, error: "シートの照合キーがないため再送できません" };
+  const relayPayload = { ...src.payload, action: "create", tournament_id: tournament.id, tournament_name: tournament.name, form_schema: db.buildFormSchema(tournament), suppress_reply_mail: true };
   if (src.op_id) relayPayload.op_id = src.op_id;
   if (src.total_amount != null) relayPayload.total_amount = src.total_amount;
   if (Array.isArray(src.option_items) && src.option_items.length) relayPayload.option_items = src.option_items;
   const relay = await relayEntryToGas(tournament.entry_gas_url, relayPayload);
   db.recordGasRelay(submissionId, relay);
   // 受付後に修正されている申込は、原本を入れただけでは古い内容のままなので今の姿で上書きする
-  if (relay.ok && src.submission.updated_at) await relaySheetUpdate(tournament, submissionId, "");
+  if (relay.ok && src.submission.updated_at) {
+    const update = await relaySheetUpdate(tournament, submissionId, "");
+    if (!update?.ok || update.missing?.length) return { ok: false, error: "初回は反映済みですが、最新の修正を反映できませんでした", relay };
+  }
   return { ok: !!relay.ok, relay, team_name: src.submission.team_name };
 }
 
@@ -1468,13 +1486,16 @@ app.get("/api/tournaments/:id/gas-sync/reconcile", requireAdmin, async (req, res
 
   const state = db.getGasSyncState(req.params.id);
   const inSheet = new Set((sheet.ids || []).map(String));
+  const unknown = sheet.has_id_column ? state.items.filter(s => !s.sheet_key) : [];
   // 申込IDで突き合わせる。IDが無い旧シートでは件数比較に落とす(黙って全欠損と言わない)。
   const missing = sheet.has_id_column
-    ? state.items.filter(s => !inSheet.has(String(s.id)))
+    ? state.items.filter(s => s.sheet_key && !inSheet.has(s.sheet_key))
     : [];
   res.json({
     ok: true,
     matched_by: sheet.has_id_column ? "申込ID" : "件数のみ",
+    comparable: !!sheet.has_id_column,
+    unknown_count: unknown.length,
     db_count: state.total,
     sheet_count: sheet.count || 0,
     missing_count: sheet.has_id_column ? missing.length : Math.max(0, state.total - (sheet.count || 0)),
@@ -1968,11 +1989,18 @@ app.delete("/api/match-records/:id", requireAdmin, (req, res) => {
 app.get("/api/tournaments", requireAdmin, (req, res) => {
   // 認証なしでも到達可能な経路。管理キーがあれば完全データ、なければ秘密フィールドを除去 (#1/#14)。
   const list = db.getTournaments();
+  if (currentAppMode() === "entry") {
+    for (const t of list) t.entry_closed_reason = db.entryClosedReason(t) || "";
+  }
   res.json(isAdminAuthed(req) ? list : list.map(sanitizeTournamentPublic));
 });
 app.get("/api/tournaments/:id", requireAdmin, (req, res) => {
   const t = db.getTournament(req.params.id);
   if (!t) return res.status(404).json({ error: "大会が見つかりません" });
+  if (currentAppMode() === "entry") {
+    t.entry_summary = summarizeEntries(db.getEntrants(t.id));
+    t.entry_closed_reason = db.entryClosedReason(t) || "";
+  }
   res.json(isAdminAuthed(req) ? t : sanitizeTournamentPublic(t));
 });
 app.post("/api/tournaments", requireAdmin, (req, res) => {
@@ -2125,17 +2153,18 @@ app.get("/api/tournaments/:id/reception.html", requireAdmin, (req, res) => {
   const entrants = db.getEntrants(req.params.id) || [];
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
-  res.send(buildReceptionHTML(t, entrants));
+  const entryOnly = currentAppMode() === "entry";
+  res.send(buildReceptionHTML(t, entryOnly ? entrants.filter(isConfirmedEntry) : entrants, entryOnly));
 });
 
-function buildReceptionHTML(t, entrants) {
+function buildReceptionHTML(t, entrants, entryOnly = false) {
   const yen = (n) => "¥" + (parseInt(n) || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   let cfg = [];
   try { cfg = JSON.parse(t.event_config || "[]"); } catch (e) {}
   const feeMap = {};
   (Array.isArray(cfg) ? cfg : []).forEach(c => { if (c && c.name) feeMap[String(c.name).trim()] = parseInt(c.fee) || 0; });
   const feeOf = (ev) => feeMap[String(ev || "").trim()] || 0;
-  const byTeam = {};
+  const byTeam = Object.create(null);
   entrants.forEach(e => {
     const team = (e.team || "").trim() || "(所属未記入)";
     (byTeam[team] = byTeam[team] || []).push(e);
@@ -2152,13 +2181,14 @@ function buildReceptionHTML(t, entrants) {
       const furi = e.furigana ? `<span class="furi">${_escHtml(e.furigana)}</span>` : "";
       return `<tr><td class="chk"></td><td class="no">${e.bracket_number || ""}</td>` +
         `<td class="nm">${nm}${furi}</td><td class="ev">${_escHtml(e.event || "")}</td>` +
-        `<td class="fee">${fee ? yen(fee) : ""}</td><td class="seal"></td></tr>`;
+        (entryOnly ? "" : `<td class="fee">${fee ? yen(fee) : ""}</td><td class="seal"></td>`) + "</tr>";
     }).join("");
     return `<section class="team-sec"><h3>${_escHtml(team)} <span class="tc">${list.length}件</span></h3>` +
       `<table class="rcp-table"><thead><tr><th class="chk">受付</th><th class="no">No</th>` +
-      `<th>氏名（ふりがな）</th><th>種目</th><th class="fee">参加料</th><th class="seal">領収印</th></tr></thead>` +
+      `<th>氏名（ふりがな）</th><th>種目</th>` +
+      (entryOnly ? "" : '<th class="fee">参加料</th><th class="seal">領収印</th>') + "</tr></thead>" +
       `<tbody>${rows}</tbody><tfoot><tr><td colspan="4" class="sub-l">小計（${list.length}件）</td>` +
-      `<td class="fee">${yen(sub)}</td><td></td></tr></tfoot></table></section>`;
+      (entryOnly ? "" : `<td class="fee">${yen(sub)}</td><td></td>`) + "</tr></tfoot></table></section>";
   }).join("");
   return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="robots" content="noindex">
 <title>${_escHtml(t.name)} 受付名簿</title><style>
@@ -2180,8 +2210,8 @@ h3{font-size:15px;margin:0 0 4px;border-bottom:2px solid #1c1917;padding-bottom:
 <button class="print-btn" onclick="window.print()">印刷 / PDF保存</button>
 <h1>${_escHtml(t.name)} 受付名簿</h1>
 <div class="meta">${_escHtml(t.date || "")}　${_escHtml(t.venue || "")}</div>
-<div class="grand">参加料 合計予定額　${yen(grand)}　（全${grandCount}件 / ${teamNames.length}団体）</div>
-<div class="note">※ 当日受付（紙）用。金額は申込種目の設定料金からの「請求予定額」です。実際の入金・領収の管理はスプレッドシート/紙が正です。受付欄・領収印欄に押印してご利用ください。</div>
+<div class="grand">${entryOnly ? `確定出場 ${grandCount}件 / ${teamNames.length}団体` : `参加料 合計予定額　${yen(grand)}　（全${grandCount}件 / ${teamNames.length}団体）`}</div>
+${entryOnly ? "" : '<div class="note">※ 当日受付（紙）用。金額は申込種目の設定料金からの「請求予定額」です。実際の入金・領収の管理はスプレッドシート/紙が正です。受付欄・領収印欄に押印してご利用ください。</div>'}
 ${sections || "<p>申込がまだありません。</p>"}
 </body></html>`;
 }
@@ -3733,10 +3763,13 @@ app.get("/api/tournaments/:id/entry-form.html", requireOpenEntryOrAdmin, (req, r
         if (Array.isArray(parsed)) events = parsed;
       } catch {}
     }
+    const entryOnly = currentAppMode() === "entry";
     const html = entryForm.buildEntryFormHTML(tournament, events, {
-      gas_url: req.query.gas_url || "REPLACE_WITH_GAS_WEB_APP_URL",
+      gas_url: entryOnly ? `${appOriginOf(req)}/api/public/tournaments/${tournament.id}/submit-team-entry`
+        : req.query.gas_url || "REPLACE_WITH_GAS_WEB_APP_URL",
       admin_email: req.query.admin_email || "",
-      deadline: req.query.deadline || "",
+      deadline: entryOnly ? db.entryDeadlineLabel(tournament) : req.query.deadline || "",
+      capacity: entryOnly ? db.getEntryCapacityState(tournament.id) : undefined,
       payment_note: tournament.entry_payment_note || req.query.payment_note || "",
       notes: req.query.notes || "",
       turnstile_sitekey: process.env.TURNSTILE_SITEKEY || "",

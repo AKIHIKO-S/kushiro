@@ -2532,7 +2532,7 @@ const A = {
  );
  if (pc > 0) meta.push(h("span", { className: "t-chip" }, pc + "名"));
  if (mc > 0) meta.push(h("span", { className: "t-chip t-chip-mc" }, mc + "試合"));
- if (t.entries_open) meta.push(h("span", { className: "t-chip hot" }, "申込受付中"));
+ if (t.entries_open && !t.entry_closed_reason) meta.push(h("span", { className: "t-chip hot" }, "申込受付中"));
 
  el.appendChild(h("div", { className: "t-card st-" + st,
    onClick: () => A.openTournament(t.id) },
@@ -2840,6 +2840,7 @@ const A = {
  const curSt = t.status || "scheduled";
  const players = t.players || [];
  const teams = new Set(players.map(p => p.team).filter(Boolean)).size;
+ const intake = t.entry_summary;
  panel.appendChild(h("div", { className: "card" },
  h("div", { className: "flex gap-3 mb-2", style: { alignItems: "flex-start", flexWrap: "wrap" } },
  h("div", { className: "flex-1" },
@@ -2854,10 +2855,11 @@ const A = {
  "大会情報を編集"),
  ),
  h("div", { className: "flex gap-4", style: { flexWrap: "wrap" } },
- h("span", { className: "text-sm" }, "出場選手: ",
-   h("strong", {}, String(players.length)), " 名"),
+ h("span", { className: "text-sm" }, intake ? "確定出場: " : "出場選手: ",
+   h("strong", {}, String(intake ? intake.confirmed : players.length)), intake ? " 件" : " 名"),
+ intake ? h("span", { className: "text-sm" }, "承認待ち: ", h("strong", {}, String(intake.pending)), " 件") : null,
  h("span", { className: "text-sm" }, "団体: ",
-   h("strong", {}, String(teams))),
+   h("strong", {}, String(intake ? intake.teams : teams))),
  A.entryOnly ? null : h("span", { className: "text-sm" }, "試合: ",
    h("strong", {}, String((t.matches || []).length))),
  ),
@@ -2869,10 +2871,12 @@ const A = {
  h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm", onClick: () => { A._entriesTid = t.id; A.showTab("entries"); } }, "出場者の一覧"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openSubmissionList(t) }, "申込の一覧"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openManualSubmission(t, () => A.openTournament(t.id)) }, "本部で申込を登録"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openEntryChanges(t) }, "変更履歴"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.fetchGasStats(t) }, "シートの集計を取得"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.downloadApplicantsXlsx(t) }, "申込一覧をExcel"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.downloadAggregation(t) }, "集計表をExcel"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openAuthedHtmlWindow(`/api/tournaments/${t.id}/reception.html`, "受付名簿") }, "受付名簿を印刷"),
  )));
 
  // ─── 大会運営ガイド (5ステップの導線) #195 ───
@@ -2955,9 +2959,9 @@ const A = {
      `${A.publicOrigin() || location.origin}/entry/${t.id}`),
    h("br", {}),
    "状態: ",
-   t.entries_open
+   t.entries_open && !t.entry_closed_reason
      ? h("strong", { style: { color: "#15803d" } }, "● 受付中")
-     : h("strong", { style: { color: "#dc2626" } }, "○ 停止中"),
+     : h("strong", { style: { color: "#dc2626" } }, t.entry_closed_reason || "○ 停止中"),
    t.entry_deadline ? ` / 締切: ${t.entry_deadline}` : "",
  ),
  ));
@@ -3014,7 +3018,7 @@ const A = {
    }, 60);
  };
 
- const s1 = t.entries_open ? chip("● 受付中", "ok") : chip("受付停止 / 未設定", "warn");
+ const s1 = t.entries_open && !t.entry_closed_reason ? chip("● 受付中", "ok") : chip("受付停止 / 未設定", "warn");
  mk(1, "申込フォームを作る・公開",
    "WordPress/Jimdoに貼る埋込コードと公開URLを発行。受付ON/OFFと締切を設定。", s1, [
    h("button", { className: "btn btn-sm", onClick: () => A.openEntryFormGenerator(t) }, "フォーム設定 / 埋込"),
@@ -3620,11 +3624,15 @@ const A = {
  async openSubmissionList(t) {
    const body = h("div", {});
    let bg = null;
-   const SHEET = { ok: ["反映済", "#166534"], partial: ["一部", "#92400e"], failed: ["失敗", "#991b1b"], pending: ["未反映", "#92400e"] };
+   const SHEET = { ok: ["反映済", "#166534"], partial: ["一部", "#92400e"], failed: ["失敗", "#991b1b"], pending: ["未反映", "#92400e"], skipped: ["対象外", "#57534e"] };
    // 絞り込み(再読込しても保つ)。当日受付では「団体名で探す」が最も使われる
    let q = "", filt = "all";
    const FILTERS = [["all", "すべて"], ["cross", "別団体と重複"], ["sheet", "シート未反映"]];
-   const sheetNg = (r) => r.sheet_upd_status === "failed" || r.sheet_upd_status === "partial" || r.sheet_upd_status === "pending";
+   const sheetState = (r) => r.sheet_status === "skipped" ? "skipped" : r.sheet_status === "failed" ? "failed" : (r.sheet_upd_status || r.sheet_status);
+   const sheetNg = (r) => ["failed", "partial", "pending"].includes(sheetState(r));
+   const resend = (r) => api.post(r.sheet_status === "failed"
+     ? `/api/tournaments/${t.id}/gas-sync/resend/${r.submission_id}`
+     : `/api/submissions/${r.submission_id}/sheet-resend`, {});
    const match = (r) => {
      if (q && !((r.team_name || "") + " " + (r.contact_name || "")).includes(q)) return false;
      if (filt === "cross") return r.cross_dup > 0;
@@ -3634,8 +3642,8 @@ const A = {
    // 受付用のCSV(Excelで開けるようBOM付き)。電話・メールは含めない
    const csvOf = (d) => {
      const cell = (v) => { const x = String(v == null ? "" : v); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
-     const head = ["団体名", "申込責任者", "出場", "取消", "別団体と重複", "受付", "最終修正"];
-     const lines = [head].concat(d.rows.map(r => [r.team_name, r.contact_name, r.entries, r.cancelled || 0, r.cross_dup || 0,
+     const head = ["団体名", "申込責任者", "確定出場", "承認待ち", "取消・却下", "別団体と重複", "受付", "最終修正"];
+     const lines = [head].concat(d.rows.map(r => [r.team_name, r.contact_name, r.entries, r.pending || 0, r.cancelled || 0, r.cross_dup || 0,
        r.created_at || "", r.updated_at || ""]));
      return "﻿" + lines.map(l => l.map(cell).join(",")).join("\r\n");
    };
@@ -3648,7 +3656,7 @@ const A = {
      const ngRows = d.rows.filter(sheetNg);
      const live = d.rows.reduce((s, r) => s + (r.entries || 0), 0);
      parts.push(h("div", { className: "text-sm", style: { marginBottom: "10px" } },
-       `申込 ${d.rows.length}件・出場 ${live}件`,
+       `申込原本 ${d.rows.length}件・確定出場 ${d.totals?.confirmed ?? live}件・承認待ち ${d.totals?.pending ?? 0}件`,
        crossRows.length ? h("span", { style: { color: "#991b1b", fontWeight: "700", marginLeft: "10px" } }, `別団体と重複の疑い ${crossRows.length}団体`) : null));
      if (d.unlinked) {
        parts.push(h("div", { className: "text-xs text-sub", style: { marginBottom: "10px" } },
@@ -3672,7 +3680,7 @@ const A = {
          e.target.disabled = true;
          let ok = 0, ng = 0;
          for (const r of ngRows) {
-           const x = await api.post(`/api/submissions/${r.submission_id}/sheet-resend`, {});
+           const x = await resend(r);
            if (x && !x.error) ok++; else ng++;
          }
          toast(`シートへ再送: 成功 ${ok}件` + (ng ? `・失敗 ${ng}件` : ""), ng ? "err" : "ok");
@@ -3682,15 +3690,15 @@ const A = {
      const rowsTable = () => {
        const tbl = h("table", { className: "tbl", style: { minWidth: "600px" } });
        tbl.appendChild(h("thead", {}, h("tr", {},
-         h("th", {}, "団体"), h("th", { style: { textAlign: "right" } }, "出場"), h("th", {}, "注意"),
+         h("th", {}, "団体"), h("th", { style: { textAlign: "right" } }, "確定出場"), h("th", {}, "注意"),
          d.tournament.gas ? h("th", {}, "シート") : null, h("th", {}, ""))));
        const tb = h("tbody", {});
        const shownRows = d.rows.filter(match);
        shownRows.forEach(r => {
-         const sh = SHEET[r.sheet_upd_status];
+         const sh = SHEET[sheetState(r)];
          tb.appendChild(h("tr", {},
            h("td", { className: "text-sm" }, h("b", {}, r.team_name || "(団体名なし)"), h("div", { className: "text-xs text-sub" }, (r.contact_name || "") + (r.updated_at ? "・修正 " + r.updated_at : ""))),
-           h("td", { className: "text-sm", style: { textAlign: "right" } }, r.entries + "件" + (r.cancelled ? `（取消${r.cancelled}）` : "")),
+           h("td", { className: "text-sm", style: { textAlign: "right" } }, r.entries + "件" + (r.pending ? `（承認待ち${r.pending}）` : "") + (r.cancelled ? `（取消・却下${r.cancelled}）` : "")),
            h("td", { className: "text-xs" }, r.cross_dup
              ? h("span", { style: { color: "#991b1b", fontWeight: "700" }, title: "出場一覧の赤い印で相手の団体と種目を確認できます" }, `別団体と重複 ${r.cross_dup}件`)
              : "—"),
@@ -3699,7 +3707,7 @@ const A = {
              sheetNg(r)
                ? h("button", { className: "btn btn-sm btn-ghost", style: { marginLeft: "4px" }, onClick: async (e) => {
                    e.target.disabled = true;
-                   const x = await api.post(`/api/submissions/${r.submission_id}/sheet-resend`, {});
+                   const x = await resend(r);
                    toast(x.error ? x.error : "シートを今の内容で書き直しました", x.error ? "err" : "ok");
                    load();
                  } }, "再送") : null) : null,
@@ -3720,6 +3728,42 @@ const A = {
      h("button", { className: "btn btn-ghost", onClick: () => A.openEntryChanges(t) }, "変更履歴"),
      h("button", { className: "btn btn-ghost", onClick: () => bg.remove() }, "閉じる")), { size: "lg" });
    load();
+ },
+
+ async openManualSubmission(t, onDone) {
+   const path = `/api/tournaments/${t.id}/desk/manual`;
+   const view = await api.get(path);
+   if (!view || view.error) return toast(view?.error || "登録画面を開けませんでした", "err");
+   const editor = window.KTTASubEditor;
+   editor.injectCss();
+   const form = h("div", {});
+   editor.render(form, view, { admin: true, manual: true });
+   const notice = h("p", { className: "text-sm text-sub" }, "締切後も本部で登録できます。手入力の申込は集計シートには送られません。");
+   const feedback = h("div", { role: "alert", className: "text-sm" });
+   const requestId = crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, "0")).join("");
+   let modal;
+   const save = h("button", { type: "button", className: "btn", onClick: async () => {
+     const data = editor.collect(form);
+     if (!data?.contact?.team_name || !data?.add?.length) {
+       feedback.textContent = "団体名を入力し、出場種目を1件以上追加してください。";
+       return;
+     }
+     save.disabled = true;
+     feedback.textContent = "";
+     try {
+       const result = await api.post(path, { ...data, request_id: requestId });
+       if (!result?.ok) { feedback.textContent = result?.error || "登録を確認できませんでした。"; return; }
+       modal.remove();
+       toast("本部で申込を登録しました", "ok");
+       if (onDone) onDone();
+     } catch {
+       feedback.textContent = "通信を確認できませんでした。画面を閉じず、同じ内容で再試行してください。";
+     } finally {
+       save.disabled = false;
+     }
+   } }, "申込を登録する");
+   modal = openModal(`本部で申込を登録 — ${t.name}`, h("div", {}, notice, form, feedback),
+     h("div", { className: "flex gap-2" }, h("button", { type: "button", className: "btn btn-ghost", onClick: () => modal.remove() }, "閉じる"), save), { size: "lg" });
  },
 
  // 1件の申込を本部が修正する(締切後も可。組合せ作成後の選手入替は「表を編集」側)。
@@ -6026,12 +6070,13 @@ const A = {
          try {
            const r = await api.get(`/api/tournaments/${t.id}/gas-sync/reconcile`);
            if (r.error) { toast(r.error, "err"); return; }
-           if (!r.missing_count) { toast(`突合しました。${r.db_count}件すべてシートに入っています`, "ok"); }
+           if (!r.comparable) { toast(`件数のみ比較: Platform ${r.db_count}件 / シート ${r.sheet_count}件。申込単位の照合はできません。`, "warn"); }
+           else if (r.unknown_count) { toast(`シート未確認 ${r.missing_count}件・照合キー不明 ${r.unknown_count}件`, "warn"); }
+           else if (!r.missing_count) { toast(`${r.db_count}件の申込IDをシートで確認しました。変更内容は未照合です。`, "ok"); }
            else {
              const names = (r.missing || []).slice(0, 5).map(m => m.team_name || m.contact_name).join("、");
              toast(`シートに無い申込が ${r.missing_count} 件あります${names ? ": " + names : ""}`, "err");
            }
-           if (r.note) toast(r.note, "err");
            await loadGas();
          } catch (err) { toast("突合に失敗: " + err.message, "err"); }
          finally { e.target.disabled = false; e.target.textContent = "シートと突合"; }
@@ -6250,7 +6295,8 @@ const A = {
    } catch (e) { /* 品質チェックは任意。失敗しても一覧は表示する */ }
    const pend = entries.filter(e => (e.entry_status || "confirmed") === "pending").length;
    const crossN = entries.filter(e => e.cross_dup && e.cross_dup.length).length;
-   summary.replaceChildren(`申込 ${entries.length}件 ・ 種目 ${eventsList().length} ・ 承認待ち ${pend}`
+   const confirmed = entries.filter(e => (e.entry_status || "confirmed") === "confirmed").length;
+   summary.replaceChildren(`確定出場 ${confirmed}件 ・ 種目 ${eventsList().length} ・ 承認待ち ${pend}`
      + (issueTotal ? ` ・ 要確認 ${issueTotal}` : ""),
      crossN ? h("label", { style: { marginLeft: "10px", color: "#991b1b", fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: "4px", alignItems: "center" },
        title: "別の団体から同じ人物・同じ組が申し込まれているもの" },
@@ -6957,7 +7003,7 @@ const A = {
  h("label", { className: "field-label" }, "申込締切日"),
  h("input", { type: "date", className: "input", id: "esDeadline",
    value: t.entry_deadline || "" }),
- h("div", { style: { display: "flex", gap: "6px", alignItems: "center", marginTop: "6px" } },
+ A.entryOnly ? h("div", { className: "text-xs text-sub" }, "締切日の翌日0時（日本時間）に公開受付を停止します。") : h("div", { style: { display: "flex", gap: "6px", alignItems: "center", marginTop: "6px" } },
    h("span", { className: "text-xs text-sub" }, "締切時刻"),
    h("input", { type: "time", className: "input", id: "esDeadlineTime",
      style: { width: "110px" }, value: t.entry_deadline_time || "" }),
@@ -7021,7 +7067,7 @@ const A = {
  const data = {
  entries_open: document.getElementById("esOpen").checked,
  entry_deadline: document.getElementById("esDeadline").value,
- entry_deadline_time: document.getElementById("esDeadlineTime").value,
+ entry_deadline_time: document.getElementById("esDeadlineTime")?.value ?? t.entry_deadline_time ?? "",
  entry_capacity: parseInt(document.getElementById("esCapacity").value) || 0,
  entry_max_events: parseInt(document.getElementById("esMaxEvents").value) || 0,
  entry_events: currentEvents,
