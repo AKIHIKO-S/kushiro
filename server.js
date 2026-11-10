@@ -1114,7 +1114,9 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
   async (req, res) => {
     const origin = req.get("Origin");
     if (origin) {
-      if (!CORS_ALLOW_ORIGINS.has(origin)) return res.status(403).json({ error: "許可されていない送信元です" });
+      if (origin !== appOriginOf(req) && !CORS_ALLOW_ORIGINS.has(origin)) {
+        return res.status(403).json({ error: "許可されていない送信元です" });
+      }
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
     }

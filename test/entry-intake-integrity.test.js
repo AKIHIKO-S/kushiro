@@ -71,7 +71,9 @@ test("受付・本部登録・本人修正・シート照合・確定件数を�
   assert.ok(inlineScripts.some(x => x[1].includes("async function submitForm")));
   for (const [, source] of inlineScripts) assert.doesNotThrow(() => new Script(source));
   const submit = (id, entries, opId) => request(`/api/public/tournaments/${id}/submit-team-entry`, "POST",
-    { ...form(entries), tournament_id: "偽の大会", action: "update" }, { "X-Op-Id": opId });
+    { ...form(entries), tournament_id: "偽の大会", action: "update" }, { "X-Op-Id": opId, Origin: base });
+  assert.equal((await request(`/api/public/tournaments/${a.id}/submit-team-entry`, "POST",
+    form([entrant("検証 外部")]), { Origin: "https://unexpected.example.invalid" })).status, 403);
   const first = await submit(a.id, [entrant("検証 甲")], "same-request-id");
   assert.equal(first.status, 201);
   const subA = await first.json();
