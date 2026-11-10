@@ -141,3 +141,16 @@ test("受付・本部登録・本人修正・シート照合・確定件数を�
   assert.match(html, /確定出場 2件/);
   assert.doesNotMatch(html, /領収印|合計予定額/);
 });
+
+test("締切未設定の大会は開催日翌日の日本時間0時に公開受付から外す", t => {
+  const item = tournament("開催日境界");
+  const clock = t.mock.method(Date, "now", () => Date.parse("2099-05-04T14:59:59Z"));
+  assert.ok(db.getOpenTournaments().some(x => x.id === item.id));
+  clock.mock.mockImplementation(() => Date.parse("2099-05-04T15:00:00Z"));
+  assert.ok(!db.getOpenTournaments().some(x => x.id === item.id));
+  assert.equal(db.getEntryCapacityState(item.id).closed, true);
+  assert.match(db.createTeamEntry(item.id, form([entrant("検証 開催後")])).error, /開催日/);
+  assert.ok(db.createManualSubmission(item.id, {
+    contact: { team_name: "架空クラブ" }, add: [entrant("検証 本部")],
+  }, "past-event-fixture").submission_id);
+});

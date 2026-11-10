@@ -10891,6 +10891,11 @@ function _entryClosedReason(t) {
   if (limit && _nowJST() > limit) {
     return `申込締切（${entryDeadlineLabel(t)}）を過ぎています`;
   }
+  // 締切の設定漏れや受付の閉じ忘れがあっても、開催済み大会は公開受付しない。
+  if (appMode.resolveMode(process.env.KTTA_APP_MODE, kvGet(appMode.KV_KEY)) === "entry"
+      && /^\d{4}-\d{2}-\d{2}$/.test(t.date || "") && t.date < _nowJST().slice(0, 10)) {
+    return "この大会は開催日を過ぎたため、申込は終了しました";
+  }
   return null;
 }
 
