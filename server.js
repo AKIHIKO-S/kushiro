@@ -5100,6 +5100,20 @@ app.post("/api/tournaments/:id/entries/:pid/fix", requireAdmin, (req, res) => {
   if (before) relayAdminEntrantChange(db.recordAdminEntrantChange(before, db.getEntrant(req.params.pid)));
   res.json(r);
 });
+// 申込の選手照合(案A): 自動一致・要確認・新規候補の一覧と、人による確定。
+app.get("/api/tournaments/:id/player-matches", requireAdmin, (req, res) => {
+  res.json(db.getPlayerMatchReview(req.params.id));
+});
+app.post("/api/tournaments/:id/player-matches/rematch", requireAdmin, (req, res) => {
+  res.json(db.rematchTournamentPlayers(req.params.id));
+});
+app.post("/api/entrants/:id/player-match", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const r = db.resolveEntrantPlayerMatch(req.params.id, String(b.slot || ""), String(b.action || ""),
+    { player_id: b.player_id, by: b.by });
+  if (r.error) return res.status(r.status || 400).json(r);
+  res.json(r);
+});
 app.post("/api/tournaments/:id/entry-issues/bulk-fix", requireAdmin, (req, res) => {
   res.json(db.bulkFixEntrantInference(req.params.id, req.body || {}));
 });

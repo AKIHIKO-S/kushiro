@@ -53,11 +53,12 @@ const ENTRY_MODE_API = [
   [new RegExp(`^${T}/entries$`)],
   [new RegExp(`^${T}/entries/[^/]+/(status|fix)$`)],
   [new RegExp(`^${T}/entry-issues(/bulk-fix)?$`)],
+  [new RegExp(`^${T}/player-matches(/rematch)?$`)],
   [new RegExp(`^${T}/entrants$`), ["GET", "HEAD"]],   // 一括削除は組合せのやり直し用なので閉じる
   [new RegExp(`^${T}/entrants/(stats|validate)$`)],
   // 申込一覧からの出場者編集
   [new RegExp(`^${E}$`)],
-  [new RegExp(`^${E}/(link|suggest-player|create-player|resolve-branch|member-from-player)$`)],
+  [new RegExp(`^${E}/(link|suggest-player|create-player|resolve-branch|member-from-player|player-match)$`)],
   // 選手データベース(名寄せ用)
   [/^\/api\/players$/],
   [/^\/api\/players\/(cleanup-invalid|normalize-categories|normalize-branches|infer-branches|infer-furigana|apply-fill|rename-team)$/],

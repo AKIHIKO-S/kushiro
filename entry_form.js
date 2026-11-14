@@ -1133,6 +1133,10 @@ function buildEntryFormHTML(tournament, events, opts) {
      項目数は大会設定で変わる(ふりがな・学年・性別・自由項目)ので、
      列数を固定せず auto-fit で入るだけ並べる。 */
   .entry-grid { grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 2px 18px; }
+  /* 出場経験(初めて/出場したことがある)は1行ぶん使い、押しやすい高さを取る */
+  .entry-row .first-time { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 20px; padding: 4px 0; font-size: 14px; }
+  .entry-row .first-time label { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; cursor: pointer; }
+  .entry-row .first-time input { width: 18px; height: 18px; margin: 0; }
 
   /* ダブルスは選手ごとに区切る。囲みは作らず、小さな見出しと細罫だけで分ける */
   .entry-row .pair-side + .pair-side { border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 8px; }
@@ -1445,14 +1449,45 @@ function flabel(key, def) {
   const l = m && typeof m.label === "string" ? m.label.trim() : "";
   return l || def;
 }
-function playerFieldsHtml(prefix, ev) {
+// 支部(北海道の支部。道外は1つにまとめる)と学年の選択肢。
+const TT_BRANCHES = ["釧路", "釧根", "根室", "十勝", "北見", "網走", "斜里", "紋別", "札幌", "函館", "旭川", "千歳", "苫小牧",
+  "江別", "室蘭", "名寄", "後志", "滝川", "岩見沢", "留萌", "日高", "稚内", "小樽", "深川", "富良野"];
+const TT_GRADES = ["小1", "小2", "小3", "小4", "小5", "小6", "中1", "中2", "中3", "高1", "高2", "高3", "一般"];
+// 氏名・ふりがなを姓と名に分けて聞くか(項目設定「氏名を姓・名に分ける」)。
+function ttNameSplit(evName) { return fstFor(evName, "name_split") !== "hidden"; }
+// 姓・名の2欄 + 送信用の隠し欄(従来の name をそのまま使う)。入力のたびに「姓 名」へまとめる。
+function ttSplitInputs(target, n1, n2, l1, l2, label, required) {
+  const rq = required ? " required" : "";
+  const sfx = required ? " (必須)" : "";
+  return '<input type="hidden" name="' + target + '" />' +
+    '<input type="text" name="' + n1 + '" data-join="' + target + '" placeholder="' + label + '（' + l1 + '）' + sfx + '" aria-label="' + label + '（' + l1 + '）"' + rq + ' oninput="ttJoin(this)" />' +
+    '<input type="text" name="' + n2 + '" data-join="' + target + '" placeholder="' + label + '（' + l2 + '）' + sfx + '" aria-label="' + label + '（' + l2 + '）"' + rq + ' oninput="ttJoin(this)" />';
+}
+function ttJoin(inp) {
+  const target = inp.getAttribute("data-join");
+  const scope = inp.closest(".entry-row") || document;
+  const parts = Array.from(scope.querySelectorAll('[data-join="' + target + '"]'))
+    .map(function (el) { return String(el.value || "").trim(); }).filter(Boolean);
+  const hid = scope.querySelector('input[name="' + target + '"]');
+  if (hid) hid.value = parts.join(" ");
+  ttFormSync();
+  recalcTotal();
+}
+function playerFieldsHtml(prefix, ev, opts) {
   const evName = ev.name;
+  const forTeam = !!(opts && opts.team);   // 団体メンバーには支部・出場経験・姓名の分割を出さない
   let h = "";
   const furi = fstFor(evName, "furigana");
   if (furi !== "hidden") {
     const lb = escapeHtml(flabel("furigana", "ふりがな"));
-    h += '<input type="text" name="' + prefix + '_furi" placeholder="' + lb + (furi === "required" ? " (必須)" : "") +
-      '" aria-label="' + lb + '"' + (furi === "required" ? " required" : "") + ' oninput="recalcTotal()" />';
+    const rq = furi === "required";
+    if (!forTeam && ttNameSplit(evName)) {
+      // 姓・名に分けて聞く。送信・照合は従来どおり「せい めい」を1つにした _furi を使う。
+      h += ttSplitInputs(prefix + "_furi", prefix + "_fsei", prefix + "_fmei", "せい", "めい", lb, rq);
+    } else {
+      h += '<input type="text" name="' + prefix + '_furi" placeholder="' + lb + (rq ? " (必須)" : "") +
+        '" aria-label="' + lb + '"' + (rq ? " required" : "") + ' oninput="recalcTotal()" />';
+    }
   }
   // 年齢自動判定が有効な種目は生年月日を入力(基準日=年度4/1 時点の満年齢で資格判定)。
   if (ev.age_check && ev.age_check.mode === "birthdate" && AGE_ASOF) {
@@ -1477,14 +1512,32 @@ function playerFieldsHtml(prefix, ev) {
     // 任意で出しているときはプレースホルダで用途を言う(例: 中3・高3が一般の部に出る場合)。
     const ph = grade === "required" ? lb + " (必須)"
       : (isStudentEvent(ev) ? lb : lb + " (学生の方のみ)");
-    h += '<input type="text" name="' + prefix + '_grade" placeholder="' + escapeHtml(ph) +
-      '" aria-label="' + lb + '"' + (grade === "required" ? " required" : "") + ' />';
+    // 学年は選択式(小1〜6・中1〜3・高1〜3・一般)。書き方のゆれで区分判定を誤らないため。
+    h += '<select name="' + prefix + '_grade" aria-label="' + lb + '"' + (grade === "required" ? " required" : "") + '>' +
+      '<option value="">' + escapeHtml(ph) + '</option>' +
+      TT_GRADES.map(function (g) { return '<option value="' + g + '">' + g + '</option>'; }).join("") + '</select>';
   }
   const pg = fstFor(evName, "player_gender");
   if (pg !== "hidden") {
     const lb = escapeHtml(flabel("player_gender", "性別"));
     h += '<select name="' + prefix + '_pgender" aria-label="' + lb + '"' + (pg === "required" ? " required" : "") +
       '><option value="">' + lb + '</option><option value="male">男</option><option value="female">女</option></select>';
+  }
+  const rg = forTeam ? "hidden" : fstFor(evName, "player_region");
+  if (rg !== "hidden") {
+    const lb = escapeHtml(flabel("player_region", "支部"));
+    h += '<select name="' + prefix + '_region" aria-label="' + lb + '"' + (rg === "required" ? " required" : "") + '>' +
+      '<option value="">' + lb + (rg === "required" ? " (必須)" : "") + '</option>' +
+      TT_BRANCHES.map(function (b) { return '<option value="' + b + '">' + b + '支部</option>'; }).join("") +
+      '<option value="道外">道外</option></select>';
+  }
+  const ft = forTeam ? "hidden" : fstFor(evName, "first_time");
+  if (ft !== "hidden") {
+    const lb = escapeHtml(flabel("first_time", "出場経験"));
+    const rq = ft === "required" ? " required" : "";
+    h += '<div class="first-time" role="radiogroup" aria-label="' + lb + '">' +
+      '<label><input type="radio" name="' + prefix + '_first" value="初めて"' + rq + ' onchange="recalcTotal()"> 初めて出場する</label>' +
+      '<label><input type="radio" name="' + prefix + '_first" value="出場したことがある"' + rq + ' onchange="recalcTotal()"> 出場したことがある</label></div>';
   }
   (FIELD_CFG.custom || []).filter(function (c) { return c && c.scope === "player"; }).forEach(function (c) {
     h += renderCustomClient(c, prefix + "_cust_" + c.key);
@@ -1670,15 +1723,15 @@ function addEntry(eventIdx) {
     // メンバーごとの可変項目(ふりがな・学年・性別・選手スコープの自由項目)。
     // 種目別設定で1つでも表示される項目があるときだけメンバーを枠で囲む
     // (何も無ければ従来どおり氏名だけのフラットな並び=既存の見た目を変えない)。
-    const memberFields = playerFieldsHtml('ev' + eventIdx + '_team' + idx + '_mx', ev);
+    const memberFields = playerFieldsHtml('ev' + eventIdx + '_team' + idx + '_mx', ev, { team: true });
     if (memberFields) {
       for (let i = 0; i < per; i++) {
         const pre = 'ev' + eventIdx + '_team' + idx + '_m' + i;
         // 最少人数を超える枠は「書く人だけ」。付随項目(ふりがな等)の見出しから「(必須)」を外す
         // ---書かない人の欄に必須と表示されていると、埋めないと送れないと誤解させる。
         // required 属性自体は残す(ttSyncRowRequired が、書き始めた人にだけ効かせ直す)。
-        const fields = i < minN ? playerFieldsHtml(pre + '_x', ev)
-          : playerFieldsHtml(pre + '_x', ev).split(' (必須)"').join('"');
+        const fields = i < minN ? playerFieldsHtml(pre + '_x', ev, { team: true })
+          : playerFieldsHtml(pre + '_x', ev, { team: true }).split(' (必須)"').join('"');
         html += '<div class="member-block" data-mi="' + i + '">' +
           '<div class="member-no">' + (i + 1) + '</div>' +
           '<div class="entry-grid">' +
@@ -1714,7 +1767,10 @@ function addEntry(eventIdx) {
     const side = (n) => '<div class="pair-side">' +
       '<div class="pair-no">選手' + n + '</div>' +
       '<div class="entry-grid">' +
-      '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n' + n + '" placeholder="氏名 (フルネーム)" aria-label="選手' + n + ' 氏名" oninput="recalcTotal()" />' +
+      (ttNameSplit(ev.name)
+        ? ttSplitInputs('ev' + eventIdx + '_pair' + idx + '_n' + n, 'ev' + eventIdx + '_pair' + idx + '_ns' + n,
+            'ev' + eventIdx + '_pair' + idx + '_nm' + n, '姓', '名', '選手' + n + ' 氏名', true)
+        : '<input type="text" name="ev' + eventIdx + '_pair' + idx + '_n' + n + '" placeholder="氏名 (フルネーム)" aria-label="選手' + n + ' 氏名" oninput="recalcTotal()" />') +
       teamInput(n) +
       playerFieldsHtml('ev' + eventIdx + '_pair' + idx + '_' + n, ev) +
       '</div></div>';
@@ -1726,7 +1782,10 @@ function addEntry(eventIdx) {
       (ptm === "required" ? " (必須)" : "") + '" aria-label="所属"' +
       (ptm === "required" ? " required" : "") + ' oninput="recalcTotal()" />';
     html += '<div class="entry-grid">' +
-      '<input type="text" name="ev' + eventIdx + '_p' + idx + '_name" placeholder="氏名 (フルネーム)" aria-label="氏名 (フルネーム)" oninput="recalcTotal()" />' +
+      (ttNameSplit(ev.name)
+        ? ttSplitInputs('ev' + eventIdx + '_p' + idx + '_name', 'ev' + eventIdx + '_p' + idx + '_nsei',
+            'ev' + eventIdx + '_p' + idx + '_nmei', '姓', '名', '氏名', true)
+        : '<input type="text" name="ev' + eventIdx + '_p' + idx + '_name" placeholder="氏名 (フルネーム)" aria-label="氏名 (フルネーム)" oninput="recalcTotal()" />') +
       teamInput +
       playerFieldsHtml('ev' + eventIdx + '_p' + idx, ev) +
       '</div>';
@@ -1868,6 +1927,9 @@ function gatherFormData() {
       const gender = q("_pgender");
       const ex = {};
       const g = q("_grade"); if (g) ex.grade = g;
+      const rgn = q("_region"); if (rgn) ex.player_region = rgn;   // 支部(選手ごと)
+      const ftEl = row.querySelector('[name$="' + token + '_first"]:checked');
+      if (ftEl) ex.first_time = ftEl.value;                         // 出場経験(初めて/出場したことがある)
       const bd = q("_bdate"); if (bd) ex.birth_date = bd;   // 年齢自動判定用(サーバが基準日で満年齢を検証)
       const ag = q("_age"); if (ag !== "") ex.age = parseInt(ag, 10);   // 紙の用紙と同じ「年齢」直接入力
       const answers = {};
@@ -1923,6 +1985,8 @@ function gatherFormData() {
         if (s2.furigana) obj.furigana2 = s2.furigana;
         if (s1.gender) obj.gender = s1.gender;
         if (s2.gender) obj.partner_gender = s2.gender;
+        if (s1.extra && s1.extra.player_region) obj.region1 = s1.extra.player_region;
+        if (s2.extra && s2.extra.player_region) obj.region2 = s2.extra.player_region;
         if (s1.extra || s2.extra) obj.extra_json = { players: [s1.extra || {}, s2.extra || {}] };
         // 年齢は集計シートの「年齢」列(紙の申込用紙と同じ並び)にそのまま入る形でも送る。
         if (s1.extra && s1.extra.age != null) obj.age1 = s1.extra.age;
@@ -1936,6 +2000,7 @@ function gatherFormData() {
         if (s.furigana) obj.furigana = s.furigana;
         if (s.gender) obj.gender = s.gender;
         if (s.extra) obj.extra_json = s.extra;
+        if (s.extra && s.extra.player_region) obj.region = s.extra.player_region;
         if (s.extra && s.extra.age != null) obj.age = s.extra.age;
       }
       data.entries.push(obj);

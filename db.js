@@ -569,6 +569,16 @@ try {
   if (!pcols.find(c => c.name === "merged_into")) {
     sqlite.exec("ALTER TABLE players ADD COLUMN merged_into TEXT");
   }
+  // 選手登録番号(ランダム6桁・変えない・使い回さない)と、統合した書き間違いの別名(JSON配列)。
+  // 申込の自動照合で「漢字+ふりがな一致」を判定するとき、別名も同じ人として数える。
+  // 単文DDLは prepare().run() で実行(静的SQL・注入なし)。
+  if (!pcols.find(c => c.name === "player_no")) {
+    sqlite.prepare("ALTER TABLE players ADD COLUMN player_no TEXT DEFAULT ''").run();
+  }
+  if (!pcols.find(c => c.name === "name_aliases")) {
+    sqlite.prepare("ALTER TABLE players ADD COLUMN name_aliases TEXT DEFAULT ''").run();
+  }
+  sqlite.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_players_player_no ON players(player_no) WHERE player_no <> ''").run();
   const tcols = sqlite.prepare("PRAGMA table_info(tournaments)").all();
   if (!tcols.find(c => c.name === "status")) {
     sqlite.exec("ALTER TABLE tournaments ADD COLUMN status TEXT DEFAULT 'scheduled'");
@@ -760,6 +770,9 @@ try {
   // {birth_date, age, grade, answers:{customKey:value}}。生年月日は選手マスタ(players)には絶対載せず
   // 大会エントリー申告として entrants のみに保持する(PII最小化・identity.md 準拠)。
   addECol("extra_json", "TEXT DEFAULT ''");
+  // 申込時の選手照合の結果(JSON)。{p1:{status,player_id,reason,candidates}, p2:{…}, at}。
+  // status: matched(自動一致) / review(要確認) / new(初出場の新規候補) / linked・created・dismissed(人が判断済み)。
+  addECol("player_match", "TEXT DEFAULT ''");
   // スーパーシード(登場ラウンド): 上位選手の予選免除。1=1回戦から(既定), R=R回戦から登場。
   // 標準配置の生成時に 2^(entry_round-1) ラウンドぶん BYE 上がりにする。
   addECol("entry_round", "INTEGER DEFAULT 1");
@@ -2007,6 +2020,19 @@ function mergePlayers(survivorId, dupId, opts = {}) {
       appearances = COALESCE(appearances,0) + ?,
       updated_at  = datetime('now','localtime')
       WHERE id = ?`).run(dup.furigana || "", dup.team || "", dup.branch || "", dup.note || "", dup.appearances || 0, survivorId);
+    // dup の氏名と別名を survivor の別名へ引き継ぐ(統合した書き間違いで申し込まれても自動照合で一致させる)。
+    {
+      const have = new Set([_playerNameKey(survivor.name), ..._parseAliases(survivor.name_aliases).map(_playerNameKey)]);
+      const merged = _parseAliases(survivor.name_aliases);
+      [dup.name, ..._parseAliases(dup.name_aliases)].forEach(n => {
+        const k = _playerNameKey(n);
+        if (k && !have.has(k)) { have.add(k); merged.push(normalizeName(n)); }
+      });
+      const after = merged.length ? JSON.stringify(merged) : (survivor.name_aliases || "");
+      before.aliases = survivor.name_aliases || "";
+      before.aliases_after = after;
+      if (after !== (survivor.name_aliases || "")) sqlite.prepare("UPDATE players SET name_aliases=? WHERE id=?").run(after, survivorId);
+    }
     // dup は削除せず「統合済み」として残す (旧IDのリンク温存 + 取り消し可能 + 改姓前表記の証跡)
     sqlite.prepare(`UPDATE players SET merged_into = ?, updated_at = datetime('now','localtime') WHERE id = ?`)
       .run(survivorId, dupId);
@@ -2082,6 +2108,10 @@ function unmergePlayers(mergeId, opts = {}) {
       updated_at = datetime('now','localtime') WHERE id = ?`)
       .run(undoFill("furigana"), undoFill("team"), undoFill("branch"), undoFill("note"),
         before.added_appearances || 0, log.survivor_id);
+    // 別名の引き継ぎを戻す(統合後に手で変えていなければ)
+    if (before.aliases_after != null && (cur.name_aliases || "") === before.aliases_after) {
+      sqlite.prepare("UPDATE players SET name_aliases=? WHERE id=?").run(before.aliases || "", log.survivor_id);
+    }
     sqlite.prepare(`UPDATE players SET merged_into = NULL, updated_at = datetime('now','localtime') WHERE id = ?`)
       .run(log.dup_id);
     sqlite.prepare(`UPDATE player_merges SET undone_at = datetime('now','localtime'), undo_operator = ? WHERE id = ?`)
@@ -10986,10 +11016,17 @@ function _enforceRequiredFields(t, formData, entries) {
   }
   const playerCustoms = (fc.custom || []).filter(c => c && c.scope === "player");
   // 選手スロット1つ分の必須検証(ふりがな/学年/選手 custom)。extra は当該選手の申告 object。
-  const checkSlot = (evName, extra) => {
+  const checkSlot = (evName, extra, slotOpts) => {
     const ex = (extra && typeof extra === "object") ? extra : {};
+    const person = !(slotOpts && slotOpts.team);   // 団体メンバーには支部・出場経験・姓名の分割を聞かない
+    if (person && stFor(evName, "name_split") !== "hidden" && slotOpts && slotOpts.name != null
+      && !/\s/.test(normalizeName(slotOpts.name))) return `${evName}: 氏名は姓と名の両方を入力してください`;
     if (stFor(evName, "furigana") === "required" && miss(ex.furigana)) return `${evName}: ふりがなを入力してください`;
+    if (person && stFor(evName, "name_split") !== "hidden" && stFor(evName, "furigana") === "required"
+      && !/\s/.test(normalizeName(ex.furigana))) return `${evName}: ふりがなは「せい」と「めい」の両方を入力してください`;
     if (stFor(evName, "grade") === "required" && miss(ex.grade)) return `${evName}: 学年を入力してください`;
+    if (person && stFor(evName, "player_region") === "required" && miss(ex.player_region)) return `${evName}: 支部を選んでください`;
+    if (person && stFor(evName, "first_time") === "required" && miss(ex.first_time)) return `${evName}: 初めて出場するかどうかを選んでください`;
     // 選手ごとの自由項目。表示条件の参照先は「同じ選手の回答」→無ければ「申込単位の回答」の順で解決
     // (申込単位の「宿泊が必要」チェック→選手ごとの「宿泊日数」のような組合せを許すため)。
     const getVal = (k) => {
@@ -11022,7 +11059,7 @@ function _enforceRequiredFields(t, formData, entries) {
       for (let i = 0; i < md.length; i++) {
         const m = md[i];
         if (!m || !String(m.name || "").trim()) continue;
-        const msg = checkSlot(evName, { furigana: m.furigana, grade: m.grade, answers: m.answers });
+        const msg = checkSlot(evName, { furigana: m.furigana, grade: m.grade, answers: m.answers }, { team: true });
         if (msg) return msg.replace(evName + ":", `${evName}: メンバー${i + 1}`);
       }
     } else if (type === "doubles" || type === "mixed") {
@@ -11034,12 +11071,12 @@ function _enforceRequiredFields(t, formData, entries) {
       // 合流しないと「ふりがな必須のダブルス種目は記入済みでも常にエラー」になる(2026-07-27修正)。
       if (n1) {
         if (stFor(evName, "player_team") === "required" && miss(ent.team1)) return `${evName}: 選手1の所属を入力してください`;
-        const m = checkSlot(evName, { furigana: ent.furigana1, ...(players[0] || {}) });
+        const m = checkSlot(evName, { furigana: ent.furigana1, ...(players[0] || {}) }, { name: n1 });
         if (m) return m.replace(evName + ":", evName + ": 選手1");
       }
       if (n2) {
         if (stFor(evName, "player_team") === "required" && miss(ent.team2)) return `${evName}: 選手2の所属を入力してください`;
-        const m = checkSlot(evName, { furigana: ent.furigana2, ...(players[1] || {}) });
+        const m = checkSlot(evName, { furigana: ent.furigana2, ...(players[1] || {}) }, { name: n2 });
         if (m) return m.replace(evName + ":", evName + ": 選手2");
       }
     } else {
@@ -11047,7 +11084,8 @@ function _enforceRequiredFields(t, formData, entries) {
       if (!name) continue;
       if (stFor(evName, "player_team") === "required" && miss(ent.team)) return `${evName}: 所属を入力してください`;
       // singles は furigana を entrant 直列(ent.furigana)+ 学年/custom を extra_json で持つ。
-      const m = checkSlot(evName, { furigana: ent.furigana, grade: ex.grade, answers: ex.answers });
+      const m = checkSlot(evName, { furigana: ent.furigana, grade: ex.grade, answers: ex.answers,
+        player_region: ex.player_region, first_time: ex.first_time }, { name });
       if (m) return m;
     }
   }
@@ -11221,6 +11259,7 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
     `SELECT id, submission_id FROM entrants WHERE tournament_id=? AND event=? AND name=? AND team=? AND partner_name=? LIMIT 1`);
 
   const createdEntrants = [];
+  const matchQueue = [];   // 保存後に選手DBと照合する entrant(個人戦・ダブルスのみ)
   const pricedEntries = [];   // 確認メール用: 実際に作成した申込のみ・権威料金(クライアント値に依存しない)
   const tpEntries = [];       // for tournament_players (status tracking)
   let token = "";
@@ -11322,6 +11361,9 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
           // 空なら createEntrant 側で苗字辞書補完にフォールバック(既存挙動)。
           furigana: ent.furigana1 || "", partner_furigana: ent.furigana2 || "",
           partner_gender: ent.partner_gender || "",
+          // 選手ごとの支部(フォームが選手1・選手2それぞれで集める)。
+          region: String(ent.region1 || ent.region || "").slice(0, 40),
+          partner_region: String(ent.region2 || "").slice(0, 40),
           note: noteBase,
         };
         emailItem = { type: "doubles", event: evName, name1: n1, name2: n2, team1, team2, fee, division_label: divLabel };
@@ -11331,7 +11373,8 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
         const team = String(ent.team || "").trim();
         if (!name) continue;
         // フォームが集めた選手のふりがな(field_config で furigana が可視のとき)。空なら苗字辞書補完。
-        data = { ...common, name, team, furigana: ent.furigana || "", note: noteBase };
+        data = { ...common, name, team, furigana: ent.furigana || "", note: noteBase,
+          region: String(ent.region || "").slice(0, 40) };
         emailItem = { type: "singles", event: evName, name, team, fee, division_label: divLabel };
       }
 
@@ -11350,6 +11393,9 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
 
       const e = createEntrant(data);
       createdEntrants.push(e);
+      // 選手照合の入力。entrant の furigana は空だと苗字辞書で補完されるため、照合には
+      // 申込者が実際に書いたふりがなだけを使う(推定の読みで「一致」と判定しない)。
+      if (type !== "team") matchQueue.push({ entrant_id: e.id, persons: _declaredPersons(ent, type) });
       // 集計シートの各行を申込へ紐づけるための識別子。どの申込のどの行かを一意に辿れるよう、
       // 作成された entrant の id と、送信データ内での位置を控える
       // (重複でスキップされた行があると位置がずれるため、位置も一緒に持つ)。
@@ -11464,6 +11510,13 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
     if (e !== mixedDuplicate) throw e;
     return { error: e.message, validation: true };
   }
+  // 申込の保存が済んでから選手DBと照合する。照合の失敗で申込そのものを落とさない。
+  if (matchQueue.length) {
+    try {
+      const pool = _loadPlayerMatchPool();
+      for (const q of matchQueue) _applyEntrantPlayerMatch(q.entrant_id, q.persons, pool);
+    } catch (err) { console.error("[player-match]", err && err.message); }
+  }
 
   return {
     ok: true,
@@ -11539,6 +11592,278 @@ function getEntries(tournamentId, statusFilter) {
 // 同じ人物の判定は選手DBの名寄せと同じく「漢字氏名(空白除去・旧字を新字へ畳む)+ふりがな」の両方一致。
 // ふりがなが片方でも無いときは裏が取れないので、漢字一致だけの「要確認」(level=name_only)として出す。
 // 取消・却下の出場は数えない。返り値: { entrant_id: [{kind, level, event, name, other_team, other_entrant_id}] }
+// ═══════════════════════════════════════════════════════
+// 申込の選手照合 (案A・2026-11-14 オーナー決定)
+// ═══════════════════════════════════════════════════════
+// 公開フォームには選手一覧も候補も出さない。申込を保存した後にサーバ側で選手DBと照らし合わせ、
+//   ・漢字(旧字・空白を畳む)とふりがなの両方が一致 → その選手IDを自動で付ける(matched)
+//   ・統合済みの書き間違い(name_aliases)も同じ人として数える
+//   ・漢字だけ一致/読みだけ一致/1字違い/DBに読みが無い → 要確認(review)。統合・確定は人の承認
+//   ・該当なしで「初めて出場する」 → 新規登録の候補(new)
+// 照合キーの正規化は名寄せ(findCrossGroupDuplicates)と同じ _foldNameVariants/_normName/_normFuri。
+const PLAYER_MATCH_DONE = new Set(["linked", "created", "dismissed"]);
+function _playerNameKey(s) { return _foldNameVariants(_normName(s)); }
+function _parseAliases(raw) {
+  try { const a = JSON.parse(raw || "[]"); return Array.isArray(a) ? a.filter(x => typeof x === "string") : []; }
+  catch (_) { return []; }
+}
+function _firstTimeOf(x) {
+  const v = x && typeof x === "object" ? x.first_time : "";
+  if (v === true || v === "yes" || v === "初めて") return "yes";
+  if (v === false || v === "no" || v === "出場したことがある") return "no";
+  return "";
+}
+// 申込データ(1行)から照合する人を取り出す。ふりがなは申込者が書いた値のみ。
+function _declaredPersons(ent, type) {
+  const ex = (ent && ent.extra_json && typeof ent.extra_json === "object") ? ent.extra_json : {};
+  if (type === "doubles" || type === "mixed") {
+    const pl = Array.isArray(ex.players) ? ex.players : [];
+    return [
+      { name: String(ent.name1 || "").trim(), furi: String(ent.furigana1 || ""), first_time: _firstTimeOf(pl[0]) },
+      { name: String(ent.name2 || "").trim(), furi: String(ent.furigana2 || ""), first_time: _firstTimeOf(pl[1]) },
+    ];
+  }
+  return [{ name: String(ent.name || "").trim(), furi: String(ent.furigana || ""), first_time: _firstTimeOf(ex) }];
+}
+function _loadPlayerMatchPool() {
+  const rows = sqlite.prepare(`SELECT id, name, furigana, team, branch, player_no, name_aliases
+    FROM players WHERE merged_into IS NULL`).all();
+  const byKey = new Map(), byFuri = new Map();
+  const push = (m, k, r) => { if (!k) return; const l = m.get(k) || []; if (!l.includes(r)) l.push(r); m.set(k, l); };
+  for (const r of rows) {
+    r._keys = [_playerNameKey(r.name), ..._parseAliases(r.name_aliases).map(_playerNameKey)].filter(Boolean);
+    r._furi = _normFuri(r.furigana);
+    r._keys.forEach(k => push(byKey, k, r));
+    push(byFuri, r._furi, r);
+  }
+  return { rows, byKey, byFuri };
+}
+function _oneCharOff(a, b) {
+  if (a.length !== b.length || a.length < 3) return false;
+  const A = [...a], B = [...b];
+  let d = 0;
+  for (let i = 0; i < A.length; i++) if (A[i] !== B[i] && ++d > 1) return false;
+  return d === 1;
+}
+function _matchCandidate(r, reason) {
+  return { player_id: r.id, player_no: r.player_no || "", name: r.name, furigana: r.furigana || "",
+    team: r.team || "", branch: r.branch || "", reason };
+}
+// 1人ぶんの照合。pool は _loadPlayerMatchPool() の戻り値。
+function matchPersonToPlayers(person, pool) {
+  const key = _playerNameKey(person && person.name);
+  const furi = _normFuri(person && person.furi);
+  const first = _firstTimeOf(person);
+  if (!key) return { status: "none" };
+  const exact = pool.byKey.get(key) || [];
+  const strong = furi ? exact.filter(r => r._furi && r._furi === furi) : [];
+  if (strong.length === 1) {
+    return { status: "matched", player_id: strong[0].id, first_time: first,
+      reason: first === "yes" ? "漢字・ふりがな一致(本人は初出場と回答)" : "漢字・ふりがな一致",
+      candidates: [_matchCandidate(strong[0], "漢字・ふりがな一致")] };
+  }
+  const cands = [], seen = new Set();
+  const add = (r, why) => { if (!seen.has(r.id)) { seen.add(r.id); cands.push(_matchCandidate(r, why)); } };
+  strong.forEach(r => add(r, "漢字・ふりがな一致(同じ人が複数)"));
+  exact.forEach(r => add(r, !furi ? "漢字一致(申込にふりがな無し)"
+    : (!r._furi ? "漢字一致(登録にふりがな無し)" : "漢字一致・読みが違う")));
+  if (furi) (pool.byFuri.get(furi) || []).forEach(r => { if (!r._keys.includes(key)) add(r, "読み一致・漢字が違う"); });
+  for (const r of pool.rows) {
+    if (cands.length >= 8) break;
+    if (r._keys.some(k => _oneCharOff(k, key))) add(r, "1字違い");
+  }
+  if (cands.length) return { status: "review", first_time: first, reason: cands[0].reason, candidates: cands.slice(0, 8) };
+  if (first === "yes") return { status: "new", first_time: first, reason: "初出場(登録なし)", candidates: [] };
+  return { status: "review", first_time: first, reason: first === "no" ? "出場歴ありと回答・登録が見つからない" : "登録が見つからない", candidates: [] };
+}
+function _readPlayerMatch(e) {
+  try { const o = JSON.parse((e && e.player_match) || "{}"); return o && typeof o === "object" ? o : {}; }
+  catch (_) { return {}; }
+}
+function _applyEntrantPlayerMatch(entrantId, persons, pool) {
+  const e = entrantStmts.get.get(entrantId);
+  if (!e) return null;
+  const prev = _readPlayerMatch(e);
+  const out = { at: new Date().toISOString() };
+  ["p1", "p2"].forEach((slot, i) => {
+    const p = persons[i];
+    if (!p || !p.name) return;
+    if (prev[slot] && PLAYER_MATCH_DONE.has(prev[slot].status)) { out[slot] = prev[slot]; return; }   // 人の判断は上書きしない
+    const r = matchPersonToPlayers(p, pool);
+    if (r.status === "none") return;
+    out[slot] = Object.assign({ name: normalizeName(p.name), furigana: String(p.furi || "").trim() }, r);
+    const linked = i === 0 ? e.player_id : e.partner_player_id;
+    if (r.status === "matched" && !linked) linkEntrantToPlayer(entrantId, r.player_id, i === 1);
+  });
+  sqlite.prepare("UPDATE entrants SET player_match=? WHERE id=?").run(JSON.stringify(out), entrantId);
+  return out;
+}
+// 既存の申込をもう一度照合する(選手DBを取り込んだ後など)。人が判断済みの枠は変えない。
+function rematchTournamentPlayers(tournamentId) {
+  const rows = sqlite.prepare(`SELECT * FROM entrants WHERE tournament_id=? AND status!='cancelled'
+    AND (team_members IS NULL OR team_members='')`).all(tournamentId);
+  const pool = _loadPlayerMatchPool();
+  let n = 0;
+  for (const e of rows) {
+    const pm = _readPlayerMatch(e);
+    const persons = [
+      { name: e.name, furi: (pm.p1 && pm.p1.furigana) || "", first_time: pm.p1 && pm.p1.first_time },
+      e.is_doubles ? { name: e.partner_name, furi: (pm.p2 && pm.p2.furigana) || "", first_time: pm.p2 && pm.p2.first_time } : null,
+    ];
+    if (!e.player_match) continue;   // 申込時の読みが残っていない行(旧申込)は推定の読みで照合しない
+    _applyEntrantPlayerMatch(e.id, persons, pool);
+    n++;
+  }
+  return { ok: true, rematched: n };
+}
+// 選手登録台帳(data/選手登録/tools/registry.json・git管理外)を選手DBへ取り込む。
+// 台帳の6桁IDを player_no にし、統合した書き間違いを別名に入れる。既存の選手とは
+// 「漢字(旧字・空白を畳む)一致が1人だけ、かつふりがなが食い違わない」ときだけ結び付け、
+// 2人以上いる・読みが違うときは取り込まず報告する(誤統合しない。判断は人)。
+// opts.apply=false(既定)は書き込まずに結果だけ返す。
+function importPlayerRegistry(registry, opts) {
+  opts = opts || {};
+  const players = (registry && registry.players) || {};
+  const G = { "男": "male", "女": "female" };
+  const C = { "一般": "general", "中学": "middle", "中学生": "middle", "高校": "high", "高校生": "high", "小学": "elementary", "小学生": "elementary" };
+  const out = { total: 0, linked: 0, created: 0, already: 0, aliases_added: 0, furigana_filled: 0, skipped: [] };
+  const run = () => {
+    const pool = _loadPlayerMatchPool();
+    const byNo = new Map(pool.rows.filter(r => r.player_no).map(r => [r.player_no, r]));
+    for (const no of Object.keys(players)) {
+      const p = players[no];
+      if (!/^\d{6}$/.test(no) || !p || !p.name) { out.skipped.push({ no, reason: "番号または氏名が不正" }); continue; }
+      out.total++;
+      const key = _playerNameKey(p.name);
+      const aliasesOf = (row) => {
+        const have = new Set([_playerNameKey(row ? row.name : p.name), ...(row ? _parseAliases(row.name_aliases).map(_playerNameKey) : [])]);
+        const add = [];
+        (Array.isArray(p.keys) ? p.keys : []).forEach(k => { const kk = _playerNameKey(k); if (kk && !have.has(kk)) { have.add(kk); add.push(String(k)); } });
+        return add;
+      };
+      let row = byNo.get(no) || null;
+      if (row) out.already++;
+      else {
+        const cands = (pool.byKey.get(key) || []).filter(r => !r.player_no);
+        const furi = _normFuri(p.furigana);
+        const fit = cands.filter(r => !furi || !r._furi || r._furi === furi);
+        if (fit.length > 1) { out.skipped.push({ no, name: p.name, reason: "同じ漢字の選手が複数(人が判断)" }); continue; }
+        if (cands.length && !fit.length) { out.skipped.push({ no, name: p.name, reason: "同じ漢字で読みが違う選手がいる(人が判断)" }); continue; }
+        if (fit.length === 1) {
+          row = fit[0];
+          out.linked++;
+          if (opts.apply) sqlite.prepare("UPDATE players SET player_no=? WHERE id=?").run(no, row.id);
+        } else {
+          out.created++;
+          if (opts.apply) {
+            const np = createPlayer({ name: p.name, furigana: p.furigana || "", team: p.main_team || "",
+              gender: G[p.gender] || "male", category: C[p.category] || "general", _allowAnyName: true });
+            sqlite.prepare("UPDATE players SET player_no=? WHERE id=?").run(no, np.id);
+            row = sqlite.prepare("SELECT * FROM players WHERE id=?").get(np.id);
+          }
+        }
+      }
+      if (!row) continue;
+      const add = aliasesOf(row);
+      if (add.length) {
+        out.aliases_added += add.length;
+        if (opts.apply) sqlite.prepare("UPDATE players SET name_aliases=? WHERE id=?").run(JSON.stringify([..._parseAliases(row.name_aliases), ...add]), row.id);
+      }
+      if (p.furigana && !String(row.furigana || "").trim()) {
+        out.furigana_filled++;
+        if (opts.apply) sqlite.prepare("UPDATE players SET furigana=? WHERE id=?").run(p.furigana, row.id);
+      }
+    }
+  };
+  if (opts.apply) sqlite.transaction(run)(); else run();
+  out.applied = !!opts.apply;
+  return out;
+}
+function _genPlayerNo() {
+  const has = sqlite.prepare("SELECT 1 FROM players WHERE player_no=?");
+  for (let i = 0; i < 200; i++) {
+    const no = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
+    if (!has.get(no)) return no;
+  }
+  throw new Error("選手番号を発番できませんでした");
+}
+// 要確認・新規候補の一覧(管理画面)。summary は状態ごとの件数。
+function getPlayerMatchReview(tournamentId) {
+  const rows = sqlite.prepare(`SELECT id, event, name, team, partner_name, partner_team, region, partner_region,
+      is_doubles, player_id, partner_player_id, player_match, submission_id
+    FROM entrants WHERE tournament_id=? AND status!='cancelled' AND player_match<>''
+    ORDER BY event, applied_at, id`).all(tournamentId);
+  const summary = { matched: 0, review: 0, new: 0, linked: 0, created: 0, dismissed: 0 };
+  const items = [];
+  for (const e of rows) {
+    const pm = _readPlayerMatch(e);
+    ["p1", "p2"].forEach(slot => {
+      const m = pm[slot];
+      if (!m || !m.status) return;
+      if (summary[m.status] != null) summary[m.status]++;
+      items.push({ entrant_id: e.id, slot, event: e.event, status: m.status, reason: m.reason || "",
+        name: m.name || (slot === "p1" ? e.name : e.partner_name), furigana: m.furigana || "",
+        team: slot === "p1" ? e.team : e.partner_team, region: slot === "p1" ? e.region : e.partner_region,
+        first_time: m.first_time || "", player_id: slot === "p1" ? e.player_id : e.partner_player_id,
+        candidates: m.candidates || [] });
+    });
+  }
+  return { summary, items };
+}
+// 人の判断を反映する。action: link(既存の選手に付ける) / create(新規登録) / dismiss(照合しない) / reopen。
+function resolveEntrantPlayerMatch(entrantId, slot, action, opts) {
+  opts = opts || {};
+  const e = entrantStmts.get.get(entrantId);
+  if (!e) return { error: "申込が見つかりません", status: 404 };
+  if (slot !== "p1" && slot !== "p2") return { error: "slot が不正です" };
+  const isPartner = slot === "p2";
+  if (isPartner && !e.is_doubles) return { error: "ダブルスではありません" };
+  const pm = _readPlayerMatch(e);
+  const m = pm[slot] || { name: isPartner ? e.partner_name : e.name, furigana: "" };
+  const name = m.name || (isPartner ? e.partner_name : e.name);
+  const furi = String(m.furigana || "").trim();
+  let player = null;
+  const tx = sqlite.transaction(() => {
+    if (action === "link") {
+      const pid = resolvePlayerId(String(opts.player_id || ""));
+      player = pid ? sqlite.prepare("SELECT * FROM players WHERE id=? AND merged_into IS NULL").get(pid) : null;
+      if (!player) throw Object.assign(new Error("選手が見つかりません"), { status: 404 });
+      // 登録に読みが無ければ申込の読みで補う。違う表記で申し込まれたら別名として残し、次回から自動一致させる。
+      if (!String(player.furigana || "").trim() && furi) {
+        sqlite.prepare("UPDATE players SET furigana=?, updated_at=datetime('now','localtime') WHERE id=?").run(furi, player.id);
+      }
+      const key = _playerNameKey(name);
+      const aliases = _parseAliases(player.name_aliases);
+      if (key && key !== _playerNameKey(player.name) && !aliases.some(a => _playerNameKey(a) === key)) {
+        aliases.push(normalizeName(name));
+        sqlite.prepare("UPDATE players SET name_aliases=? WHERE id=?").run(JSON.stringify(aliases), player.id);
+      }
+      linkEntrantToPlayer(entrantId, player.id, isPartner);
+      pm[slot] = Object.assign({}, m, { status: "linked", player_id: player.id, by: String(opts.by || "").slice(0, 40) });
+    } else if (action === "create") {
+      const _eg = _eventGender(e.event);
+      const g = (_eg === "male" || _eg === "female") ? _eg : (isPartner ? (e.partner_gender || e.gender || "male") : (e.gender || "male"));
+      player = createPlayer({ name, team: isPartner ? e.partner_team : e.team, branch: isPartner ? e.partner_region : e.region,
+        gender: g, category: e.category, furigana: furi });
+      sqlite.prepare("UPDATE players SET player_no=? WHERE id=?").run(_genPlayerNo(), player.id);
+      linkEntrantToPlayer(entrantId, player.id, isPartner);
+      pm[slot] = Object.assign({}, m, { status: "created", player_id: player.id, by: String(opts.by || "").slice(0, 40) });
+    } else if (action === "dismiss") {
+      pm[slot] = Object.assign({}, m, { status: "dismissed", by: String(opts.by || "").slice(0, 40) });
+    } else if (action === "reopen") {
+      linkEntrantToPlayer(entrantId, null, isPartner);
+      pm[slot] = Object.assign({}, m, { status: "review", player_id: null });
+    } else {
+      throw Object.assign(new Error("action が不正です"), { status: 400 });
+    }
+    pm.at = new Date().toISOString();
+    sqlite.prepare("UPDATE entrants SET player_match=? WHERE id=?").run(JSON.stringify(pm), entrantId);
+  });
+  try { tx(); }
+  catch (err) { return { error: err.message, status: err.status || 400 }; }
+  return { ok: true, slot, match: pm[slot], player: player ? getPlayer(player.id) : null };
+}
+
 function findCrossGroupDuplicates(tournamentId) {
   const rows = sqlite.prepare(`SELECT e.*, s.team_name AS sub_team FROM entrants e
     LEFT JOIN entry_submissions s ON s.id = e.submission_id
@@ -11883,7 +12208,7 @@ function bulkFixEntrantInference(tournamentId, opts) {
 const FIELD_LABELS = {
   team_name: "団体名", furigana: "ふりがな", player_team: "所属", grade: "学年",
   player_gender: "性別", birth_date: "生年月日", supervisor: "引率顧問", advisor: "顧問",
-  coach: "コーチ", note: "備考",
+  coach: "コーチ", note: "備考", player_region: "支部", first_time: "出場経験", name_split: "氏名を姓・名に分ける",
 };
 const DEFAULT_FIELD_CONFIG = {
   version: 2,
@@ -11897,6 +12222,9 @@ const DEFAULT_FIELD_CONFIG = {
     advisor: "hidden",         // 顧問 = 新設。既定は非表示(現行フォームに無いため=後方互換)
     coach: "optional",         // コーチ = 現行は任意
     note: "optional",          // 通信欄 = 現行は任意
+    name_split: "hidden",      // 氏名・ふりがなを姓/名に分けて聞く(選手登録つきの申込)。既定は従来の1欄
+    player_region: "hidden",   // 選手ごとの支部 = 既定は非表示
+    first_time: "hidden",      // 初めて出場する/出場したことがある = 既定は非表示(初出場=新規登録の候補)
   },
   custom: [],                  // 主催者定義の自由項目
   event_overrides: {},         // 種目名 → {key:"required|optional|hidden"} の上書き
@@ -11975,7 +12303,7 @@ function buildFormSchema(tournament) {
   // 選手行シート(シングルス/団体/ダブルス/ミックス)に足す列。氏名・年齢・チーム名・区分は固定列。
   // 生年月日は「年齢」列で用が足り、かつ個人情報を集計表に増やさないため既定では列にしない。
   const player = [];
-  ["furigana", "grade", "player_gender"].forEach(k => { if (visibleAnywhere(k)) player.push(col(k)); });
+  ["furigana", "grade", "player_gender", "player_region", "first_time"].forEach(k => { if (visibleAnywhere(k)) player.push(col(k)); });
   player.push(...customOf("player"));
 
   return {
@@ -14555,6 +14883,8 @@ module.exports = {
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
   getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII,
+  importPlayerRegistry,
+  matchPersonToPlayers, getPlayerMatchReview, resolveEntrantPlayerMatch, rematchTournamentPlayers,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel, entryClosedReason: _entryClosedReason,
   getManualSubmissionView, createManualSubmission, publicEntryOperationId,

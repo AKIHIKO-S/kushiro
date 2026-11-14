@@ -2923,6 +2923,7 @@ const A = {
  h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm", onClick: () => { A._entriesTid = t.id; A.showTab("entries"); } }, "出場者の一覧"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openSubmissionList(t) }, "申込の一覧"),
+ h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openPlayerMatch(t) }, "選手の照合"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openManualSubmission(t, () => A.openTournament(t.id)) }, "本部で申込を登録"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openEntryChanges(t) }, "変更履歴"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.fetchGasStats(t) }, "シートの集計を取得"),
@@ -3782,6 +3783,98 @@ const A = {
    load();
  },
 
+ // 選手の照合(案A): 申込の氏名・ふりがなを選手DBと突き合わせた結果。漢字とふりがなの両方が
+ // 一致した人は自動で付いている。要確認・新規候補だけを人が判断する(統合・確定は人の承認)。
+ async openPlayerMatch(t) {
+   const body = h("div", {});
+   let bg = null, filt = "todo";
+   const ST = { matched: ["自動で一致", "#166534"], review: ["要確認", "#92400e"], new: ["新規候補", "#1e40af"],
+     linked: ["確認済み", "#166534"], created: ["新規登録済み", "#166534"], dismissed: ["照合しない", "#57534e"] };
+   const act = async (it, action, playerId, btn) => {
+     if (btn) btn.disabled = true;
+     const r = await api.post(`/api/entrants/${it.entrant_id}/player-match`, { slot: it.slot, action, player_id: playerId || "" });
+     if (!r || r.error) { toast((r && r.error) || "保存できませんでした", "err"); if (btn) btn.disabled = false; return; }
+     toast(action === "create" ? `新規登録しました（選手番号 ${r.player?.player_no || ""}）`
+       : action === "link" ? "選手に付けました" : action === "dismiss" ? "照合しない扱いにしました" : "やり直せる状態に戻しました", "ok");
+     load();
+   };
+   const personCell = (it) => h("td", { className: "text-sm" },
+     h("b", {}, it.name || "(氏名なし)"),
+     h("div", { className: "text-xs text-sub" }, [it.furigana || "ふりがな未記入", it.team, it.region].filter(Boolean).join("・")
+       + (it.first_time === "yes" ? "・初めて出場" : it.first_time === "no" ? "・出場したことがある" : "")));
+   const opsCell = (it) => {
+     const td = h("td", { className: "text-xs" });
+     if (it.status === "review" || it.status === "new") {
+       const list = h("div", { style: { display: "grid", gap: "4px", marginBottom: "6px" } });
+       (it.candidates || []).forEach(c => {
+         const b = h("button", { className: "btn btn-sm btn-ghost", style: { justifyContent: "flex-start", textAlign: "left" },
+           title: "この選手と同じ人として付けます。違う表記は別名として残り、次から自動で一致します" },
+           `${c.name}（${c.furigana || "読み未登録"}）${c.team ? "・" + c.team : ""}${c.player_no ? "・No." + c.player_no : ""}　${c.reason}`);
+         b.addEventListener("click", () => act(it, "link", c.player_id, b));
+         list.appendChild(b);
+       });
+       if (!(it.candidates || []).length) list.appendChild(h("div", { className: "text-sub" }, "似た登録はありません"));
+       const nb = h("button", { className: "btn btn-sm" }, "新しい選手として登録");
+       nb.addEventListener("click", () => act(it, "create", "", nb));
+       const db_ = h("button", { className: "btn btn-sm btn-ghost" }, "照合しない");
+       db_.addEventListener("click", () => act(it, "dismiss", "", db_));
+       td.append(list, h("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" } }, nb, db_));
+     } else if (it.status !== "matched") {
+       const rb = h("button", { className: "btn btn-sm btn-ghost" }, "やり直す");
+       rb.addEventListener("click", () => act(it, "reopen", "", rb));
+       td.appendChild(rb);
+     } else {
+       const rb = h("button", { className: "btn btn-sm btn-ghost", title: "自動の一致を外して、人が選び直します" }, "付け直す");
+       rb.addEventListener("click", () => act(it, "reopen", "", rb));
+       td.appendChild(rb);
+     }
+     return td;
+   };
+   const load = async () => {
+     body.replaceChildren(h("div", { className: "text-sub", style: { padding: "12px" } }, "読み込み中…"));
+     const d = await api.get(`/api/tournaments/${t.id}/player-matches`);
+     if (!d || d.error) { body.replaceChildren(h("div", { className: "text-sm", style: { color: "#b91c1c" } }, (d && d.error) || "読み込めませんでした")); return; }
+     const s = d.summary || {};
+     const todo = (s.review || 0) + (s.new || 0);
+     const items = (d.items || []).filter(it => filt === "all" || it.status === "review" || it.status === "new");
+     const tb = h("tbody", {});
+     items.forEach(it => {
+       const st = ST[it.status] || [it.status, "#57534e"];
+       tb.appendChild(h("tr", {},
+         h("td", { className: "text-xs" }, it.event, it.slot === "p2" ? h("div", { className: "text-sub" }, "ペアの2人目") : null),
+         personCell(it),
+         h("td", { className: "text-xs" }, h("span", { style: { color: st[1], fontWeight: "700" } }, st[0]),
+           it.reason ? h("div", { className: "text-sub" }, it.reason) : null),
+         opsCell(it)));
+     });
+     if (!items.length) tb.appendChild(h("tr", {}, h("td", { colSpan: 4, className: "text-sub text-sm" },
+       filt === "all" ? "照合した申込はまだありません" : "確認が必要な申込はありません")));
+     const tbl = h("table", { className: "tbl", style: { minWidth: "640px" } },
+       h("thead", {}, h("tr", {}, h("th", {}, "種目"), h("th", {}, "申込の氏名"), h("th", {}, "状態"), h("th", {}, "判断"))), tb);
+     body.replaceChildren(
+       h("p", { className: "text-sm", style: { margin: "0 0 6px" } },
+         `自動で一致 ${s.matched || 0}人・要確認 ${s.review || 0}人・新規候補 ${s.new || 0}人・確認済み ${(s.linked || 0) + (s.created || 0) + (s.dismissed || 0)}人`),
+       h("p", { className: "text-xs text-sub", style: { margin: "0 0 10px", lineHeight: "1.6" } },
+         "漢字とふりがなの両方が登録と一致した人は自動で付いています。似た登録がある人・初めて出場する人は、ここで同じ人か新しい人かを決めてください。"),
+       h("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" } },
+         ...[["todo", `確認が必要（${todo}）`], ["all", "すべて"]].map(([v, l]) =>
+           h("button", { className: "btn btn-sm" + (filt === v ? "" : " btn-ghost"), onClick: () => { filt = v; load(); } }, l))),
+       h("div", { style: { overflowX: "auto" } }, tbl));
+   };
+   const again = h("button", { className: "btn btn-ghost", title: "選手の登録を直した後などに、未判断の申込をもう一度照らし合わせます" }, "もう一度照合");
+   again.addEventListener("click", async () => {
+     again.disabled = true;
+     const r = await api.post(`/api/tournaments/${t.id}/player-matches/rematch`, {});
+     again.disabled = false;
+     if (!r || r.error) return toast((r && r.error) || "照合できませんでした", "err");
+     toast(`${r.rematched}件を照合し直しました`, "ok");
+     load();
+   });
+   bg = openModal(`選手の照合 — ${t.name}`, body, h("div", { className: "flex gap-2" },
+     again, h("button", { className: "btn btn-ghost", onClick: () => bg.remove() }, "閉じる")), { size: "lg" });
+   load();
+ },
+
  async openManualSubmission(t, onDone) {
    const path = `/api/tournaments/${t.id}/desk/manual`;
    const view = await api.get(path);
@@ -3952,10 +4045,21 @@ const A = {
    ["team_name", "団体名"], ["furigana", "選手のふりがな"], ["player_team", "選手の所属"],
    ["grade", "選手の学年"], ["player_gender", "選手の性別"], ["supervisor", "引率顧問"],
    ["advisor", "顧問"], ["coach", "コーチ"], ["note", "通信欄"],
+   ["name_split", "氏名を姓・名に分ける"], ["player_region", "選手の支部"], ["first_time", "選手の出場経験"],
  ];
  const fieldCfgBox = h("div", {});
  const renderFieldCfg = () => {
    clear(fieldCfgBox);
+   // 選手登録つきの申込(2026-11 オーナー決定)に必要な項目を一度に必須へ。申込後に選手DBと
+   // 自動照合し(漢字+ふりがな一致)、初めて出場する人は新規登録の候補になる。
+   fieldCfgBox.appendChild(h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginBottom: "8px" } },
+     h("button", { type: "button", className: "btn btn-sm btn-ghost", onClick: () => {
+       ["name_split", "furigana", "player_team", "grade", "player_gender", "player_region", "first_time"]
+         .forEach(k => { fieldCfg.fields[k] = "required"; });
+       renderFieldCfg(); refreshCode();
+       toast("選手登録用の項目を必須にしました（保存で反映）", "ok");
+     } }, "選手登録用の項目をまとめて必須にする"),
+     h("span", { className: "text-xs text-sub" }, "姓・名、せい・めい、所属、学年、性別、支部、出場経験")));
    const grid = h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 14px", marginBottom: "10px" } });
    STD_FIELDS.forEach(([key, label]) => {
      const cur = fieldCfg.fields[key] || "hidden";
@@ -3991,6 +4095,7 @@ const A = {
    const PER_EVENT_FIELDS = [
      ["furigana", "ふりがな"], ["player_team", "所属"],
      ["grade", "学年"], ["player_gender", "性別"],
+     ["player_region", "支部"], ["first_time", "出場経験"],
    ];
    const evNames = events.map(e => e && e.name).filter(Boolean);
    const ovDetails = h("details", { style: { margin: "4px 0 10px" } },
@@ -6380,6 +6485,9 @@ const A = {
    h("button", { className: "btn btn-sm btn-ghost",
      title: "申込ごとの出場件数・別団体との重複・シート反映。申込内容の修正もここから",
      onClick: () => A.openSubmissionList(t) }, "申込の一覧"),
+   h("button", { className: "btn btn-sm btn-ghost",
+     title: "申込の氏名・ふりがなを選手データベースと照らし合わせた結果。要確認・新規候補をここで決める",
+     onClick: () => A.openPlayerMatch(t) }, "選手の照合"),
    h("button", { className: "btn btn-sm btn-ghost",
      title: "申込後の修正・取消・種目追加の記録",
      onClick: () => A.openEntryChanges(t) }, "変更履歴"),
