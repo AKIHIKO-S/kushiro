@@ -10556,6 +10556,150 @@ function getSubmissionList(tournamentId) {
     unlinked: all.filter(e => !e.submission_id || !subs.find(s => s.id === e.submission_id)).length };
 }
 
+// ── 受付台帳(申込集計モードの受付画面) ─────────────────────────────
+// 申込(entry_submissions)を団体ごとの1行にし、種目ごとの出場数を並べる。
+// 出場数の定義は集計Excel・summarizeEntries と同じ「status=confirmed の出場」。
+function _deskState(t) {
+  const today = _nowJST().slice(0, 10);
+  if (["cancelled", "completed"].includes(t.status)) return "closed";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t.date || "") && t.date < today) return "closed";
+  const limit = entryDeadlineAt(t);
+  if (limit && _nowJST() > limit) return "closed";
+  return t.entries_open ? "open" : "before";
+}
+function _deskDaysLeft(t) {
+  const d = String(t.entry_deadline || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  const today = _nowJST().slice(0, 10);
+  return Math.round((Date.parse(d + "T00:00:00Z") - Date.parse(today + "T00:00:00Z")) / 86400000);
+}
+// 申込の経路。手入力(本部)とExcel取込は admin として入り、payload に経路が残る
+function _deskRoute(sub) {
+  if (sub.source !== "admin") return "web";
+  let p = null;
+  try { p = sub.payload_json ? JSON.parse(sub.payload_json) : null; } catch (_) {}
+  const r = String((p && (p.route || p.intake || p.channel)) || "");
+  return /excel|xlsx/i.test(r) ? "excel" : "manual";
+}
+// 確認事項の種類と、本部の人に見せる平易な見出し
+const _DESK_ISSUE = {
+  missing_furigana: ["kana", "ふりがなが空欄です"],
+  club_variant: ["name", "所属の表記が揺れています"],
+  age_mismatch: ["class", "区分と年齢が合いません"],
+  birth_missing: ["class", "生年月日が入っていません"],
+  gender_mismatch: ["other", "性別が種目と合いません"],
+  category_mismatch: ["other", "区分が種目と合いません"],
+  missing_name: ["other", "氏名が空欄です"],
+  duplicate_entry: ["other", "同じ団体の中で重なっています"],
+  player_link_mismatch: ["other", "選手の結びつけを確認してください"],
+};
+function _deskLabel(e) {
+  const mem = entrantMembers(e);
+  if (mem && mem.length && isTeamEntrant(e)) return `${e.display_name || e.name || e.team || ""}（${mem.length}名）`;
+  if (e.is_doubles && e.partner_name) return `${normalizeName(e.name)}・${normalizeName(e.partner_name)}`;
+  return e.display_name || normalizeName(e.name || "");
+}
+function getEntryDeskList() {
+  const ts = sqlite.prepare(`SELECT * FROM tournaments`).all();
+  const cnt = sqlite.prepare(`SELECT tournament_id AS tid, COUNT(*) AS n, COUNT(DISTINCT submission_id) AS subs
+    FROM entrants WHERE COALESCE(status,'confirmed')='confirmed' GROUP BY tournament_id`).all();
+  const by = {}; cnt.forEach(r => { by[r.tid] = r; });
+  const subN = {}; sqlite.prepare(`SELECT tournament_id AS tid, COUNT(*) AS n FROM entry_submissions GROUP BY tournament_id`)
+    .all().forEach(r => { subN[r.tid] = r.n; });
+  const items = ts.map(t => ({
+    id: t.id, name: t.name, date: t.date || "", venue: t.venue || "", deadline: t.entry_deadline || "",
+    entry_open: !!t.entries_open, state: _deskState(t), days_left: _deskDaysLeft(t),
+    entries: (by[t.id] && by[t.id].n) || 0, teams: subN[t.id] || 0,
+  }));
+  const rank = { open: 0, before: 1, closed: 2 };
+  items.sort((a, b) => rank[a.state] - rank[b.state]
+    || (a.state === "closed" ? String(b.date).localeCompare(String(a.date))
+      : String(a.deadline || a.date || "9999").localeCompare(String(b.deadline || b.date || "9999"))));
+  return { items };
+}
+function getEntryDesk(tournamentId) {
+  const t = stmts.getTournament.get(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  const subs = submissionStmts.listByTournament.all(t.id);
+  const all = sqlite.prepare(`SELECT * FROM entrants WHERE tournament_id=?`).all(t.id);
+  let cross = {};
+  try { cross = findCrossGroupDuplicates(t.id); } catch (err) { console.error("desk cross dup:", err.message); }
+  let data = [];
+  try { data = findEntrantDataIssues(t.id).items || []; } catch (err) { console.error("desk issues:", err.message); }
+  const dataBy = {}; data.forEach(d => { dataBy[d.id] = d.issues; });
+  const ents = {};   // submission_id -> entrants
+  all.forEach(e => { if (e.submission_id) (ents[e.submission_id] = ents[e.submission_id] || []).push(e); });
+  const subTeam = {}; subs.forEach(s => { subTeam[s.id] = s.team_name || ""; });
+  const entSub = {}; all.forEach(e => { entSub[e.id] = e.submission_id || ""; });
+
+  // 種目の並び: 要項(event_config)の順。実データだけにある種目は末尾
+  const evNames = [];
+  try {
+    const cfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []);
+    (Array.isArray(cfg) ? cfg : []).forEach(c => { if (c && c.name && !evNames.includes(String(c.name))) evNames.push(String(c.name)); });
+  } catch (_) {}
+  all.forEach(e => { if (isConfirmedEntry(e) && e.event && !evNames.includes(e.event)) evNames.push(e.event); });
+  const evCount = {}; evNames.forEach(n => { evCount[n] = 0; });
+
+  const byRoute = { web: 0, excel: 0, manual: 0 };
+  let checks = 0, sheetUnknown = 0;
+  const rows = subs.map(s => {
+    const list = ents[s.id] || [];
+    const live = list.filter(isConfirmedEntry);
+    const route = _deskRoute(s);
+    byRoute[route]++;
+    const byEvent = {};
+    live.forEach(e => { byEvent[e.event] = (byEvent[e.event] || 0) + 1; evCount[e.event] = (evCount[e.event] || 0) + 1; });
+    const issues = [];
+    live.forEach(e => {
+      (cross[e.id] || []).forEach(c => {
+        const ids = [e.id, c.other_entrant_id].sort();
+        const key = `dup:${e.event}:${ids.join("+")}`;
+        if (issues.some(i => i.key === key)) return;
+        const other = subTeam[entSub[c.other_entrant_id]] || c.other_team || "別の団体";
+        issues.push({ key, type: "dup", title: "別の団体と重複の疑い", entrant_id: e.id,
+          detail: `${c.name} さんが ${other} からも同じ種目（${e.event}）に申し込んでいます` });
+      });
+      (dataBy[e.id] || []).forEach(d => {
+        const m = _DESK_ISSUE[d.code] || ["other", "内容を確認してください"];
+        const key = `${d.code}:${e.id}`;
+        let detail = `${_deskLabel(e)}（${e.event}）`;
+        if (d.code === "club_variant" && d.suggested) detail += `：多くの申込では「${d.suggested}」と書かれています`;
+        issues.push({ key, type: m[0], title: m[1], entrant_id: e.id, detail });
+      });
+    });
+    const sheetBad = s.gas_status === "failed" || ["failed", "partial", "pending"].includes(s.sheet_upd_status || "");
+    if (t.entry_gas_url && sheetBad && s.gas_status !== "skipped") {
+      issues.push({ key: `sheet:${s.id}`, type: "sheet", title: "シートに届いていません", entrant_id: "",
+        resend: s.gas_status === "failed" ? "initial" : "update",
+        detail: "本部には保存済みです。もう一度シートへ送れます" });
+    }
+    if (t.entry_gas_url && route === "web" && !s.gas_status) sheetUnknown++;
+    checks += issues.length;
+    return {
+      submission_id: s.id, team_name: s.team_name || "", contact_name: s.contact_name || "",
+      route, received_at: s.created_at || "", entries: live.length,
+      cancelled: list.filter(e => ["cancelled", "rejected"].includes(e.status || "")).length,
+      by_event: byEvent,
+      players: list.filter(e => !["rejected"].includes(e.status || "")).map(e => ({
+        entrant_id: e.id, event: e.event, label: _deskLabel(e),
+        kana: e.is_doubles && e.partner_name ? [e.furigana || "", e.partner_furigana || ""].filter(Boolean).join("・") : (e.furigana || ""),
+        status: e.status || "confirmed" })),
+      issues,
+    };
+  }).sort((a, b) => String(a.team_name).localeCompare(String(b.team_name), "ja"));
+  const sumAll = summarizeEntries(all);
+  return {
+    tournament: { id: t.id, name: t.name, date: t.date || "", venue: t.venue || "", deadline: t.entry_deadline || "",
+      days_left: _deskDaysLeft(t), state: _deskState(t), gas: !!t.entry_gas_url },
+    events: evNames.map(n => ({ name: n, count: evCount[n] || 0 })),
+    totals: { teams: rows.filter(r => r.entries > 0).length, entries: sumAll.confirmed, submissions: subs.length,
+      checks, by_route: byRoute, sheet_unknown: sheetUnknown },
+    unlinked: all.filter(e => isConfirmedEntry(e) && (!e.submission_id || !ents[e.submission_id] || !subTeam.hasOwnProperty(e.submission_id))).length,
+    rows,
+  };
+}
+
 function createEntry(tournamentId, data) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
@@ -15018,7 +15162,7 @@ module.exports = {
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
   getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII,
-  importPlayerRegistry, syncPlayerRegistry, planPlayerRegistrySync, registryFromSheetRows,
+  importPlayerRegistry, getEntryDeskList, getEntryDesk, syncPlayerRegistry, planPlayerRegistrySync, registryFromSheetRows,
   matchPersonToPlayers, getPlayerMatchReview, resolveEntrantPlayerMatch, rematchTournamentPlayers,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel, entryClosedReason: _entryClosedReason,

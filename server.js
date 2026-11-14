@@ -1439,6 +1439,18 @@ app.get("/api/tournaments/:id/submissions", requireAdmin, (req, res) => {
   res.json(r);
 });
 
+// 受付台帳(申込集計モードの受付画面)。電話・メールは返さない
+app.get("/api/entry-desk/tournaments", requireAdmin, (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(db.getEntryDeskList());
+});
+app.get("/api/tournaments/:id/desk", requireAdmin, (req, res) => {
+  const r = db.getEntryDesk(req.params.id);
+  res.setHeader("Cache-Control", "no-store");
+  if (r.error) return res.status(404).json(r);
+  res.json(r);
+});
+
 app.get("/api/tournaments/:id/desk/manual", requireAdmin, (req, res) => {
   const view = db.getManualSubmissionView(req.params.id);
   res.setHeader("Cache-Control", "no-store");

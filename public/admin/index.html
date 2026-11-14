@@ -1260,6 +1260,7 @@ html[data-app-mode="entry"] .tab[data-tab="coaches"],
 html[data-app-mode="entry"] .em-hide { display: none !important; }
 </style>
 <link rel="stylesheet" href="/shared/site-tone.css">
+<link rel="stylesheet" href="/admin/entry-desk.css">
 </head>
 <body>
 
@@ -1613,6 +1614,7 @@ html[data-app-mode="entry"] .em-hide { display: none !important; }
 <script src="/shared/tie-order.js"></script>
 <script src="/shared/bracket-layout.js"></script>
 <script src="/shared/submission-editor.js"></script>
+<script src="/admin/entry-desk.js"></script>
 <script>
 const { h, esc, api, toast, fmtDate, fmtDateShort, clear,
  parsePaste, downloadCSV, downloadJSON, openModal, EV_TYPES, ROUNDS, CATS } = TT;
@@ -1754,6 +1756,8 @@ const A = {
 
  // URLハッシュから画面を復元 (ブラウザ戻る/進む対応)
  handleHash() {
+ // 申込集計モードは受付台帳(entry-desk.js)が画面を持つ。既存のタブへ移るときだけ下へ進む
+ if (A.entryOnly && window.EntryDesk && window.EntryDesk.route(location.hash)) return;
  const hash = location.hash.slice(1);
  if (!hash) { A.showTab("tournaments", true); return; }
  const [type, id] = hash.split("/");
@@ -1822,6 +1826,7 @@ const A = {
  if (!A.entryOnly) A.loadPushPlayers();   // マイ番号(プッシュ)登録選手 (#288) — 失敗してもUIは継続
  if (A.activeTab === "tournaments") A.renderTournaments();
  if (A.activeTab === "players") A.renderPlayers();
+ if (A.entryOnly && window.EntryDesk) window.EntryDesk.refresh();
  } catch (e) { console.error(e); }
  },
  // マイ番号(プッシュ)を登録済みの選手ID集合を取得 (#288)。バッジ表示に使用。
