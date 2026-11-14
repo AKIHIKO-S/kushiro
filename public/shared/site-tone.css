@@ -1,0 +1,163 @@
+/* ═══════════════════════════════════════════════════════
+   協会サイト調（EmDash v8）の共通トークン — 2026-11-15 オーナー承認
+   承認見本: docs/dev-records/20261115_受付台帳_サイト調/
+   値の出所: kushirotta-renewal/20261103_emdash/public/v8.css の :root
+   このファイルは各画面の <style> の後に読み込み、色・書体・罫線・余白を上書きする。
+   画面ごとに値を書かず、ここのトークン(--st-*)を参照すること。
+   赤は「受付中」と取消・削除などの不可逆操作だけに使う(サイトの規則)。
+═══════════════════════════════════════════════════════ */
+@font-face{font-family:"Roboto Condensed";src:url("/shared/fonts/roboto-condensed-latin-700-normal.woff2") format("woff2");font-weight:700;font-display:swap}
+@font-face{font-family:"Roboto Condensed";src:url("/shared/fonts/roboto-condensed-latin-800-normal.woff2") format("woff2");font-weight:800;font-display:swap}
+
+html body, html body.site-tone {
+  /* サイトの値そのもの */
+  --st-ink:#1b1d22; --st-paper:#fdfcf9; --st-white:#fff;
+  --st-navy:#14294a; --st-navy-d:#0e1e37; --st-blue:#1e5fa8; --st-sky:#eaf0f6;
+  --st-red:#b8202a; --st-red-bg:#f8e7e8;
+  --st-mute:#5c6068; --st-line:rgba(27,29,34,.14); --st-line2:rgba(27,29,34,.08); --st-wash:#f2f3f1;
+  --st-warn:#8a6510; --st-warn-bg:#f6eedb; --st-dup:#8a1f26; --st-dup-bg:#f6e4e5;
+  --st-ok:#256b52; --st-ok-bg:#e3f0ea;
+  --st-jp:"Hiragino Sans","Yu Gothic UI","Yu Gothic","BIZ UDPGothic",Meiryo,sans-serif;
+  --st-num:"Roboto Condensed","Arial Narrow",sans-serif;
+  --st-rule:2px solid var(--st-ink);     /* 区切りの太罫(サイトの一覧と同じ2px) */
+  --st-hair:1px solid var(--st-line);    /* 細罫 */
+  --st-radius:4px;
+  --st-tap:46px;
+
+  /* 既存トークンをサイトの値へ寄せる(common.css / 各画面の body 上書きより後勝ち) */
+  --ink-0:#fdfcf9; --ink-50:#f7f7f4; --ink-100:#f2f3f1; --ink-200:#e3e4e2; --ink-300:#cfd1d3;
+  --ink-400:#a3a7ad; --ink-500:#7a7e85; --ink-600:#5c6068; --ink-700:#41454c; --ink-800:#2a2d33;
+  --ink-900:#1b1d22; --ink-950:#0e1e37;
+  --kt-accent:#14294a; --kt-accent-d:#0e1e37; --kt-accent-l:#eaf0f6;
+  --pri:#14294a; --pri-l:#1e5fa8; --pri-d:#0e1e37; --pri-bg:#eaf0f6;
+  --accent:#14294a; --accent-l:#0e1e37; --accent-bg:#eaf0f6;
+  --tancho:#b8202a;
+  --ok:#256b52; --ok-bg:#e3f0ea; --warn:#8a6510;
+  --bg:#fdfcf9; --card:#fdfcf9; --card-elev:#fff;
+  --border:rgba(27,29,34,.14); --border-strong:rgba(27,29,34,.24);
+  --txt:#1b1d22; --txt-l:#41454c; --sub:#5c6068; --sub-l:#7a7e85;
+  --radius-sm:4px; --radius:4px; --radius-lg:4px; --radius-xl:6px;
+  --shadow-sm:none; --shadow:none;
+  --shadow-lg:0 12px 32px -12px rgba(14,30,55,.22); --shadow-xl:0 24px 56px -16px rgba(14,30,55,.28);
+  --font-display:var(--st-jp); --font-body:var(--st-jp);
+
+  background:var(--st-paper);
+  color:var(--st-ink);
+  font-family:var(--st-jp);
+  font-weight:500;
+}
+html body :focus-visible{outline:3px solid var(--st-blue);outline-offset:2px}
+html body input:focus, html body select:focus, html body textarea:focus{
+  border-color:var(--st-navy)!important;box-shadow:0 0 0 3px rgba(30,95,168,.18)!important}
+
+/* 数字はサイトと同じ英数字書体 */
+.st-num, .num, .mono, .match-sets, .rank-rating{font-family:var(--st-num);font-variant-numeric:tabular-nums;font-feature-settings:normal}
+
+/* ─── 頭: 白地に細罫、紺の協会名(サイトのヘッダと同じ組み) ─── */
+html body .admin-hero, html body .app-header{
+  background:rgba(253,252,249,.97);color:var(--st-ink);border-bottom:var(--st-hair);box-shadow:none;
+  -webkit-backdrop-filter:none;backdrop-filter:none}
+html body .admin-hero .ktta-logo-name, html body .app-header .ktta-logo-name{color:var(--st-navy);font-weight:700}
+html body .admin-hero .ktta-logo-tag, html body .app-header .ktta-logo-tag{color:var(--st-mute);font-family:var(--st-num);font-weight:700;letter-spacing:0}
+html body .ktta-logo-mark{background-image:url("/shared/assets/ktta-logo-256.png")}
+html body .admin-badge{background:var(--st-sky);color:var(--st-navy);border-radius:3px;font-family:var(--st-num);letter-spacing:.04em}
+html body .admin-actions .btn{background:var(--st-white)!important;color:var(--st-navy)!important;border:var(--st-hair)!important}
+html body .settings-icon{background:transparent;color:var(--st-navy);border:var(--st-hair);border-radius:var(--st-radius);width:44px;height:44px}
+html body .settings-icon:hover{background:var(--st-sky)}
+
+/* ─── タブ: 紺の下線で現在地 ─── */
+html body .tabs{background:var(--st-paper);border-bottom:var(--st-hair)}
+html body .tab, html body .tab-more{color:var(--st-ink);font-weight:700;min-height:var(--st-tap)}
+html body .tab:hover:not(.active), html body .tab-more:hover{background:var(--st-sky);color:#245d8e}
+html body .tab.active, html body .tab-more.active{color:var(--st-navy);border-bottom:3px solid var(--st-navy);box-shadow:none}
+
+/* ─── 面: 箱と影をやめ、罫で区切る ─── */
+html body .card, html body .modal-box, html body .t-card, html body .pdb-card, html body .pdb-acc,
+html body .tournament-row, html body .player-row, html body .match-list-item, html body .op-tools-body{
+  background:var(--st-paper);box-shadow:none}
+html body .card{border:0;border-top:var(--st-rule);border-radius:0;padding:16px 4px 18px;margin-bottom:22px}
+html body .card .card{border-top:var(--st-hair);padding:12px 0}
+html body .card-head{border-bottom:var(--st-hair)}
+html body .card-title{font-size:18px;font-weight:700;color:var(--st-ink)}
+html body .pdb-acc-head:hover, html body .player-row:hover, html body .tournament-row:hover, html body .match-list-item:hover{background:#f3f6f9}
+
+/* ─── ボタン: 主=紺、ほか=白地に紺文字 ─── */
+html body .btn{background:var(--st-navy);border:1px solid var(--st-navy);color:#fdfcf9;border-radius:var(--st-radius);
+  font-weight:700;min-height:44px;transform:none}
+html body .btn:hover{background:var(--st-navy-d);border-color:var(--st-navy-d);transform:none}
+html body .btn-ghost, html body .btn-ok{background:var(--st-white);color:var(--st-navy);border:var(--st-hair)}
+html body .btn-ghost:hover, html body .btn-ok:hover{background:var(--st-sky);border-color:var(--st-navy);color:var(--st-navy)}
+html body .btn-danger{background:var(--st-white);color:var(--st-red);border:1px solid #e3b5b8}
+html body .btn-danger:hover{background:var(--st-red);border-color:var(--st-red);color:#fdfcf9}
+html body .btn-sm{min-height:36px;padding:6px 12px;font-size:13px}
+html body .btn:disabled{background:var(--st-wash);border-color:var(--st-line);color:var(--st-mute)}
+
+/* ─── 入力 ─── */
+html body .input, html body select, html body textarea{background:var(--st-white);border:var(--st-hair);border-radius:var(--st-radius)}
+html body .input:hover, html body select:hover, html body textarea:hover{border-color:rgba(27,29,34,.32)}
+
+/* ─── 表: 見出しは淡灰、合計は淡い空色、区切りは細罫 ─── */
+html body table th{background:var(--st-wash);color:var(--st-mute);font-weight:700;border-bottom:1px solid var(--st-ink)}
+html body table td{border-color:var(--st-line2)}
+html body table tfoot td{background:var(--st-sky);color:var(--st-navy);font-weight:800}
+
+/* ─── 印(バッジ) ─── */
+html body .badge{border-radius:3px;font-weight:700}
+html body .badge-ok{background:var(--st-ok-bg);color:var(--st-ok)}
+html body .badge-warn{background:var(--st-warn-bg);color:var(--st-warn)}
+html body .badge-err{background:var(--st-dup-bg);color:var(--st-dup)}
+html body .badge-sub, html body .badge-ghost{background:var(--st-wash);color:var(--st-mute);border-color:var(--st-line)}
+
+/* ─── モーダル: 黒帯をやめ、白地＋太罫 ─── */
+html body .modal-bg{background:rgba(14,30,55,.42);-webkit-backdrop-filter:none;backdrop-filter:none}
+html body .modal-box{border-radius:6px;box-shadow:var(--shadow-xl)}
+html body .modal-head{background:var(--st-paper);color:var(--st-ink);border-bottom:var(--st-rule);border-radius:6px 6px 0 0}
+html body .modal-title{font-size:18px;font-weight:700}
+html body .modal-close{background:transparent;color:var(--st-navy);border:var(--st-hair);border-radius:var(--st-radius);width:44px;height:44px}
+html body .modal-close:hover{background:var(--st-sky)}
+html body .modal-body{background:var(--st-paper)}
+html body .modal-body .field{background:transparent;border:0;border-bottom:var(--st-hair);border-radius:0;box-shadow:none;padding:10px 0}
+html body .modal-body .field-label{color:var(--st-mute);font-size:13px;font-weight:700}
+html body .modal-foot{background:var(--st-wash);border-top:var(--st-hair);border-radius:0 0 6px 6px}
+html body .modal-section-title{font-size:14px;color:var(--st-navy)}
+html body .modal-section-title::before{width:12px;height:2px;border-radius:0;background:var(--st-navy)}
+
+/* ─── 大会の一覧: サイトの「大会申込一覧」と同じ行の組み方(箱をやめ、細罫で区切る) ─── */
+html body .t-card{background:transparent;border:0;border-bottom:var(--st-hair);border-radius:0;margin:0;box-shadow:none;transform:none}
+html body .t-card:hover{background:rgba(20,41,74,.05);transform:none;box-shadow:none}
+html body .t-card-body{padding:14px 4px}
+html body .t-card-name{font-size:17px;color:var(--st-ink)}
+html body .t-card-actions{background:transparent;border-left:0;flex-direction:row;align-items:center;padding:10px 4px}
+html body .t-chip{background:transparent;border:0;padding:0 10px 0 0;border-radius:0;color:var(--st-mute);font-size:14px}
+html body .t-chip.hot{background:transparent;color:var(--st-red)}
+html body .t-status{border-radius:3px;padding:4px 9px;font-size:12px}
+html body .t-status::before{display:none}
+html body .t-status.st-scheduled{background:var(--st-sky);color:var(--st-navy)}
+html body .t-status.st-preparation{background:var(--st-navy);color:#fdfcf9}
+html body .t-status.st-ongoing{background:var(--st-red);color:#fdfcf9}
+html body .t-status.st-completed, html body .t-status.st-cancelled{background:#716c64;color:#fdfcf9}
+html body .t-progress{background:var(--st-wash);border-radius:0;height:4px}
+html body .t-progress > span{background:var(--st-navy)}
+html body .badge.status-scheduled{background:var(--st-sky);color:var(--st-navy);border-color:transparent}
+
+/* ─── 選手データベース ─── */
+html body .pdb-hero{background:transparent;border:0;border-top:var(--st-rule);border-radius:0;box-shadow:none}
+html body .pdb-hero .pdb-total-num, html body .pdb-total b, html body .pdb-total strong{font-family:var(--st-num);color:var(--st-navy)}
+html body .pdb-acc{border:0;border-bottom:var(--st-hair);border-radius:0;background:transparent}
+html body .pdb-acc-head{background:transparent;border-radius:0}
+html body .pdb-acc-head .pdb-row-num{color:var(--st-navy)}
+
+/* トースト */
+html body .toast{background:var(--st-navy);color:#fdfcf9;border-radius:var(--st-radius)}
+
+@media (prefers-reduced-motion:reduce){html body *{animation:none!important;transition:none!important}}
+
+/* 見出し横のボタン群: 狭い画面で縦書きに潰れないよう折り返す */
+html body .card-head{flex-wrap:wrap;row-gap:10px}
+html body .card-head > .flex{flex-wrap:wrap}
+html body .card-head .btn{white-space:nowrap}
+html body .card-head .card-title{white-space:nowrap}
+@media (max-width:480px){
+  html body .card-head > .flex{width:100%}
+  html body .t-card-actions, html body .t-card .actions{justify-content:flex-start}
+}

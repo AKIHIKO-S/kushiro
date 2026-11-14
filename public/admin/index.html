@@ -1259,6 +1259,7 @@ html[data-app-mode="entry"] .tab[data-tab="api"],
 html[data-app-mode="entry"] .tab[data-tab="coaches"],
 html[data-app-mode="entry"] .em-hide { display: none !important; }
 </style>
+<link rel="stylesheet" href="/shared/site-tone.css">
 </head>
 <body>
 
@@ -1269,8 +1270,8 @@ html[data-app-mode="entry"] .em-hide { display: none !important; }
  <a class="ktta-logo ktta-logo--inverse" href="/admin">
    <span class="ktta-logo-mark" aria-hidden="true"></span>
    <span class="ktta-logo-text">
-     <span class="ktta-logo-name">KTTA Platform</span>
-     <span class="ktta-logo-tag">KUSHIRO · TABLE TENNIS</span>
+     <span class="ktta-logo-name">釧路卓球協会</span>
+     <span class="ktta-logo-tag">大会の運営</span>
    </span>
  </a>
  <span class="admin-badge">ADMIN</span>
@@ -1453,7 +1454,7 @@ html[data-app-mode="entry"] .em-hide { display: none !important; }
  <button class="btn btn-sm btn-ghost" onclick="A.openTidyDialog()" title="所属(学校名)からカテゴリを判定し、支部名を正規化。変更内容をプレビューで確認してから一括適用します">支部・カテゴリを整える</button>
  <button class="btn btn-sm btn-ghost" onclick="A.openInferDialog()" title="空欄の支部を同じ所属の選手から、空欄のふりがなを名字辞書から推測して補完(プレビュー確認あり)">空欄を推測で補完</button>
  <button class="btn btn-sm btn-ghost" onclick="A.openRenameTeamDialog()" title="所属名の表記ゆれを一括で統一(例: 鳥取中学 → 鳥取中学校)。対象件数を確認してから適用します">所属名を統一</button>
- <button class="btn btn-sm btn-ghost" style="background:#fef3c7;color:#78350f;border-color:#fcd34d" onclick="A.openMergeDialog()" title="氏名・ふりがなが近い重複選手を検出して1人に結合(戦績も統合)">重複の結合</button>
+ <button class="btn btn-sm btn-ghost" onclick="A.openMergeDialog()" title="氏名・ふりがなが近い重複選手を検出して1人に結合(戦績も統合)">重複の結合</button>
  <button class="btn btn-sm" onclick="A.newPlayer()">+ 新規選手</button>
  </div>
  </div>
