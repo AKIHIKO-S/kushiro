@@ -11788,6 +11788,26 @@ function importPlayerRegistry(registry, opts) {
 // 既定は書き込まない(dry run)。opts.apply=true で1トランザクションで実行。
 const _REG_GENDER = { "男子": "male", "男": "male", "女子": "female", "女": "female" };
 const _REG_CATEGORY = { "一般": "general", "中学": "middle", "中学生": "middle", "高校": "high", "高校生": "high", "小学": "elementary", "小学生": "elementary" };
+// 選手登録リスト(Excel)の「選手一覧」シートを registry.json と同じ形に直す。
+// rows は1行目が見出しの2次元配列。別名は「 / 」区切り。見出しが無ければ error を返す。
+function registryFromSheetRows(rows) {
+  const head = (rows && rows[0] || []).map(v => String(v == null ? "" : v).trim());
+  const col = (n) => head.indexOf(n);
+  const c = { no: col("選手ID"), name: col("氏名"), furi: col("ふりがな"), team: col("メイン所属(記入)"),
+    gender: col("性別"), cat: col("区分"), alias: col("別名(統合した表記)") };
+  if (c.no < 0 || c.name < 0) return { error: "「選手一覧」シートに「選手ID」「氏名」の列が見つかりません" };
+  const players = {};
+  const v = (r, i) => i < 0 ? "" : String(r[i] == null ? "" : r[i]).trim();
+  for (const r of rows.slice(1)) {
+    const no = v(r, c.no).replace(/^(\d{1,5})$/, m => m.padStart(6, "0"));
+    const name = v(r, c.name);
+    if (!no && !name) continue;
+    const alias = v(r, c.alias).split(/\s*[\/／]\s*/).map(x => x.trim()).filter(Boolean);
+    players[no] = { name, keys: [name, ...alias], furigana: v(r, c.furi), main_team: v(r, c.team),
+      gender: v(r, c.gender), category: v(r, c.cat) };
+  }
+  return { players };
+}
 function planPlayerRegistrySync(registry) {
   const players = (registry && registry.players) || {};
   const pool = _loadPlayerMatchPool();
@@ -14998,7 +15018,7 @@ module.exports = {
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
   getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII,
-  importPlayerRegistry, syncPlayerRegistry, planPlayerRegistrySync,
+  importPlayerRegistry, syncPlayerRegistry, planPlayerRegistrySync, registryFromSheetRows,
   matchPersonToPlayers, getPlayerMatchReview, resolveEntrantPlayerMatch, rematchTournamentPlayers,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel, entryClosedReason: _entryClosedReason,

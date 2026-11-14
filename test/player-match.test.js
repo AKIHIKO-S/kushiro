@@ -228,3 +228,13 @@ test("台帳統合: 漢字一致は更新、重複は統合、読み違いは保
   const again = db.syncPlayerRegistry(reg);
   assert.strictEqual(again.created + again.merge_groups, 0, "2回目は新規も統合も出ない");
 });
+
+test("台帳統合: 選手登録リスト(Excel)の選手一覧を読める(別名は / 区切り・番号は6桁)", () => {
+  const rows = [["選手ID", "氏名", "ふりがな", "メイン所属(記入)", "所属の候補数", "所属の候補(新しい順)", "性別", "区分", "別名(統合した表記)"],
+    ["012345", "表計 一", "ひょうけい はじめ", "架空クラブ", 1, "", "男子", "一般", "表計 壱 / 票計 一"],
+    [12346, "表計 二", "", "", 0, "", "", "", ""]];
+  const r = db.registryFromSheetRows(rows);
+  assert.deepStrictEqual(r.players["012345"].keys, ["表計 一", "表計 壱", "票計 一"]);
+  assert.strictEqual(r.players["012346"].name, "表計 二", "先頭の0が落ちた番号も6桁に戻す");
+  assert.ok(db.registryFromSheetRows([["名前"]]).error, "見出しが違えば読まない");
+});

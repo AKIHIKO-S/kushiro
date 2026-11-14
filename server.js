@@ -4223,9 +4223,20 @@ app.post("/api/owner/players/delete-all", requireOwnerStrict, async (req, res) =
 // apply なし=件数と保留の一覧だけ返す(書き込まない)。apply=true は事前バックアップ+担当コード必須。
 app.post("/api/owner/player-registry/sync", requireOwner, async (req, res) => {
   const b = req.body || {};
-  const reg = b.registry;
+  let reg = b.registry;
+  // 選手登録リスト(.xlsx)をそのまま受け付ける(画面から base64 で送る)。読むのは「選手一覧」シートだけ。
+  if (!reg && b.xlsx_base64) {
+    try {
+      const XLSX = require("xlsx");
+      const wb = XLSX.read(Buffer.from(String(b.xlsx_base64), "base64"), { type: "buffer" });
+      const ws = wb.Sheets["選手一覧"];
+      if (!ws) return res.status(400).json({ error: "「選手一覧」シートが見つかりません。選手登録リストのExcelを選んでください" });
+      reg = db.registryFromSheetRows(XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" }));
+      if (reg.error) return res.status(400).json({ error: reg.error });
+    } catch (e) { return res.status(400).json({ error: "Excelを読めませんでした: " + e.message }); }
+  }
   if (!reg || typeof reg !== "object" || !reg.players || typeof reg.players !== "object")
-    return res.status(400).json({ error: "registry.json の中身(players を含むJSON)を送ってください" });
+    return res.status(400).json({ error: "選手登録リスト(.xlsx)か registry.json を選んでください" });
   const brief = (r) => {
     const { plan, ...counts } = r;
     return { ...counts, hold_list: plan.hold.map(h => ({ no: h.no, name: h.name, furigana: h.furigana, team: h.team,

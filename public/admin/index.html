@@ -9560,7 +9560,7 @@ const A = {
        h("button", { className: "btn btn-sm btn-ok", onClick: () => A.ownerDownloadDB() }, "ダウンロード")]),
      card("全データ書き出し（データ用ファイル）", "全選手・大会・試合のデータをファイルに書き出します。", [
        h("button", { className: "btn btn-sm", onClick: () => A.exportJSON() }, "データを書き出す")]),
-     card("選手登録台帳と統合", "選手登録台帳(registry.json)と今の選手DBを照らし合わせ、台帳の内容で更新・統合・新規登録します。選手は削除しません。まず件数だけ確かめ、実行時は自動でバックアップを取ります。", [
+     card("選手登録台帳と統合", "選手登録リスト(Excel)と今の選手DBを照らし合わせ、台帳の内容で更新・統合・新規登録します。選手は削除しません。まず件数だけ確かめ、実行時は自動でバックアップを取ります。", [
        h("button", { className: "btn btn-sm", onClick: () => A.ownerRegistrySync() }, "台帳を選んで照合する")]),
      card("全選手の削除", "全選手レコードを削除（実行前に自動バックアップ＋件数の打鍵確認）。", [
        h("button", { className: "btn btn-sm btn-danger", onClick: () => A.ownerDeleteAllPlayers() }, "全選手を削除")]),
@@ -9624,7 +9624,7 @@ const A = {
  async ownerRegistrySync() {
    if (!(await A.ensureOwner())) return;
    let reg = null;
-   const file = h("input", { type: "file", accept: ".json,application/json", className: "input" });
+   const file = h("input", { type: "file", accept: ".xlsx,.json", className: "input" });
    const opInput = h("input", { className: "input", placeholder: "操作担当コード（氏名は入力しない）", value: A.ownerOperator() });
    const out = h("div", { className: "text-sm", style: { lineHeight: 1.7, marginTop: "8px" } });
    const msg = h("div", { className: "text-xs", style: { color: "#b91c1c", minHeight: "16px", marginTop: "4px" } });
@@ -9640,8 +9640,16 @@ const A = {
    };
    file.addEventListener("change", async () => {
      msg.textContent = ""; out.textContent = "照合しています…"; runBtn.disabled = true; reg = null;
-     try { reg = JSON.parse(await file.files[0].text()); } catch (e) { out.textContent = ""; msg.textContent = "JSONとして読めませんでした"; return; }
-     const r = await A.ownerFetch("/api/owner/player-registry/sync", { method: "POST", body: { registry: reg } });
+     const f = file.files[0];
+     try {
+       if (/\.json$/i.test(f.name)) reg = { registry: JSON.parse(await f.text()) };
+       else {
+         const bytes = new Uint8Array(await f.arrayBuffer());
+         let bin = ""; for (let i = 0; i < bytes.length; i += 32768) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+         reg = { xlsx_base64: btoa(bin) };
+       }
+     } catch (e) { out.textContent = ""; msg.textContent = "ファイルを読めませんでした"; return; }
+     const r = await A.ownerFetch("/api/owner/player-registry/sync", { method: "POST", body: reg });
      if (!r.ok) { out.textContent = ""; msg.textContent = (r.json && r.json.error) || ("失敗 (" + r.status + ")"); return; }
      show(r.json); runBtn.disabled = false;
    });
@@ -9649,7 +9657,7 @@ const A = {
      const operator = (opInput.value || "").trim();
      if (!/^[A-Za-z0-9_-]{3,32}$/.test(operator)) { msg.textContent = "3〜32文字の英数字・ハイフン・アンダースコアで入力してください"; return; }
      runBtn.disabled = true; msg.textContent = "";
-     const r = await A.ownerFetch("/api/owner/player-registry/sync", { method: "POST", body: { registry: reg, apply: true, operator } });
+     const r = await A.ownerFetch("/api/owner/player-registry/sync", { method: "POST", body: Object.assign({}, reg, { apply: true, operator }) });
      if (r.ok && r.json) {
        out.textContent = "";
        out.appendChild(h("div", { className: "font-bold" }, "統合しました。" + line(r.json)));
@@ -9660,8 +9668,8 @@ const A = {
    });
    const body = h("div", {},
      h("div", { className: "text-sm", style: { lineHeight: 1.7, marginBottom: "10px" } },
-       "台帳ファイル(registry.json)を選ぶと、書き込まずに件数を出します。内容を確かめてから実行してください。実行前に自動でバックアップを取ります。"),
-     h("div", { className: "field" }, h("label", { className: "field-label" }, "台帳ファイル"), file),
+       "選手登録リストのExcel(.xlsx)を選ぶと、書き込まずに件数を出します。内容を確かめてから実行してください。実行前に自動でバックアップを取ります。"),
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "選手登録リスト（.xlsx）"), file),
      h("div", { className: "field" }, h("label", { className: "field-label" }, "操作担当コード"), opInput), out, msg);
    const foot = h("div", { className: "flex gap-2", style: { justifyContent: "flex-end" } },
      h("button", { className: "btn btn-ghost", onClick: () => bg.remove() }, "閉じる"), runBtn);
