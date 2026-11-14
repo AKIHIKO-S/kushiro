@@ -11779,6 +11779,121 @@ function importPlayerRegistry(registry, opts) {
   out.applied = !!opts.apply;
   return out;
 }
+// 選手登録台帳(registry.json)と本番の選手DBを統合する(2026-11-15 オーナー指示)。
+// 台帳を優先: 同一人物は台帳の氏名・ふりがな・所属・性別・区分で更新し、本番側の旧表記は別名・所属履歴に残す。
+// 同一人物の判定: 漢字(旧字・空白を畳む。別名・台帳の表記ゆれ含む)が一致し、
+//   ふりがなが両方あれば一致すること(どちらかが空なら漢字の一致だけで同一とする)。
+// 判定が割れる組(読み違い・所属違い・1人を2つの台帳番号が取り合う)は触らず hold に出す(人が判断)。
+// 本番にしかいない選手は残して選手番号だけ振る。削除はしない。統合は mergePlayers(リダイレクト・取消可)。
+// 既定は書き込まない(dry run)。opts.apply=true で1トランザクションで実行。
+const _REG_GENDER = { "男子": "male", "男": "male", "女子": "female", "女": "female" };
+const _REG_CATEGORY = { "一般": "general", "中学": "middle", "中学生": "middle", "高校": "high", "高校生": "high", "小学": "elementary", "小学生": "elementary" };
+function planPlayerRegistrySync(registry) {
+  const players = (registry && registry.players) || {};
+  const pool = _loadPlayerMatchPool();
+  const meta = new Map(sqlite.prepare("SELECT id, created_at, gender, category FROM players WHERE merged_into IS NULL").all().map(r => [r.id, r]));
+  const byNo = new Map(pool.rows.filter(r => r.player_no).map(r => [r.player_no, r]));
+  const plan = { merge: [], update: [], create: [], prod_only: [], hold: [], invalid: [] };
+  const decided = [];
+  for (const no of Object.keys(players)) {
+    const p = players[no];
+    if (!/^\d{6}$/.test(no) || !p || !String(p.name || "").trim()) { plan.invalid.push({ no, reason: "番号または氏名が不正" }); continue; }
+    if (byNo.has(no)) { decided.push({ no, p, rows: [byNo.get(no)], bad: [] }); continue; }
+    const keys = new Set([p.name, ...(Array.isArray(p.keys) ? p.keys : [])].map(_playerNameKey).filter(Boolean));
+    const cands = [];
+    keys.forEach(k => (pool.byKey.get(k) || []).forEach(r => { if (!cands.includes(r)) cands.push(r); }));
+    const furi = _normFuri(p.furigana);
+    const fit = [], bad = [];
+    for (const r of cands) {
+      if (r.player_no && r.player_no !== no) { bad.push({ id: r.id, reason: "別の選手番号が付いている" }); continue; }
+      if (furi && r._furi) { (r._furi === furi ? fit : bad).push(r._furi === furi ? r : { id: r.id, reason: "同じ漢字で読みが違う" }); continue; }
+      // 読みで比べられないときは漢字の一致で同一人物とする(11-14 オーナー決定「漢字一致=1ID」)。
+      // 所属の違いは「古い情報」として台帳の所属へ更新し、旧所属は履歴に残す。
+      fit.push(r);
+    }
+    if (bad.length) plan.hold.push({ no, name: p.name, furigana: p.furigana || "", team: p.main_team || "",
+      fit: fit.map(r => r.id), candidates: bad.map(b => Object.assign({}, b, (() => { const r = pool.rows.find(x => x.id === b.id); return { name: r.name, furigana: r.furigana || "", team: r.team || "" }; })())) });
+    else decided.push({ no, p, rows: fit, bad });
+  }
+  // 1人の本番選手を2つ以上の台帳番号が取り合ったら、その全員を保留
+  const claim = new Map();
+  decided.forEach(d => d.rows.forEach(r => claim.set(r.id, (claim.get(r.id) || 0) + 1)));
+  const heldRows = new Set(plan.hold.flatMap(h => h.candidates.map(c => c.id).concat(h.fit)));
+  for (const d of decided) {
+    if (d.rows.some(r => claim.get(r.id) > 1)) {
+      plan.hold.push({ no: d.no, name: d.p.name, furigana: d.p.furigana || "", team: d.p.main_team || "", fit: [],
+        candidates: d.rows.map(r => ({ id: r.id, name: r.name, furigana: r.furigana || "", team: r.team || "", reason: "1人を複数の台帳番号が取り合っている" })) });
+      d.rows.forEach(r => heldRows.add(r.id));
+      continue;
+    }
+    if (!d.rows.length) plan.create.push({ no: d.no, p: d.p });
+    else {
+      const rows = d.rows.slice().sort((a, b) => String(meta.get(a.id).created_at || "").localeCompare(String(meta.get(b.id).created_at || "")) || a.id.localeCompare(b.id));
+      if (rows.length > 1) plan.merge.push({ no: d.no, survivor: rows[0].id, dups: rows.slice(1).map(r => r.id) });
+      plan.update.push({ no: d.no, p: d.p, id: rows[0].id });
+    }
+  }
+  const used = new Set(decided.flatMap(d => d.rows.map(r => r.id)));
+  pool.rows.forEach(r => { if (!used.has(r.id) && !heldRows.has(r.id)) plan.prod_only.push({ id: r.id, has_no: !!r.player_no }); });
+  // 保留の候補に挙がった本番選手は、他の台帳番号で確定していなければ番号を振らずに残す
+  plan.held_rows = [...heldRows].filter(id => !used.has(id) || claim.get(id) > 1);
+  return plan;
+}
+function syncPlayerRegistry(registry, opts) {
+  opts = opts || {};
+  const plan = planPlayerRegistrySync(registry);
+  const out = { merged_pairs: plan.merge.reduce((n, m) => n + m.dups.length, 0), merge_groups: plan.merge.length,
+    updated: plan.update.length, created: plan.create.length, prod_only: plan.prod_only.length,
+    hold: plan.hold.length, held_prod_rows: plan.held_rows.length, invalid: plan.invalid.length,
+    changes: { name: 0, furigana: 0, team: 0, gender: 0, category: 0, aliases: 0 }, applied: !!opts.apply };
+  out.plan = plan;
+  if (!opts.apply) return out;
+  const today = new Date().toISOString().slice(0, 10);
+  const run = () => {
+    for (const m of plan.merge) for (const dup of m.dups) {
+      const r = mergePlayers(m.survivor, dup, { operator: opts.operator || "registry" });
+      if (r && r.error) throw new Error("統合に失敗: " + r.error);
+    }
+    for (const u of plan.update) {
+      const row = sqlite.prepare("SELECT * FROM players WHERE id=?").get(u.id);
+      const p = u.p;
+      const aliases = _parseAliases(row.name_aliases);
+      const have = new Set([_playerNameKey(p.name), ...aliases.map(_playerNameKey)]);
+      const addAlias = (n) => { const k = _playerNameKey(n); if (k && !have.has(k)) { have.add(k); aliases.push(String(n)); out.changes.aliases++; } };
+      addAlias(row.name);
+      (Array.isArray(p.keys) ? p.keys : []).forEach(addAlias);
+      const next = {
+        name: p.name,
+        furigana: String(p.furigana || "").trim() || row.furigana || "",
+        team: String(p.main_team || "").trim() || row.team || "",
+        gender: _REG_GENDER[p.gender] || row.gender,
+        category: _REG_CATEGORY[p.category] || row.category,
+      };
+      ["name", "furigana", "team", "gender", "category"].forEach(k => { if (String(next[k] || "") !== String(row[k] || "")) out.changes[k]++; });
+      updatePlayer(u.id, next);
+      sqlite.prepare("UPDATE players SET player_no=?, name_aliases=? WHERE id=?").run(u.no, aliases.length ? JSON.stringify(aliases) : "", u.id);
+      // 所属が変わったら旧所属を締めて新所属を積む(上書きしない #298)
+      if (normalizeTeam(next.team) !== normalizeTeam(row.team) && String(next.team).trim()) {
+        const ended = sqlite.prepare("UPDATE affiliations SET end_date=? WHERE player_id=? AND COALESCE(end_date,'')=''").run(today, u.id).changes;
+        // 履歴が無い選手(#298以前の登録)は、旧所属を締めた1件として残す
+        if (!ended && String(row.team || "").trim()) addAffiliation(u.id, { team: row.team, end_date: today, note: "台帳統合前の所属" });
+        addAffiliation(u.id, { team: next.team, start_date: today, note: "選手登録台帳" });
+      } else if (String(next.team).trim() && !sqlite.prepare("SELECT 1 FROM affiliations WHERE player_id=? LIMIT 1").get(u.id)) {
+        addAffiliation(u.id, { team: next.team });
+      }
+    }
+    for (const c of plan.create) {
+      const p = c.p;
+      const np = createPlayer({ name: p.name, furigana: p.furigana || "", team: p.main_team || "",
+        gender: _REG_GENDER[p.gender] || "male", category: _REG_CATEGORY[p.category] || "", _allowAnyName: true });
+      const al = (Array.isArray(p.keys) ? p.keys : []).filter(k => _playerNameKey(k) !== _playerNameKey(p.name));
+      sqlite.prepare("UPDATE players SET player_no=?, name_aliases=? WHERE id=?").run(c.no, al.length ? JSON.stringify(al) : "", np.id);
+    }
+    for (const r of plan.prod_only) if (!r.has_no) sqlite.prepare("UPDATE players SET player_no=? WHERE id=?").run(_genPlayerNo(), r.id);
+  };
+  sqlite.transaction(run)();
+  return out;
+}
 function _genPlayerNo() {
   const has = sqlite.prepare("SELECT 1 FROM players WHERE player_no=?");
   for (let i = 0; i < 200; i++) {
@@ -14883,7 +14998,7 @@ module.exports = {
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
   getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII,
-  importPlayerRegistry,
+  importPlayerRegistry, syncPlayerRegistry, planPlayerRegistrySync,
   matchPersonToPlayers, getPlayerMatchReview, resolveEntrantPlayerMatch, rematchTournamentPlayers,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel, entryClosedReason: _entryClosedReason,

@@ -4219,6 +4219,33 @@ app.post("/api/owner/players/delete-all", requireOwnerStrict, async (req, res) =
     res.json({ ok: true, deleted: total, backup: backup && backup.name });
   } catch (e) { res.status(500).json({ error: "削除に失敗しました: " + e.message }); }
 });
+// 選手登録台帳(registry.json)と選手DBの統合(2026-11-15・オーナー)。台帳を優先し、削除はしない。
+// apply なし=件数と保留の一覧だけ返す(書き込まない)。apply=true は事前バックアップ+担当コード必須。
+app.post("/api/owner/player-registry/sync", requireOwner, async (req, res) => {
+  const b = req.body || {};
+  const reg = b.registry;
+  if (!reg || typeof reg !== "object" || !reg.players || typeof reg.players !== "object")
+    return res.status(400).json({ error: "registry.json の中身(players を含むJSON)を送ってください" });
+  const brief = (r) => {
+    const { plan, ...counts } = r;
+    return { ...counts, hold_list: plan.hold.map(h => ({ no: h.no, name: h.name, furigana: h.furigana, team: h.team,
+      candidates: h.candidates.map(c => ({ name: c.name, furigana: c.furigana, team: c.team, reason: c.reason })) })) };
+  };
+  if (!b.apply) {
+    try { return res.json(brief(db.syncPlayerRegistry(reg))); }
+    catch (e) { return res.status(500).json({ error: "照合に失敗しました: " + e.message }); }
+  }
+  const operator = ownerAuditCode(req);
+  if (!operator) return res.status(400).json({ error: "操作担当コードを入力してください（監査ログに記録します）。" });
+  let backup = null;
+  try { backup = await db.createSnapshot("manual"); }
+  catch (e) { return res.status(500).json({ error: "事前バックアップに失敗したため中止しました: " + e.message }); }
+  try {
+    const r = brief(db.syncPlayerRegistry(reg, { apply: true, operator }));
+    auditOwner(req, "player_registry_sync", `merged=${r.merged_pairs} updated=${r.updated} created=${r.created} prod_only=${r.prod_only} hold=${r.hold} backup=${backup && backup.name}`);
+    res.json({ ...r, backup: backup && backup.name, players_now: (db.getPlayers() || []).length });
+  } catch (e) { res.status(500).json({ error: "統合に失敗しました(変更は取り消されています): " + e.message, backup: backup && backup.name }); }
+});
 // アップロードした .db / .db.gz から復元 (DR用・オーナー)。オフサイト退避(お名前ドットコム等)から
 // 落としたバックアップを、ローカルスナップショットが無い新サーバでも取り込めるようにする。
 // multer のファイル種別エラーは下の (err,req,res,next) で 400 整形。

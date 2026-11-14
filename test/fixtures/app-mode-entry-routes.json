@@ -81,6 +81,7 @@
  "POST /api/mail/test",
  "POST /api/owner/operators/:id/disable",
  "POST /api/owner/operators/invite",
+ "POST /api/owner/player-registry/sync",
  "POST /api/owner/players/delete-all",
  "POST /api/owner/restore-upload",
  "POST /api/player-merges/:id/undo",

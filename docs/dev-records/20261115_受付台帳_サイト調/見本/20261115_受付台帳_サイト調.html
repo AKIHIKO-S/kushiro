@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>受付台帳 サイト調</title>
+<link rel="stylesheet" href="mihon-site.css">
+<style>
+/* 案A: 強さの源 = 表。紙の受付帳簿の感覚で、団体ごとの1行に種目別の人数が並ぶ。
+   Excelで原本を扱ってきた本部の人が、説明なしで読める形にする。 */
+.tools{display:grid;gap:10px;padding:0 var(--gut) 12px}
+.find{display:flex;gap:8px}
+.search{flex:1;min-width:0;width:100%;min-height:46px;padding:0 12px;border:1px solid var(--line);background:#fff;border-radius:4px;font-size:16px}
+.search:focus{border-color:var(--navy)}
+.filters{display:flex;flex-wrap:wrap;gap:6px}
+.chip{min-height:44px;padding:0 10px;border:1px solid var(--line);background:var(--card);border-radius:4px;font-size:14px;font-weight:700;color:var(--navy)}
+.chip:hover{border-color:var(--navy)}
+.chip b{font-family:var(--num);font-weight:800;font-size:15px;margin-left:3px}
+.chip[aria-pressed="true"]{background:var(--navy);color:#fdfcf9;border-color:var(--navy)}
+.chip--warn[aria-pressed="false"]{color:var(--warn);border-color:#dcc89a;background:var(--warn-bg)}
+
+/* スマホ: 横スクロールさせず、団体ごとに2段で読ませる */
+.ledger{margin:0 var(--gut);border-top:2px solid var(--ink)}
+.row{display:grid;grid-template-columns:1fr auto;gap:2px 10px;width:100%;padding:11px 0;border:0;border-bottom:1px solid var(--line);background:none;text-align:left}
+.row__team{grid-column:1;grid-row:1;font-size:17px;font-weight:700;line-height:1.4}
+.row__sum{font-family:var(--num);color:var(--navy);font-size:28px;font-weight:800;line-height:1.1;text-align:right;grid-column:2;grid-row:1}
+.row__sum small{font-family:var(--jp);font-size:12px;font-weight:700;font-weight:500;color:var(--sub);margin-left:2px}
+.row__by{grid-column:1/-1;font-size:15px;color:var(--sub)}
+.row__by b{color:var(--navy);font-family:var(--num);font-weight:800;font-size:16px}
+.row__tags{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:5px;margin-top:3px}
+.totals{margin:14px var(--gut) 96px;padding:10px 0;border-top:2px solid var(--ink);display:grid;grid-template-columns:repeat(2,1fr);gap:4px 16px;font-size:15px}
+.totals div{display:flex;justify-content:space-between;border-bottom:1px solid var(--line2);padding:4px 0}
+.totals b{font-weight:800;color:var(--navy);font-size:17px}
+.dock{position:fixed;left:0;right:0;bottom:0;display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px var(--gut) calc(8px + env(safe-area-inset-bottom));background:var(--paper);border-top:1px solid var(--line);box-shadow:0 -8px 20px -14px rgba(14,30,55,.18);z-index:10}
+
+.table{display:none}
+.side{display:none}
+@media (min-width:960px){
+  .tools{grid-template-columns:minmax(380px,460px) 1fr;align-items:center}
+  .filters{justify-content:flex-end}
+  .ledger,.totals,.dock{display:none}
+  .wrap{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;padding:0 var(--gut) 24px;align-items:start}
+  .table{display:block;max-height:calc(100dvh - 280px);overflow:auto;border-top:2px solid var(--ink);border-bottom:2px solid var(--ink)}
+  table{border-collapse:separate;border-spacing:0;width:100%;font-size:15px}
+  th,td{padding:0 10px;height:46px;border-bottom:1px solid var(--line2);text-align:center;white-space:nowrap;background:var(--paper)}
+  thead th{position:sticky;top:0;z-index:2;background:var(--wash);border-bottom:1px solid var(--ink);font-size:13px;font-weight:700;color:var(--sub)}
+  tfoot td{position:sticky;bottom:0;z-index:2;background:var(--sky);border-top:1px solid var(--ink);border-bottom:0;font-weight:800;color:var(--navy)}
+  th:first-child,td:first-child{position:sticky;left:0;z-index:1;text-align:left;font-weight:700}
+  thead th:first-child,tfoot td:first-child{z-index:3}
+  tbody tr{cursor:pointer}
+  tbody tr:hover td{background:#f3f6f9}
+  tbody tr[aria-selected="true"] td{background:var(--sky);box-shadow:inset 0 -2px 0 var(--navy)}
+  td.zero{color:#a3a7ad}
+  td.num{font-size:16px;font-weight:700}
+  td.sum{font-weight:800;color:var(--navy);font-size:17px}
+  .side{display:block;position:sticky;top:96px;border-top:2px solid var(--ink);padding-top:12px}
+  .side h2{margin:0;font-size:20px;font-weight:700}
+  .side__out{margin-top:18px;padding-top:12px;border-top:1px solid var(--line);display:grid;gap:8px}
+  .side__empty{font-size:15px;color:var(--sub)}
+}
+</style>
+</head>
+<body>
+<div class="memo"><b>見本「受付台帳」サイト調（1案）</b> 11-10に決めた受付台帳の並びはそのままに、色・書体・罫線を協会の新サイトに合わせました。データはすべて架空です。</div>
+<div id="app"></div>
+<script src="mihon.js"></script>
+<script>
+(function(){
+  var h=M.h, q="", only="all", picked=null;
+  function count(s,k){return s.entries.filter(function(e){return e.ev===k;}).length;}
+  function visible(){return M.SUBS.filter(function(s){
+    if(only==="warn"&&!s.issues.length)return false;
+    if(only!=="all"&&only!=="warn"&&s.route!==only)return false;
+    if(!q)return true;
+    return (s.team+s.contact+s.entries.map(function(e){return e.label+e.kana;}).join("")).indexOf(q)>=0;
+  });}
+  function tags(s){return s.issues.map(function(i){return h("span",{class:"tag "+(i.type==="dup"?"tag--dup":"tag--warn")},i.title);});}
+  var out=[h("button",{class:"btn btn--main",type:"button",onclick:function(){M.toast("集計表をExcelで保存します（見本）");}},"集計表をExcelで保存"),h("button",{class:"btn",type:"button",onclick:function(){M.toast("名簿を印刷します（見本）");}},"名簿を印刷")];
+  function chip(v,l,c){return h("button",{class:"chip"+(c||""),type:"button","aria-pressed":String(only===v),onclick:function(){only=v;render();}},l);}
+  function open(s){picked=s; if(matchMedia("(min-width:960px)").matches)render(); else M.sheet(s.team,M.subDetail(s));}
+  var host=h("div",{});
+  function render(){
+    host.textContent="";
+    var rows=visible();
+    host.appendChild(h("div",{class:"tools"},
+      h("div",{class:"find"},h("input",{class:"search",type:"search",value:q,placeholder:"団体名・氏名で探す","aria-label":"申込を探す",oninput:function(e){q=e.target.value;renderList();}}),h("button",{class:"btn",type:"button",onclick:M.collect},"申込を追加")),
+      h("div",{class:"filters"},chip("all",["すべて",h("b",{},M.SUBS.length)]),chip("warn",["確認",h("b",{},M.issues().length)]," chip--warn"),chip("Excel",["Excel",h("b",{},M.routeCount("Excel"))]),chip("手入力",["手入力",h("b",{},M.routeCount("手入力"))]))));
+    host.appendChild(listBox);
+    renderList();
+  }
+  var listBox=h("div",{});
+  function renderList(){
+    listBox.textContent="";
+    var rows=visible();
+    // スマホの台帳
+    listBox.appendChild(h("div",{class:"ledger"},rows.map(function(s){
+      return h("button",{class:"row",type:"button",onclick:function(){open(s);}},
+        h("span",{class:"row__team"},s.team),
+        h("span",{class:"row__sum num"},s.entries.length,h("small",{},"出場")),
+        h("span",{class:"row__by"},M.EVENTS.filter(function(e){return count(s,e.key);}).map(function(e,i){return [i?"・":"",e.short+" ",h("b",{class:"num"},count(s,e.key))];})),
+        s.issues.length?h("span",{class:"row__tags"},tags(s)):null);
+    }),rows.length?null:h("p",{style:"padding:18px 0;color:var(--sub)"},"条件に合う申込はありません。「すべて」に戻してください。")));
+    listBox.appendChild(h("div",{class:"totals num"},M.EVENTS.map(function(e){return h("div",{},h("span",{},e.short),h("b",{},M.evCount(e.key)));}),h("div",{},h("span",{},"出場 計"),h("b",{},M.entriesTotal()))));
+    listBox.appendChild(h("div",{class:"dock"},out));
+    // PCの台帳
+    listBox.appendChild(h("div",{class:"wrap"},
+      h("div",{class:"table",tabindex:"0","aria-label":"申込の台帳"},h("table",{},
+        h("thead",{},h("tr",{},h("th",{},"団体"),M.EVENTS.map(function(e){return h("th",{},e.short);}),h("th",{},"出場"),h("th",{},"経路"),h("th",{},"受付"),h("th",{},"確認"))),
+        h("tbody",{},rows.map(function(s){return h("tr",{"aria-selected":picked===s?"true":null,onclick:function(){open(s);}},
+          h("td",{},s.team),
+          M.EVENTS.map(function(e){var c=count(s,e.key);return h("td",{class:"num"+(c?"":" zero")},c||"−");}),
+          h("td",{class:"num sum"},s.entries.length),h("td",{},s.route),h("td",{class:"num"},s.at),
+          h("td",{},s.issues.length?h("span",{class:"tag "+(s.issues[0].type==="dup"?"tag--dup":"tag--warn")},s.issues.length+"件"):"")
+        );})),
+        h("tfoot",{},h("tr",{},h("td",{},"合計 "+M.SUBS.length+"団体"),M.EVENTS.map(function(e){return h("td",{class:"num"},M.evCount(e.key));}),h("td",{class:"num"},M.entriesTotal()),h("td",{}),h("td",{}),h("td",{}))))),
+      h("aside",{class:"side"},picked?[h("h2",{},picked.team),M.subDetail(picked)]:h("p",{class:"side__empty"},"表の行を押すと、選手の名前と連絡先がここに出ます。"),h("div",{class:"side__out"},out.map(function(b){return b.cloneNode(true);})))));
+    listBox.querySelectorAll(".side__out .btn").forEach(function(b){b.addEventListener("click",function(){M.toast(b.textContent+"（見本）");});});
+  }
+  M.frame(function(){return h("div",{},M.head(),(render(),host));});
+})();
+</script>
+</body>
+</html>

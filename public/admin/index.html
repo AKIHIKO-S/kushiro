@@ -9560,6 +9560,8 @@ const A = {
        h("button", { className: "btn btn-sm btn-ok", onClick: () => A.ownerDownloadDB() }, "ダウンロード")]),
      card("全データ書き出し（データ用ファイル）", "全選手・大会・試合のデータをファイルに書き出します。", [
        h("button", { className: "btn btn-sm", onClick: () => A.exportJSON() }, "データを書き出す")]),
+     card("選手登録台帳と統合", "選手登録台帳(registry.json)と今の選手DBを照らし合わせ、台帳の内容で更新・統合・新規登録します。選手は削除しません。まず件数だけ確かめ、実行時は自動でバックアップを取ります。", [
+       h("button", { className: "btn btn-sm", onClick: () => A.ownerRegistrySync() }, "台帳を選んで照合する")]),
      card("全選手の削除", "全選手レコードを削除（実行前に自動バックアップ＋件数の打鍵確認）。", [
        h("button", { className: "btn btn-sm btn-danger", onClick: () => A.ownerDeleteAllPlayers() }, "全選手を削除")]),
      card("申込者の連絡先を一括で消す", "保存期間を過ぎた申込の連絡先(氏名・メール・電話)をまとめて消します(件数や集計は残ります)。", [
@@ -9617,6 +9619,53 @@ const A = {
        else { msg.textContent = (r.json && r.json.error) || ("失敗 (" + r.status + ")"); }
      } }, "全選手を削除する"));
    const bg = openModal("全選手の削除（オーナー）", body, foot);
+ },
+ // 選手登録台帳との統合(オーナー)。①ファイルを選ぶ→②件数と保留の一覧(書き込まない)→③担当コードを入れて実行。
+ async ownerRegistrySync() {
+   if (!(await A.ensureOwner())) return;
+   let reg = null;
+   const file = h("input", { type: "file", accept: ".json,application/json", className: "input" });
+   const opInput = h("input", { className: "input", placeholder: "操作担当コード（氏名は入力しない）", value: A.ownerOperator() });
+   const out = h("div", { className: "text-sm", style: { lineHeight: 1.7, marginTop: "8px" } });
+   const msg = h("div", { className: "text-xs", style: { color: "#b91c1c", minHeight: "16px", marginTop: "4px" } });
+   const runBtn = h("button", { className: "btn btn-danger", disabled: true }, "この内容で統合する");
+   const line = (r) => "統合 " + r.merged_pairs + "件・更新 " + r.updated + "件・新規 " + r.created + "件・本番にのみ " + r.prod_only + "件・保留 " + r.hold + "件";
+   const show = (r) => {
+     out.textContent = "";
+     out.appendChild(h("div", { className: "font-bold" }, line(r)));
+     out.appendChild(h("div", { className: "text-xs text-sub" }, "保留は統合も更新もしません。同じ漢字で読みが違う組です。本人かどうかを確かめてから、選手の統合で手作業で合わせてください。"));
+     (r.hold_list || []).forEach(x => out.appendChild(h("div", { style: { borderTop: "1px solid var(--border)", padding: "6px 0", fontSize: "13px" } },
+       h("div", {}, "台帳 ", h("b", {}, x.name), "（" + (x.furigana || "読みなし") + "）", x.team || ""),
+       x.candidates.map(c => h("div", { className: "text-sub" }, "今のDB ", c.name, "（" + (c.furigana || "読みなし") + "）", c.team || "", "：", c.reason)))));
+   };
+   file.addEventListener("change", async () => {
+     msg.textContent = ""; out.textContent = "照合しています…"; runBtn.disabled = true; reg = null;
+     try { reg = JSON.parse(await file.files[0].text()); } catch (e) { out.textContent = ""; msg.textContent = "JSONとして読めませんでした"; return; }
+     const r = await A.ownerFetch("/api/owner/player-registry/sync", { method: "POST", body: { registry: reg } });
+     if (!r.ok) { out.textContent = ""; msg.textContent = (r.json && r.json.error) || ("失敗 (" + r.status + ")"); return; }
+     show(r.json); runBtn.disabled = false;
+   });
+   runBtn.addEventListener("click", async () => {
+     const operator = (opInput.value || "").trim();
+     if (!/^[A-Za-z0-9_-]{3,32}$/.test(operator)) { msg.textContent = "3〜32文字の英数字・ハイフン・アンダースコアで入力してください"; return; }
+     runBtn.disabled = true; msg.textContent = "";
+     const r = await A.ownerFetch("/api/owner/player-registry/sync", { method: "POST", body: { registry: reg, apply: true, operator } });
+     if (r.ok && r.json) {
+       out.textContent = "";
+       out.appendChild(h("div", { className: "font-bold" }, "統合しました。" + line(r.json)));
+       out.appendChild(h("div", {}, "今の選手数: " + r.json.players_now + "人"));
+       out.appendChild(h("div", {}, "実行前のバックアップ: " + (r.json.backup || "")));
+       toast("選手台帳を統合しました", "ok");
+     } else { msg.textContent = (r.json && r.json.error) || ("失敗 (" + r.status + ")"); runBtn.disabled = false; }
+   });
+   const body = h("div", {},
+     h("div", { className: "text-sm", style: { lineHeight: 1.7, marginBottom: "10px" } },
+       "台帳ファイル(registry.json)を選ぶと、書き込まずに件数を出します。内容を確かめてから実行してください。実行前に自動でバックアップを取ります。"),
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "台帳ファイル"), file),
+     h("div", { className: "field" }, h("label", { className: "field-label" }, "操作担当コード"), opInput), out, msg);
+   const foot = h("div", { className: "flex gap-2", style: { justifyContent: "flex-end" } },
+     h("button", { className: "btn btn-ghost", onClick: () => bg.remove() }, "閉じる"), runBtn);
+   const bg = openModal("選手登録台帳と統合（オーナー）", body, foot);
  },
  async ownerPurgePII() {
    if (!(await A.ensureOwner())) return;
