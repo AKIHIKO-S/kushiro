@@ -7,7 +7,7 @@
 #
 # やること: ①/etc/ktta.env をバックアップ ②PUBLIC_BASE_URL を書き込み ③メール設定の有無を「項目名だけ」表示
 #           ④サービス再起動 ⑤動作確認。鍵・パスワードの値はログに出さない。
-# アドレスは選択式。入力値はスクリプトへ直接埋め込まず環境変数で渡し、サーバー側でも許可リストと照合する。
+# 接続ツール(drone-ssh)は case 文の ;; を扱えないため if で照合する。アドレスは選択式。入力値はスクリプトへ直接埋め込まず環境変数で渡し、サーバー側でも許可リストと照合する。
 # kushirotta.jp 移行時は下の候補を選ぶ(移行手順書 B-1)。
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -47,15 +47,13 @@ jobs:
           key: ${{ secrets.ORACLE_SSH_KEY }}
           port: 22
           envs: TARGET_URL
-          script_stop: true
           script: |
             set -e
             F=/etc/ktta.env
-            case "$TARGET_URL" in
-              https://140-245-94-114.nip.io) URL=https://140-245-94-114.nip.io ;;
-              https://ktta.kushirotta.jp) URL=https://ktta.kushirotta.jp ;;
-              *) echo "想定外のアドレスです"; exit 1 ;;
-            esac
+            URL=""
+            if [ "$TARGET_URL" = "https://140-245-94-114.nip.io" ]; then URL="https://140-245-94-114.nip.io"; fi
+            if [ "$TARGET_URL" = "https://ktta.kushirotta.jp" ]; then URL="https://ktta.kushirotta.jp"; fi
+            if [ -z "$URL" ]; then echo "想定外のアドレスです"; exit 1; fi
             BAK="$F.bak-$(date +%Y%m%d-%H%M%S)"
             sudo cp -p "$F" "$BAK"
             echo "バックアップ: $BAK"
