@@ -2,28 +2,11 @@
    協会サイト調（EmDash v8）の共通トークン — 2026-11-15 オーナー承認
    承認見本: docs/dev-records/20261115_受付台帳_サイト調/
    値の出所: kushirotta-renewal/20261103_emdash/public/v8.css の :root
-   このファイルは各画面の <style> の後に読み込み、色・書体・罫線・余白を上書きする。
-   画面ごとに値を書かず、ここのトークン(--st-*)を参照すること。
+   このファイルは管理画面の <style> の後に読み込み、既存の見た目を上書きする。
+   値(--st-*)は site-tokens.css が正本。ここに値を書かず、--st-* を参照すること。
    赤は「受付中」と取消・削除などの不可逆操作だけに使う(サイトの規則)。
 ═══════════════════════════════════════════════════════ */
-@font-face{font-family:"Roboto Condensed";src:url("/shared/fonts/roboto-condensed-latin-700-normal.woff2") format("woff2");font-weight:700;font-display:swap}
-@font-face{font-family:"Roboto Condensed";src:url("/shared/fonts/roboto-condensed-latin-800-normal.woff2") format("woff2");font-weight:800;font-display:swap}
-
 html body, html body.site-tone {
-  /* サイトの値そのもの */
-  --st-ink:#1b1d22; --st-paper:#fdfcf9; --st-white:#fff;
-  --st-navy:#14294a; --st-navy-d:#0e1e37; --st-blue:#1e5fa8; --st-sky:#eaf0f6;
-  --st-red:#b8202a; --st-red-bg:#f8e7e8;
-  --st-mute:#5c6068; --st-line:rgba(27,29,34,.14); --st-line2:rgba(27,29,34,.08); --st-wash:#f2f3f1;
-  --st-warn:#8a6510; --st-warn-bg:#f6eedb; --st-dup:#8a1f26; --st-dup-bg:#f6e4e5;
-  --st-ok:#256b52; --st-ok-bg:#e3f0ea;
-  --st-jp:"Hiragino Sans","Yu Gothic UI","Yu Gothic","BIZ UDPGothic",Meiryo,sans-serif;
-  --st-num:"Roboto Condensed","Arial Narrow",sans-serif;
-  --st-rule:2px solid var(--st-ink);     /* 区切りの太罫(サイトの一覧と同じ2px) */
-  --st-hair:1px solid var(--st-line);    /* 細罫 */
-  --st-radius:4px;
-  --st-tap:46px;
-
   /* 既存トークンをサイトの値へ寄せる(common.css / 各画面の body 上書きより後勝ち) */
   --ink-0:#fdfcf9; --ink-50:#f7f7f4; --ink-100:#f2f3f1; --ink-200:#e3e4e2; --ink-300:#cfd1d3;
   --ink-400:#a3a7ad; --ink-500:#7a7e85; --ink-600:#5c6068; --ink-700:#41454c; --ink-800:#2a2d33;

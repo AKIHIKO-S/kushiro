@@ -1169,7 +1169,7 @@ function buildEntryFormHTML(tournament, events, opts) {
   }
 
   /* ══════════════════════════════════════════════════════════
-     協会サイト調(2026-11-15 オーナー承認)。値は public/shared/site-tone.css の
+     協会サイト調(2026-11-15 オーナー承認)。値は public/shared/site-tokens.css の
      --st-* だけを使う(lib/site-tone.js が :root へ写す)。上の白磁・帳簿の構造は残し、
      色・書体・罫・主ボタンをサイトに揃える後勝ちの上書き。
      赤は「エラー・必須の未入力・受付終了」だけに使い、主な操作は紺にする(サイトの規則)。
@@ -2574,7 +2574,7 @@ function buildEntryLandingHTML(tournaments) {
   .empty{padding:22px 0;border-bottom:1px solid var(--line);color:var(--ink-2);}
   .sub{margin-top:22px;font-size:14px;}
   .sub a{color:var(--red);display:inline-block;padding:10px 0;}
-  /* 協会サイト調(値は site-tone.css の --st-* のみ)。紺=操作、赤=締切などの注意 */
+  /* 協会サイト調(値は site-tokens.css の --st-* のみ)。紺=操作、赤=締切などの注意 */
   ${siteTone.rootCss("")}
   :root{--bg:var(--st-paper);--ink:var(--st-ink);--ink-2:var(--st-mute);--red:var(--st-red);--line:var(--st-line);--gothic:var(--st-jp);}
   body{font-weight:500;}
@@ -2687,7 +2687,7 @@ function buildApplicantStatusHTML() {
   .msg.err{background:var(--err-bg);color:var(--err);}
   .hidden{display:none;}
   a.home{color:var(--red);font-weight:700;text-decoration:none;font-size:13px;}
-  /* 協会サイト調(値は site-tone.css の --st-* のみ)。箱と影をやめて罫で区切り、
+  /* 協会サイト調(値は site-tokens.css の --st-* のみ)。箱と影をやめて罫で区切り、
      操作は紺、赤は取消など戻せない操作とエラーだけに使う */
   ${siteTone.rootCss("")}
   :root{--paper:var(--st-paper);--card:var(--st-paper);--ink:var(--st-ink);--ink-2:var(--st-mute);

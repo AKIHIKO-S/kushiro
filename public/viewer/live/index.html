@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#1e2a4a">
 <title>KTTA Platform - LIVE 観戦ビュー</title>
 <link rel="stylesheet" href="/shared/common.css">
+<link rel="stylesheet" href="/shared/site-tokens.css">
 <style>
   :root {
     /* ─── 丹頂ライトテーマ (白基調・丹頂レッド・墨ヘッダー / 視認性最優先) ─── */
@@ -1014,6 +1015,18 @@
     .lv-court-team { font-size: 9px; }
     .lv-tab { padding: 9px 8px; font-size: 11px; }
   }
+
+  /* ═══ 協会サイト調(2026-11-15 オーナー承認・全画面共通) ═══
+     値は /shared/site-tokens.css の --st-* だけを参照する。構造はそのまま、色・書体だけ寄せる。
+     赤は LIVE(この画面の主題=機能色)と再コールの警告に限る。 */
+  :root {
+    --lv-bg: var(--st-paper); --lv-surface: var(--st-paper); --lv-surface-2: var(--st-wash);
+    --lv-line: var(--st-line); --lv-line-strong: rgba(27,29,34,.24);
+    --lv-text: var(--st-ink); --lv-text-2: var(--st-ink); --lv-sub: var(--st-mute);
+    --lv-accent: var(--st-red); --lv-header: var(--st-navy);
+    --lv-ok: var(--st-ok); --lv-ok-d: var(--st-ok); --lv-warn: var(--st-warn); --lv-blue: var(--st-blue);
+    --font-body: var(--st-jp); --font-display: var(--st-jp);
+  }
 </style>
 </head>
 <body>
@@ -1025,7 +1038,7 @@
     <div class="lv-brand">
       <div class="lv-brand-mark" aria-label="KTTA"></div>
       <div class="lv-brand-text">
-        <div class="lv-brand-name">KTTA Platform</div>
+        <div class="lv-brand-name">釧路卓球協会</div>
         <div class="lv-brand-tag">KUSHIRO · TABLE TENNIS</div>
       </div>
       <span class="lv-live-chip">LIVE</span>

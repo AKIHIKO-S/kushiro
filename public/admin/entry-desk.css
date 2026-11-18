@@ -1,5 +1,5 @@
 /* 受付台帳(申込集計モードの受付画面) — 2026-11-15 オーナー承認の見本「受付台帳 サイト調」を移植
-   色・書体・罫線は /shared/site-tone.css のトークン(--st-*)だけを参照する。
+   色・書体・罫線は /shared/site-tokens.css のトークン(--st-*)だけを参照する。
    既存の管理画面のクラス(.btn .tag .row 等)とぶつからないよう、部品はすべて ed- 始まり。 */
 html.desk-on body > .admin-hero, html.desk-on body > .tabs, html.desk-on body > .container { display: none !important; }
 #entryDesk { display: none; }

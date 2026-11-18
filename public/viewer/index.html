@@ -15,6 +15,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="マイ番号">
 <link rel="stylesheet" href="/shared/common.css">
+<link rel="stylesheet" href="/shared/site-tokens.css">
 <link rel="preload" href="/shared/common.js" as="script"><!-- 末尾<script>の発見を前倒し(高RTT会場のクリティカルパス短縮)。?v=は版注入で自動付与 -->
 <style>
  /* viewer 専用の追加スタイル */
@@ -1366,6 +1367,42 @@ body{ background:#fbfaf7; }
  .sbar2-val{ font-size:13px; font-weight:800; color:var(--txt); font-variant-numeric:tabular-nums; flex:none; }
  .sbar2-track{ height:7px; background:var(--v3-soft); border-radius:2px; overflow:hidden; }
  .sbar2-fill{ height:100%; background:var(--v3-rule); border-radius:2px; min-width:2px; }
+ /* ═══════════ 協会サイト調(2026-11-15 オーナー承認・全画面共通) ═══════════
+    値は /shared/site-tokens.css の --st-* だけを参照し、ここに色の値を書かない。
+    構造(新聞スポーツ面の罫・カード種)はそのまま、既存トークンをサイトの値へ寄せる後勝ち。
+    赤(--st-red)は LIVE・取消などの機能色に限り、操作と現在地は紺にする。 */
+ body{
+   --kt-accent:var(--st-navy); --kt-accent-d:var(--st-navy-d); --kt-accent-l:var(--st-sky);
+   --accent:var(--st-navy); --accent-l:var(--st-navy-d); --accent-bg:var(--st-sky); --accent-d:var(--st-navy-d);
+   --pri:var(--st-navy); --pri-l:var(--st-blue); --pri-d:var(--st-navy-d); --pri-bg:var(--st-sky);
+   --bg:var(--st-paper); --card:var(--st-paper); --card-elev:var(--st-white);
+   --border:var(--st-line); --border-strong:rgba(27,29,34,.24);
+   --txt:var(--st-ink); --sub:var(--st-mute);
+   --radius-sm:var(--st-radius); --radius:var(--st-radius); --radius-lg:var(--st-radius); --radius-xl:6px;
+   --shadow-sm:none; --shadow:none;
+   --font-display:var(--st-jp); --font-body:var(--st-jp);
+   --v3-hair:var(--st-line); --v3-rule:var(--st-ink); --v3-soft:var(--st-wash);
+   --tc-ink:var(--st-ink); --tc-ink2:var(--st-mute); --tc-line:var(--st-line); --tc-line2:var(--st-line2);
+   --tc-red:var(--st-red); --tc-redbg:var(--st-red-bg); --tc-amber:var(--st-warn); --tc-amberbg:var(--st-warn-bg);
+   --tc-green:var(--st-ok); --tc-greenbg:var(--st-ok-bg); --tc-sh:none; --tc-sh-h:none;
+   --lg-win:var(--st-ok); --lg-lose:var(--st-red); --lg-win-bg:var(--st-ok-bg); --lg-line:var(--st-line); --lg-bg:var(--st-white);
+   background:var(--st-paper); color:var(--st-ink); font-family:var(--st-jp);
+ }
+ :focus-visible{ outline:3px solid var(--st-blue); outline-offset:2px; }
+ /* 頭: 白地に細罫、紺の協会名(管理画面・サイトと同じ組み) */
+ .hero{ background:var(--st-paper); border-bottom:var(--st-hair); box-shadow:none; }
+ .hero .ktta-logo-name{ color:var(--st-navy); font-weight:700; }
+ .hero .ktta-logo-tag{ color:var(--st-mute); font-family:var(--st-num); font-weight:700; letter-spacing:0; }
+ .hero .ktta-logo-mark{ background-image:url("/shared/assets/ktta-logo-256.png"); }
+ .v-home-link{ color:var(--st-navy); }
+ .live-indicator{ background:var(--st-red-bg); border-color:rgba(184,32,42,.3); color:var(--st-red); }
+ .live-dot{ background:var(--st-red); box-shadow:none; }
+ /* 面: 箱の影をやめ、罫で区切る */
+ .container .card, .tournament-card{ border-radius:var(--st-radius); box-shadow:none; }
+ .tournament-card:hover{ transform:none; box-shadow:none; border-color:var(--st-navy); }
+ .tournament-icon{ background:var(--st-sky); color:var(--st-navy); }
+ .num, .mono, .match-sets, .rank-rating, .sbar2-val{ font-family:var(--st-num); font-variant-numeric:tabular-nums; }
+
 </style>
 </head>
 <body>
@@ -1376,8 +1413,8 @@ body{ background:#fbfaf7; }
  <a class="ktta-logo" href="/viewer">
    <span class="ktta-logo-mark" aria-hidden="true"></span>
    <span class="ktta-logo-text">
-     <span class="ktta-logo-name">KTTA Platform</span>
-     <span class="ktta-logo-tag">KUSHIRO · TABLE TENNIS · ASSOCIATION</span>
+     <span class="ktta-logo-name">釧路卓球協会</span>
+     <span class="ktta-logo-tag">KUSHIRO TABLE TENNIS ASSOCIATION</span>
    </span>
  </a>
  <div class="hero-right">
