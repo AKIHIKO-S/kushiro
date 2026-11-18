@@ -41,7 +41,7 @@ const multer = require("multer");
 const appMode = require("./app-mode");
 const QRCode = require("qrcode");     // ローカルQR生成(会場オフラインで外部QRサービスに依存しないLAN接続案内用)
 const db = require("./db");
-const { normalizeEmail, validEmail, validPassword, boundedPassword } = require("./lib/operator-accounts");
+const { MAX_OWNER_ACCOUNTS, normalizeEmail, validEmail, validPassword, boundedPassword } = require("./lib/operator-accounts");
 const reports = require("./reports");
 const importQuality = require("./tools/import_quality");   // 取込プレビューの品質警告(notices)を全経路へ後付け
 const rosterReader = require("./tools/roster_reader");       // ブック内の名簿と突合し取りこぼし/過大/表記揺れを検出
@@ -551,7 +551,10 @@ function cookieValue(req, key) {
 function sessionOf(req) {
   if (req.kttaSession !== undefined) return req.kttaSession;
   const token = cookieValue(req, SESSION_COOKIE);
-  req.kttaSession = db.getAuthSession(token) || db.operatorAccounts.session(token);
+  let s = db.getAuthSession(token) || db.operatorAccounts.session(token);
+  // オーナー権限を付けた運営アカウントも、サーバーに OWNER_KEY が無い間は運営権限に留める(フェイルクローズ)。
+  if (s && s.kind === "account" && s.principal_type === "owner" && !OWNER_KEY) s = { ...s, principal_type: "admin" };
+  req.kttaSession = s;
   return req.kttaSession;
 }
 function setSessionCookie(res, token, expiresAt) {
@@ -653,6 +656,17 @@ function requireOwner(req, res, next) {
   // 開発環境だけ既存テストのために管理キーへフォールバックする。
   return requireAdmin(req, res, next);
 }
+// オーナーキーを入力した本人か(オーナー権限を付けた運営アカウントではないか)。
+// 権限の付与・剥奪はキー保持者だけにする。付与されたアカウントが別アカウントへ権限を広げられないようにするため。
+function isOwnerKeyHolder(req) {
+  const s = sessionOf(req);
+  if (s) return s.principal_type === "owner" && s.kind !== "account";
+  return !!(req.auth && req.auth.principal_type === "owner" && req.auth.principal_id === "server-key");
+}
+function requireOwnerKeyHolder(req, res, next) {
+  if (!isOwnerKeyHolder(req)) return res.status(403).json({ error: "この操作はオーナーキーで入った画面からだけ行えます" });
+  next();
+}
 // オーナー操作の実行者名(自由記入・日本語可)を取り出す。監査ログ用。
 // HTTPヘッダは latin1 のみ(日本語不可)なので、ヘッダは encodeURIComponent 済みとして decode する。
 // JSONボディ(operator)は UTF-8 をそのまま運べるため、POST はボディを優先。
@@ -673,12 +687,20 @@ function validOperatorCode(value) {
 }
 // 監査の「誰」は氏名ではなく担当コードだけを保存する。旧ヘッダ鍵の server-key は実施者ではない。
 function ownerAuditCode(req) {
+  // メールのアカウントで入った人は、本文の担当コードで別人を名乗れないようアカウントのコードに固定する
+  const s = sessionOf(req);
+  if (s && s.kind === "account") return validOperatorCode(accountAuditCode(s.principal_id));
   const bodyCode = validOperatorCode(req.body && req.body.operator);
   if (bodyCode) return bodyCode;
   if (req.auth && req.auth.principal_type === "owner" && req.auth.principal_id !== "server-key") {
-    return validOperatorCode(req.auth.principal_id);
+    return validOperatorCode(accountAuditCode(req.auth.principal_id));
   }
   return "";
+}
+// メールのアカウントは内部ID(UUID)の先頭8文字を担当コードにする(メールアドレスは監査に残さない)
+function accountAuditCode(id) {
+  id = String(id || "");
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(id) ? "acct-" + id.slice(0, 8) : id;
 }
 
 // 未認証レスポンスから漏らしてはならない大会の秘密フィールド。
@@ -917,13 +939,31 @@ app.post("/api/owner/operators/invite", requireSameOrigin, requireOwnerStrict, r
       db.operatorAccounts.cancelInvite(invite.token);
       return res.status(502).json({ error: "メールを送信できませんでした。送信設定を確認して再発行してください" });
     }
+    auditOwner(req, "運営アカウント:招待メール");
     res.status(201).json({ ok: true });
   } catch (error) { next(error); }
 });
 app.post("/api/owner/operators/:id/disable", requireSameOrigin, requireOwnerStrict, (req, res) => {
   res.set("Cache-Control", "no-store");
+  // オーナー権限を持つアカウントの停止はキー保持者だけ(付与されたアカウント同士で締め出し合わない)
+  if (db.operatorAccounts.isOwner(req.params.id) && !isOwnerKeyHolder(req)) {
+    return res.status(403).json({ error: "オーナー権限のあるアカウントは、オーナーキーで入った画面からだけ停止できます" });
+  }
   if (!db.operatorAccounts.disable(req.params.id)) return res.status(404).json({ error: "アカウントが見つかりません" });
+  auditOwner(req, "運営アカウント:停止 " + accountAuditCode(req.params.id));
   res.json({ ok: true });
+});
+// 運営アカウントへのオーナー権限の付与・剥奪。オーナーキー保持者だけ・上限つき・監査ログに記録。
+app.post("/api/owner/operators/:id/owner", requireSameOrigin, requireOwnerStrict, requireOwnerKeyHolder, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const granted = (req.body || {}).granted;
+  if (typeof granted !== "boolean") return res.status(400).json({ error: "付与するか外すかを指定してください" });
+  const result = db.operatorAccounts.setOwner(req.params.id, granted);
+  if (result.error === "not_found") return res.status(404).json({ error: "アカウントが見つかりません" });
+  if (result.error === "not_active") return res.status(409).json({ error: "パスワード設定済みで利用中のアカウントにだけ付けられます" });
+  if (result.error === "limit") return res.status(409).json({ error: "オーナー権限を付けられるのは " + MAX_OWNER_ACCOUNTS + " アカウントまでです。先にほかのアカウントから外してください" });
+  if (result.changed) auditOwner(req, (granted ? "運営アカウント:オーナー権限を付与 " : "運営アカウント:オーナー権限を解除 ") + accountAuditCode(req.params.id));
+  res.json({ ok: true, owner: granted });
 });
 
 app.post("/api/auth/owner/session", rateLimit({ windowMs: 60000, max: 8, message: "試行回数が多すぎます。しばらく待ってください。" }), (req, res) => {
