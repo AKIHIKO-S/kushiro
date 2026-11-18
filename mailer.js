@@ -84,6 +84,21 @@ function esc(s) {
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+const signatureGuide = "大会等のメール配信に関するアドレスの追加・変更・削除は下記からお願いいたします。";
+const signatureForm = "https://forms.gle/CSP5RwciRL7GFALM6";
+const signatureMail = "kushirotta@gmail.com";
+const signatureSite = "https://www.kushirotta.jp/";
+const signatureRule = '"'.repeat(62);
+const signatureText = [signatureGuide, signatureForm, signatureRule, "釧路卓球協会",
+  `Mail：${signatureMail}`, `URL：${signatureSite}`, signatureRule].join("\n");
+const signatureHtml = `<div style="margin-top:28px;font-size:13px;line-height:1.65;color:#57534e;">
+  ${signatureGuide}<br><a href="${signatureForm}">${signatureForm}</a>
+  <div style="margin-top:10px;padding:8px 0;border-block:1px solid #a8a29e;">
+    釧路卓球協会<br>Mail：<a href="mailto:${signatureMail}">${signatureMail}</a><br>
+    URL：<a href="${signatureSite}">${signatureSite}</a>
+  </div>
+</div>`;
+
 function formatYen(n) {
   const v = parseInt(n) || 0;
   return `¥${v.toLocaleString("ja-JP")}`;
@@ -286,10 +301,7 @@ async function sendConfirmationEmail(opts) {
     `■ 参加料お支払い`,
     `  大会当日、開会式前に受付でお支払いください。`,
     ``,
-    `■ お問合せ`,
-    `  ${ADMIN_EMAIL || SMTP_USER}`,
-    ``,
-    `釧路卓球協会`,
+    signatureText,
   ].filter(s => s !== undefined && s !== null).join("\n");
 
   const html = `
@@ -354,10 +366,7 @@ async function sendConfirmationEmail(opts) {
     ※当日のキャンセル・欠席による参加料の返金はできかねますのでご了承ください。
   </p>
 
-  <div style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;color:#78716c;">
-    お問合せ: <a href="mailto:${esc(ADMIN_EMAIL || SMTP_USER)}" style="color:#b91c1c;">${esc(ADMIN_EMAIL || SMTP_USER)}</a><br>
-    釧路卓球協会
-  </div>
+  ${signatureHtml}
 </div>`.trim();
 
   try {
@@ -406,7 +415,7 @@ async function sendAdminNotification(opts) {
     `合計: ${formatYen(total)}`,
     ``,
     adminUrl ? `管理画面: ${adminUrl}` : "",
-  ].filter(Boolean).join("\n");
+  ].filter(Boolean).join("\n") + "\n\n" + signatureText;
   try {
     const info = await transporter.sendMail({
       from: SMTP_FROM,
@@ -463,7 +472,7 @@ async function sendEntryChangeNotification(opts) {
     `この変更は申込締切前・組合せ作成前にのみ受け付けています。`,
     opts.adminUrl ? `管理画面: ${opts.adminUrl}` : "",
     ``,
-    `釧路卓球協会 申込システム`,
+    signatureText,
   ].filter(s => s !== undefined && s !== null).join("\n");
   const html = `
 <div style="font-family:'Hiragino Sans','Yu Gothic UI',system-ui,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#1c1917;">
@@ -477,6 +486,7 @@ async function sendEntryChangeNotification(opts) {
   </table>
   <p style="font-size:12.5px;color:#57534e;margin-top:14px;">この変更は申込締切前・組合せ作成前にのみ受け付けています。</p>
   ${opts.adminUrl ? `<p style="margin-top:12px;"><a href="${esc(opts.adminUrl)}" style="display:inline-block;padding:9px 16px;background:#211d18;color:#fff;border-radius:4px;text-decoration:none;font-size:13px;">管理画面で確認する</a></p>` : ""}
+  ${signatureHtml}
 </div>`;
   return getTransporter().sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text, html });
 }
@@ -513,7 +523,7 @@ async function sendGasRelayFailure(opts) {
     `  3. 直らない場合は、GASのデプロイ設定（アクセス権が「全員」か）を確認してください`,
     opts.adminUrl ? `\n管理画面: ${opts.adminUrl}` : "",
     ``,
-    `釧路卓球協会 申込システム`,
+    signatureText,
   ].filter(s => s !== undefined && s !== null).join("\n");
   const html = `
 <div style="font-family:'Hiragino Sans','Yu Gothic UI',system-ui,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#1c1917;">
@@ -529,6 +539,7 @@ async function sendGasRelayFailure(opts) {
   </table>
   <p style="font-size:13px;color:#57534e;margin-top:14px;">管理画面の申込一覧で「未反映」を探し、「シートへ再送」を押してください。</p>
   ${opts.adminUrl ? `<p style="margin-top:12px;"><a href="${esc(opts.adminUrl)}" style="display:inline-block;padding:9px 16px;background:#211d18;color:#fff;border-radius:4px;text-decoration:none;font-size:13px;">管理画面を開く</a></p>` : ""}
+  ${signatureHtml}
 </div>`;
   return getTransporter().sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text, html });
 }

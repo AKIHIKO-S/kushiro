@@ -60,8 +60,12 @@ test("申込保存・集計とメールを分離し、失敗した運営通知�
     assert.match(message.text, /中学男子シングルス.*検証 選手/);
     assert.match(message.text, /学年: 中2.*学校名: 架空中学/);
     assert.doesNotMatch(message.text, /2085-04-10/);
+    assert.match(message.text, /https:\/\/forms\.gle\/CSP5RwciRL7GFALM6/);
+    assert.match(message.text, /Mail：kushirotta@gmail\.com\nURL：https:\/\/www\.kushirotta\.jp\//);
   }
   const applicant = mail.find(m => m.to.address);
+  assert.match(applicant.html, /href="mailto:kushirotta@gmail\.com"/);
+  assert.match(applicant.html, /href="https:\/\/forms\.gle\/CSP5RwciRL7GFALM6"/);
   const mailCode = applicant.text.match(/申込番号: ([A-Z0-9-]+)/)[1];
   assert.equal(db.resolveSubmissionToken(mailCode).id, receipt.submission_id);
   assert.match(applicant.text, /platform\.example\.invalid\/entry\/status\?tournament=/);
