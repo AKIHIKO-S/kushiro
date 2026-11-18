@@ -1276,6 +1276,12 @@ html.auth-gate .admin-actions, html.auth-gate #connBadge { display: none !import
 html body .modal-bg { z-index: 99990; }
 html body .modal-box { position: relative; z-index: 1; background: var(--st-paper, #fdfcf9); opacity: 1; }
 html body .toast { z-index: 100001; }
+.bulk-preview { width: 100%; border-collapse: collapse; font-size: 13px; }
+.bulk-preview th, .bulk-preview td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--st-line, #e5e5e5); vertical-align: top; overflow-wrap: anywhere; }
+.bulk-preview th { position: sticky; top: 0; background: var(--st-wash, #f2f3f1); font-weight: 700; }
+/* 短い列は折り返さず、狭い画面では枠の中で横に送る。最後の列(変更内容)だけ折り返す */
+.bulk-preview th, .bulk-preview td { white-space: nowrap; }
+.bulk-preview th:last-child, .bulk-preview td:last-child { white-space: normal; min-width: 11em; }
 </style>
 <link rel="stylesheet" href="/shared/site-tokens.css">
 <link rel="stylesheet" href="/shared/site-tone.css">
@@ -6244,10 +6250,23 @@ const A = {
    catch (err) { toast("失敗: " + err.message, "err"); }
  };
  const bulkFix = async () => {
-   if (!window.confirm(`種目名から推定した値で不整合(性別/区分/ふりがな/所属ゆれ)を一括修正します。\n※ 重複申込・年齢範囲外・選手DB連携の不一致は自動修正されません(個別にご確認ください)。よろしいですか?`)) return;
-   try { const r = await api.post(`/api/tournaments/${t.id}/entry-issues/bulk-fix`, { gender: true, category: true, furigana: true, club: true });
-     toast(`${(r && r.fixed) || 0}件を修正しました`, "ok"); await load(); }
-   catch (err) { toast("失敗: " + err.message, "err"); }
+   const opts = { gender: true, category: true, furigana: true, club: true };
+   let pre;
+   try { pre = await api.post(`/api/tournaments/${t.id}/entry-issues/bulk-fix`, { ...opts, dry_run: true }); }
+   catch (err) { return toast("確認の一覧を作れませんでした。", "err"); }
+   if (!pre || pre.error) return toast((pre && pre.error) || "確認の一覧を作れませんでした。", "err");
+   A.previewBulk({
+     title: "推定値で一括修正（確認）",
+     intro: "種目名などから推定した値で、性別・区分・ふりがな・所属の表記ゆれを直します。重複申込・年齢範囲外・選手データベースとの不一致は自動では直しません（個別に確かめてください）。",
+     count: pre.count || 0, headers: ["氏名", "種目", "変更前 → 変更後"], rows: A._bulkFixRows(pre.changes),
+     applyLabel: "この内容で直す",
+     onApply: async () => {
+       const r = await api.post(`/api/tournaments/${t.id}/entry-issues/bulk-fix`, opts);
+       if (!r || r.error) throw new Error((r && r.error) || "修正できませんでした。");
+       await load();
+       A.showBulkResult({ title: "一括修正しました", summary: `${r.fixed || 0}件を直しました。`,
+         check: "申込一覧の上の「データ不整合」の件数が減ったこと、直した人の行を確かめてください。", backup: r.backup });
+     } });
  };
  // ── 集計スプレッドシートへの反映状況 ──
  let gasState = null;
@@ -8614,12 +8633,66 @@ const A = {
  },
 
  // チーム名混入を一括削除
+ // ── 一括処理の2段階(プレビュー→承認→実行)の共通部品 ──
+ // rows は [[列1, 列2, …], …]。先頭50行だけ見せ、残りは件数で示す。
+ previewBulk({ title, intro, count, headers, rows, applyLabel, onApply }) {
+   const table = h("table", { className: "bulk-preview" },
+     h("thead", {}, h("tr", {}, ...headers.map(x => h("th", {}, x)))),
+     h("tbody", {}, ...rows.slice(0, 50).map(r => h("tr", {}, ...r.map(c => h("td", {}, c == null || c === "" ? "（空欄）" : String(c)))))));
+   const body = h("div", {},
+     h("p", { className: "text-sm", style: { margin: "0 0 10px", lineHeight: 1.7 } }, intro),
+     h("p", { style: { margin: "0 0 8px", fontWeight: 700 } }, count ? `対象 ${count}件` : "対象はありません"),
+     count ? h("div", { style: { maxHeight: "50vh", overflow: "auto", border: "1px solid var(--st-line, #ddd)" } }, table) : null,
+     count > 50 ? h("p", { className: "text-xs text-sub", style: { margin: "6px 0 0" } }, `ほか ${count - 50}件（先頭50件を表示）`) : null,
+     count ? h("p", { className: "text-xs text-sub", style: { margin: "10px 0 0", lineHeight: 1.7 } },
+       "実行の直前に自動でバックアップを取ります。取れなかったときは実行しません。") : null);
+   let bg;
+   const go = h("button", { type: "button", className: "btn", disabled: count ? null : "", onClick: async () => {
+     go.disabled = ""; go.textContent = "実行しています…";
+     try { await onApply(); bg.remove(); }
+     catch (e) { toast((e && e.message) || "実行できませんでした。", "err"); go.disabled = null; go.textContent = applyLabel; }
+   } }, count ? applyLabel : "実行するものはありません");
+   bg = openModal(title, body, h("div", { className: "flex gap-2", style: { justifyContent: "flex-end" } },
+     h("button", { type: "button", className: "btn btn-ghost", onClick: () => bg.remove() }, "やめる"), go), { size: "lg" });
+ },
+ // 実行後の案内: 何が変わったか・どこで確かめるか・どう戻すか
+ showBulkResult({ title, summary, check, backup }) {
+   const body = h("div", { style: { lineHeight: 1.8 } },
+     h("p", { style: { margin: "0 0 10px", fontWeight: 700 } }, summary),
+     h("p", { className: "text-sm", style: { margin: "0 0 6px" } }, h("b", {}, "確かめ方: "), check),
+     h("p", { className: "text-sm", style: { margin: 0 } }, h("b", {}, "元に戻すには: "),
+       backup ? `「管理設定」→「システム管理（オーナー）」→ バックアップの一覧から「${backup}」を復元します（このバックアップより後の変更もすべて戻ります）。`
+         : "実行前のバックアップがありません。個別に直してください。"));
+   const bg = openModal(title, body, h("button", { type: "button", className: "btn", onClick: () => bg.remove() }, "閉じる"));
+ },
+ _bulkFieldLabel(f, v) {
+   if (f === "gender") return v === "female" ? "女子" : v === "male" ? "男子" : v === "mixed" ? "混合" : v;
+   if (f === "category") return (TT.catLabel ? TT.catLabel(v) : v) || v;
+   return v;
+ },
+ _bulkFixRows(changes) {
+   const names = { gender: "性別", category: "区分", furigana: "ふりがな", team: "所属" };
+   return (changes || []).map(c => [c.name, c.event,
+     c.fields.map(f => `${names[f.field] || f.field}: ${A._bulkFieldLabel(f.field, f.before) || "（空欄）"} → ${A._bulkFieldLabel(f.field, f.after)}`).join(" / ")]);
+ },
+
  async cleanupInvalidPlayers() {
-   if (!confirm("選手DBから「チーム名/学校名と判定される」レコードを削除します。よろしいですか?")) return;
    if (!(await A.ensureOwner())) return;   // 一括クリーンアップはオーナー権限
-   const r = (await A.ownerFetch("/api/players/cleanup-invalid", { method: "POST", body: {} })).json || {};
-   toast(`${r.removed || 0}件の不正レコードを削除しました`, "ok");
-   await A.reload();
+   const pre = (await A.ownerFetch("/api/players/cleanup-invalid", { method: "POST", body: { dry_run: true } })).json || {};
+   if (pre.error) return toast(pre.error, "err");
+   A.previewBulk({
+     title: "チーム名混入を削除（確認）",
+     intro: "選手データベースのうち、氏名ではなくチーム名・学校名と判定された登録を削除します。申込や試合からのつながりは外し、試合結果そのものは残します。統合済みの登録は対象にしません。",
+     count: pre.count || 0, headers: ["登録名", "所属", "判定の理由"],
+     rows: (pre.samples || []).map(x => [x.name, x.team, x.reason]),
+     applyLabel: "削除を実行する",
+     onApply: async () => {
+       const r = (await A.ownerFetch("/api/players/cleanup-invalid", { method: "POST", body: {} })).json || {};
+       if (r.error) throw new Error(r.error);
+       await A.reload();
+       A.showBulkResult({ title: "チーム名混入を削除しました", summary: `${r.removed || 0}件を削除しました。`,
+         check: "「選手」の一覧で、チーム名・学校名の登録が消えたことを確かめてください。", backup: r.backup });
+     } });
  },
 
  // 所属(校名)からカテゴリ(小/中/高/大)を一括自動振り分け (#247)
@@ -8668,9 +8741,10 @@ const A = {
            catCh.length ? api.post("/api/players/normalize-categories", {}) : Promise.resolve({ updated: 0 }),
            brCh.length ? api.post("/api/players/normalize-branches", {}) : Promise.resolve({ updated: 0 }),
          ]);
-         toast(`適用しました: カテゴリ${(rc && rc.updated) || 0}件 / 支部名${(rb && rb.updated) || 0}件`, "ok");
          document.querySelector(".modal-bg")?.remove();
          await A.reload();
+         A.showBulkResult({ title: "支部・カテゴリを整えました", summary: `カテゴリ${(rc && rc.updated) || 0}件・支部名${(rb && rb.updated) || 0}件を変更しました。`,
+           check: "「選手」の一覧で、支部・カテゴリの表示を確かめてください。", backup: (rc && rc.backup) || (rb && rb.backup) });
        } catch (e) { toast("適用に失敗: " + e.message, "err"); applyBtn.disabled = null; }
      } }, total ? `適用する（計${total}件）` : "変更なし");
    openModal("支部・カテゴリを整える", body,
@@ -8739,9 +8813,10 @@ const A = {
            brSel.length ? api.post("/api/players/apply-fill", { field: "branch", changes: brSel }) : Promise.resolve({ updated: 0 }),
            fuSel.length ? api.post("/api/players/apply-fill", { field: "furigana", changes: fuSel }) : Promise.resolve({ updated: 0 }),
          ]);
-         toast(`補完しました: 支部${(rb && rb.updated) || 0}件 / ふりがな${(rf && rf.updated) || 0}件`, "ok");
          document.querySelector(".modal-bg")?.remove();
          await A.reload();
+         A.showBulkResult({ title: "空欄を補完しました", summary: `支部${(rb && rb.updated) || 0}件・ふりがな${(rf && rf.updated) || 0}件を補完しました。`,
+           check: "「選手」の一覧で、補完した人の支部・ふりがなを確かめてください。", backup: (rb && rb.backup) || (rf && rf.backup) });
        } catch (e) { toast("補完に失敗: " + e.message, "err"); applyBtn.disabled = null; }
      } }, total ? "チェックした行を適用" : "補完できる項目なし");
    openModal("空欄を推測で補完", body,
@@ -8855,9 +8930,10 @@ const A = {
      try { r = await api.post("/api/players/rename-team", { from: fromIn.value.trim(), to: toIn.value.trim() }); }
      catch (e) { return toast("統一に失敗: " + e.message, "err"); }
      if (!r || r.error) return toast((r && r.error) || "統一に失敗しました", "err");
-     toast(`統一しました: 計${r.total}件（選手${r.counts.players}名ほか）`, "ok");
      document.querySelector(".modal-bg")?.remove();
      await A.reload();
+     A.showBulkResult({ title: "所属名を統一しました", summary: `計${r.total}件（選手${r.counts.players}名ほか）を統一しました。`,
+       check: "「選手」の一覧を統一後の所属名で検索して確かめてください。", backup: r.backup });
    });
    const body = h("div", {},
      h("div", { className: "text-sm text-sub", style: { marginBottom: "10px", lineHeight: "1.6" } },
@@ -16631,14 +16707,25 @@ const TMgmt = {
 
   async _bulkFixInference() {
     const tid = TMgmt.tournamentId;
-    try {
-      const r = await api.post(`/api/tournaments/${tid}/entry-issues/bulk-fix`, { event: TMgmt.event, gender: true, category: true, furigana: true });
-      if (r && r.error) { toast(r.error, "err"); return; }
-      // gender/category/furigana は表の非正規化名(surname/given_name 由来)を変えないため resync-names 不要
-      // (_fixOne も name/team のときだけ resync する。無駄な全試合UPDATEを避ける)。
-      toast("一括修正しました（" + ((r && r.fixed) || 0) + "件）", "ok");
-      await TMgmt.reload();
-    } catch (e) { toast("通信に失敗しました: " + ((e && e.message) || e), "err"); }
+    const opts = { event: TMgmt.event, gender: true, category: true, furigana: true };
+    let pre;
+    try { pre = await api.post(`/api/tournaments/${tid}/entry-issues/bulk-fix`, { ...opts, dry_run: true }); }
+    catch (e) { toast("確認の一覧を作れませんでした。", "err"); return; }
+    if (!pre || pre.error) { toast((pre && pre.error) || "確認の一覧を作れませんでした。", "err"); return; }
+    A.previewBulk({
+      title: "推定値で一括修正（確認）",
+      intro: "この種目の出場者のうち、性別・区分・ふりがなを推定値で直します。",
+      count: pre.count || 0, headers: ["氏名", "種目", "変更前 → 変更後"], rows: A._bulkFixRows(pre.changes),
+      applyLabel: "この内容で直す",
+      onApply: async () => {
+        const r = await api.post(`/api/tournaments/${tid}/entry-issues/bulk-fix`, opts);
+        if (!r || r.error) throw new Error((r && r.error) || "修正できませんでした。");
+        // gender/category/furigana は表の非正規化名(surname/given_name 由来)を変えないため resync-names 不要
+        // (_fixOne も name/team のときだけ resync する。無駄な全試合UPDATEを避ける)。
+        await TMgmt.reload();
+        A.showBulkResult({ title: "一括修正しました", summary: `${r.fixed || 0}件を直しました。`,
+          check: "この画面の「データの確認」の件数が減ったことを確かめてください。", backup: r.backup });
+      } });
   },
   async _fixOne(pid, field, suggested) {
     const tid = TMgmt.tournamentId;

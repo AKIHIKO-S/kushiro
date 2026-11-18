@@ -1736,17 +1736,27 @@ app.put("/api/players/:id", requireAdmin, (req, res) => {
   res.json(player);
 });
 // 既存DBから「チーム名と判定される」選手レコードを削除 (admin 専用)
-app.post("/api/players/cleanup-invalid", requireOwner, (req, res) => {
-  auditOwner(req, "players_cleanup_invalid", "");
-  res.json(db.cleanupInvalidPlayers());
+// 一括処理の実行前に自動バックアップを取る(プレビュー=dry_run のときは取らない)。
+// 取れなかったら実行しない。取れたら応答に backup(名前)を付け、画面で「戻し方」を案内する。
+async function backupBeforeBulk(req, res, next) {
+  if (req.body && req.body.dry_run) return next();
+  try { const snap = await db.createSnapshot("manual"); req.bulkBackup = snap && snap.name; }
+  catch (e) { return res.status(500).json({ error: "実行前のバックアップに失敗したため、中止しました。" }); }
+  next();
+}
+const withBackup = (req, r) => (req.bulkBackup ? { ...r, backup: req.bulkBackup } : r);
+app.post("/api/players/cleanup-invalid", requireOwner, backupBeforeBulk, (req, res) => {
+  const dry = !!(req.body && req.body.dry_run);
+  if (!dry) auditOwner(req, "players_cleanup_invalid", "");
+  res.json(withBackup(req, db.cleanupInvalidPlayers({ dry_run: dry })));
 });
 // 所属(校名)から小/中/高/大カテゴリを一括自動振り分け (#247)
-app.post("/api/players/normalize-categories", requireAdmin, (req, res) => {
-  res.json(db.normalizePlayerCategories({ dry_run: !!(req.body && req.body.dry_run) }));
+app.post("/api/players/normalize-categories", requireAdmin, backupBeforeBulk, (req, res) => {
+  res.json(withBackup(req, db.normalizePlayerCategories({ dry_run: !!(req.body && req.body.dry_run) })));
 });
 // 支部名の一括整形(取込と同じ normalizeShibuName ルール)。dry_run でプレビュー。
-app.post("/api/players/normalize-branches", requireAdmin, (req, res) => {
-  res.json(db.normalizePlayerBranches({ dry_run: !!(req.body && req.body.dry_run) }));
+app.post("/api/players/normalize-branches", requireAdmin, backupBeforeBulk, (req, res) => {
+  res.json(withBackup(req, db.normalizePlayerBranches({ dry_run: !!(req.body && req.body.dry_run) })));
 });
 // 空欄の支部を入力済みの選手(所属→支部の多数決)から推測補完。dry_run でプレビュー。
 app.post("/api/players/infer-branches", requireAdmin, (req, res) => {
@@ -1757,18 +1767,18 @@ app.post("/api/players/infer-furigana", requireAdmin, (req, res) => {
   res.json(db.inferPlayerFurigana({ dry_run: !!(req.body && req.body.dry_run) }));
 });
 // 推測補完のうち人が選んだ行だけを確定書き込み(field=branch|furigana, changes=[{id,to}])。
-app.post("/api/players/apply-fill", requireAdmin, (req, res) => {
+app.post("/api/players/apply-fill", requireAdmin, backupBeforeBulk, (req, res) => {
   const b = req.body || {};
   const r = db.applyInferredFill(b.field, b.changes);
   if (r.error) return res.status(400).json(r);
-  res.json(r);
+  res.json(withBackup(req, r));
 });
 // 所属名の統一(表記ゆれの一括変更 例:鳥取中学→鳥取中学校)。dry_run で件数プレビュー。
-app.post("/api/players/rename-team", requireAdmin, (req, res) => {
+app.post("/api/players/rename-team", requireAdmin, backupBeforeBulk, (req, res) => {
   const b = req.body || {};
   const r = db.renameTeam(b.from, b.to, { dry_run: !!b.dry_run });
   if (r.error) return res.status(400).json(r);
-  res.json(r);
+  res.json(withBackup(req, r));
 });
 
 app.delete("/api/players/:id", requireAdmin, (req, res) => {
@@ -5176,8 +5186,8 @@ app.post("/api/entrants/:id/player-match", requireAdmin, (req, res) => {
   if (r.error) return res.status(r.status || 400).json(r);
   res.json(r);
 });
-app.post("/api/tournaments/:id/entry-issues/bulk-fix", requireAdmin, (req, res) => {
-  res.json(db.bulkFixEntrantInference(req.params.id, req.body || {}));
+app.post("/api/tournaments/:id/entry-issues/bulk-fix", requireAdmin, backupBeforeBulk, (req, res) => {
+  res.json(withBackup(req, db.bulkFixEntrantInference(req.params.id, req.body || {})));
 });
 app.put("/api/tournaments/:id/entry-settings", requireAdmin, (req, res) => {
   const body = req.body || {};

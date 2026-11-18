@@ -12465,6 +12465,8 @@ function bulkFixEntrantInference(tournamentId, opts) {
   opts = opts || {};
   const issues = findEntrantDataIssues(tournamentId);
   let fixed = 0;
+  const changes = [];   // プレビュー用: 行ごとの 変更前 → 変更後
+  const cur = sqlite.prepare("SELECT gender, category, furigana, team FROM entrants WHERE id=?");
   for (const it of issues.items) {
     if (opts.event && it.event !== opts.event) continue;   // 種目指定があればその種目だけ(表示件数とスコープを一致)
     const patch = {};
@@ -12474,8 +12476,16 @@ function bulkFixEntrantInference(tournamentId, opts) {
       if (is.code === "missing_furigana" && opts.furigana && is.suggested) patch.furigana = is.suggested;
       if (is.code === "club_variant" && opts.club && is.suggested) patch.team = is.suggested;
     }
-    if (Object.keys(patch).length) { updateEntrant(it.id, patch); fixed++; }
+    if (!Object.keys(patch).length) continue;
+    if (opts.dry_run) {
+      const before = cur.get(it.id) || {};
+      changes.push({ id: it.id, name: it.name || "", event: it.event || "",
+        fields: Object.keys(patch).map(f => ({ field: f, before: before[f] == null ? "" : String(before[f]), after: String(patch[f]) })) });
+      continue;
+    }
+    updateEntrant(it.id, patch); fixed++;
   }
+  if (opts.dry_run) return { ok: true, dry_run: true, count: changes.length, changes: changes.slice(0, 100) };
   return { ok: true, fixed };
 }
 
@@ -14253,13 +14263,16 @@ function setCourtLayout(tournamentId, layout) {
 
 // 既存DBのチーム名混入クリーンアップ
 // players テーブルから looksLikeValidPlayerName で NG と判定される行を削除
-function cleanupInvalidPlayers() {
-  const all = sqlite.prepare("SELECT id, name FROM players").all();
+function cleanupInvalidPlayers(opts = {}) {
+  // 統合済み(merged_into あり)はリダイレクトとして残す決まりなので対象にしない
+  const all = sqlite.prepare("SELECT id, name, team FROM players WHERE merged_into IS NULL").all();
   const ids = [];
   for (const p of all) {
     const v = looksLikeValidPlayerName(p.name);
-    if (!v.ok) ids.push({ id: p.id, name: p.name, reason: v.reason });
+    if (!v.ok) ids.push({ id: p.id, name: p.name, team: p.team || "", reason: v.reason });
   }
+  // プレビュー: 件数と見本だけを返し、何も消さない
+  if (opts.dry_run) return { dry_run: true, count: ids.length, samples: ids.slice(0, 50) };
   // entrants からのリンク解除のみ (削除はせず player_id=null)
   const delStmt = sqlite.prepare("DELETE FROM players WHERE id = ?");
   const unlinkE = sqlite.prepare(
