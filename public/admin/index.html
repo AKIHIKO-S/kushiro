@@ -28,7 +28,7 @@
  font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
  font-family: var(--font-display); text-transform: uppercase;
  }
- .admin-actions { display: flex; gap: 8px; align-items: center; }
+ .admin-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: 100%; }
  .admin-actions .btn { font-size: 12px; padding: 7px 14px; font-weight: 600; }
  @media (max-width: 480px) {
  .admin-hero-in { padding: 0 12px; }
@@ -1303,9 +1303,9 @@ html body .toast { z-index: 100001; }
  <span class="admin-badge">ADMIN</span>
  </div>
  <div class="admin-actions">
- <a href="/viewer" target="_blank" class="btn btn-ghost em-hide"
-    style="background:rgba(255,255,255,.08); color:#fff; border-color:transparent">閲覧</a>
- <a href="/viewer/live/" target="_blank" class="btn btn-ghost em-hide"
+ <a href="/" target="_blank" rel="noopener" class="btn btn-ghost"
+    style="background:rgba(255,255,255,.08); color:#fff; border-color:transparent">一般公開画面</a>
+ <a href="/viewer/live/" target="_blank" rel="noopener" class="btn btn-ghost em-hide"
     style="background:rgba(255,255,255,.08); color:#fff; border-color:transparent">観戦</a>
  <span id="adminWho" class="admin-who" hidden></span>
  <button type="button" class="btn btn-ghost admin-setbtn" onclick="A.openSettings()">管理設定</button>
