@@ -349,9 +349,12 @@
     const live = r.players.filter(p => p.status !== "cancelled");
     return [
       h("p", { class: "ed-sub" }, [r.contact_name ? "連絡者 " + r.contact_name : "", jpDate(r.received_at) + " 受付", ROUTE[r.route] || ""].filter(Boolean).join("・")),
+      (r.mail || []).map(m => h("p", { class: "ed-sub" },
+        (m.recipient === "admin" ? "運営通知" : "申込者控え") + "：" +
+        ({ pending: "送信待ち", sending: "送信中", sent: "メールサーバー受付済み", failed: "送信失敗", skipped: "送信対象外" }[m.state] || "未確認"))),
       r.issues.map(i => h("div", { class: "ed-issue" + (i.type === "dup" ? " ed-issue--dup" : "") },
         h("b", {}, i.title), h("br"), i.detail,
-        i.type === "sheet" ? h("div", {}, h("button", { class: "ed-btn", type: "button", onclick: (e) => resend(r, i, e.currentTarget) }, "もう一度シートへ送る")) : null)),
+        ["sheet", "mail"].includes(i.type) ? h("div", {}, h("button", { class: "ed-btn", type: "button", onclick: (e) => resend(r, i, e.currentTarget) }, i.type === "mail" ? "このメールを再送" : "もう一度シートへ送る")) : null)),
       h("ul", { class: "ed-plist" }, r.players.map(p => h("li", { class: p.status === "cancelled" ? "is-cancelled" : "" },
         h("b", {}, p.label), h("small", {}, p.event + (p.kana ? "・" + p.kana : "") + (p.status === "cancelled" ? "・取り消し済み" : "") + (p.status === "pending" ? "・承認待ち" : ""))))),
       h("div", { class: "ed-btns" },
@@ -362,13 +365,13 @@
 
   async function resend(r, i, btn) {
     btn.disabled = true;
-    const url = i.resend === "initial"
+    const url = i.type === "mail" ? "/api/submissions/" + r.submission_id + "/mail-resend" : i.resend === "initial"
       ? "/api/tournaments/" + S.tid + "/gas-sync/resend/" + r.submission_id
       : "/api/submissions/" + r.submission_id + "/sheet-resend";
     let res = null;
-    try { res = await api().post(url, {}); } catch (_) {}
+    try { res = await api().post(url, i.type === "mail" ? { recipient: i.recipient } : {}); } catch (_) {}
     if (!res || res.error) { btn.disabled = false; return toast((res && res.error) || "送れませんでした", "err"); }
-    toast("シートへ送りました", "ok");
+    toast(i.type === "mail" ? "メールの再送を予約しました" : "シートへ送りました", "ok");
     closeSheet();
     reload();
   }

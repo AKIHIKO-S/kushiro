@@ -1188,6 +1188,33 @@ app.options("/api/public/tournaments/:id/submit-team-entry", (req, res) => {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.sendStatus(204);
 });
+async function deliverEntryMail(submissionId = null) {
+  if (!mailer.isEnabled()) return;
+  await Promise.all(db.claimEntryMail(submissionId).map(async job => {
+    let ok = false;
+    let skipped = false;
+    try {
+      const data = db.getEntryMailContent(job.submission_id, job.recipient);
+      if (!data) skipped = true;
+      else {
+        const origin = (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
+        const send = job.recipient === "applicant" ? mailer.sendConfirmationEmail : mailer.sendAdminNotification;
+        ok = !!(await send({ ...data, appOrigin: origin,
+          adminUrl: origin ? `${origin}/admin#tournament/${encodeURIComponent(data.tournament.id)}` : "" })).ok;
+      }
+    } catch (_) { /* SMTPエラーには宛先が含まれ得るためログに残さない。 */ }
+    db.finishEntryMail(job, ok, Date.now(), skipped);
+  }));
+}
+let entryMailRunning = false;
+function scheduleEntryMail(submissionId = null) {
+  if (entryMailRunning) return;
+  entryMailRunning = true;
+  deliverEntryMail(submissionId)
+    .catch(() => console.error("[entry mail] 送信処理を完了できませんでした"))
+    .finally(() => { entryMailRunning = false; });
+}
+
 app.post("/api/public/tournaments/:id/submit-team-entry",
   entryRateLimit,
   express.text({ limit: "1mb", type: ["text/plain", "application/json"] }),
@@ -1223,12 +1250,18 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
       // DBレベルで replay 判定する (Phase4残: 真のDB冪等)。
       const opId = db.publicEntryOperationId(req.params.id, req.get("X-Op-Id") || payload.op_id);
       // enforce:true = 公開フォーム経路は field_config の必須項目をサーバ側で強制(クライアント不信)。
-      const r = db.createTeamEntry(req.params.id, { ...payload, source: "form" }, opId, { enforce: true, explicit_additions: true });
+      if (!mailer.validRecipient(payload.contact_email)) {
+        return res.status(400).json({ error: "連絡先メールアドレスを正しく入力してください。" });
+      }
+      const r = db.createTeamEntry(req.params.id, { ...payload, source: "form" }, opId,
+        { enforce: true, explicit_additions: true, queue_mail: true });
 
       // Platformで成立していない受付はシートへ送らない。
       if (r.error) {
         return res.status(400).json({ error: r.error });
       }
+      const created = r.entrant_ids && r.entrant_ids.length > 0;
+      if (created) scheduleEntryMail(r.submission_id);
 
       // GAS 連携が設定されていればサーバー側から中継 (スプレッドシート反映、best-effort)。
       // server→GAS は CORS 制約なし。ブラウザ直POSTの誤エラーを解消する要。
@@ -1275,29 +1308,8 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
         }
       }
 
-      // ── 控えメール送信 (実際に申込が作成された時のみ。全件スクリーニング除外なら送らない=いたずらメール防止) ──
-      const mailResults = { confirmation: null, admin: null };
-      const created = !r.error && r.entrant_ids && r.entrant_ids.length > 0;
-      if (created && mailer.isEnabled() && tournament) {
-        const appOrigin = appOriginOf(req);   // X-Forwarded-Host を信用しない正規オリジン
-        const adminUrl = `${appOrigin}/admin#tournament/${req.params.id}`;
-        const [confirmRes, adminRes] = await Promise.allSettled([
-          mailer.sendConfirmationEmail({ tournament, formData: payload, result: r, appOrigin }),
-          mailer.sendAdminNotification({ tournament, formData: payload, result: r, adminUrl }),
-        ]);
-        mailResults.confirmation = confirmRes.status === "fulfilled"
-          ? confirmRes.value : { ok: false, error: String(confirmRes.reason) };
-        mailResults.admin = adminRes.status === "fulfilled"
-          ? adminRes.value : { ok: false, error: String(adminRes.reason) };
-      }
       const { contact: _contact, ...base } = r;
-      // 公開(CORS全開放)レスポンスには成否boolのみ返す。SMTP生エラー/GAS生応答などの
-      // 内部詳細は外部へ出さない(#15)。申込番号(applicant_token)は本人閲覧に必要なため base に残す。
-      const mailSafe = {
-        confirmation: mailResults.confirmation ? { ok: !!mailResults.confirmation.ok } : null,
-        admin: mailResults.admin ? { ok: !!mailResults.admin.ok } : null,
-      };
-      res.status(201).json({ ...base, mail: mailSafe, gas: gasRelay ? { ok: !!gasRelay.ok } : null });
+      res.status(201).json({ ...base, mail: created ? { queued: true } : null, gas: gasRelay ? { ok: !!gasRelay.ok } : null });
     } catch (e) {
       recordError(e, req, res, 500);
       res.status(500).json({ error: "申込処理エラー: " + e.message });
@@ -1434,6 +1446,15 @@ app.post("/api/submissions/:sid/sheet-resend", requireAdmin, async (req, res) =>
   const sheet = await relaySheetUpdate(t, req.params.sid, "");
   if (!sheet || !sheet.ok) return res.status(400).json({ error: (sheet && sheet.error) || "反映できませんでした", sheet });
   res.json({ ok: true, sheet });
+});
+
+app.post("/api/submissions/:sid/mail-resend", requireAdmin, (req, res) => {
+  const recipient = req.body?.recipient;
+  if (recipient !== "applicant" && recipient !== "admin") return res.status(400).json({ error: "再送先を確認してください。" });
+  if (!mailer.isEnabled()) return res.status(503).json({ error: "メール送信が設定されていません。" });
+  if (!db.retryEntryMail(req.params.sid, recipient)) return res.status(409).json({ error: "再送できるメールがありません。" });
+  scheduleEntryMail(req.params.sid);
+  res.status(202).json({ ok: true });
 });
 
 // 申込の一覧(件数・修正・シート反映・別団体との重複)。金銭の収受は扱わない。
@@ -5619,9 +5640,10 @@ function lanIPv4s() {
 }
 // テスト時(require('../server'))はサーバを起動せず app と内部関数だけ公開する。
 // 本番(node server.js)は require.main===module が真になり従来どおり起動・常駐する。
-module.exports = { app, _resolveEvents, __test__: { relayEntryToGas, relayEntryToGasOnce } };
+module.exports = { app, _resolveEvents, __test__: { relayEntryToGas, relayEntryToGasOnce, deliverEntryMail } };
 
 if (require.main === module) {
+setInterval(() => scheduleEntryMail(), 15000).unref();
 const server = app.listen(PORT, () => {   // host未指定=0.0.0.0(全インターフェース)=LAN内の他端末から到達可能
   console.log(`\n卓球大会運営アプリ 起動中`);
   console.log(`   閲覧画面:  http://localhost:${PORT}/viewer`);

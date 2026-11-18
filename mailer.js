@@ -33,12 +33,49 @@ function getTransporter() {
     port: SMTP_PORT,
     secure: SMTP_SECURE,
     auth: { user: SMTP_USER, pass: SMTP_PASS },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 30000,
   });
   return _transporter;
 }
 
 function isEnabled() {
   return !!(SMTP_USER && SMTP_PASS);
+}
+
+function validRecipient(value) {
+  return typeof value === "string" && value.trim().length <= 200 &&
+    /^[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+$/i.test(value.trim());
+}
+
+function answerLines(answers, fields = []) {
+  return fields.flatMap(({ key, label }) => {
+    const value = answers && Object.hasOwn(answers, key) ? answers[key] : null;
+    if (value == null || value === "" || !["string", "number", "boolean"].includes(typeof value)) return [];
+    return [`${label}: ${typeof value === "boolean" ? (value ? "はい" : "いいえ") : value}`];
+  });
+}
+
+function entryPersonLines(e, fields) {
+  const ex = e.extra_json || {};
+  const slot = (name, team, extra = {}) => {
+    if (!name) return "";
+    const values = [team, extra.grade && `学年: ${extra.grade}`, extra.age && `年齢: ${extra.age}`,
+      ...answerLines(extra.answers, fields)].filter(Boolean);
+    return `${name}${values.length ? `（${values.join("、")}）` : ""}`;
+  };
+  if (e.type === "team") return [e.team_name, ...(e.members || []).map((name, i) => slot(name, "", (e.members_detail || [])[i]))].filter(Boolean);
+  if (e.type === "doubles" || e.type === "mixed") {
+    const players = ex.players || [];
+    return [slot(e.name1, e.team1, players[0]), slot(e.name2, e.team2, players[1])].filter(Boolean);
+  }
+  return [slot(e.name, e.team, ex)].filter(Boolean);
+}
+
+function entryText(e, fields) {
+  const division = e.division_label ? `（${e.division_label}）` : "";
+  return `・${e.event}${division}: ${entryPersonLines(e, fields).join(" / ")} - ${formatYen(e.fee)}`;
 }
 
 function esc(s) {
@@ -117,7 +154,7 @@ function authoritativeFees(tournament, entries) {
 }
 
 // 申込内容を HTML テーブルにする
-function entriesTable(entries) {
+function entriesTable(entries, fields) {
   if (!entries || !entries.length) return "";
   const rows = entries.map(e => {
     // label は「エスケープ済みの断片 + 自分で書いたタグ」を組み立てた HTML。
@@ -139,6 +176,7 @@ function entriesTable(entries) {
     } else {
       detail = `${esc(e.name || "")} (${esc(e.team || "")})`;
     }
+    if (e.extra_json || e.members_detail) detail = entryPersonLines(e, fields).map(esc).join("<br>");
     return `<tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${label}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${detail}</td>
@@ -161,11 +199,11 @@ async function sendConfirmationEmail(opts) {
   if (!isEnabled()) return { ok: false, skipped: true, reason: "SMTP未設定" };
   const transporter = getTransporter();
   const { tournament, formData, result } = opts;
-  const toEmail = formData.contact_email;
+  const toEmail = String(formData.contact_email || "").trim();
   if (!toEmail) return { ok: false, skipped: true, reason: "宛先メールなし" };
   // 形式が不正なら送信を試みず明確にスキップ (sendMail の分かりにくい reject を避ける)。
   // 申込自体は成立済みなので控えメールのみ見送る。
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(toEmail).trim())) {
+  if (!validRecipient(toEmail)) {
     return { ok: false, skipped: true, reason: "宛先メール形式が不正" };
   }
 
@@ -181,6 +219,7 @@ async function sendConfirmationEmail(opts) {
   const coach = formData.coach || "";
   // 申込単位スコープの自由項目(scope=submission)の回答。生の生年月日は含まない。
   const subAnswers = (formData.extra && typeof formData.extra === "object") ? formData.extra : null;
+  const subLines = answerLines(subAnswers, opts.fields?.submission);
   // #26: 参加料・合計はサーバ側で算出 (クライアント値は信用しない)。
   // Phase4: 実際に作成された申込(created_entries, 権威料金)があればそれを使う。
   // spam/重複で落ちた行を含む生の formData.entries で再計算すると、控えメールの明細・合計が
@@ -203,7 +242,7 @@ async function sendConfirmationEmail(opts) {
   // Phase4: 申込番号(トークン) + 本人確認ページのURL。本人が後から申込内容を閲覧できる。
   const token = (result && result.applicant_token) || "";
   // 能力トークンをURLに含めない。確認ページで申込番号を入力し、HttpOnlyセッションへ交換する。
-  const statusUrl = (token && opts.appOrigin) ? `${opts.appOrigin}/entry/status` : "";
+  const statusUrl = (token && opts.appOrigin) ? `${opts.appOrigin}/entry/status?tournament=${encodeURIComponent(tournament.id)}` : "";
 
   const subject = `【${tournName}】申込を受け付けました`;
 
@@ -229,17 +268,13 @@ async function sendConfirmationEmail(opts) {
     `  担当者: ${contactName}`,
     contactTel ? `  電話: ${contactTel}` : "",
     `  メール: ${toEmail}`,
+    supervisor ? `  引率顧問: ${supervisor}` : "",
+    advisor ? `  顧問: ${advisor}` : "",
+    coach ? `  コーチ: ${coach}` : "",
+    ...subLines,
     ``,
     `■ 申込内容 (${feeEntries.length}件)`,
-    ...(feeEntries.map(e => {
-      if (e.type === "team") {
-        return `  ・${e.event} : ${e.team_name || ""} [${(e.members || []).join("、")}] - ${formatYen(e.fee)}`;
-      }
-      if (e.type === "doubles") {
-        return `  ・${e.event} : ${e.name1 || ""} / ${e.name2 || ""} (${e.team || ""}) - ${formatYen(e.fee)}`;
-      }
-      return `  ・${e.event} : ${e.name || ""} (${e.team || ""}) - ${formatYen(e.fee)}`;
-    })),
+    ...feeEntries.map(e => entryText(e, opts.fields?.player)),
     // 有料オプション(弁当・懇親会など)。金額はサーバが受付時に確定した明細をそのまま出す。
     ...(optionItems.length ? [``, `■ オプション`] : []),
     ...optionItems.map(o => `  ・${o.label} : ${o.qty}${o.unit || ""} - ${formatYen(o.amount)}`),
@@ -292,11 +327,11 @@ async function sendConfirmationEmail(opts) {
     ${supervisor ? `<tr><td style="color:#78716c;padding-right:12px;">引率顧問:</td><td>${esc(supervisor)}</td></tr>` : ""}
     ${advisor ? `<tr><td style="color:#78716c;padding-right:12px;">顧問:</td><td>${esc(advisor)}</td></tr>` : ""}
     ${coach ? `<tr><td style="color:#78716c;padding-right:12px;">コーチ:</td><td>${esc(coach)}</td></tr>` : ""}
-    ${subAnswers ? Object.keys(subAnswers).map(k => `<tr><td style="color:#78716c;padding-right:12px;">${esc(k)}:</td><td>${esc(subAnswers[k] === true ? "はい" : String(subAnswers[k]))}</td></tr>`).join("") : ""}
+    ${subLines.map(line => `<tr><td colspan="2">${esc(line)}</td></tr>`).join("")}
   </table>
 
   <h2 style="font-size:14px;border-left:4px solid #b91c1c;padding-left:8px;margin:24px 0 12px;">申込内容</h2>
-  ${entriesTable(feeEntries)}
+  ${entriesTable(feeEntries, opts.fields?.player)}
   ${optionItems.length ? `
   <h2 style="font-size:14px;border-left:4px solid #b91c1c;padding-left:8px;margin:24px 0 12px;">オプション</h2>
   <table style="width:100%;border-collapse:collapse;font-size:13px;">
@@ -328,11 +363,12 @@ async function sendConfirmationEmail(opts) {
   try {
     const info = await transporter.sendMail({
       from: SMTP_FROM,
-      to: toEmail,
+      to: { address: toEmail, name: "" },
       subject,
       text,
       html,
     });
+    if (!info.accepted?.length) return { ok: false };
     return { ok: true, message_id: info.messageId };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -350,6 +386,7 @@ async function sendAdminNotification(opts) {
     ? result.total_amount
     : authoritativeFees(tournament, formData.entries).total;
   const subject = `【新規申込】${tournament.name} - ${formData.team_name || formData.contact_name || ""}`;
+  const entries = result.created_entries || [];
   const text = [
     `新規申込が届きました。`,
     ``,
@@ -357,7 +394,15 @@ async function sendAdminNotification(opts) {
     `所属: ${formData.team_name || ""}`,
     `担当: ${formData.contact_name || ""}`,
     `連絡先: ${formData.contact_email || ""} / ${formData.contact_tel || ""}`,
+    formData.supervisor ? `引率顧問: ${formData.supervisor}` : "",
+    formData.advisor ? `顧問: ${formData.advisor}` : "",
+    formData.coach ? `コーチ: ${formData.coach}` : "",
     `申込件数: ${result.entry_count}件`,
+    result.submission_id ? `受付台帳ID: ${result.submission_id}` : "",
+    ...answerLines(formData.extra, opts.fields?.submission),
+    ...entries.map(e => entryText(e, opts.fields?.player)),
+    ...(result.options || []).map(o => `・${o.label}: ${o.qty}${o.unit || ""}`),
+    formData.note ? `通信欄: ${formData.note}` : "",
     `合計: ${formatYen(total)}`,
     ``,
     adminUrl ? `管理画面: ${adminUrl}` : "",
@@ -369,6 +414,7 @@ async function sendAdminNotification(opts) {
       subject,
       text,
     });
+    if (!info.accepted?.length || info.rejected?.length) return { ok: false };
     return { ok: true, message_id: info.messageId };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -499,6 +545,7 @@ async function sendOperatorInvite(to, link) {
 
 module.exports = {
   isEnabled,
+  validRecipient,
   sendOperatorInvite,
   sendConfirmationEmail,
   sendAdminNotification,

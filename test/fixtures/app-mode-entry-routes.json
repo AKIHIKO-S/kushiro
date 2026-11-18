@@ -100,6 +100,7 @@
  "POST /api/public/tournaments/:id/entry",
  "POST /api/public/tournaments/:id/submit-team-entry",
  "POST /api/registered-teams",
+ "POST /api/submissions/:sid/mail-resend",
  "POST /api/submissions/:sid/sheet-resend",
  "POST /api/sync/now",
  "POST /api/sync/push",

@@ -259,6 +259,15 @@ sqlite.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_submissions_tournament ON entry_submissions(tournament_id);
   CREATE INDEX IF NOT EXISTS idx_submissions_token ON entry_submissions(token_hash);
+  CREATE TABLE IF NOT EXISTS entry_mail_jobs (
+    submission_id TEXT NOT NULL REFERENCES entry_submissions(id) ON DELETE CASCADE,
+    recipient TEXT NOT NULL CHECK(recipient IN ('applicant','admin')),
+    state TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    due_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (submission_id, recipient)
+  );
+  CREATE INDEX IF NOT EXISTS idx_entry_mail_due ON entry_mail_jobs(state, due_at);
   -- idx_submissions_opid(op_id列を使う索引)は、既存DBでは op_id を ALTER で足した後でないと
   -- 「no such column: op_id」で失敗するため、ここではなく移行ブロックで ALTER の直後に作成する。
 
@@ -9203,6 +9212,7 @@ function deleteSubmissionPII(submissionId, opts = {}) {
   if (!sub) return { error: "申込原本が見つかりません" };
   const txn = sqlite.transaction(() => {
     // 連絡先 + 申込単位の構造化データ(引率者/顧問/コーチ名・自由回答=PIIを含みうる)を匿名化。
+    sqlite.prepare("DELETE FROM entry_mail_jobs WHERE submission_id=?").run(submissionId);
     sqlite.prepare("UPDATE entry_submissions SET contact_name='', contact_email='', contact_tel='', extra_json='' WHERE id=?").run(submissionId);
     // 入金メモは自由記述(振込名義などが書かれうる)なので連絡先と同じ扱いで消す。金額と状態は集計のため残す。
     sqlite.prepare("UPDATE entry_submissions SET pay_note='' WHERE id=?").run(submissionId);
@@ -9418,6 +9428,51 @@ function getSubmissionForResend(submissionId) {
     total_amount: sub.total_amount != null ? sub.total_amount : null,
     option_items: options,
   };
+}
+
+function claimEntryMail(submissionId = null, now = Date.now()) {
+  return sqlite.prepare(`UPDATE entry_mail_jobs
+    SET state='sending', due_at=@lease, attempts=attempts+1
+    WHERE rowid IN (SELECT rowid FROM entry_mail_jobs
+      WHERE state IN ('pending','sending') AND due_at<=@now
+        AND (@id IS NULL OR submission_id=@id)
+      ORDER BY due_at, rowid LIMIT 4)
+    RETURNING submission_id, recipient, attempts`)
+    .all({ id: submissionId, now, lease: now + 300000 });
+}
+
+function finishEntryMail(job, ok, now = Date.now(), skipped = false) {
+  const state = skipped ? "skipped" : ok ? "sent" : job.attempts >= 3 ? "failed" : "pending";
+  sqlite.prepare(`UPDATE entry_mail_jobs SET state=?, due_at=?
+    WHERE submission_id=? AND recipient=? AND state='sending' AND attempts=?`)
+    .run(state, state === "pending" ? now + job.attempts * 60000 : 0, job.submission_id, job.recipient, job.attempts);
+}
+
+function retryEntryMail(id, recipient) {
+  return sqlite.prepare(`UPDATE entry_mail_jobs SET state='pending', attempts=0, due_at=0
+    WHERE submission_id=? AND recipient=? AND state IN ('pending','failed')`).run(id, recipient).changes > 0;
+}
+
+function getEntryMailContent(id, recipient) {
+  const sub = submissionStmts.getById.get(id);
+  const tournament = sub && stmts.getTournament.get(sub.tournament_id);
+  if (!tournament || !sub.contact_email) return null;
+  const cfg = _eventCfgOf(tournament);
+  const entries = sqlite.prepare("SELECT * FROM entrants WHERE submission_id=?").all(id)
+    .filter(isConfirmedEntry).map(e => _entrantToPayloadEntry(e, tournament, cfg));
+  if (!entries.length) return null;
+  const extra = _parseObj(sub.extra_json);
+  const answers = resolveFieldConfig(tournament).custom;
+  const fields = { submission: answers.filter(c => c.scope !== "player"), player: answers.filter(c => c.scope === "player") };
+  const formData = { team_name: sub.team_name, contact_name: sub.contact_name, contact_email: sub.contact_email,
+    contact_tel: sub.contact_tel, supervisor: extra.supervisor, advisor: extra.advisor, coach: extra.coach,
+    extra: extra.answers, note: _parseObj(sub.payload_json).note };
+  // 再送時も同じ申込へ戻れるよう、メール専用の確認番号を発行する。平文は保存しない。
+  const token = recipient === "applicant" ? _genApplicantToken() : "";
+  if (token) submissionStmts.addToken.run(_hashToken(token), id);
+  const options = _parseObj(sub.options_json);
+  return { tournament, formData, fields, result: { submission_id: id, applicant_token: token, entry_count: entries.length,
+    created_entries: entries, total_amount: sub.total_amount, options: Array.isArray(options) ? options : [] } };
 }
 
 // ── 申込設定のコピー(去年の同じ大会の設定をそのまま使う) ────────────────
@@ -10621,6 +10676,12 @@ function getEntryDesk(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
   const subs = submissionStmts.listByTournament.all(t.id);
+  const mailBy = new Map();
+  for (const job of sqlite.prepare(`SELECT j.submission_id, j.recipient, j.state, j.attempts FROM entry_mail_jobs j
+    JOIN entry_submissions s ON s.id=j.submission_id WHERE s.tournament_id=?`).all(t.id)) {
+    if (!mailBy.has(job.submission_id)) mailBy.set(job.submission_id, []);
+    mailBy.get(job.submission_id).push(job);
+  }
   const all = sqlite.prepare(`SELECT * FROM entrants WHERE tournament_id=?`).all(t.id);
   let cross = {};
   try { cross = findCrossGroupDuplicates(t.id); } catch (err) { console.error("desk cross dup:", err.message); }
@@ -10669,6 +10730,12 @@ function getEntryDesk(tournamentId) {
       });
     });
     const sheetBad = s.gas_status === "failed" || ["failed", "partial", "pending"].includes(s.sheet_upd_status || "");
+    const mail = mailBy.get(s.id) || [];
+    for (const job of mail) if (job.state === "failed" || (job.state === "pending" && job.attempts)) {
+      issues.push({ key: `mail:${job.recipient}`, type: "mail", recipient: job.recipient,
+        title: `${job.recipient === "admin" ? "運営通知" : "申込者控え"}を送信できていません`,
+        detail: "申込は保存済みです。メールだけを再送できます。" });
+    }
     if (t.entry_gas_url && sheetBad && s.gas_status !== "skipped") {
       issues.push({ key: `sheet:${s.id}`, type: "sheet", title: "シートに届いていません", entrant_id: "",
         resend: s.gas_status === "failed" ? "initial" : "update",
@@ -10685,7 +10752,7 @@ function getEntryDesk(tournamentId) {
         entrant_id: e.id, event: e.event, label: _deskLabel(e),
         kana: e.is_doubles && e.partner_name ? [e.furigana || "", e.partner_furigana || ""].filter(Boolean).join("・") : (e.furigana || ""),
         status: e.status || "confirmed" })),
-      issues,
+      issues, mail: mail.map(({ recipient, state }) => ({ recipient, state })),
     };
   }).sort((a, b) => String(a.team_name).localeCompare(String(b.team_name), "ja"));
   const sumAll = summarizeEntries(all);
@@ -11645,6 +11712,10 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
         options_json: optionPricing.items.length ? JSON.stringify(optionPricing.items) : "",
       });
       if (token) submissionStmts.addToken.run(_hashToken(token), submissionId);
+      if (opts.queue_mail) {
+        sqlite.prepare("INSERT INTO entry_mail_jobs (submission_id, recipient) VALUES (?, 'applicant'), (?, 'admin')")
+          .run(submissionId, submissionId);
+      }
       if (opts.skip_sheet) sqlite.prepare("UPDATE entry_submissions SET gas_status='skipped' WHERE id=?").run(submissionId);
       if (opId) sqlite.prepare(`UPDATE entry_submissions SET ledger_keys=? WHERE id=?`).run(JSON.stringify([opId]), submissionId);
     }
@@ -15184,6 +15255,7 @@ module.exports = {
   findCrossGroupDuplicates, getSubmissionEditView, editSubmission, recordAdminEntrantChange, buildSheetUpdatePayload, recordSheetUpdate, getSubmissionList,
   copyEntrySettings, listEntrySettingSources,
   recordGasRelay, getGasSyncState, getSubmissionForResend,
+  claimEntryMail, finishEntryMail, retryEntryMail, getEntryMailContent,
   resolveEntryOptions, sanitizeEntryOptions, priceEntryOptions,
   findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,
   updateEntrySettings, getOpenTournaments, getUsedEventsCatalog,

@@ -2188,12 +2188,8 @@ function showConfirmModal(data) {
   });
 }
 
-// 内容から安定した冪等キーを作る (同一内容の再送=同キー=サーバーで1回だけ登録。内容変更時は別キー)。
-function ttHash(str) {
-  var h = 5381;
-  for (var i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
-  return h.toString(36);
-}
+// 同じ画面内の再試行では同じ鍵。鍵そのものは入力内容から推測できない乱数にする。
+let ttLastEntry = null;
 // 申込の「同一性」を表す鍵。同じ内容の再送(二度押し・通信リトライ)はこれが一致し、
 // サーバ側で1件として扱われる=重複登録が起きない。
 //
@@ -2208,7 +2204,13 @@ function ttOpId(data) {
     if (k === "cf_turnstile_token" || k === "hp_url" || k === "submitted_at") return;
     copy[k] = data[k];
   });
-  return "entry-" + TOURNAMENT_ID + "-" + ttHash(JSON.stringify(copy));
+  const body = JSON.stringify(copy);
+  if (!ttLastEntry || ttLastEntry.body !== body) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    const key = Array.from(bytes, n => n.toString(16).padStart(2, "0")).join("");
+    ttLastEntry = { body, key };
+  }
+  return ttLastEntry.key;
 }
 
 async function submitForm(e) {
@@ -2272,7 +2274,7 @@ async function submitForm(e) {
         ? '同じ内容の申込がすでに登録されています。最初に申込まれた際の<b>申込番号</b>(控えメール)でご確認ください。お心当たりがない場合や修正が必要な場合は大会本部までご連絡ください。'
         : merged
           ? '今回の追加分を、既存のお申込にまとめました。下記の<b>申込番号</b>で全種目をまとめて確認できます(以前の申込番号でも確認できます)。'
-          : 'お申込ありがとうございます。下記の申込番号を控えてください。<br>お申込内容をLINE等で関係者と共有する場合は、下記をコピーしてご利用ください。';
+          : 'お申込ありがとうございます。メールが届かない場合に備え、下記の申込番号を控えてください。<br>お申込内容をLINE等で関係者と共有する場合は、下記をコピーしてご利用ください。';
       const card = document.createElement("div");
       card.className = "success-card";
       card.innerHTML =
@@ -2308,6 +2310,7 @@ async function submitForm(e) {
       };
       // 新規申込ボタン
       document.getElementById("ttNewBtn").onclick = function() {
+        ttLastEntry = null;
         document.getElementById("entryForm").reset();
         document.getElementById("entryForm").querySelectorAll(".form-section").forEach(s => s.style.display = "");
         document.getElementById("submitBtn").style.display = "";
