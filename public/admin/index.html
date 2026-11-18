@@ -1494,7 +1494,7 @@ html body .toast { z-index: 100001; }
  </div>
  </div>
  <div class="flex gap-2 mb-3" style="flex-wrap:wrap">
- <input type="text" class="input" id="pSearch" placeholder="検索 (氏名・ふりがな・所属・支部)" oninput="A.renderPlayers()" style="flex:1;min-width:200px">
+ <input type="text" class="input" id="pSearch" aria-label="選手番号・氏名・所属で選手を探す" placeholder="選手番号・氏名・所属を検索" oninput="A.renderPlayers()" style="flex:1;min-width:200px">
  <select class="input" id="pGender" style="width:120px" onchange="A.renderPlayers()">
  <option value="all">全性別</option>
  <option value="male">男子</option>
@@ -8269,8 +8269,8 @@ const A = {
  const body = h("div", {});
  body.appendChild(h("div", { className: "text-sm text-sub mb-3", style: { lineHeight: "1.6" } },
  groups.length
- ? `重複の可能性がある ${groups.length} 組を検出しました。各組で「残す選手」を選んで結合してください。戦績・入賞・出場記録は残す選手に統合され、統合元のIDは「統合済み」として残ります（オーナーの「選手マージ履歴」から取り消せます）。`
- : "重複の可能性がある選手は見つかりませんでした。ふりがなと漢字氏名の両方が一致する選手だけを候補に出しています（別人の誤検出を防ぐため。ふりがな未登録の選手は候補に出ません）。"));
+ ? `確認待ちの候補が ${groups.length} 組あります。一字違い・所属違いは別人の場合があります。同じ選手だと確認できた組だけオーナーが統合してください。統合元のIDは残り、オーナーの「選手マージ履歴」から取り消せます。`
+ : "確認待ちの候補は見つかりませんでした。"));
  groups.forEach((g, gi) => body.appendChild(A._renderMergeGroup(g, gi)));
  openModal("重複選手の結合", body,
  h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
@@ -8348,11 +8348,11 @@ const A = {
  h("div", { style: { flex: "1", minWidth: "0" } },
  h("div", {}, h("b", {}, p.name), p.furigana ? h("span", { className: "text-xs text-sub" }, ` ${p.furigana}`) : ""),
  h("div", { className: "text-xs text-sub" },
- `${p.team || "所属未設定"} ・ ${p.wins}勝${p.losses}敗 ・ 入賞${p.achievements} ・ 出場${p.appearances}回`)));
+ `選手番号 ${p.player_no || "未付与"} ・ ${p.team || "所属未設定"} ・ ${p.wins}勝${p.losses}敗 ・ 入賞${p.achievements} ・ 出場${p.appearances}回`)));
  card.appendChild(row);
  });
  card.appendChild(h("div", { className: "text-xs text-sub", style: { margin: "4px 0 8px" } }, "↑ 残す選手 (先に登録された方=古いIDを既定選択)"));
- card.appendChild(h("button", { className: "btn btn-sm", onClick: () => A.doMergeGroup(gi, g) }, `この${g.players.length}名を1人に結合`));
+ card.appendChild(h("button", { className: "btn btn-sm", onClick: () => A.doMergeGroup(gi, g) }, "同一選手として承認・統合"));
  return card;
  },
  async doMergeGroup(gi, g) {
@@ -8431,6 +8431,7 @@ const A = {
  let list = [...A.state.players];
  if (q) list = list.filter(p =>
  (p.name || "").toLowerCase().includes(q) ||
+  (p.player_no || "") === q.normalize("NFKC") ||
  (p.furigana || "").includes(q) ||
  (p.team || "").toLowerCase().includes(q) ||
  (p.branch || "").toLowerCase().includes(q));
@@ -8500,6 +8501,7 @@ const A = {
  h("div", { className: "pdb-name" }, p.name || "(無名)"),
  p.furigana ? h("div", { className: "pdb-furi" }, p.furigana) : null,
  h("div", { className: "pdb-meta" },
+ p.player_no ? h("span", { className: "pdb-cat" }, "No. " + p.player_no) : null,
  h("span", { className: "pdb-cat" }, TT.catLabel(p.category)),
  (p.gender === "female" || p.gender === "male")
    ? h("span", { className: "pdb-sex" }, p.gender === "female" ? "女" : "男") : null,

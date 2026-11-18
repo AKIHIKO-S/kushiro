@@ -170,11 +170,23 @@ test("マージ履歴: listPlayerMerges が新しい順に選手名付きで返�
 });
 
 test("重複候補 slim に created_at が含まれる(既定の残存者=古いID判定用)", () => {
-  // 候補抽出は「漢字氏名とふりがなの両方一致」(スペース表記ゆれは正規化で吸収)
+  // 同じ氏名でも、所属が異なれば一致とは扱わず、疑義として比較する。
   db.createPlayer({ name: "候補次郎", team: "P", furigana: "こうほ じろう", _allowAnyName: true });
   db.createPlayer({ name: "候補　次郎", team: "Q", furigana: "こうほじろう", _allowAnyName: true });
   const r = db.findDuplicatePlayerCandidates();
   const g = r.groups.find(g => (g.players || []).some(p => p.name === "候補次郎"));
   assert.ok(g, "候補グループがある");
+  assert.equal(g.reason, "所属クラブが違う");
   assert.ok((g.players || []).every(p => "created_at" in p), "created_at を含む");
+});
+
+test("漢字一字違いは保留候補になるが、二字違いや所属だけの一致は組にしない", () => {
+  const a = db.createPlayer({ name: "検証 太郎", team: "架空甲", _allowAnyName: true });
+  const b = db.createPlayer({ name: "検証 大郎", team: "架空乙", _allowAnyName: true });
+  const c = db.createPlayer({ name: "検訟 次郎", team: "架空甲", _allowAnyName: true });
+  const groups = db.findDuplicatePlayerCandidates().groups;
+  const pair = (x, y) => groups.find(g => g.players.some(p => p.id === x.id) && g.players.some(p => p.id === y.id));
+  assert.equal(pair(a, b)?.reason, "氏名の漢字一字・所属クラブが違う");
+  assert.equal(pair(a, c), undefined);
+  assert.equal(db.getPlayer(b.id).id, b.id, "検出だけで統合しない");
 });

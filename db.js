@@ -1305,6 +1305,7 @@ function getPlayers({ search, gender, category, team, sort } = {}) {
     const q = _searchNorm(search);
     rows = rows.filter(r =>
       _searchNorm(r.name).includes(q) ||
+      (r.player_no || "") === q ||
       _searchNorm(r.furigana).includes(q) ||
       _searchNorm(r.team).includes(q) ||
       _searchNorm(r.branch).includes(q)
@@ -2154,27 +2155,52 @@ function _normFuri(s) {
   return t;
 }
 
-// 重複候補を検出。KTTAの掟(候補提示まで・確定は人)に従い、【漢字氏名とふりがなの両方が一致】する
-// 選手だけを高信頼の候補として抽出する(オーナー要望 2026-07-17: 誤統合を避け、ふりがな漢字一致のみ)。
-//   - 漢字1文字違い(山田太郎/山田次郎)は氏名が違うため非検出。
-//   - 同じ読みの別漢字(佐藤/佐東、ともに「さとう」)も氏名が違うため非検出(=別人を出さない)。
-//   - ふりがな未登録の選手は「読みで裏取りできない」ため候補に出さない(recall より precision を優先)。
+// 漢字一字の差を候補抽出にだけ使う。別候補を連結して一括統合しない。
+function _hanNameMasks(name) {
+  const chars = [..._playerNameKey(name)];
+  return chars.flatMap((c, i) => /\p{Script=Han}/u.test(c)
+    ? [chars.slice(0, i).join("") + "\0" + chars.slice(i + 1).join("")] : []);
+}
+function _teamDiff(a, b) {
+  const left = normalizeTeam(a || ""), right = normalizeTeam(b || "");
+  return !!left && !!right && left !== right;
+}
+
 function findDuplicatePlayerCandidates() {
   const players = getPlayers();   // match_wins/match_losses/total_achievements を含む
   const slim = p => ({ id: p.id, name: p.name, team: p.team || "", furigana: p.furigana || "",
     gender: p.gender, appearances: p.appearances || 0, wins: p.match_wins || 0,
     losses: p.match_losses || 0, achievements: p.total_achievements || 0,
-    created_at: p.created_at || "" });   // 既定の残存者=「古いID(先に登録)」の判定用
-  const byKey = new Map();   // "正規化名|正規化ふりがな" -> [players]
-  players.forEach(p => {
-    const nk = _normName(p.name), fk = _normFuri(p.furigana);
-    if (!nk || !fk || fk.length < 2) return;   // 漢字氏名・ふりがなの両方が必要
-    const key = nk + "|" + fk;
-    if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key).push(p);
-  });
+    created_at: p.created_at || "", player_no: p.player_no || "" });
   const groups = [];
-  byKey.forEach(arr => { if (arr.length > 1) groups.push({ reason: "氏名・ふりがな一致", players: arr.map(slim) }); });
+  const byName = new Map(), byMask = new Map(), seen = new Set();
+  const addPair = (p, q, reason) => {
+    const key = [p.id, q.id].sort().join("|");
+    if (seen.has(key)) return;
+    seen.add(key);
+    groups.push({ reason, players: [slim(p), slim(q)] });
+  };
+  const index = (map, key, p) => {
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(p);
+  };
+  for (const p of players) {
+    const name = _playerNameKey(p.name), reading = _normFuri(p.furigana);
+    if (!name) continue;
+    for (const q of byName.get(name) || []) {
+      if (_teamDiff(p.team, q.team)) addPair(p, q, "所属クラブが違う");
+      else if (reading.length >= 2 && reading === _normFuri(q.furigana)) addPair(p, q, "氏名・ふりがな一致");
+    }
+    for (const mask of _hanNameMasks(p.name)) {
+      for (const q of byMask.get(mask) || []) {
+        if (name !== _playerNameKey(q.name)) {
+          addPair(p, q, _teamDiff(p.team, q.team) ? "氏名の漢字一字・所属クラブが違う" : "氏名の漢字が一字違う");
+        }
+      }
+      index(byMask, mask, p);
+    }
+    index(byName, name, p);
+  }
   return { count: groups.length, groups };
 }
 
@@ -11996,9 +12022,8 @@ function importPlayerRegistry(registry, opts) {
 }
 // 選手登録台帳(registry.json)と本番の選手DBを統合する(2026-11-15 オーナー指示)。
 // 台帳を優先: 同一人物は台帳の氏名・ふりがな・所属・性別・区分で更新し、本番側の旧表記は別名・所属履歴に残す。
-// 同一人物の判定: 漢字(旧字・空白を畳む。別名・台帳の表記ゆれ含む)が一致し、
-//   ふりがなが両方あれば一致すること(どちらかが空なら漢字の一致だけで同一とする)。
-// 判定が割れる組(読み違い・所属違い・1人を2つの台帳番号が取り合う)は触らず hold に出す(人が判断)。
+// 氏名の主表記(旧字・空白を畳む)が一致しても、読みに相違がある、所属が異なる、
+// 別の選手番号が付くなどの場合は変更せず、hold で運営者の確認に回す。
 // 本番にしかいない選手は残して選手番号だけ振る。削除はしない。統合は mergePlayers(リダイレクト・取消可)。
 // 既定は書き込まない(dry run)。opts.apply=true で1トランザクションで実行。
 const _REG_GENDER = { "男子": "male", "男": "male", "女子": "female", "女": "female" };
@@ -12028,26 +12053,45 @@ function planPlayerRegistrySync(registry) {
   const pool = _loadPlayerMatchPool();
   const meta = new Map(sqlite.prepare("SELECT id, created_at, gender, category FROM players WHERE merged_into IS NULL").all().map(r => [r.id, r]));
   const byNo = new Map(pool.rows.filter(r => r.player_no).map(r => [r.player_no, r]));
+  const byMask = new Map();
+  for (const row of pool.rows) for (const mask of _hanNameMasks(row.name)) {
+    if (!byMask.has(mask)) byMask.set(mask, []);
+    byMask.get(mask).push(row);
+  }
   const plan = { merge: [], update: [], create: [], prod_only: [], hold: [], invalid: [] };
   const decided = [];
   for (const no of Object.keys(players)) {
     const p = players[no];
     if (!/^\d{6}$/.test(no) || !p || !String(p.name || "").trim()) { plan.invalid.push({ no, reason: "番号または氏名が不正" }); continue; }
-    if (byNo.has(no)) { decided.push({ no, p, rows: [byNo.get(no)], bad: [] }); continue; }
+    const hold = (candidates, fit = []) => plan.hold.push({ no, name: p.name, furigana: p.furigana || "", team: p.main_team || "",
+      fit: fit.map(r => r.id), candidates: candidates.map(({ row, reason }) =>
+        ({ id: row.id, name: row.name, furigana: row.furigana || "", team: row.team || "", reason })) });
+    const masks = _hanNameMasks(p.name);
+    const primary = _playerNameKey(p.name);
+    if (byNo.has(no)) {
+      const row = byNo.get(no);
+      const differentName = primary !== _playerNameKey(row.name);
+      if (differentName || _teamDiff(p.main_team, row.team)) {
+        hold([{ row, reason: differentName ? "同じ選手番号で氏名が違う" : "所属クラブが違う" }]);
+      } else decided.push({ no, p, rows: [row], bad: [] });
+      continue;
+    }
     const keys = new Set([p.name, ...(Array.isArray(p.keys) ? p.keys : [])].map(_playerNameKey).filter(Boolean));
     const cands = [];
     keys.forEach(k => (pool.byKey.get(k) || []).forEach(r => { if (!cands.includes(r)) cands.push(r); }));
     const furi = _normFuri(p.furigana);
     const fit = [], bad = [];
     for (const r of cands) {
-      if (r.player_no && r.player_no !== no) { bad.push({ id: r.id, reason: "別の選手番号が付いている" }); continue; }
-      if (furi && r._furi) { (r._furi === furi ? fit : bad).push(r._furi === furi ? r : { id: r.id, reason: "同じ漢字で読みが違う" }); continue; }
-      // 読みで比べられないときは漢字の一致で同一人物とする(11-14 オーナー決定「漢字一致=1ID」)。
-      // 所属の違いは「古い情報」として台帳の所属へ更新し、旧所属は履歴に残す。
+      if (primary !== _playerNameKey(r.name)) { bad.push({ row: r, reason: "台帳の別名とは一致するが氏名が違う" }); continue; }
+      if (r.player_no && r.player_no !== no) { bad.push({ row: r, reason: "別の選手番号が付いている" }); continue; }
+      if (_teamDiff(p.main_team, r.team)) { bad.push({ row: r, reason: "所属クラブが違う" }); continue; }
+      if (furi && r._furi && r._furi !== furi) { bad.push({ row: r, reason: "同じ漢字で読みが違う" }); continue; }
       fit.push(r);
     }
-    if (bad.length) plan.hold.push({ no, name: p.name, furigana: p.furigana || "", team: p.main_team || "",
-      fit: fit.map(r => r.id), candidates: bad.map(b => Object.assign({}, b, (() => { const r = pool.rows.find(x => x.id === b.id); return { name: r.name, furigana: r.furigana || "", team: r.team || "" }; })())) });
+    if (!cands.length) for (const row of new Set(masks.flatMap(mask => byMask.get(mask) || []))) {
+      if (primary !== _playerNameKey(row.name)) bad.push({ row, reason: "氏名の漢字が一字違う" });
+    }
+    if (bad.length) hold(bad, fit);
     else decided.push({ no, p, rows: fit, bad });
   }
   // 1人の本番選手を2つ以上の台帳番号が取り合ったら、その全員を保留
@@ -12055,9 +12099,9 @@ function planPlayerRegistrySync(registry) {
   decided.forEach(d => d.rows.forEach(r => claim.set(r.id, (claim.get(r.id) || 0) + 1)));
   const heldRows = new Set(plan.hold.flatMap(h => h.candidates.map(c => c.id).concat(h.fit)));
   for (const d of decided) {
-    if (d.rows.some(r => claim.get(r.id) > 1)) {
+    if (d.rows.some(r => claim.get(r.id) > 1 || heldRows.has(r.id))) {
       plan.hold.push({ no: d.no, name: d.p.name, furigana: d.p.furigana || "", team: d.p.main_team || "", fit: [],
-        candidates: d.rows.map(r => ({ id: r.id, name: r.name, furigana: r.furigana || "", team: r.team || "", reason: "1人を複数の台帳番号が取り合っている" })) });
+        candidates: d.rows.map(r => ({ id: r.id, name: r.name, furigana: r.furigana || "", team: r.team || "", reason: "別の台帳行でも候補または保留になっている" })) });
       d.rows.forEach(r => heldRows.add(r.id));
       continue;
     }
@@ -12071,7 +12115,7 @@ function planPlayerRegistrySync(registry) {
   const used = new Set(decided.flatMap(d => d.rows.map(r => r.id)));
   pool.rows.forEach(r => { if (!used.has(r.id) && !heldRows.has(r.id)) plan.prod_only.push({ id: r.id, has_no: !!r.player_no }); });
   // 保留の候補に挙がった本番選手は、他の台帳番号で確定していなければ番号を振らずに残す
-  plan.held_rows = [...heldRows].filter(id => !used.has(id) || claim.get(id) > 1);
+  plan.held_rows = [...heldRows];
   return plan;
 }
 function syncPlayerRegistry(registry, opts) {

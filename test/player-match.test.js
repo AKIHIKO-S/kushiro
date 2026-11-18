@@ -194,7 +194,7 @@ test("台帳統合: 漢字一致は更新、重複は統合、読み違いは保
   const sq = new (require("better-sqlite3"))(process.env.DB_PATH);
   const A = mk("統合 一郎", "", "旧架空中学");
   const B1 = mk("統合 二郎", "", "架空クラブ");
-  const B2 = mk("統合　二郎", "", "架空クラブB");
+  const B2 = mk("統合　二郎", "", "架空クラブ");
   const C = mk("統合 三郎", "とうごう さぶろ", "架空クラブ");
   const D = mk("統合 四郎", "", "架空クラブ");
   [A, B1, B2, D].forEach(p => sq.prepare("UPDATE players SET furigana='' WHERE id=?").run(p.id));
@@ -203,7 +203,7 @@ test("台帳統合: 漢字一致は更新、重複は統合、読み違いは保
     "900001": { name: "統合 一郎", keys: [], furigana: "とうごう いちろう", main_team: "架空高校", gender: "男子", category: "高校生" },
     "900002": { name: "統合 二郎", keys: [], furigana: "", main_team: "架空クラブ", gender: "男子", category: "一般" },
     "900003": { name: "統合 三郎", keys: [], furigana: "とうごう さぶろう", main_team: "架空クラブ", gender: "男子", category: "一般" },
-    "900005": { name: "統合 五郎", keys: [], furigana: "とうごう ごろう", main_team: "架空クラブ", gender: "女子", category: "" },
+    "900005": { name: "別姓 花子", keys: [], furigana: "べっせい はなこ", main_team: "架空クラブ", gender: "女子", category: "" },
   } };
   const dry = db.syncPlayerRegistry(reg);
   assert.strictEqual(dry.applied, false);
@@ -214,19 +214,30 @@ test("台帳統合: 漢字一致は更新、重複は統合、読み違いは保
 
   db.syncPlayerRegistry(reg, { apply: true });
   const a = db.getPlayer(A.id);
-  assert.strictEqual(a.team, "架空高校", "台帳の所属へ更新");
-  assert.strictEqual(a.furigana, "とうごう いちろう");
-  assert.strictEqual(a.category, "high");
-  const hist = db.listAffiliations(A.id).map(x => x.team + "|" + (x.end_date ? "end" : "now"));
-  assert.ok(hist.includes("旧架空中学|end") && hist.includes("架空高校|now"), "旧所属は履歴に残る: " + hist);
+  assert.strictEqual(a.team, "旧架空中学", "クラブが違う選手は保留し、所属を変えない");
+  assert.ok(dry.plan.hold.some(h => h.no === "900001" && h.candidates.some(c => c.reason === "所属クラブが違う")));
+  assert.strictEqual(db.listAffiliations(A.id)[0].team, "旧架空中学");
   // 同じ秒に登録された2人なので、どちらか一方へリダイレクトされていればよい(削除しない)
   assert.strictEqual(db.getPlayer(B1.id).id, db.getPlayer(B2.id).id, "重複は1人に統合され、旧IDも引ける");
   assert.strictEqual(db.getPlayer(C.id).furigana, "とうごう さぶろ", "保留は触らない");
   const nos = [db.getPlayer(A.id), db.getPlayer(B2.id), db.getPlayer(D.id)].map(p => p.player_no);
-  assert.deepStrictEqual(nos.slice(0, 2), ["900001", "900002"]);
+  assert.deepStrictEqual(nos.slice(0, 2), ["", "900002"]);
   assert.match(nos[2], /^\d{6}$/, "本番にしかいない選手にも番号");
   const again = db.syncPlayerRegistry(reg);
   assert.strictEqual(again.created + again.merge_groups, 0, "2回目は新規も統合も出ない");
+});
+
+test("台帳取り込み: 漢字一字違いは新規登録せず保留し、同じ番号でも所属相違は反映しない", () => {
+  const p = db.createPlayer({ name: "比較 和子", team: "第一卓球クラブ" });
+  const variant = { players: { "907900": { name: "比較 和美", main_team: "第一卓球クラブ" } } };
+  const dry = db.syncPlayerRegistry(variant, { apply: true });
+  assert.ok(dry.plan.hold.some(h => h.candidates.some(c => c.id === p.id && /一字違/.test(c.reason))));
+  assert.equal(dry.created, 0);
+  db.syncPlayerRegistry({ players: { "907900": { name: "比較 和子", main_team: "第一卓球クラブ" } } }, { apply: true });
+  assert.equal(db.getPlayers({ search: "９０７９００" }).find(x => x.id === p.id).player_no, "907900");
+  const changed = db.syncPlayerRegistry({ players: { "907900": { name: "比較 和子", main_team: "第二卓球クラブ" } } }, { apply: true });
+  assert.ok(changed.plan.hold.some(h => h.no === "907900"));
+  assert.equal(db.getPlayer(p.id).team, "第一卓球クラブ");
 });
 
 test("台帳統合: 選手登録リスト(Excel)の選手一覧を読める(別名は / 区切り・番号は6桁)", () => {

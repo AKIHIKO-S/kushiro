@@ -45,20 +45,19 @@ test("createTeamEntry: 混合ダブルス(type:mixed)が欠落せず登録され
   assert.ok(ents.some(e => e.event === "男子シングルス"), "シングルスも登録");
 });
 
-test("findDuplicatePlayerCandidates: ふりがなと漢字氏名の両方一致のみ(オーナー要望 2026-07)", () => {
+test("findDuplicatePlayerCandidates: 完全一致と漢字一字違いを区別して候補に出す", () => {
   const A = db.createPlayer({ name: "山田 太郎", furigana: "やまだ たろう", _allowAnyName: true });
   const B = db.createPlayer({ name: "山田太郎", furigana: "ヤマダタロウ", _allowAnyName: true }); // カタカナでも同一読み
   const C = db.createPlayer({ name: "山田次郎", furigana: "やまだ じろう", _allowAnyName: true });
   const D = db.createPlayer({ name: "佐藤花子", furigana: "さとう はなこ", _allowAnyName: true });
-  const E = db.createPlayer({ name: "佐東花子", furigana: "さとう はなこ", _allowAnyName: true }); // 読み同・漢字違い=別人
+  const E = db.createPlayer({ name: "佐東花子", furigana: "さとう はなこ", _allowAnyName: true });
   const F = db.createPlayer({ name: "山田太郎", team: "ふりがな無し", _allowAnyName: true });      // ふりがな未登録
   const r = db.findDuplicatePlayerCandidates();
-  const together = (x, y) => r.groups.some(g => { const s = new Set(g.players.map(p => p.id)); return s.has(x) && s.has(y); });
-  assert.ok(together(A.id, B.id), "漢字名一致(スペース違い)+ふりがな一致(カタカナ↔ひらがな)を検出");
-  assert.ok(!together(D.id, E.id), "読みが同じでも漢字が違えば非検出(別人を出さない)");
-  assert.ok(!together(A.id, C.id), "漢字1文字違いは非検出");
-  assert.ok(!together(A.id, F.id), "ふりがな未登録は候補に出さない");
-  assert.ok(r.groups.every(g => g.reason === "氏名・ふりがな一致"), "理由は1種のみ");
+  const reason = (x, y) => r.groups.find(g => g.players.some(p => p.id === x) && g.players.some(p => p.id === y))?.reason;
+  assert.equal(reason(A.id, B.id), "氏名・ふりがな一致");
+  assert.equal(reason(D.id, E.id), "氏名の漢字が一字違う");
+  assert.equal(reason(A.id, C.id), "氏名の漢字が一字違う");
+  assert.equal(reason(A.id, F.id), undefined, "片方の所属・読みが空で矛盾を確定できなければ候補にしない");
 });
 
 test("監督モード: 発行→ロスター→修正申請→本部承認でDB反映 (#285)", () => {
