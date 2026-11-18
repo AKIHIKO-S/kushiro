@@ -1629,6 +1629,17 @@ app.post("/api/mail/test", requireAdmin, async (req, res) => {
     res.status(500).json({ error: "送信失敗: " + e.message });
   }
 });
+// 個人情報を含む書き出しの記録。氏名などは残さず、日時・種類・担当コードだけをオーナーの監査ログへ。
+// 担当コード: 管理キーは入力された操作担当コード、メールのアカウントは内部IDの先頭8文字(acct-xxxxxxxx)
+const EXPORT_LOG_KINDS = { players_csv: "書き出し:選手CSV", matches_csv: "書き出し:試合CSV", entrants_csv: "書き出し:出場者CSV" };
+app.post("/api/admin/export-log", requireAdmin, (req, res) => {
+  const action = EXPORT_LOG_KINDS[String((req.body || {}).kind || "")];
+  if (!action) return res.status(400).json({ error: "書き出しの種類が正しくありません" });
+  const id = String((req.auth && req.auth.principal_id) || "");
+  const code = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(id) ? "acct-" + id.slice(0, 8) : id;
+  db.logOwnerAction({ action, operator: code });
+  res.json({ ok: true });
+});
 app.all("/api/public/search", (req, res) => res.status(404).json({ error: "公開選手検索は提供していません" }));
 
 // ═══ 管理API（選手CRUD） ══════════════════════════════

@@ -86,6 +86,13 @@ test("運営アカウントの招待・ログイン・再設定・停止を本�
   // 動作状況(診断)はオーナーだけ
   assert.equal((await request("/api/diagnostics", { cookie: legacy })).status, 401);
   assert.equal((await request("/api/diagnostics", { cookie: owner })).status, 200);
+  // 個人情報を含む書き出しは、日時と担当コードだけを監査ログに残す(メールアドレスは残さない)
+  assert.equal((await post("/api/admin/export-log", { kind: "nope" }, legacy)).status, 400);
+  assert.equal((await post("/api/admin/export-log", { kind: "players_csv" })).status, 401);
+  assert.equal((await post("/api/admin/export-log", { kind: "players_csv" }, replaced)).status, 200);
+  const exportLog = db.getOwnerAudit(5).find(e => e.action === "書き出し:選手CSV");
+  assert.ok(exportLog && /^acct-[0-9a-f]{8}$/.test(exportLog.operator));
+  assert.ok(!JSON.stringify(db.getOwnerAudit(50)).includes(email));
   assert.equal((await request("/api/auth/session", { method: "DELETE", cookie: replaced })).status, 200);
   assert.equal((await request("/api/tournaments", { cookie: replaced })).status, 401);
   const last = getCookie(await login(newPassword));

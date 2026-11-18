@@ -6525,13 +6525,14 @@ const A = {
    const pend = entries.filter(e => (e.entry_status || "confirmed") === "pending").length;
    const crossN = entries.filter(e => e.cross_dup && e.cross_dup.length).length;
    const confirmed = entries.filter(e => (e.entry_status || "confirmed") === "confirmed").length;
-   summary.replaceChildren(`確定出場 ${confirmed}件 ・ 種目 ${eventsList().length} ・ 承認待ち ${pend}`
-     + (issueTotal ? ` ・ 要確認 ${issueTotal}` : ""),
+   // replaceChildren は null を「null」という文字にしてしまうので、無い部品は配列から外して渡す
+   summary.replaceChildren(...[`確定出場 ${confirmed}件 ・ 種目 ${eventsList().length} ・ 承認待ち ${pend}件`
+     + (issueTotal ? ` ・ 要確認 ${issueTotal}件` : ""),
      crossN ? h("label", { style: { marginLeft: "10px", color: "#991b1b", fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: "4px", alignItems: "center" },
        title: "別の団体から同じ人物・同じ組が申し込まれているもの" },
        (() => { const c = h("input", { type: "checkbox" }); c.checked = fltCross;
          c.addEventListener("change", () => { fltCross = c.checked; renderTable(); }); return c; })(),
-       `別団体と重複の疑い ${crossN}件だけ表示`) : null);
+       `別団体と重複の疑い ${crossN}件だけ表示`) : null].filter(Boolean));
    refreshShibu();
    if (activeTab !== "all" && !eventsList().includes(activeTab)) activeTab = "all";
    renderQuality(); renderTabs(); renderCompare(); renderTable();
@@ -8432,7 +8433,8 @@ const A = {
 
  // ヒーロー件数バナー (閲覧ビューと統一)
  const males = list.filter(p => p.gender !== "female").length;
- const heroNum = h("span", { className: "pdb-total-num" }, "0");
+ // 数え上げの動きはやめ、最初から最終の人数を出す(内訳と同時に読めるように)
+ const heroNum = h("span", { className: "pdb-total-num" }, String(list.length));
  el.appendChild(h("div", { className: "pdb-total pdb-hero" },
    h("div", { className: "pdb-total-main" }, heroNum, h("span", { className: "pdb-total-unit" }, "名")),
    (function(){
@@ -8442,9 +8444,6 @@ const A = {
        h("div", { className: "pdb-total-sub" }, `男子 ${males} ・ 女子 ${list.length - males}`),
        pushN ? h("div", { className: "pdb-total-sub", style: { color: "#166534", fontWeight: 700 } }, `通知ON ${pushN}名（呼出が届く）`) : null);
    })()));
- (function(){ const dur=600,t0=performance.now(),tgt=list.length;
-   const step=(n)=>{const k=Math.min(1,(n-t0)/dur);heroNum.textContent=String(Math.round(tgt*(1-Math.pow(1-k,3))));if(k<1)requestAnimationFrame(step);};
-   requestAnimationFrame(step); })();
 
  const renderPlayerCard = (p) => {
  const gClass = p.gender === "female" ? "female" : "male";
@@ -9460,8 +9459,32 @@ const A = {
  downloadJSON(`tabletennis-${new Date().toISOString().slice(0,10)}.json`, r.json);
  },
 
+ // 個人情報を含む書き出しの前の確認(ブラウザ標準の confirm ではなく画面内のダイアログ)
+ confirmPersonalExport(what) {
+   return new Promise(resolve => {
+     let done = false;
+     const finish = (v) => { if (done) return; done = true; bg.remove(); resolve(v); };
+     const body = h("div", { style: { lineHeight: 1.8 } },
+       h("p", { style: { margin: "0 0 8px", fontWeight: 700, textWrap: "balance" } }, "個人情報を含むため取り扱いに注意してください。"),
+       h("p", { className: "text-sm", style: { margin: 0 } },
+         what + "には、氏名・ふりがな・所属が入ります。共有のパソコンに残さない、メールで送らない、使い終わったら消す、を守ってください。",
+         h("br"), "書き出した日時と担当コードは記録されます（氏名などは記録しません）。"));
+     const foot = h("div", { className: "flex gap-2", style: { justifyContent: "flex-end" } },
+       h("button", { type: "button", className: "btn btn-ghost", onClick: () => finish(false) }, "やめる"),
+       h("button", { type: "button", className: "btn", onClick: () => finish(true) }, "注意して書き出す"));
+     const bg = openModal("書き出しの確認", body, foot, { trapFocus: true });
+     // ×・背景クリックで閉じたときも「やめる」として扱う
+     new MutationObserver((_, ob) => { if (!bg.isConnected) { ob.disconnect(); finish(false); } }).observe(document.body, { childList: true });
+   });
+ },
+
  async exportPlayersCSV() {
+ if (!(await A.confirmPersonalExport("選手CSV"))) return;
  const players = await api.get("/api/players");
+ if (!Array.isArray(players)) return toast("選手を読み込めませんでした。ログインし直してください。", "err");
+ // 記録が残せないときは書き出さない(誰がいつ持ち出したか分からなくなるため)
+ const logged = await api.post("/api/admin/export-log", { kind: "players_csv" }).catch(() => null);
+ if (!logged || !logged.ok) return toast("書き出しの記録ができなかったため、中止しました。もう一度お試しください。", "err");
  const rows = [["名前", "ふりがな", "所属", "性別", "出場", "試合勝", "試合負"]];
  players.forEach(p => rows.push([
  p.name, p.furigana, p.team,

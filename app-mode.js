@@ -29,6 +29,7 @@ const ENTRY_MODE_API = [
   [/^\/api\/admin\/purge-submission-pii$/],
   [/^\/api\/admin\/qr$/],
   [/^\/api\/export\/all$/],
+  [/^\/api\/admin\/export-log$/, ["POST"]],
   [/^\/api\/import\/players$/],
   [/^\/api\/sync\/(push|now|status)$/],   // 試合を直接書き込む sync/matches・sync/tournament は閉じる
   // 公開の申込

@@ -120,5 +120,6 @@
  "PUT /api/submissions/:sid",
  "PUT /api/tournaments/:id",
  "PUT /api/tournaments/:id/entries/:pid/status",
- "PUT /api/tournaments/:id/entry-settings"
+ "PUT /api/tournaments/:id/entry-settings",
+ "POST /api/admin/export-log"
 ]
