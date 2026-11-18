@@ -19,7 +19,14 @@ html.desk-on #entryDesk { display: block; }
 
 /* 頭: 白地に細い罫。左にロゴと協会名、右に画面の切替 */
 .ed-top { position: sticky; top: 0; z-index: 15; display: flex; align-items: center; gap: 12px; height: var(--hd);
-  padding: 0 max(0px, calc(var(--gut) - 11px)) 0 var(--gut); background: rgba(253,252,249,.97); border-bottom: 1px solid var(--st-line); }
+  padding: 0 max(0px, calc(var(--gut) - 11px)) 0 var(--gut); background: #fdfcf9; border-bottom: 1px solid var(--st-line); box-shadow: 0 1px 0 rgba(20,41,74,.06); }
+.ed-top__who { display: flex; align-items: center; gap: 8px; flex: none; padding-left: 12px; border-left: 1px solid var(--st-line); font-size: 13px; }
+.ed-top__name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--st-mute); }
+.ed-top__role { font-size: 11px; font-weight: 700; color: var(--st-navy); border: 1px solid currentColor; border-radius: 3px; padding: 1px 6px; }
+.ed-top__out { min-height: 44px; padding: 0 10px; background: none; border: 1px solid var(--st-line); border-radius: var(--st-radius); font: inherit; font-weight: 700; color: var(--st-navy); }
+.ed-top__out:hover { background: var(--st-sky); }
+.ed-account { margin: 0 var(--gut) 14px; padding: 12px 14px; border: 1px solid var(--st-line); display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; font-size: 14px; }
+@media (max-width: 899px) { .ed-top__who { display: none; } }
 .ed-top__brand { display: flex; align-items: center; gap: 8px; min-width: 0; text-decoration: none; }
 .ed-top__logo { width: 40px; height: 40px; object-fit: contain; flex: none; }
 .ed-top__org { display: grid; gap: 2px; font-weight: 700; font-size: 19px; line-height: 1.05; color: var(--st-navy); white-space: nowrap; }
@@ -29,7 +36,7 @@ html.desk-on #entryDesk { display: block; }
 .ed-top__nav a { position: relative; display: inline-flex; align-items: center; min-height: 44px; padding: 0 11px;
   font-size: 14px; font-weight: 700; text-decoration: none; color: var(--st-ink); white-space: nowrap; }
 .ed-top__nav a::after { content: ""; position: absolute; left: 11px; right: 11px; bottom: 0; height: 3px; background: var(--st-navy);
-  transform: scaleX(0); transform-origin: left; transition: transform .2s ease; }
+  transform: scaleX(0); transform-origin: left; }
 .ed-top__nav a[aria-current] { color: var(--st-navy); }
 .ed-top__nav a[aria-current]::after { transform: scaleX(1); }
 .ed-top__nav a:hover { background: var(--st-sky); color: #245d8e; }

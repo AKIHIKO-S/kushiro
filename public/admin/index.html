@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" class="auth-pending">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1258,6 +1258,24 @@ html[data-app-mode="entry"] .tab[data-tab="bracket-mgmt"],
 html[data-app-mode="entry"] .tab[data-tab="api"],
 html[data-app-mode="entry"] .tab[data-tab="coaches"],
 html[data-app-mode="entry"] .em-hide { display: none !important; }
+/* 未ログインのときは画面の中身を組み立てない。ログイン確認が終わるまでも同じ(一瞬でも中身を見せないため) */
+html.auth-pending .tabs, html.auth-pending .container, html.auth-pending #entryDesk, html.auth-pending .ed-backbar,
+html.auth-pending .admin-actions, html.auth-pending #connBadge,
+html.auth-gate .tabs, html.auth-gate .container, html.auth-gate #entryDesk, html.auth-gate .ed-backbar,
+html.auth-gate .admin-actions, html.auth-gate #connBadge { display: none !important; }
+.auth-gate { max-width: 440px; margin: 56px auto; padding: 0 24px; text-align: center; }
+.auth-gate h1 { font-size: 22px; margin: 0 0 10px; }
+.auth-gate p { margin: 0 0 20px; color: var(--st-ink-sub, #4b5563); line-height: 1.7; }
+.auth-gate .btn { min-height: 44px; min-width: 160px; }
+.admin-who { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; max-width: 260px; min-width: 0; }
+.admin-who__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-who__role { flex: none; font-size: 11px; padding: 1px 7px; border: 1px solid currentColor; border-radius: 3px; }
+@media (max-width: 600px) { .admin-who__name { display: none; } }
+/* ダイアログは読み込み中の白い膜(z 9999)より必ず前に出す。本体は不透明な紙色で、背面の表の文字を透かさない。
+   名前候補の吹き出し(z 100000)はダイアログの中でも使うので、それより下に置く。お知らせ(toast)はさらに前 */
+html body .modal-bg { z-index: 99990; }
+html body .modal-box { position: relative; z-index: 1; background: var(--st-paper, #fdfcf9); opacity: 1; }
+html body .toast { z-index: 100001; }
 </style>
 <link rel="stylesheet" href="/shared/site-tokens.css">
 <link rel="stylesheet" href="/shared/site-tone.css">
@@ -1283,9 +1301,18 @@ html[data-app-mode="entry"] .em-hide { display: none !important; }
     style="background:rgba(255,255,255,.08); color:#fff; border-color:transparent">閲覧</a>
  <a href="/viewer/live/" target="_blank" class="btn btn-ghost em-hide"
     style="background:rgba(255,255,255,.08); color:#fff; border-color:transparent">観戦</a>
- <button class="settings-icon" onclick="A.openSettings()" title="設定" aria-label="設定">⚙</button>
+ <span id="adminWho" class="admin-who" hidden></span>
+ <button type="button" class="btn btn-ghost admin-setbtn" onclick="A.openSettings()">管理設定</button>
+ <button type="button" id="adminLogout" class="btn btn-ghost admin-logout" onclick="A.logout()" hidden>ログアウト</button>
  </div>
  </div>
+</div>
+
+<!-- 未ログイン時はこれだけを出す(A.init が表示を切り替える) -->
+<div id="authGate" class="auth-gate" hidden>
+ <h1>ログインが必要です</h1>
+ <p>運営の画面は、ログインしてから使えます。</p>
+ <button type="button" class="btn" onclick="A.openLogin()">ログインする</button>
 </div>
 
 <!-- タブ(案A: 常用3 + 設定・連携ドロップダウン) -->
@@ -1639,12 +1666,13 @@ if (typeof api.onPending !== "function") api.onPending = () => {};
 // 実JSエラーのみ (画像等のリソース読込失敗は e.error 無し → 無視)
 window.addEventListener("error", (e) => {
   if (!e || !e.error) return;
-  try { toast("エラー: " + (e.message || e.error.message || "不明"), "err"); } catch (_) {}
+  // 生のエラー文は利用者に意味が通じないので画面には出さない。詳細は開発者ツールのコンソールへ
+  try { console.error(e.error); toast("問題が起きました。画面を再読み込みしてください。", "err"); } catch (_) {}
 });
 window.addEventListener("unhandledrejection", (e) => {
   try {
-    const r = e && e.reason;
-    toast("処理エラー: " + ((r && r.message) || r || "不明"), "err");
+    console.error(e && e.reason);
+    toast("問題が起きました。画面を再読み込みしてください。", "err");
   } catch (_) {}
 });
 
@@ -1733,9 +1761,23 @@ const A = {
  } catch (e) {}
 
  // HttpOnlyセッションを先に復元する。管理キーはブラウザへ保存しない。
- try { await api.refreshSession(); } catch (e) {}
+ let session = null;
+ try { session = await api.refreshSession(); } catch (e) {}
+ if (!api.adminKey) {
+   // 未ログイン: 画面の中身は組み立てず、ログインの案内だけを出す。#players 等の直接指定も通さない
+   A.showAuthGate();
+   if (initialOperatorInvite) A.openLogin(initialOperatorInvite);
+   else A.openLogin();
+   window.addEventListener("hashchange", () => {
+     const token = takeOperatorInvite();
+     if (token) { document.querySelector(".modal-bg")?.remove(); A.openLogin(token); }
+     else if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+   });
+   return;
+ }
+ document.documentElement.classList.remove("auth-pending");
+ A.renderWho(session);
  if (initialOperatorInvite) A.openLogin(initialOperatorInvite);
- else if (!api.adminKey) A.openLogin();
 
  document.querySelectorAll(".tab").forEach(t => {
  t.addEventListener("click", () => A.showTab(t.dataset.tab));
@@ -1753,6 +1795,36 @@ const A = {
  await A.reload();
  // 初期表示: ハッシュがあれば復元
  A.handleHash();
+ },
+
+ // 未ログインの案内画面
+ showAuthGate() {
+   const root = document.documentElement;
+   root.classList.remove("auth-pending", "desk-on");
+   root.classList.add("auth-gate");
+   document.getElementById("authGate").hidden = false;
+   if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+ },
+ // 右上に「誰で入っているか」と役割を出す
+ renderWho(session) {
+   const box = document.getElementById("adminWho");
+   const out = document.getElementById("adminLogout");
+   if (!box || !session || !session.authenticated) return;
+   const role = session.principal_type === "owner" ? "オーナー" : "運営";
+   const name = session.label || (session.kind === "account" ? "運営アカウント" : "管理キー");
+   box.textContent = "";
+   box.append(h("span", { className: "admin-who__name", title: name }, name), h("span", { className: "admin-who__role" }, role));
+   box.hidden = false;
+   out.hidden = false;
+   A.session = { kind: session.kind, label: name, role, owner: session.principal_type === "owner" };
+ },
+ // メールのアカウントでも管理キーでも、同じ DELETE でセッションを閉じる
+ async logout() {
+   try {
+     const r = await fetch("/api/auth/session", { method: "DELETE", credentials: "same-origin" });
+     if (r.ok || r.status === 401) { location.replace(location.pathname); return; }
+   } catch {}
+   toast("ログアウトできませんでした。通信状況を確認してください。", "err");
  },
 
  // URLハッシュから画面を復元 (ブラウザ戻る/進む対応)
@@ -1822,8 +1894,9 @@ const A = {
  api.get("/api/tournaments"),
  api.get("/api/players"),
  ]);
- A.state.tournaments = tournaments || [];
- A.state.players = players || [];
+ // 401 等でエラーの形が返っても配列として扱えるようにする(「not iterable」で画面が止まるのを防ぐ)
+ A.state.tournaments = Array.isArray(tournaments) ? tournaments : [];
+ A.state.players = Array.isArray(players) ? players : [];
  if (!A.entryOnly) A.loadPushPlayers();   // マイ番号(プッシュ)登録選手 (#288) — 失敗してもUIは継続
  if (A.activeTab === "tournaments") A.renderTournaments();
  if (A.activeTab === "players") A.renderPlayers();
@@ -2102,18 +2175,16 @@ const A = {
        const div = document.getElementById("mailStatus");
        if (!div) return;
        if (s.enabled) {
-         div.innerHTML = `<span style="color:#15803d;font-weight:bold;">● 有効</span><br>` +
-           `送信サーバー: ${s.config.SMTP_HOST}:${s.config.SMTP_PORT}<br>` +
-           `送信元: ${s.config.SMTP_USER}<br>` +
-           `差出人: ${s.config.SMTP_FROM}<br>` +
-           `通知先: ${s.config.ADMIN_EMAIL || "(未設定)"}`;
+         // 設定の値(送信サーバー・アカウント等)は画面に出さない。使えるかどうかだけを示す
+         div.innerHTML = `<span style="color:#15803d;font-weight:bold;">● 送信できます</span><br>` +
+           `運営への通知先: ${s.notify_configured ? "設定済み" : "未設定"}`;
        } else {
          div.innerHTML = `<span style="color:#dc2626;font-weight:bold;">○ 未設定</span><br>` +
            `メール送信が未設定です。設定は担当者にお問い合わせください。`;
        }
      } catch (e) {
        const div = document.getElementById("mailStatus");
-       if (div) div.textContent = "状態取得失敗: " + e.message;
+       if (div) div.textContent = "メールの状態を確認できませんでした。";
      }
    }, 100);
    return null;
@@ -2127,8 +2198,8 @@ const A = {
  "選手数: " + (A.state.players.length) + " 名"),
  h("div", { className: "flex gap-2 mt-3", style: { flexWrap: "wrap" } },
  h("button", { className: "btn btn-sm",
- onClick: () => { document.querySelector(".modal-bg")?.remove();
-   A.openDiagnostics(); } }, "動作状況・エラー履歴を見る"),
+ onClick: async () => { document.querySelector(".modal-bg")?.remove();
+   if (await A.ensureOwner()) A.openDiagnostics(); } }, "動作状況・エラー履歴を見る（オーナー）"),
  h("button", { className: "btn btn-sm",
  style: { background: "#fef2f2", color: "#7f1d1d", borderColor: "#fca5a5" },
  onClick: () => { document.querySelector(".modal-bg")?.remove();
@@ -2149,13 +2220,7 @@ const A = {
  ),
  );
  const foot = h("div", { className: "flex gap-2" },
- h("button", { className: "btn", onClick: async () => {
-   try {
-     const r = await fetch("/api/auth/session", { method: "DELETE", credentials: "same-origin" });
-     if (r.ok || r.status === 401) return location.reload();
-   } catch {}
-   toast("ログアウトできませんでした。通信状況を確認してください。", "err");
- } }, "ログアウト"),
+ h("button", { className: "btn", onClick: () => A.logout() }, "ログアウト"),
  h("button", { className: "btn btn-ghost",
  onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"),
  );
@@ -2343,7 +2408,7 @@ const A = {
    h("button", { className: "btn btn-sm btn-danger",
      onClick: async () => {
        if (!confirm("診断ログをクリアしますか?")) return;
-       await api.post("/api/diagnostics/clear", {});
+       await A.ownerFetch("/api/diagnostics/clear", { method: "POST", body: {} });
        A.refreshDiagnostics();
      } }, "ログクリア"),
    h("button", { className: "btn btn-sm btn-ghost",
@@ -2358,7 +2423,7 @@ const A = {
  },
 
  async refreshDiagnostics() {
- const r = await api.get("/api/diagnostics");
+ const r = (await A.ownerFetch("/api/diagnostics")).json || { error: "動作状況を取得できませんでした" };
  if (r.error) {
    toast("診断データ取得失敗: " + r.error, "err");
    return;
@@ -6029,7 +6094,7 @@ const A = {
 
  // 管理者限定のファイル帳票は、HttpOnlyログインCookie付きfetchで取得する。
  async downloadAuthedFile(url, filename) {
- if (!api.adminKey) return toast("管理キーが必要です（管理設定で入力してください）", "err");
+ if (!api.adminKey) return toast("ログインが必要です（右上の「管理設定」からログインしてください）", "err");
  try {
  const resp = await fetch(url, { credentials: "same-origin" });
  if (!resp.ok) {
@@ -6048,7 +6113,7 @@ const A = {
 
  // 管理者限定のHTML帳票は、HttpOnlyログインCookie付きfetchで別ウィンドウに開く。
  async openAuthedHtmlWindow(url, filename) {
- if (!api.adminKey) return toast("管理キーが必要です（管理設定で入力してください）", "err");
+ if (!api.adminKey) return toast("ログインが必要です（右上の「管理設定」からログインしてください）", "err");
  try {
  const resp = await fetch(url, { credentials: "same-origin" });
  if (!resp.ok) return toast("取得失敗: HTTP " + resp.status + (resp.status === 401 || resp.status === 503 ? " (管理キーを確認してください)" : ""), "err");
@@ -6068,7 +6133,7 @@ const A = {
  // 別ウィンドウで HTML 領収書を開く (確実な方法)。team 指定で1団体のみ #272
  async openReceiptsHtmlWindow(t, team) {
  // window.open + fetch + Blob URL で確実に開く (navigation 介入を回避)。requireAdmin のため管理キー必須。
- if (!api.adminKey) return toast("管理キーが必要です（管理設定で入力してください）", "err");
+ if (!api.adminKey) return toast("ログインが必要です（右上の「管理設定」からログインしてください）", "err");
  try {
  const resp = await fetch(A._receiptsUrl(t, team), { credentials: "same-origin" });
  if (!resp.ok) return toast("取得失敗: HTTP " + resp.status + (resp.status === 401 || resp.status === 503 ? " (管理キーを確認)" : ""), "err");
@@ -6871,7 +6936,7 @@ const A = {
    // (ネイティブconfirmは使わない)。反映後の確定は通常フロー(差分バー→確定ボタン)。
    const sheetImportXlsx = () => {
      if (!api.adminKey && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
-       return toast("管理キーが必要です（管理設定で入力）", "err");
+       return toast("ログインが必要です（右上の「管理設定」からログインしてください）", "err");
      }
      const inp = document.createElement("input");
      inp.type = "file"; inp.accept = ".xlsx";
@@ -8292,7 +8357,7 @@ const A = {
  }
  A._playerSuggestCache = null;
  toast(`${ok}名を「${survName}」に結合しました`, "ok");
- try { A.state.players = await api.get("/api/players"); } catch {}
+ try { const ps = await api.get("/api/players"); if (Array.isArray(ps)) A.state.players = ps; } catch {}
  A.renderPlayers();
  document.querySelector(".modal-bg")?.remove();
  A.openMergeDialog();
@@ -9738,7 +9803,7 @@ const A = {
            if (!rr.ok || j.error) return toast("取り消し失敗: " + (j.error || rr.status), "err");
            toast("マージを取り消しました" + (j.skipped ? `（手修正済みの${j.skipped.length}行は温存）` : ""), "ok");
            A._playerSuggestCache = null;
-           try { A.state.players = await api.get("/api/players"); A.renderPlayers(); } catch (e) {}
+           try { const ps = await api.get("/api/players"); if (Array.isArray(ps)) A.state.players = ps; A.renderPlayers(); } catch (e) {}
            document.querySelector(".modal-bg")?.remove(); A.ownerMergeHistory();
          } }, "取り消す")),
        h("div", { className: "text-xs text-sub" },
@@ -12415,7 +12480,7 @@ const O = {
 
  // ── Excelラウンドトリップ取込: 出力した表を手修正→再取込して『位置だけ』正本化(選手/結果は保持) ──
  async importBracketXlsx(event) {
- if (!api.adminKey) return toast("管理キーが必要です（管理設定で入力）", "err");
+ if (!api.adminKey) return toast("ログインが必要です（右上の「管理設定」からログインしてください）", "err");
  const tid = O.tournamentId;
  const inp = document.createElement("input");
  inp.type = "file"; inp.accept = ".xlsx";
@@ -16586,9 +16651,23 @@ const TMgmt = {
     "align-items:center;gap:7px;padding:9px 14px;border-radius:10px;font-size:12px;font-weight:800;" +
     "box-shadow:0 6px 20px rgba(0,0,0,.22);letter-spacing:.01em";
   document.body.appendChild(badge);
-  const render = (count, online) => {
-    if (online && !count) { badge.style.display = "none"; return; }
-    badge.style.display = "inline-flex";
+  // 一度の送信失敗で「オフライン」が出たまま残らないよう、赤い表示の前にサーバーへ届くかを確かめる
+  let checking = null;
+  const reachable = () => checking || (checking = (async () => {
+    if (navigator.onLine === false) return false;
+    try { const r = await fetch("/api/health", { cache: "no-store", credentials: "same-origin" }); return r.status < 500; }
+    catch (e) { return false; }
+    finally { setTimeout(() => { checking = null; }, 3000); }
+  })());
+  const setVisible = (on) => {
+    badge.style.display = on ? "inline-flex" : "none";
+    // 表示中は画面下に余白を足して、表の最後の行や入力欄を覆わない
+    document.body.style.paddingBottom = on ? "64px" : "";
+  };
+  const render = async (count, online) => {
+    if (!online && await reachable()) { api.online = true; online = true; }
+    if (online && !count) { setVisible(false); return; }
+    setVisible(true);
     if (!online) {
       badge.style.background = "#dc2626"; badge.style.color = "#fff";
       badge.textContent = count

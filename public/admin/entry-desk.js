@@ -86,7 +86,17 @@
       h("nav", { class: "ed-top__nav", "aria-label": "主な画面" },
         h("a", { href: "#list", "aria-current": active === "list" ? "page" : null }, "大会"),
         h("a", { href: last ? "#desk/" + last : "#list", "aria-current": active === "desk" ? "page" : null }, "受付"),
-        h("a", { href: "#more", "aria-current": active === "more" ? "page" : null }, "その他")));
+        h("a", { href: "#more", "aria-current": active === "more" ? "page" : null }, "その他")),
+      who());
+  }
+  // 誰でログイン中か+ログアウト(狭い画面では「その他」の先頭に出す)
+  function who() {
+    const s = app().session;
+    if (!s) return null;
+    return h("div", { class: "ed-top__who" },
+      h("span", { class: "ed-top__name", title: s.label }, s.label),
+      h("span", { class: "ed-top__role" }, s.role),
+      h("button", { class: "ed-top__out", type: "button", onclick: () => app().logout() }, "ログアウト"));
   }
 
   function frame(active, body) {
@@ -142,8 +152,12 @@
     S.view = "more";
     const go = (tab) => () => { leaveTo(tab); };
     const item = (title, note, fn) => h("button", { class: "ed-more__row", type: "button", onclick: fn }, h("b", {}, title), h("span", {}, note));
+    const s = app().session;
     frame("more", [
       h("div", { class: "ed-head" }, h("h1", {}, "その他")),
+      s ? h("div", { class: "ed-account" },
+        h("span", {}, "ログイン中: ", h("b", {}, s.label), "（" + s.role + "）"),
+        h("button", { class: "ed-btn", type: "button", onclick: () => app().logout() }, "ログアウト")) : null,
       h("div", { class: "ed-more" },
         item("選手の名寄せ", "選手データベースで、同じ人の登録をまとめる・所属を整える", go("players")),
         item("データの書き出し・取り込み", "Excel・CSVの書き出しと、名簿の取り込み", go("import")),

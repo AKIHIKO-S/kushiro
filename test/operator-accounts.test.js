@@ -72,6 +72,20 @@ test("運営アカウントの招待・ログイン・再設定・停止を本�
   assert.equal((await request("/api/tournaments", { cookie: staff })).status, 401);
   assert.equal((await login(password)).status, 401);
   const replaced = getCookie(await login(newPassword));
+  // 右上の表示用: メールのアカウントはメールアドレス、管理キーは操作担当コード、オーナーは役割が分かる
+  const who = async cookie => (await request("/api/auth/session", { cookie })).json();
+  assert.deepEqual(
+    (({ authenticated, principal_type, kind, label }) => ({ authenticated, principal_type, kind, label }))(await who(replaced)),
+    { authenticated: true, principal_type: "admin", kind: "account", label: email });
+  assert.equal((await who(legacy)).kind, "key");
+  assert.equal((await who(owner)).principal_type, "owner");
+  assert.deepEqual(await who(""), { authenticated: false });
+  // メール設定の値(送信サーバー・アカウント等)は画面へ返さない
+  const mail = await (await request("/api/mail/status", { cookie: legacy })).json();
+  assert.deepEqual(Object.keys(mail).sort(), ["enabled", "notify_configured"]);
+  // 動作状況(診断)はオーナーだけ
+  assert.equal((await request("/api/diagnostics", { cookie: legacy })).status, 401);
+  assert.equal((await request("/api/diagnostics", { cookie: owner })).status, 200);
   assert.equal((await request("/api/auth/session", { method: "DELETE", cookie: replaced })).status, 200);
   assert.equal((await request("/api/tournaments", { cookie: replaced })).status, 401);
   const last = getCookie(await login(newPassword));

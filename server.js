@@ -835,7 +835,11 @@ app.get("/api/auth/session", (req, res) => {
   res.set("Cache-Control", "no-store");
   const s = sessionOf(req);
   if (!s) return res.json({ authenticated: false });
-  res.json({ authenticated: true, principal_type: s.principal_type, principal_id: s.principal_id, expires_at: s.expires_at });
+  // kind: account=メールで入った運営アカウント / key=管理キー・オーナーの鍵で入ったセッション
+  // label: 画面右上に出す名前(アカウントはメールアドレス、鍵は操作担当コード)
+  const kind = s.kind === "account" ? "account" : "key";
+  const label = kind === "account" ? String(s.email || "") : String(s.principal_id || "");
+  res.json({ authenticated: true, principal_type: s.principal_type, principal_id: s.principal_id, expires_at: s.expires_at, kind, label: label.slice(0, 120) });
 });
 app.delete("/api/auth/session", requireSession(["admin", "owner", "coach", "applicant", "player", "referee"]), (req, res) => {
   const token = cookieValue(req, SESSION_COOKIE);
@@ -1609,14 +1613,11 @@ app.post("/api/tournaments/:id/entry-settings/copy", requireAdmin, (req, res) =>
 });
 
 // SMTP 設定状態を返す + テスト送信エンドポイント (admin専用)
+// 送信サーバー名・アカウント・宛先などの値は画面へ出さない(運営の端末に内部情報を残さないため)。
+// 返すのは「使えるか」と「通知先が決まっているか」だけ。値の確認・変更はサーバー側で行う。
 app.get("/api/mail/status", requireAdmin, (req, res) => {
-  res.json({
-    enabled: mailer.isEnabled(),
-    config: {
-      ...mailer.config,
-      // パスワードは絶対に返さない
-    },
-  });
+  res.set("Cache-Control", "no-store");
+  res.json({ enabled: mailer.isEnabled(), notify_configured: !!(mailer.config && mailer.config.ADMIN_EMAIL) });
 });
 app.post("/api/mail/test", requireAdmin, async (req, res) => {
   const to = req.body?.to || mailer.config.ADMIN_EMAIL;
@@ -5287,7 +5288,8 @@ app.get("/api/sync/status", requireAdmin, (req, res) => {
 
 // ═══ 診断 API (admin 専用) ═══
 // 直近のエラー・リクエスト・サーバー状態を返す
-app.get("/api/diagnostics", requireAdmin, (req, res) => {
+// 動作状況(メモリ・ディスク・エラー履歴)は内部情報なのでオーナーだけが見る
+app.get("/api/diagnostics", requireOwner, (req, res) => {
   const mem = process.memoryUsage();
   let dbStats = null, dbSize = null;
   try { dbStats = db.getStats(); } catch (e) { dbStats = { error: String(e.message || e) }; }
@@ -5343,7 +5345,7 @@ app.get("/api/diagnostics", requireAdmin, (req, res) => {
 });
 
 // 診断ログクリア (admin)
-app.post("/api/diagnostics/clear", requireAdmin, (req, res) => {
+app.post("/api/diagnostics/clear", requireOwner, (req, res) => {
   DIAG.errors = [];
   DIAG.recentRequests = [];
   DIAG.errorCount = 0;
