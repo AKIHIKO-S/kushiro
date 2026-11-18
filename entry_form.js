@@ -7,6 +7,7 @@
 // 共通ユーティリティ (lib/) を取り込み。escapeHtml/escapeJs/escapeJsId/eventName は entry_form 既存実装と同一。
 const { escapeHtml, escapeJs, escapeJsId, jsonForScript } = require("./lib/text");
 const { eventName: _eventName } = require("./lib/events");
+const siteTone = require("./lib/site-tone");
 
 // buildEntryFormHTML の前処理(締切/参加料注記/種目名正規化などの派生値)を計算する内部ヘルパ。
 function _formPreamble(tournament, opts, events) {
@@ -60,6 +61,8 @@ function buildEntryFormHTML(tournament, events, opts) {
   const turnstileSitekey = opts.turnstile_sitekey || "";   // 設定時のみ Turnstile ウィジェットを表示
   const _c = _formPreamble(tournament, opts, events);
   const { deadline, paymentNote, notes, tournName, tournDate } = _c;
+  // 書体・ロゴは配信元(このアプリ)から読む。埋込先(Jimdo等)の相対パスにしないため絶対URLにする
+  const assetOrigin = ((String(gasUrl).match(/^https?:\/\/[^/]+/) || [""])[0]);
   events = _c.events;   // 壊れた event_config (name=オブジェクト) は _formPreamble で正規化済み
 
   // events は [{ name, fee, type, ... }, ...]
@@ -1165,11 +1168,76 @@ function buildEntryFormHTML(tournament, events, opts) {
     .event-block .add-buttons { padding-left: 18px; }
   }
 
+  /* ══════════════════════════════════════════════════════════
+     協会サイト調(2026-11-15 オーナー承認)。値は public/shared/site-tone.css の
+     --st-* だけを使う(lib/site-tone.js が :root へ写す)。上の白磁・帳簿の構造は残し、
+     色・書体・罫・主ボタンをサイトに揃える後勝ちの上書き。
+     赤は「エラー・必須の未入力・受付終了」だけに使い、主な操作は紺にする(サイトの規則)。
+     ══════════════════════════════════════════════════════════ */
+  ${siteTone.rootCss(assetOrigin)}
+  :root {
+    --paper: var(--st-paper); --card: var(--st-white); --card-2: var(--st-white);
+    --ink: var(--st-ink); --ink-2: var(--st-mute);
+    --line: var(--st-line); --line-2: var(--st-line2);
+    --red: var(--st-red); --red-2: #951a22;
+    --amber: var(--st-warn); --amber-bg: var(--st-warn-bg);
+    --green: var(--st-ok); --green-bg: var(--st-ok-bg);
+    --gothic: var(--st-jp); --mincho: var(--st-jp);
+  }
+  body { background: var(--st-paper); color: var(--st-ink); font-family: var(--st-jp); font-weight: 500; }
+  :focus-visible { outline: 3px solid var(--st-blue); outline-offset: 2px; }
+
+  /* 頭: 協会名(紺)+大会名。サイトのヘッダと同じ組み */
+  .form-header { background: var(--st-white); color: var(--st-ink); border-bottom: var(--st-rule); }
+  .form-header-art { display: none; }
+  .st-brand { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; color: var(--st-navy);
+    font-weight: 700; font-size: 15px; letter-spacing: .02em; line-height: 1.3; }
+  .st-brand img { width: 34px; height: 34px; display: block; flex: 0 0 34px; }
+  .st-brand small { display: block; font-family: var(--st-num); font-size: 10.5px; font-weight: 700;
+    letter-spacing: .02em; color: var(--st-mute); }
+  .form-header h1 { color: var(--st-ink); }
+  .form-header .seal { background: var(--st-sky); color: var(--st-navy); letter-spacing: .12em; }
+  .form-header .meta { color: var(--st-mute); }
+
+  /* 見出しと区切りはサイトの2px太罫 */
+  .form-section h2 { border-bottom: var(--st-rule); }
+  .event-block { border-top: var(--st-rule); }
+  .form-row input:focus, .form-row select:focus, .form-row textarea:focus,
+  .entry-row input:focus, .entry-row select:focus {
+    border-color: var(--st-navy) !important; box-shadow: 0 0 0 3px rgba(30,95,168,.18) !important;
+  }
+  .entry-row input[type="text"]:focus, .entry-row input[type="date"]:focus, .entry-row select:focus {
+    border-bottom: 2px solid var(--st-navy); box-shadow: none !important;
+  }
+  input[type="checkbox"], input[type="radio"] { accent-color: var(--st-navy); }
+  .div-seg .seg input:checked + span { background: var(--st-navy); color: var(--st-white); }
+
+  /* 主な操作(申し込む)は紺。押せる高さはサイトと同じ46px以上 */
+  .submit-btn { background: var(--st-navy); color: var(--st-white); border-radius: var(--st-radius); min-height: var(--st-tap); }
+  .submit-btn:hover { background: var(--st-navy-d); }
+  .btn-add { border: 1.5px solid var(--st-navy); color: var(--st-navy); border-radius: var(--st-radius); }
+  .btn-add:hover { background: var(--st-sky); }
+  .st-link { color: var(--st-blue); font-weight: 700; }
+
+  /* 合計・金額は英数字書体で桁を揃える */
+  .total-box { border: var(--st-rule); border-radius: var(--st-radius); }
+  .total-box .amount, .fee-tag, .count-badge { font-family: var(--st-num); font-variant-numeric: tabular-nums; }
+  .notice { border-top: var(--st-hair); border-bottom: var(--st-hair); color: var(--st-mute); }
+
+  /* 道しるべ: 現在地は紺の下線 */
+  #ttRail { background: var(--st-paper); border-bottom: var(--st-hair); }
+  #ttRail .bar { background: var(--st-navy); }
+  #ttRail .step .st { color: var(--st-mute); }
+  .confirm-modal { border-top-color: var(--st-ink); }
+  .success-card { border: var(--st-rule); }
+
+
 </style>
 ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : ''}
 </head>
 <body>
 <div class="form-header">
+  <div class="st-brand"><img src="${assetOrigin}/shared/assets/ktta-logo-256.png" alt="" width="34" height="34"><span>釧路卓球協会<small>KUSHIRO TABLE TENNIS ASSOCIATION</small></span></div>
   <h1><span class="seal">大会申込</span>${tournName}</h1>
   <div class="meta">
     開催日 ${tournDate || "日程未定"}
@@ -1178,7 +1246,7 @@ ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v
   </div>
 </div>
 ${closedNotice}
-<p><a href="/entry/status?tournament=${encodeURIComponent(tournament.id)}" target="_top" style="display:inline-flex;align-items:center;min-height:44px;color:var(--red)">申込済みの方：申込番号で追加・修正する</a></p>
+<p><a href="/entry/status?tournament=${encodeURIComponent(tournament.id)}" target="_top" class="st-link" style="display:inline-flex;align-items:center;min-height:44px">申込済みの方：申込番号で追加・修正する</a></p>
 
 <form id="entryForm" onsubmit="return submitForm(event)">
 
@@ -2506,10 +2574,25 @@ function buildEntryLandingHTML(tournaments) {
   .empty{padding:22px 0;border-bottom:1px solid var(--line);color:var(--ink-2);}
   .sub{margin-top:22px;font-size:14px;}
   .sub a{color:var(--red);display:inline-block;padding:10px 0;}
+  /* 協会サイト調(値は site-tone.css の --st-* のみ)。紺=操作、赤=締切などの注意 */
+  ${siteTone.rootCss("")}
+  :root{--bg:var(--st-paper);--ink:var(--st-ink);--ink-2:var(--st-mute);--red:var(--st-red);--line:var(--st-line);--gothic:var(--st-jp);}
+  body{font-weight:500;}
+  h1{padding-bottom:10px;border-bottom:var(--st-rule);}
+  ul{border-top:0;}
+  li{border-bottom:var(--st-hair);}
+  .go{background:var(--st-navy);border-radius:var(--st-radius);min-height:var(--st-tap);}
+  .go:hover{background:var(--st-navy-d);}
+  .sub a{color:var(--st-blue);font-weight:700;}
+  .st-brand{display:flex;align-items:center;gap:10px;margin:0 0 18px;color:var(--st-navy);font-weight:700;font-size:15px;line-height:1.3;}
+  .st-brand img{width:34px;height:34px;display:block;flex:0 0 34px;}
+  .st-brand small{display:block;font-family:var(--st-num);font-size:10.5px;font-weight:700;color:var(--st-mute);}
+  :focus-visible{outline:3px solid var(--st-blue);outline-offset:2px;}
 </style>
 </head>
 <body>
 <main class="wrap">
+  <div class="st-brand"><img src="/shared/assets/ktta-logo-256.png" alt="" width="34" height="34"><span>釧路卓球協会<small>KUSHIRO TABLE TENNIS ASSOCIATION</small></span></div>
   <h1>大会の申込</h1>
   <p class="note">現在、このページでは大会の申込のみご案内しています。組合せや試合結果の掲載は休止しています。</p>
   ${rows ? `<ul>${rows}</ul>` : `<div class="empty">現在受付中の大会はありません。</div>`}
@@ -2604,12 +2687,41 @@ function buildApplicantStatusHTML() {
   .msg.err{background:var(--err-bg);color:var(--err);}
   .hidden{display:none;}
   a.home{color:var(--red);font-weight:700;text-decoration:none;font-size:13px;}
+  /* 協会サイト調(値は site-tone.css の --st-* のみ)。箱と影をやめて罫で区切り、
+     操作は紺、赤は取消など戻せない操作とエラーだけに使う */
+  ${siteTone.rootCss("")}
+  :root{--paper:var(--st-paper);--card:var(--st-paper);--ink:var(--st-ink);--ink-2:var(--st-mute);
+    --red:var(--st-red);--red-2:#951a22;--line:var(--st-line);--gothic:var(--st-jp);--mincho:var(--st-jp);
+    --ok:var(--st-ok);--ok-bg:var(--st-ok-bg);--warn:var(--st-warn);--warn-bg:var(--st-warn-bg);--err:var(--st-red);--err-bg:var(--st-red-bg);}
+  body{font-weight:500;}
+  .head{text-align:left;padding-bottom:12px;border-bottom:var(--st-rule);}
+  .kicker{display:flex;align-items:center;gap:10px;color:var(--st-navy);font-size:15px;letter-spacing:.02em;text-transform:none;}
+  .kicker img{width:34px;height:34px;display:block;}
+  h1{font-weight:800;margin-top:14px;}
+  .card{border:0;border-bottom:var(--st-hair);border-radius:0;box-shadow:none;padding:20px 2px;background:transparent;}
+  .lookup input,.mbox .fld input{border:var(--st-hair);border-radius:var(--st-radius);background:var(--st-white);font-family:var(--st-num);}
+  .lookup input:focus,.mbox .fld input:focus{outline:none;border-color:var(--st-navy);box-shadow:0 0 0 3px rgba(30,95,168,.18);}
+  .btn{background:var(--st-navy);border-radius:var(--st-radius);min-height:var(--st-tap);}
+  .btn:hover{background:var(--st-navy-d);}
+  .btn.ghost{background:var(--st-white);color:var(--st-navy);border:var(--st-hair);}
+  .btn.ghost:hover{background:var(--st-sky);}
+  .btn.danger{background:var(--st-red);}
+  .mini{border:var(--st-hair);border-radius:var(--st-radius);min-height:40px;}
+  .mini:hover{background:var(--st-sky);border-color:var(--st-navy);}
+  .mini.danger{color:var(--st-red);border-color:rgba(184,32,42,.35);}
+  .ticket-code,td.num,.total b{font-family:var(--st-num);font-variant-numeric:tabular-nums;}
+  .badge{border-radius:3px;}
+  .mbox{background:var(--st-paper);border-radius:6px;border-top:var(--st-rule);}
+  .mbox .note{background:var(--st-wash);border-radius:var(--st-radius);}
+  .total{border-top:var(--st-rule);}
+  a.home{color:var(--st-blue);}
+  :focus-visible{outline:3px solid var(--st-blue);outline-offset:2px;}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="head">
-    <div class="kicker">釧路卓球協会</div>
+    <div class="kicker"><img src="/shared/assets/ktta-logo-256.png" alt="" width="34" height="34">釧路卓球協会</div>
     <h1>申込内容の確認</h1>
     <div class="sub">申込番号を入力すると、前回の申込を確認し、出場種目の追加や内容の修正ができます。</div>
   </div>
