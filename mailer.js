@@ -554,10 +554,21 @@ async function sendOperatorInvite(to, link) {
   if (!info.accepted?.length) throw new Error("招待メールを受け付けませんでした");
 }
 
+async function sendOperatorReset(to, link) {
+  const info = await getTransporter().sendMail({
+    from: SMTP_FROM || SMTP_USER, to,
+    subject: "KTTA Platform | パスワードの再設定",
+    text: "運営アカウントのパスワード再設定を受け付けました。次のリンクから新しいパスワードを設定してください。リンクは発行後1時間、1回だけ有効です。\n\n"
+      + link + "\n\n設定し直すまでは今のパスワードのまま使えます。心当たりがない場合は、このメールを破棄してください。",
+  });
+  if (!info.accepted?.length) throw new Error("再設定メールを受け付けませんでした");
+}
+
 module.exports = {
   isEnabled,
   validRecipient,
   sendOperatorInvite,
+  sendOperatorReset,
   sendConfirmationEmail,
   sendAdminNotification,
   sendEntryChangeNotification,

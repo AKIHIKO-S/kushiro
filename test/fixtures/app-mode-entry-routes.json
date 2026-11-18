@@ -70,6 +70,7 @@
  "POST /api/applicant/submission",
  "POST /api/auth/admin/activate",
  "POST /api/auth/admin/password",
+ "POST /api/auth/admin/password-reset",
  "POST /api/auth/admin/session",
  "POST /api/auth/applicant/session",
  "POST /api/auth/owner/session",

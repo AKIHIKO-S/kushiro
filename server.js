@@ -41,7 +41,7 @@ const multer = require("multer");
 const appMode = require("./app-mode");
 const QRCode = require("qrcode");     // ローカルQR生成(会場オフラインで外部QRサービスに依存しないLAN接続案内用)
 const db = require("./db");
-const { MAX_OWNER_ACCOUNTS, normalizeEmail, validEmail, validPassword, boundedPassword } = require("./lib/operator-accounts");
+const { MAX_OWNER_ACCOUNTS, PASSWORD_MIN, normalizeEmail, validEmail, validPassword, boundedPassword } = require("./lib/operator-accounts");
 const reports = require("./reports");
 const importQuality = require("./tools/import_quality");   // 取込プレビューの品質警告(notices)を全経路へ後付け
 const rosterReader = require("./tools/roster_reader");       // ブック内の名簿と突合し取りこぼし/過大/表記揺れを検出
@@ -656,6 +656,16 @@ function requireOwner(req, res, next) {
   // 開発環境だけ既存テストのために管理キーへフォールバックする。
   return requireAdmin(req, res, next);
 }
+const PASSWORD_RULE_MESSAGE = "パスワードは" + PASSWORD_MIN + "文字以上で、英字・数字・記号(! # $ % など)をそれぞれ1つ以上入れてください(128文字以内)";
+// 招待・再設定メールに載せる管理画面のURL。本番は PUBLIC_BASE_URL(HTTPS・パスなし)だけを使う(Hostヘッダを信用しない)。
+function operatorLinkBase(req) {
+  const configured = (process.env.PUBLIC_BASE_URL || "").trim();
+  try {
+    const url = new URL(IS_PROD ? configured : appOriginOf(req));
+    if (IS_PROD && (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash)) return null;
+    return url;
+  } catch { return null; }
+}
 // オーナーキーを入力した本人か(オーナー権限を付けた運営アカウントではないか)。
 // 権限の付与・剥奪はキー保持者だけにする。付与されたアカウントが別アカウントへ権限を広げられないようにするため。
 function isOwnerKeyHolder(req) {
@@ -901,10 +911,30 @@ app.post("/api/auth/admin/password", requireSameOrigin, operatorLoginLimit, oper
     res.json({ ok: true, principal_type: "admin", principal_id: login.id });
   } catch (error) { next(error); }
 });
+// パスワードを忘れた本人が、登録メールアドレス宛てに再設定リンクを受け取る。オーナーの操作は要らない。
+// 登録の有無を推測させないため、形式が正しいアドレスには常に同じ応答をすぐ返し、送信は応答の後に行う。
+const operatorResetIpLimit = rateLimit({ windowMs: 15 * 60_000, max: 5 });
+const operatorResetEmailLimit = rateLimit({ windowMs: 60 * 60_000, max: 3, keyFor: req =>
+  "reset:" + crypto.createHash("sha256").update(normalizeEmail(req.body?.email).slice(0, 254)).digest("hex") });
+app.post("/api/auth/admin/password-reset", requireSameOrigin, operatorResetIpLimit, operatorResetEmailLimit, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const email = normalizeEmail(req.body?.email);
+  if (!validEmail(email)) return res.status(400).json({ error: "メールアドレスを確認してください" });
+  const base = operatorLinkBase(req);
+  if (!base || !mailer.isEnabled()) return res.status(503).json({ error: "いまは再設定メールを送れません。オーナーにご連絡ください" });
+  res.json({ ok: true, message: "登録されているアドレスであれば、再設定のメールを送りました。届かない場合はオーナーにご連絡ください。" });
+  const reset = db.operatorAccounts.issueReset(email);
+  if (!reset) return;
+  const link = new URL("/admin/", base);
+  link.hash = "operator-invite=" + reset.token;
+  mailer.sendOperatorReset(email, link.href).then(
+    () => db.logOwnerAction({ action: "運営アカウント:パスワード再設定メール " + accountAuditCode(reset.id) }),
+    () => db.operatorAccounts.cancelInvite(reset.token));
+});
 app.post("/api/auth/admin/activate", requireSameOrigin, rateLimit({ max: 8 }), async (req, res, next) => {
   res.set("Cache-Control", "no-store");
   const { token, password } = req.body || {};
-  if (!validPassword(password)) return res.status(400).json({ error: "パスワードは15文字以上、128文字以内で入力してください" });
+  if (!validPassword(password)) return res.status(400).json({ error: PASSWORD_RULE_MESSAGE });
   try {
     const result = await db.operatorAccounts.accept(token, password);
     if (result.busy) return res.status(429).json({ error: "時間をおいて、もう一度お試しください" });
@@ -920,14 +950,8 @@ app.post("/api/owner/operators/invite", requireSameOrigin, requireOwnerStrict, r
   res.set("Cache-Control", "no-store");
   const email = normalizeEmail(req.body?.email);
   if (!validEmail(email)) return res.status(400).json({ error: "有効なメールアドレスを入力してください" });
-  const configured = (process.env.PUBLIC_BASE_URL || "").trim();
-  let url;
-  try {
-    url = new URL(IS_PROD ? configured : appOriginOf(req));
-    if (IS_PROD && (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash)) throw new Error();
-  } catch {
-    return res.status(503).json({ error: "招待に使う管理画面のHTTPS URLが未設定です" });
-  }
+  const url = operatorLinkBase(req);
+  if (!url) return res.status(503).json({ error: "招待に使う管理画面のHTTPS URLが未設定です" });
   if (!mailer.isEnabled()) return res.status(503).json({ error: "招待メールの送信設定が必要です" });
   try {
     const invite = db.operatorAccounts.issue(email);

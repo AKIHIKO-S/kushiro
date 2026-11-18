@@ -31,8 +31,8 @@ test("運営アカウントの招待・ログイン・再設定・停止を本�
   const owner = getCookie(await post("/api/auth/owner/session", { key: process.env.OWNER_KEY }));
   const legacy = getCookie(await post("/api/auth/admin/session", { key: process.env.ADMIN_KEY }));
   const email = "staff@example.invalid";
-  const password = "fixture first password";
-  const newPassword = "fixture replacement password";
+  const password = "Fixture-pass1";
+  const newPassword = "Replace-pass2";
   const invitePath = "/api/owner/operators/invite";
   const loginPath = "/api/auth/admin/password";
   const activatePath = "/api/auth/admin/activate";

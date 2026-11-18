@@ -30,7 +30,7 @@ test("オーナー権限の付与はキー保持者だけ・上限つき・剥�
   const getCookie = r => r.headers.get("set-cookie").split(";")[0];
   const owner = getCookie(await post("/api/auth/owner/session", { key: process.env.OWNER_KEY, operator: "keyholder" }));
   const legacy = getCookie(await post("/api/auth/admin/session", { key: process.env.ADMIN_KEY }));
-  const password = "fixture owner grant password";
+  const password = "Grant-pass3";
   // 3アカウントを利用中にする
   const accounts = [];
   for (const address of ["grant-a@example.invalid", "grant-b@example.invalid", "grant-c@example.invalid"]) {
