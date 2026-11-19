@@ -268,6 +268,21 @@ sqlite.exec(`
     PRIMARY KEY (submission_id, recipient)
   );
   CREATE INDEX IF NOT EXISTS idx_entry_mail_due ON entry_mail_jobs(state, due_at);
+  -- Google スプレッドシートへの控え(lib/sheets-backup.js)の送信記録。送った行をそのまま持つので、
+  -- 失敗したぶんは同じ内容で再送できる。受付そのものとは独立(失敗しても受付は止めない)。
+  CREATE TABLE IF NOT EXISTS sheet_backup_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tournament_id TEXT NOT NULL,
+    submission_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT '',
+    rows_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_sheet_backup_t ON sheet_backup_log(tournament_id, status);
   -- idx_submissions_opid(op_id列を使う索引)は、既存DBでは op_id を ALTER で足した後でないと
   -- 「no such column: op_id」で失敗するため、ここではなく移行ブロックで ALTER の直後に作成する。
 
@@ -9239,6 +9254,7 @@ function deleteSubmissionPII(submissionId, opts = {}) {
   const txn = sqlite.transaction(() => {
     // 連絡先 + 申込単位の構造化データ(引率者/顧問/コーチ名・自由回答=PIIを含みうる)を匿名化。
     sqlite.prepare("DELETE FROM entry_mail_jobs WHERE submission_id=?").run(submissionId);
+    sqlite.prepare("DELETE FROM sheet_backup_log WHERE submission_id=?").run(submissionId);   // 控えの送信記録(氏名を含む)
     sqlite.prepare("UPDATE entry_submissions SET contact_name='', contact_email='', contact_tel='', extra_json='' WHERE id=?").run(submissionId);
     // 入金メモは自由記述(振込名義などが書かれうる)なので連絡先と同じ扱いで消す。金額と状態は集計のため残す。
     sqlite.prepare("UPDATE entry_submissions SET pay_note='' WHERE id=?").run(submissionId);
@@ -10459,6 +10475,58 @@ function recordAdminEntrantChange(before, after, opts) {
     sqlite.prepare(`UPDATE entry_submissions SET updated_at=datetime('now','localtime') WHERE id=?`).run(sub.id);
   })();
   return { group, submission_id: sub.id, tournament: t, kind };
+}
+
+// ── Google スプレッドシートへの控え ─────────────────────────────────
+// 申込1件の「今の姿」を、出場者1人(1組・1チーム)=1行の配列にする。列の並びは
+// lib/sheets-backup.js の HEADER と同じ。連絡先は個人情報なので、メールは「あり/なし」だけ。
+// 申込番号は内部ID。申込者が本人確認に使う番号(トークン)は載せない(持っていれば申込を直せてしまうため)。
+function buildBackupRows(submissionId, kind) {
+  const sub = submissionStmts.getById.get(String(submissionId || ""));
+  if (!sub) return null;
+  const t = stmts.getTournament.get(sub.tournament_id);
+  if (!t) return null;
+  const ents = sqlite.prepare(`SELECT * FROM entrants WHERE submission_id=? ORDER BY event, seed, furigana`).all(sub.id);
+  const at = String(kind) === "新規" ? (sub.created_at || "")
+    : sqlite.prepare("SELECT datetime('now','localtime') AS t").get().t;
+  const players = (e) => {
+    if (isTeamEntrant(e)) { const m = entrantMembers(e); return m.length ? m.join("、") : (e.display_name || e.name || ""); }
+    if (e.is_doubles && e.partner_name) return `${normalizeName(e.name)}・${normalizeName(e.partner_name)}`;
+    return e.display_name || normalizeName(e.name || "");
+  };
+  const teams = (e) => (e.partner_team && e.partner_team !== e.team) ? `${e.team || ""}／${e.partner_team}` : (e.team || "");
+  const rows = ents.map(e => [
+    String(kind || ""), at, sub.id, t.name || "", sub.team_name || "", e.event || "", players(e), teams(e),
+    e.age_group || "", e.fee || 0, _STATUS_JA[e.status || "confirmed"] || (e.status || ""),
+    sub.contact_email ? "あり" : "なし",
+  ]);
+  return { tournament_id: t.id, submission_id: sub.id, kind: String(kind || ""), rows };
+}
+
+function recordBackupAttempt(b) {
+  return sqlite.prepare(`INSERT INTO sheet_backup_log (tournament_id, submission_id, kind, rows_json) VALUES (?,?,?,?)`)
+    .run(b.tournament_id, b.submission_id, b.kind, JSON.stringify(b.rows)).lastInsertRowid;
+}
+function finishBackup(id, result) {
+  const ok = !!(result && result.ok);
+  sqlite.prepare(`UPDATE sheet_backup_log SET status=?, error=?, attempts=attempts+1, updated_at=datetime('now','localtime') WHERE id=?`)
+    .run(ok ? "ok" : "failed", ok ? "" : String((result && result.error) || "不明").slice(0, 300), id);
+}
+// 控えの件数。pending は送信中か、送信途中で止まったもの(再送の対象にする)。
+function getBackupState(tournamentId) {
+  const r = sqlite.prepare(`SELECT
+      SUM(CASE WHEN status='ok' THEN 1 ELSE 0 END) ok,
+      SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) failed,
+      SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) pending
+    FROM sheet_backup_log WHERE tournament_id=?`).get(String(tournamentId));
+  const last = sqlite.prepare(`SELECT error FROM sheet_backup_log WHERE tournament_id=? AND status='failed' ORDER BY id DESC LIMIT 1`)
+    .get(String(tournamentId));
+  return { ok: r.ok || 0, failed: r.failed || 0, pending: r.pending || 0, last_error: last ? last.error : "" };
+}
+function listBackupToResend(tournamentId, limit) {
+  return sqlite.prepare(`SELECT id, rows_json FROM sheet_backup_log WHERE tournament_id=? AND status IN ('failed','pending')
+    ORDER BY id LIMIT ?`).all(String(tournamentId), Math.max(1, Math.min(100, parseInt(limit) || 30)))
+    .map(r => { let rows = []; try { rows = JSON.parse(r.rows_json) || []; } catch (_) {} return { id: r.id, rows }; });
 }
 
 // 申込の一覧(本部の「申込の一覧」画面)。金銭の収受は運営アプリでは扱わない(オーナー方針 2026-11-03)ので、
@@ -15234,7 +15302,7 @@ module.exports = {
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel, entryClosedReason: _entryClosedReason,
   getManualSubmissionView, createManualSubmission, publicEntryOperationId,
   applicantReplaceEntrant, applicantCancelEntrant, applicantReplaceEntrantBySubmission, applicantCancelEntrantBySubmission, listEntryChanges,
-  findCrossGroupDuplicates, getSubmissionEditView, editSubmission, recordAdminEntrantChange, getSubmissionList,
+  findCrossGroupDuplicates, getSubmissionEditView, editSubmission, recordAdminEntrantChange, getSubmissionList, buildBackupRows, recordBackupAttempt, finishBackup, getBackupState, listBackupToResend,
   copyEntrySettings, listEntrySettingSources,
   claimEntryMail, finishEntryMail, retryEntryMail, getEntryMailContent,
   resolveEntryOptions, sanitizeEntryOptions, priceEntryOptions,

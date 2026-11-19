@@ -1211,6 +1211,27 @@ async function deliverEntryMail(submissionId = null) {
   }));
 }
 let entryMailRunning = false;
+// ── Google スプレッドシートへの控え(未設定なら何もしない) ──
+// アプリのDBが正本で、ここは控え。失敗しても申込の受付・修正は止めず、応答も待たせない
+// (切り離して送り、結果は sheet_backup_log に残す。件数は管理画面に出る)。
+const sheetBackup = require("./lib/sheets-backup").create();
+function backupSubmission(submissionId, kind) {
+  if (!sheetBackup.enabled || !submissionId) return;
+  setImmediate(async () => {
+    let logId = null;
+    try {
+      const b = db.buildBackupRows(submissionId, kind);
+      if (!b || !b.rows.length) return;
+      logId = db.recordBackupAttempt(b);
+      db.finishBackup(logId, await sheetBackup.append(b.rows));
+    } catch (e) {
+      console.error("[sheet-backup] 失敗:", e && e.message);
+      if (logId != null) { try { db.finishBackup(logId, { ok: false, error: String((e && e.message) || e) }); } catch (_) {} }
+    }
+  });
+}
+function backupFromChange(rec) { if (rec && rec.submission_id) backupSubmission(rec.submission_id, "修正"); }
+
 function scheduleEntryMail(submissionId = null) {
   if (entryMailRunning) return;
   entryMailRunning = true;
@@ -1265,7 +1286,7 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
         return res.status(400).json({ error: r.error });
       }
       const created = r.entrant_ids && r.entrant_ids.length > 0;
-      if (created) scheduleEntryMail(r.submission_id);
+      if (created) { scheduleEntryMail(r.submission_id); backupSubmission(r.submission_id, "新規"); }
 
       const { contact: _contact, ...base } = r;
       res.status(201).json({ ...base, mail: created ? { queued: true } : null });
@@ -1303,6 +1324,7 @@ app.post("/api/applicant/entrants/:id/replace", requireSession(["applicant"]), a
       });
     }
   } catch (e) { recordError(e, req, res, 0); }
+  backupSubmission(req.auth.principal_id, "修正");
   res.json(db.getSubmissionById(req.auth.principal_id));
 });
 
@@ -1319,6 +1341,7 @@ app.post("/api/applicant/entrants/:id/cancel", requireSession(["applicant"]), as
       });
     }
   } catch (e) { recordError(e, req, res, 0); }
+  backupSubmission(req.auth.principal_id, "取消");
   res.json(db.getSubmissionById(req.auth.principal_id));
 });
 
@@ -1349,7 +1372,7 @@ app.post("/api/applicant/submission", requireSession(["applicant"]), async (req,
   const r = db.editSubmission(req.auth.principal_id,
     { contact: b.contact, options: b.options, entries: b.entries, add: b.add, reason: b.reason }, { actor: "applicant" });
   if (r.error) return res.status(400).json({ error: r.error });
-  if (!r.unchanged) await notifyEdit(req, r);
+  if (!r.unchanged) { await notifyEdit(req, r); backupSubmission(r.submission_id, "修正"); }
   res.json({ ok: true, unchanged: !!r.unchanged, changes: r.changes || [],
     view: db.getSubmissionEditView(req.auth.principal_id, { admin: false }) });
 });
@@ -1366,6 +1389,7 @@ app.put("/api/submissions/:sid", requireAdmin, async (req, res) => {
   const r = db.editSubmission(req.params.sid,
     { contact: b.contact, options: b.options, entries: b.entries, add: b.add, reason: b.reason }, { actor: "admin" });
   if (r.error) return res.status(400).json({ error: r.error });
+  if (!r.unchanged) backupSubmission(r.submission_id, "修正");
   res.json({ ok: true, unchanged: !!r.unchanged, changes: r.changes || [],
     view: db.getSubmissionEditView(req.params.sid, { admin: true }) });
 });
@@ -1411,7 +1435,27 @@ app.post("/api/tournaments/:id/desk/manual", requireAdmin, (req, res) => {
   const r = db.createManualSubmission(req.params.id, body, opId);
   if (r.error) return res.status(400).json({ error: r.error });
   if (!r.submission_id) return res.status(409).json({ error: r.already_registered ? "すでに登録済みの出場です" : "登録できる出場がありません" });
+  if (!r.replayed) backupSubmission(r.submission_id, "本部登録");
   res.status(r.replayed ? 200 : 201).json({ ok: true, submission_id: r.submission_id, replayed: !!r.replayed });
+});
+
+// スプレッドシートへの控えの状況と、失敗分の再送(設定が無ければ enabled=false を返すだけ)。
+app.get("/api/tournaments/:id/sheet-backup", requireAdmin, (req, res) => {
+  if (!db.getTournament(req.params.id)) return res.status(404).json({ error: "大会が見つかりません" });
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ enabled: sheetBackup.enabled, tab: sheetBackup.enabled ? sheetBackup.tab : "", ...db.getBackupState(req.params.id) });
+});
+app.post("/api/tournaments/:id/sheet-backup/resend", requireAdmin, async (req, res) => {
+  if (!db.getTournament(req.params.id)) return res.status(404).json({ error: "大会が見つかりません" });
+  if (!sheetBackup.enabled) return res.status(400).json({ error: "スプレッドシートの控えは設定されていません" });
+  const items = db.listBackupToResend(req.params.id, 30);
+  let ok = 0, ng = 0;
+  for (const it of items) {
+    const r = await sheetBackup.append(it.rows);
+    db.finishBackup(it.id, r);
+    if (r.ok) ok++; else ng++;
+  }
+  res.json({ ok: true, sent: items.length, succeeded: ok, failed: ng, ...db.getBackupState(req.params.id) });
 });
 
 // 本部の一括登録(締切後も可): Excelテンプレの書き出しと、記入済みファイルの読み取り(登録はしない)。
@@ -2737,7 +2781,7 @@ app.put("/api/entrants/:id", requireAdmin, (req, res) => {
   if (cur && occStale(cur, req.body)) return sendConflict(res, cur);
   const e = db.updateEntrant(req.params.id, stripOcc(req.body) || {});
   if (!e) return res.status(404).json({ error: "エントリーが見つかりません" });
-  db.recordAdminEntrantChange(cur, e);
+  backupFromChange(db.recordAdminEntrantChange(cur, e));
   res.json(e);
 });
 // 枠の編集グリッドのDB検索編集: 既存 entrant のメンバー(本人/相方)を選手マスタにリンク上書き。
@@ -2756,7 +2800,7 @@ app.delete("/api/entrants/:id", requireAdmin, (req, res) => {
     return sendBracketConflict(res, e.tournament_id, e.event);
   }
   db.deleteEntrant(req.params.id);
-  if (e) db.recordAdminEntrantChange(e, null);
+  if (e) backupFromChange(db.recordAdminEntrantChange(e, null));
   res.json({ ok: true, bracket_rev: e ? db.bracketRev(e.tournament_id, e.event) : null });
 });
 // マスタDBへのリンク
@@ -4911,7 +4955,7 @@ app.put("/api/tournaments/:id/entries/:pid/status", requireAdmin, (req, res) => 
   const before = db.getEntrant(req.params.pid);
   const r = db.setEntrantStatus(req.params.pid, status);
   if (r.error) return res.status(404).json(r);
-  if (before) db.recordAdminEntrantChange(before, db.getEntrant(req.params.pid));
+  if (before) backupFromChange(db.recordAdminEntrantChange(before, db.getEntrant(req.params.pid)));
   res.json(r);
 });
 app.put("/api/tournaments/:id/entries/:pid/seed", requireAdmin, (req, res) => {
@@ -4952,7 +4996,7 @@ app.post("/api/tournaments/:id/entries/:pid/fix", requireAdmin, (req, res) => {
   const before = db.getEntrant(req.params.pid);
   const r = db.fixEntrant(req.params.pid, req.body || {});
   if (r.error) return res.status(400).json(r);
-  if (before) db.recordAdminEntrantChange(before, db.getEntrant(req.params.pid));
+  if (before) backupFromChange(db.recordAdminEntrantChange(before, db.getEntrant(req.params.pid)));
   res.json(r);
 });
 // 申込の選手照合(案A): 自動一致・要確認・新規候補の一覧と、人による確定。

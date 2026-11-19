@@ -46,6 +46,7 @@ const ENTRY_MODE_API = [
   [new RegExp(`^${T}$`)],
   [new RegExp(`^${T}/sync/now$`)],
   [new RegExp(`^${T}/(submissions|entry-changes|applicants|applicants\\.xlsx|aggregation\\.xlsx)$`)],
+  [new RegExp(`^${T}/sheet-backup(/resend)?$`)],   // Googleスプレッドシートへの控えの状況と再送
   [new RegExp(`^${T}/desk/manual$`), ["GET", "HEAD", "POST"]],
   [new RegExp(`^${T}/desk/manual-template(\\.xlsx|/read)$`), ["GET", "HEAD", "POST"]],
   [new RegExp(`^${T}/desk$`), ["GET", "HEAD"]],
