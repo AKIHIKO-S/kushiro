@@ -5480,7 +5480,7 @@ const staticOpts = {
 // 参照に注入する。これにより古い common.js 等がブラウザに残り続ける事故を根絶
 // (例: TT.playerStatsSection is not a function)。
 const ASSET_VER = Date.now().toString(36);
-function _serveVersionedHtml(file) {
+function _serveVersionedHtml(file, cacheControl = "no-cache") {
   return (req, res) => {
     fs.readFile(file, "utf8", (err, html) => {
       if (err) return res.status(404).type("html").send("<h1>not found</h1>");
@@ -5488,12 +5488,17 @@ function _serveVersionedHtml(file) {
       // immutable 化に乗せる(毎回再検証の往復を消す)。href/src の ?v= 既存分は付け替える。
       const out = html.replace(/(\/shared\/[A-Za-z0-9_.\-/]+\.(?:js|css|svg|png|webp))(\?v=[^"']*)?/g, `$1?v=${ASSET_VER}`);
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Cache-Control", cacheControl);
       res.send(out);
     });
   };
 }
 app.get(["/admin", "/admin/", "/admin/index.html"], _serveVersionedHtml(path.join(publicDir, "admin", "index.html")));
+app.get(["/players", "/players/"], (req, res, next) => {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  res.setHeader("Cache-Control", "private, no-store");
+  next();
+}, requireSession(["admin", "owner"]), _serveVersionedHtml(path.join(__dirname, "lib", "player-directory-preview.html"), "private, no-store"));
 app.get(["/viewer", "/viewer/", "/viewer/index.html"], _serveVersionedHtml(path.join(publicDir, "viewer", "index.html")));
 app.get(["/viewer/live", "/viewer/live/", "/viewer/live/index.html"], _serveVersionedHtml(path.join(publicDir, "viewer", "live", "index.html")));
 app.get(["/widget", "/widget/", "/widget/index.html"], _serveVersionedHtml(path.join(publicDir, "widget", "index.html")));

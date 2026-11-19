@@ -24,6 +24,7 @@ self.addEventListener("fetch", function (e) {
   try { url = new URL(req.url); } catch (_) { return; }
   if (url.origin !== self.location.origin) return;       // 同一オリジンのみ
   if (url.pathname.indexOf("/api/") === 0) return;       // データは常にネット(オフラインはアプリの送信キューが担保)
+  if (/^\/players(?:\/|$)/i.test(url.pathname)) return; // 管理者向けの名鑑表示はキャッシュを使わない
   if (url.pathname.indexOf("/uploads/") === 0) return;   // アップロード画像も素通し
   e.respondWith(
     fetch(req).then(function (res) {
