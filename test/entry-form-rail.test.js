@@ -1,8 +1,7 @@
 // 申込フォームの承認デザイン(見本案2「道しるべ」・2026-07-27 オーナー承認)の回帰。
 //  ・トンマナ … サイト正典の白磁(温白#fbfaf7 / 墨罫#211d18 / 丹頂は機能色 / 全面ゴシック)
 //  ・道しるべ … 行程レール(連絡先・種目選手・確認事項・送信)と「必須があとN項目」
-//  ・埋込(iframe自動高さ)ではページがスクロールしないため sticky/fixed が効かない。
-//    その環境では貼り付けをやめ、残数を送信ボタンの手前に置く(実機で確認済み)。
+//  ・埋込(iframe)は廃止したので、埋込用の分岐を持たない。
 //  ・学年 … 学生の種目は設定どおり / 一般の部は任意(一般に学生が出場する場合に記入)
 //    / シニア・ラージの年代別は出さない
 // 実行: node --test test/entry-form-rail.test.js
@@ -66,12 +65,10 @@ test("出場種目は件数で判定する(未選択が『任意』に見えな�
   assert.match(h, /出場種目を選んでください/, "残数チップの案内");
 });
 
-test("埋込ではsticky/fixedをやめる分岐がある", () => {
+test("埋込用の分岐とiframeへの通知は持たない(埋込は廃止)", () => {
   const h = html(mk({ version: 2, fields: {}, custom: [], event_overrides: {} }));
-  assert.match(h, /tt-embedded/, "埋込判定のクラス");
-  assert.match(h, /body\.tt-embedded #ttRail\s*\{\s*position:\s*static/, "レールの貼り付けを解除");
-  assert.match(h, /body\.tt-embedded #ttRemain\s*\{[^}]*position:\s*static/, "残数の固定を解除");
-  assert.match(h, /window\.self !== window\.top/, "iframe内かどうかで判定");
+  assert.ok(!/tt-embedded/.test(h), "埋込判定のクラスが残っていない");
+  assert.ok(!/__ktta_entry_form|window\.parent\.postMessage/.test(h), "親ページへの高さ通知が残っていない");
 });
 
 test("動きの規範を守っている(reduced-motion対応・200ms以内)", () => {

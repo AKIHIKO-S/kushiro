@@ -59,7 +59,7 @@ test("申込・後日修正・選手DBの API は通す", () => {
     ["GET", "/api/tournaments/t1/entry-issues"], ["POST", "/api/tournaments/t1/entry-issues/bulk-fix"],
     ["PUT", "/api/tournaments/t1/entry-settings"], ["POST", "/api/tournaments/t1/entry-settings/copy"],
     ["GET", "/api/tournaments/t1/applicants.xlsx"], ["GET", "/api/tournaments/t1/aggregation.xlsx"],
-    ["GET", "/api/tournaments/t1/entry-form.html"], ["GET", "/api/tournaments/t1/entry-form-config"],
+    ["GET", "/api/tournaments/t1/entry-form-config"],
     ["POST", "/api/public/tournaments/t1/submit-team-entry"], ["POST", "/api/public/tournaments/t1/entry"], ["GET", "/api/public/open-tournaments"],
     ["POST", "/api/forms/submit"], ["GET", "/api/applicant/edit-view"], ["POST", "/api/applicant/submission"], ["GET", "/api/applicant/me"],
     ["GET", "/api/submissions/s1/edit-view"], ["PUT", "/api/submissions/s1"],

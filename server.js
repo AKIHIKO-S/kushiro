@@ -412,15 +412,11 @@ app.use((req, res, next) => {
   // 検索エンジン索引を全面禁止 (#271): 参加者(未成年含む)の氏名・所属が
   // 検索結果から「思わぬところ」で閲覧される事故を防ぐ。robots.txt と二重で抑止。
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  // 埋込許可パス(Jimdo/STUDIO等の外部サイトに iframe 埋込するウィジェット/申込フォーム)は
-  // X-Frame-Options:SAMEORIGIN を付けると外部ドメインで真っ白になるため、frame-ancestors * を使う。
-  // (X-Frame-Options に「任意元許可」値は無い。ALLOWALL は非標準で無視されるため CSP を使用。)
+  // 外部サイトへの iframe 埋込を許すのは観戦ウィジェット(/widget)だけ。
+  // X-Frame-Options:SAMEORIGIN を付けると外部ドメインで真っ白になるため、そこだけ frame-ancestors * を使う。
+  // 申込フォーム(/entry/...)は個人情報を扱うので、他のサイトへの埋込を許さない(クリックジャッキング対策)。
   const p = req.path || "";
-  // 申込フォーム(/entry/:id)・ウィジェットは外部サイト埋込のため frame-ancestors * 。
-  // ただし申込者本人の閲覧ページ /entry/status は PII(氏名/連絡先/料金)を表示するので
-  // 第三者サイトへの iframe 埋込を許さない(クリックジャッキング対策)。
-  const embeddable = (p.startsWith("/entry") && p !== "/entry/status" && !p.startsWith("/entry/status"))
-    || p.startsWith("/widget") || p.includes("/entry-form");
+  const embeddable = p.startsWith("/widget");
   // Content-Security-Policy: 既知の外部リソース(Googleフォント / QR生成画像)だけ許可し他を遮断。
   // インラインscript/styleはアプリ構造上 'unsafe-inline' が必要だが、外部scriptの注入・
   // connect でのデータ持ち出し・object/base は塞ぐ(XSS時の被害を限定)。
@@ -3608,7 +3604,7 @@ if (SEAL_DIR_PERSISTENT) {
   app.use("/uploads", express.static(SEAL_DIR_PERSISTENT));
 }
 
-// ─── 申込フォーム HTML 生成 (Jimdo 等への埋込用) ───
+// ─── 申込フォーム HTML 生成 ───
 // テンプレID があれば templates から events を取得、なければ matches から推定
 // よく使われる申込種目のデフォルトカタログ (admin で追加・編集可能)
 const DEFAULT_EVENTS_CATALOG = [
@@ -3722,44 +3718,6 @@ app.get("/api/events-catalog", (req, res) => {
 // 運営内部情報のため requireAdmin。
 app.get("/api/used-events", requireAdmin, (req, res) => {
   res.json({ events: db.getUsedEventsCatalog() });
-});
-
-app.get("/api/tournaments/:id/entry-form.html", requireOpenEntryOrAdmin, (req, res) => {
-  try {
-    const tournament = req.entryTournament;
-    let events = _resolveEvents(tournament);
-    // フォーム要求にに events が含まれていれば優先 (JSON 文字列)
-    if (req.query.events) {
-      try {
-        const parsed = JSON.parse(req.query.events);
-        if (Array.isArray(parsed)) events = parsed;
-      } catch {}
-    }
-    const entryOnly = currentAppMode() === "entry";
-    const html = entryForm.buildEntryFormHTML(tournament, events, {
-      gas_url: entryOnly ? `${appOriginOf(req)}/api/public/tournaments/${tournament.id}/submit-team-entry`
-        : req.query.gas_url || "REPLACE_WITH_GAS_WEB_APP_URL",
-      admin_email: req.query.admin_email || "",
-      deadline: entryOnly ? db.entryDeadlineLabel(tournament) : req.query.deadline || "",
-      capacity: entryOnly ? db.getEntryCapacityState(tournament.id) : undefined,
-      payment_note: tournament.entry_payment_note || req.query.payment_note || "",
-      notes: req.query.notes || "",
-      turnstile_sitekey: process.env.TURNSTILE_SITEKEY || "",
-      field_config: db.resolveFieldConfig(tournament),   // 必須項目設定(空なら既定=現行フォーム相当)
-    });
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
-    // iframe 埋込許可 (Jimdo / STUDIO のいずれからも埋込可能に)
-    res.removeHeader("X-Frame-Options");
-    // CSP も緩めて anywhere from embedded可能
-    res.setHeader("Content-Security-Policy",
-      "frame-ancestors *;");
-    // 全てのリソースを self とインライン許可 (外部依存なし)
-    res.setHeader("Referrer-Policy", "no-referrer-when-downgrade");
-    res.send(html);
-  } catch (e) {
-    res.status(500).send(errHtml("フォーム生成に失敗しました", e));
-  }
 });
 
 // 申込フォームの events 情報を JSON で取得 (admin UI 用)
@@ -5254,7 +5212,7 @@ app.get("/sw.js", (req, res) => {
 app.use("/shared", cacheMw, express.static(path.join(publicDir, "shared"), staticOpts));
 app.use("/admin", cacheMw, express.static(path.join(publicDir, "admin"), staticOpts));
 app.use("/viewer", cacheMw, express.static(path.join(publicDir, "viewer"), staticOpts));
-app.use("/widget", cacheMw, express.static(path.join(publicDir, "widget"), staticOpts)); // Jimdo/STUDIO 埋込ウィジェット
+app.use("/widget", cacheMw, express.static(path.join(publicDir, "widget"), staticOpts)); // 観戦ウィジェット(外部サイトへの埋込)
 app.use("/ref", cacheMw, express.static(path.join(publicDir, "ref"), staticOpts)); // 審判結果入力ページ
 
 // 運用マニュアル (Markdown)
@@ -5363,9 +5321,7 @@ app.get("/entry/status", (req, res) => {
 });
 
 // ── 公開申込フォーム /entry/:id ───────────────────────
-// Jimdo 等への iframe 埋込にも、単独URL公開にもこの URL を使用。
-// 既存 /api/tournaments/:id/entry-form.html と同じ HTML を返すが
-// デフォルトで「自己サーバーに POST」する設定にする (GAS 不要)。
+// 申込者へはこのURLを案内する(WordPress等への埋込は廃止。リンクで申込フォームへ案内する)。
 // 申込フォームの「Excelで一括入力」。テンプレの配布と、記入済みファイルの読み取りだけを行う。
 // 読み取り結果はフォームの入力欄へ流し込むだけで、登録は通常の送信(submit-team-entry)に任せる
 // =必須チェック・同じ種目の重複・申込番号の発行を二重に持たない。
@@ -5430,17 +5386,11 @@ app.get("/entry/:id", requireOpenEntryOrAdmin, (req, res) => {
   try {
     const tournament = req.entryTournament;
     const events = _resolveEvents(tournament);
-    // POST 先: 大会に GAS URL が設定されていればそちらへ (スプレッドシート連携)
-    //          設定されていなければ本サーバーへ (自己完結)
-    // 正規オリジン(appOriginOf)を使う。X-Forwarded-Host は信用しない(送信先のすり替え防止)。
-    const selfUrl = `${appOriginOf(req)}/api/public/tournaments/${tournament.id}/submit-team-entry`;
-    // 送信は常に同一オリジン(自サーバー)へ。GAS連携が設定されていても、ブラウザから
-    // script.google.com へ直接POSTすると応答が CORS で読めず「送信エラー」を誤表示する
-    // (実際は保存成功)。そのため submit-team-entry がサーバー側でGASへ中継する方式に統一。
-    const postUrl = selfUrl;
+    // 送信先は本サーバー。正規オリジン(appOriginOf)を使う。X-Forwarded-Host は信用しない(送信先のすり替え防止)。
+    const postUrl = `${appOriginOf(req)}/api/public/tournaments/${tournament.id}/submit-team-entry`;
 
     const html = entryForm.buildEntryFormHTML(tournament, events, {
-      gas_url: postUrl,
+      submit_url: postUrl,
       admin_email: req.query.admin_email || "",
       deadline: db.entryDeadlineLabel(tournament) || req.query.deadline || "",
       payment_note: tournament.entry_payment_note || req.query.payment_note || "",
@@ -5452,8 +5402,10 @@ app.get("/entry/:id", requireOpenEntryOrAdmin, (req, res) => {
     });
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
-    res.removeHeader("X-Frame-Options");
-    res.setHeader("Content-Security-Policy", "frame-ancestors *;");
+    // 申込フォームは他サイトに埋め込ませない(frame-ancestors 'self' / X-Frame-Options は共通ヘッダが付ける)。
+    // 他の制限(送信先・外部スクリプト)は従来どおり緩めておく: 旧アドレスで開いた申込ページが
+    // 新しい正規アドレスへ送信できること、Turnstile を使う場合に外部スクリプトが読めることを保つため。
+    res.setHeader("Content-Security-Policy", "frame-ancestors 'self';");
     res.send(html);
   } catch (e) {
     recordError(e, req, res, 500);

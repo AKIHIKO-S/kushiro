@@ -57,7 +57,7 @@ const ENTRY_MODE_API = [
   [/^\/api\/matches\/[^/]+\/(call|uncall)$/, ["POST"]],
   [/^\/api\/public\/tournaments\/[^/]+\/ops-version$/, ["GET", "HEAD"]],   // 画面の自動更新(変化の有無だけ返す)
   [new RegExp(`^${T}/entry-settings(/.*)?$`)],
-  [new RegExp(`^${T}/entry-form(\\.html|-config)$`)],
+  [new RegExp(`^${T}/entry-form-config$`)],
   [new RegExp(`^${T}/entries$`)],
   [new RegExp(`^${T}/entries/[^/]+/(status|fix)$`)],
   [new RegExp(`^${T}/entry-issues(/bulk-fix)?$`)],

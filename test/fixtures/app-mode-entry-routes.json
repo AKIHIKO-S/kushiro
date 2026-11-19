@@ -52,7 +52,6 @@
  "GET /api/tournaments/:id/entries",
  "GET /api/tournaments/:id/entry-changes",
  "GET /api/tournaments/:id/entry-form-config",
- "GET /api/tournaments/:id/entry-form.html",
  "GET /api/tournaments/:id/entry-issues",
  "GET /api/tournaments/:id/entry-settings/sources",
  "GET /api/tournaments/:id/operations",

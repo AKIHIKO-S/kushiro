@@ -1,7 +1,6 @@
 // ═══════════════════════════════════════════════════════
 // 申込フォーム HTML 生成
-// Jimdo などのノーコードサイトの「HTML埋め込み」ブロックに貼れる
-// 完全スタンドアロン (CDN不要、外部依存なし)
+// 完全スタンドアロン (CDN不要、外部依存なし)。公開URL(/entry/大会ID)で配信する
 // ═══════════════════════════════════════════════════════
 
 // 共通ユーティリティ (lib/) を取り込み。escapeHtml/escapeJs/escapeJsId/eventName は entry_form 既存実装と同一。
@@ -48,7 +47,7 @@ function _formPreamble(tournament, opts, events) {
  * @param {Object} tournament - 大会オブジェクト (DB getTournament)
  * @param {Array} events - 種目リスト [{name, fee, type, gender, category}, ...]
  * @param {Object} opts -
- *   gas_url: GAS Web App の URL (フォーム POST 先)
+ *   submit_url: フォームの送信先(このアプリの submit-team-entry)
  *   admin_email: 主催者メールアドレス
  *   notes: 申込フォーム下部の注意事項
  *   deadline: 申込締切日 (表示用)
@@ -56,13 +55,13 @@ function _formPreamble(tournament, opts, events) {
  */
 function buildEntryFormHTML(tournament, events, opts) {
   opts = opts || {};
-  const gasUrl = opts.gas_url || "REPLACE_WITH_GAS_WEB_APP_URL";
+  const submitUrl = opts.submit_url || "";
   const adminEmail = opts.admin_email || "";
   const turnstileSitekey = opts.turnstile_sitekey || "";   // 設定時のみ Turnstile ウィジェットを表示
   const _c = _formPreamble(tournament, opts, events);
   const { deadline, paymentNote, notes, tournName, tournDate } = _c;
-  // 書体・ロゴは配信元(このアプリ)から読む。埋込先(Jimdo等)の相対パスにしないため絶対URLにする
-  const assetOrigin = ((String(gasUrl).match(/^https?:\/\/[^/]+/) || [""])[0]);
+  // 書体・ロゴは配信元(このアプリ)から読む。絶対URLにして、配信元が変わっても同じ見た目にする
+  const assetOrigin = ((String(submitUrl).match(/^https?:\/\/[^/]+/) || [""])[0]);
   events = _c.events;   // 壊れた event_config (name=オブジェクト) は _formPreamble で正規化済み
 
   // events は [{ name, fee, type, ... }, ...]
@@ -285,9 +284,8 @@ function buildEntryFormHTML(tournament, events, opts) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${tournName} 申込フォーム</title>
 <script>
-/* ── 埋込安全網: 何が起きても真っ白(クラッシュ)にせず、利用者に分かる案内を出す ──
-   Jimdo/STUDIO 等への iframe 埋込で稀に発生する初期化/通信エラーを捕捉し、
-   再読み込み導線を提示する。最初の<script>として最優先で設置。*/
+/* ── 安全網: 何が起きても真っ白(クラッシュ)にせず、利用者に分かる案内を出す ──
+   初期化/通信エラーを捕捉し、再読み込み導線を提示する。最初の<script>として最優先で設置。*/
 (function () {
   function showFatal(msg) {
     try {
@@ -326,7 +324,7 @@ function buildEntryFormHTML(tournament, events, opts) {
   /* ───────────────────────────────────────────────
      丹頂エディトリアル — 釧路卓球協会 申込フォーム
      温かみのある紙 × 丹頂レッド × 墨。明朝の見出し + ゴシック本文。
-     システムフォントのみ (HTTPS/Jimdo/STUDIO/CSP 準拠)。
+     システムフォントのみ (HTTPS/CSP 準拠)。
      ─────────────────────────────────────────────── */
   :root {
     --paper:   #f1e9d9;
@@ -1036,9 +1034,6 @@ function buildEntryFormHTML(tournament, events, opts) {
     display: flex; align-items: stretch; gap: 2px;
     font-family: var(--gothic);
   }
-  /* 埋込(iframeで高さ自動)ではページ自体がスクロールしないため sticky が効かない。
-     その場合は貼り付けをやめ、フォーム冒頭の案内板として置く(情報は同じ)。 */
-  body.tt-embedded #ttRail { position: static; }
   #ttRail .step {
     position: relative; flex: 1; text-align: center;
     padding: 10px 2px 12px;
@@ -1054,7 +1049,7 @@ function buildEntryFormHTML(tournament, events, opts) {
     background: var(--red); transform: translateX(0);
     transition: transform .18s ease-out; pointer-events: none;
   }
-  /* 残り必須の常設チップ。埋込では画面外に出るので、送信ボタンの手前に置き換える */
+  /* 残り必須の常設チップ */
   #ttRemain {
     position: fixed; right: 14px; bottom: 14px; z-index: 60;
     background: #fff; border: 1.5px solid var(--line); border-radius: 999px;
@@ -1062,10 +1057,6 @@ function buildEntryFormHTML(tournament, events, opts) {
     box-shadow: 0 10px 26px -14px rgba(48, 32, 16, .4);
   }
   #ttRemain.ok { border-color: var(--green); color: var(--green); background: var(--green-bg); }
-  body.tt-embedded #ttRemain {
-    position: static; display: block; margin: 0 0 10px; text-align: center;
-    box-shadow: none;
-  }
   @media (prefers-reduced-motion: reduce) {
     #ttRail .bar { transition-duration: .01ms; }
   }
@@ -1391,7 +1382,7 @@ ${turnstileSitekey ? '<div class="cf-turnstile" data-sitekey="' + escapeHtml(tur
 <script>
 const TOURNAMENT_ID = ${escapeJs(tournament.id)};
 const TOURNAMENT_NAME = ${escapeJs(tournament.name || "")};
-const SUBMIT_URL = ${escapeJs(gasUrl)};  // 送信先。原則 同一オリジン(自サーバー)。サーバーが必要に応じGASへ中継。
+const SUBMIT_URL = ${escapeJs(submitUrl)};  // 送信先。同一オリジン(自サーバー)
 const EVENTS = ${eventsJson};
 const FIELD_CFG = ${fieldCfgJson};
 const ENTRY_OPTIONS = ${optionsJson};
@@ -2189,7 +2180,7 @@ function buildSummaryText(data) {
 // 確認モーダルを表示
 function showConfirmModal(data) {
   return new Promise((resolve) => {
-    // iframe埋込(自動高さ)では position:fixed が画面外に出るため、確認はインラインで表示する。
+    // 確認はインラインで表示する(全画面オーバーレイを使わない)。
     const ov = document.createElement("div");
     ov.className = "confirm-inline";
     let entriesHTML = "";
@@ -2229,7 +2220,6 @@ function showConfirmModal(data) {
       '<button type="button" class="btn-confirm">この内容で送信する</button>' +
       '</div></div>';
     // フォームを一時的に隠し、確認パネルをその位置にインライン表示する。
-    // → iframe はパネルの高さに自動縮小し、グレーの全画面オーバーレイや高さ暴走が起きない。
     const form = document.getElementById("entryForm");
     const sections = form ? form.querySelectorAll(".form-section") : [];
     const submitBtn = document.getElementById("submitBtn");
@@ -2238,14 +2228,12 @@ function showConfirmModal(data) {
     if (form && form.parentNode) form.parentNode.insertBefore(ov, form);
     else document.body.appendChild(ov);
     ttScrollTop();
-    setTimeout(ttPostHeight, 0);
     function finish(result) {
       ov.remove();
       // 確認を抜けたらフォームを元に戻す(送信成功時は submitForm 側で改めて隠す)。
       sections.forEach(function (s) { s.style.display = ""; });
       if (submitBtn) submitBtn.style.display = "";
       ttScrollTop();
-      setTimeout(ttPostHeight, 0);
       resolve(result);
     }
     ov.querySelector(".btn-cancel").onclick = function () { finish(false); };
@@ -2299,8 +2287,7 @@ async function submitForm(e) {
   const controller = (typeof AbortController !== "undefined") ? new AbortController() : null;
   const timer = controller ? setTimeout(function () { controller.abort(); }, 25000) : null;
   try {
-    // 同一オリジン(自サーバー)へ text/plain で送信。サーバーが必要に応じGASへ中継するため、
-    // ブラウザからのクロスオリジン送信(応答がCORSで読めず誤エラーになる問題)を回避。
+    // 同一オリジン(自サーバー)へ text/plain で送信する(クロスオリジン送信で応答が読めない問題を避ける)。
     const resp = await fetch(SUBMIT_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8", "X-Op-Id": ttOpId(data) },
@@ -2383,10 +2370,8 @@ async function submitForm(e) {
         renderEvents();
         recalcTotal();
         ttScrollTop();
-      setTimeout(ttPostHeight, 0);
       };
       ttScrollTop();
-      setTimeout(ttPostHeight, 0);
     } else {
       showMessage(result?.error
         ? "送信できませんでした: " + result.error
@@ -2414,47 +2399,13 @@ function showMessage(text, type) {
   if (type === "ok") setTimeout(() => box.innerHTML = "", 8000);
 }
 
-// ── 埋込iframeの高さ自動調整 ──
-// 実コンテンツ高さを親フレームへ通知。親側リスナ(埋込スニペットに同梱)が iframe の
-// 高さを合わせる。スクリプトを除去するCMS(一部Jimdo)では通知が無視され固定高にフォールバック。
-// 確認/完了の表示に切り替えた時、フォーム先頭へスクロールし、親フレームにも「上へスクロール」を依頼する。
-// 親の埋込スニペットが対応していれば iframe を視界へ送る。未対応でもインライン表示なので破綻しない。
+// 確認/完了の表示に切り替えた時、フォーム先頭へスクロールする。
 function ttScrollTop() {
   try { window.scrollTo(0, 0); } catch (_) {}
-  try {
-    if (window.parent !== window) {
-      window.parent.postMessage(
-        { __ktta_entry_form: true, id: TOURNAMENT_ID, scrollIntoView: true }, "*");
-    }
-  } catch (_) {}
 }
-var __ttLastH = 0;
-function ttPostHeight() {
-  try {
-    if (window.parent === window) return; // 埋込でない(単独表示)なら不要
-    // ★コンテンツ(body)の高さだけを測る。documentElement.scrollHeight は親が iframe を伸ばすと
-    //   それに追従して「最低でも iframe 高」になり、ResizeObserver/親の高さ加算と無限ループ(縦に伸び続ける)
-    //   を起こすため使わない。body は min-height 等を持たず内容高そのものなので追従しない。
-    var h = document.body ? document.body.scrollHeight : 0;
-    if (h <= 0) return;
-    if (Math.abs(h - __ttLastH) < 2) return; // 変化なし(±1px)なら送らない=フィードバックループ遮断
-    __ttLastH = h;
-    window.parent.postMessage(
-      { __ktta_entry_form: true, id: TOURNAMENT_ID, height: h }, "*");
-  } catch (_) {}
-}
-if (window.ResizeObserver) {
-  try { new ResizeObserver(ttPostHeight).observe(document.body); } catch (_) {}
-}
-window.addEventListener("load", ttPostHeight);
-window.addEventListener("resize", ttPostHeight);
-// レイアウト/フォント確定後の取りこぼし対策に数回だけ遅延送信
-[120, 500, 1200].forEach(function (ms) { setTimeout(ttPostHeight, ms); });
 
 // ══ 道しるべ(見本案2・2026-07-27 承認): 行程レールと残り必須の表示 ══
 // 目的は「いま何を書いていて、あと何が要るか」を常に見せること。
-// 埋込(iframe自動高さ)ではページがスクロールしないため sticky/fixed が効かない。
-// その環境では貼り付けをやめ、レールをフォーム冒頭に、残数を送信ボタンの手前に置く。
 var TT_RAIL = null;
 function ttBuildRail() {
   var form = document.getElementById("entryForm");
@@ -2499,12 +2450,7 @@ function ttBuildRail() {
 
   var remain = document.createElement("div");
   remain.id = "ttRemain";
-  // 埋込では送信ボタンの手前に置く(画面外に固定しても見えないため)
-  if (document.body.classList.contains("tt-embedded") && submitBtn && submitBtn.parentNode) {
-    submitBtn.parentNode.insertBefore(remain, submitBtn);
-  } else {
-    document.body.appendChild(remain);
-  }
+  document.body.appendChild(remain);
 
   var current = -1;
   function setCurrent(i) {
@@ -2746,19 +2692,12 @@ function ttImportExcel(inp) {
 document.getElementById("entryForm").addEventListener("input", ttFormSync);
 document.getElementById("entryForm").addEventListener("change", ttFormSync);
 
-// 埋込(iframeで高さを親に渡す運用)かどうか。ページ自体がスクロールしないため
-// sticky/fixed が効かず、道しるべの置き場所を変える必要がある。
-try {
-  if (window.self !== window.top) document.body.classList.add("tt-embedded");
-} catch (e) { document.body.classList.add("tt-embedded"); }
-
 // 初期化 (失敗しても安全網が案内を表示)
 try {
   renderEvents();
   recalcTotal();
   ttBuildRail();
   ttFormSync();
-  ttPostHeight();
 } catch (e) {
   if (window.__ttShowFatal) window.__ttShowFatal(e && e.message);
   else throw e;
