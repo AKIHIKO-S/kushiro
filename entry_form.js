@@ -93,7 +93,7 @@ function buildEntryFormHTML(tournament, events, opts) {
   const entryOptions = Array.isArray(opts.entry_options) ? opts.entry_options : [];
   const optionsSection = entryOptions.length ? `
 <div class="form-section">
-  <h2>オプション</h2>
+  <h2><span class="en" aria-hidden="true">OPTION</span>オプション</h2>
   <div class="opt-list">
     ${entryOptions.map(o => `<div class="opt-row">
       <div class="opt-info">
@@ -1231,6 +1231,44 @@ function buildEntryFormHTML(tournament, events, opts) {
   .confirm-modal { border-top-color: var(--st-ink); }
   .success-card { border: var(--st-rule); }
 
+  /* ══ 協会サイト(v8)の部品の形に合わせる(2026-11-19 オーナー承認の見本)。
+     サイトの大会ページと同じ: 水色の帯の見出し・英字の大見出し+紺の太罫・角丸の白パネル・丸いボタン。
+     色と書体は上の --st-* のまま、形だけを後勝ちで揃える。 ══ */
+  body { background: var(--st-paper); color: var(--st-ink); }
+  .form-header { background: var(--st-sky) !important; border: 0 !important; border-radius: 0 !important;
+    margin: 0 -16px 0 !important; padding: 22px 20px 26px !important; box-shadow: none !important; }
+  .form-header h1 { color: var(--st-navy) !important; font-weight: 900 !important;
+    font-size: clamp(24px, 4.6vw, 36px) !important; line-height: 1.3 !important; margin: 14px 0 6px !important; }
+  .form-header h1 .seal { display: inline-flex; align-items: center; background: var(--st-white) !important;
+    color: var(--st-navy) !important; border: 1px solid rgba(20,41,74,.25) !important; border-radius: 4px !important;
+    font-size: 12px !important; font-weight: 800 !important; padding: 3px 9px !important; vertical-align: middle; margin-right: 10px; }
+  .form-header .meta { color: var(--st-ink) !important; font-weight: 700; }
+  .st-link { display: inline-flex !important; align-items: center; justify-content: center; min-height: var(--st-tap);
+    padding: 0 22px; margin: 18px 0 6px; border-radius: 999px; background: var(--st-white); border: 1.5px solid var(--st-navy);
+    color: var(--st-navy) !important; font-weight: 800; text-decoration: none !important; font-size: 14px; }
+  .st-note { color: var(--st-mute); }
+  .form-section { background: var(--st-white) !important; border: 1px solid var(--st-line) !important; border-radius: 12px !important;
+    box-shadow: 0 14px 28px -22px rgba(20,41,74,.45) !important; padding: 22px 20px 24px !important; margin: 22px 0 !important; }
+  .form-section h2 { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; border: 0 !important;
+    border-bottom: 3px solid var(--st-navy) !important; padding: 0 0 12px !important; margin: 0 0 16px !important;
+    color: var(--st-ink) !important; font-size: 15px !important; font-weight: 800 !important; }
+  .form-section h2 .en { font: 800 32px/1 var(--st-num); color: var(--st-navy); letter-spacing: .01em; }
+  .required { background: var(--st-navy) !important; color: #fff !important; border-radius: 3px !important;
+    font-size: 10.5px !important; padding: 2px 6px !important; }
+  input[type=text], input[type=tel], input[type=email], input[type=number], input[type=date], textarea, select {
+    border-radius: 8px !important; border: 1px solid rgba(27,29,34,.22) !important; background: #fff !important; }
+  input:focus, textarea:focus, select:focus { outline: 2px solid var(--st-blue) !important; outline-offset: 1px; border-color: var(--st-blue) !important; }
+  .total-box { border: 0 !important; border-radius: 0 !important; background: var(--st-sky) !important; padding: 16px 18px !important; }
+  .total-box .amount { font-family: var(--st-num) !important; color: var(--st-navy) !important; font-weight: 800 !important; }
+  .notice { background: var(--st-wash) !important; border: 0 !important; border-radius: 10px !important; }
+  .submit-btn { border-radius: 999px !important; background: var(--st-navy) !important; min-height: 56px; font-size: 16px !important;
+    letter-spacing: .08em; box-shadow: 0 12px 24px -16px rgba(20,41,74,.8) !important; }
+  .submit-btn:hover { background: var(--st-navy-d) !important; }
+  #eventsContainer .btn-add, .add-buttons button { border-radius: 999px !important; }
+  #eventsContainer .btn-del { border-radius: 6px !important; }
+  #ttRail { background: var(--st-white) !important; border-radius: 12px; border: 1px solid var(--st-line) !important; overflow: hidden; }
+  .fee-tag, .cap-tag { border-radius: 4px !important; }
+
 
 </style>
 ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : ''}
@@ -1252,7 +1290,7 @@ ${closedNotice}
 <form id="entryForm" onsubmit="return submitForm(event)">
 
 <div class="form-section">
-  <h2>申込責任者・連絡先</h2>
+  <h2><span class="en" aria-hidden="true">CONTACT</span>申込責任者・連絡先</h2>
   <div class="form-row">
     ${stdTextField('team_name', '団体名', 'team_name', 'text', '例: ○○高校 / □□クラブ')}
     <div>
@@ -1279,13 +1317,13 @@ ${closedNotice}
 </div>
 
 <div class="form-section">
-  <h2>出場種目</h2>
+  <h2><span class="en" aria-hidden="true">EVENTS</span>出場種目</h2>
   ${events.length > 3 ? '<p class="events-lead">出場する種目をタップして開き、選手を記入してください。出ない種目はそのままで構いません。</p>' : ''}
   <div id="eventsContainer"></div>
 </div>
 
 <div class="form-section">
-  <h2>合計</h2>
+  <h2><span class="en" aria-hidden="true">TOTAL</span>合計</h2>
   <div class="total-box">
     <div class="label">参加料合計</div>
     <div class="amount">¥ <span id="totalAmount">0</span></div>
@@ -1297,7 +1335,7 @@ ${closedNotice}
 ${optionsSection}
 
 ${fst('note') !== 'hidden' ? `<div class="form-section">
-  <h2>通信欄${fst('note') === 'required' ? ' ' + reqSpan : ''}</h2>
+  <h2><span class="en" aria-hidden="true">NOTE</span>通信欄${fst('note') === 'required' ? ' ' + reqSpan : ''}</h2>
   <div class="form-row full">
     <textarea name="note" rows="3"${fst('note') === 'required' ? ' required' : ''} placeholder="連絡事項があればこちらに記入してください"></textarea>
   </div>
