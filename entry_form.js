@@ -2682,8 +2682,9 @@ function ttApplyImport(data) {
   (data.events || []).forEach(function (ie) {
     var idx = EVENTS.findIndex(function (e) { return e.name === ie.name; });
     if (idx < 0 || !document.getElementById("members_" + idx)) return;
-    var det = document.getElementById("members_" + idx).closest("details");
-    if (det) det.open = true;
+    // 読み込んだ種目だけ開く(たたんだ種目に入れても見えないため)
+    var blk = document.getElementById("members_" + idx).closest("details");
+    if (blk) blk.open = true;
     evCount++;
     (ie.rows || []).forEach(function (rec, i) {
       var row = ttXnextRow(idx);
