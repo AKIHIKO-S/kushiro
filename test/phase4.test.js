@@ -73,7 +73,7 @@ test("申込番号トークンで本人が閲覧でき、PII(メール)は開示
   const r = db.createTeamEntry(t.id, { team_name: "甲", contact_name: "監督", contact_email: "secret@a.jp", entries: [
     { event: "男子シングルス", type: "singles", name: "山田 太郎", team: "甲", division: "high" },
   ] });
-  assert.ok(/^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(r.applicant_token), "申込番号は 4-4-4 形式: " + r.applicant_token);
+  assert.ok(/^[A-Z2-9]{12}$/.test(r.applicant_token), "申込番号はハイフン無し12桁: " + r.applicant_token);
   const view = db.getSubmissionByToken(r.applicant_token);
   assert.ok(view.ok);
   assert.strictEqual(view.entries.length, 1);

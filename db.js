@@ -9197,14 +9197,14 @@ function entrantDupKey(e) {
   return "S:" + ev + ":" + _dupNorm(e.name) + "@" + _dupNorm(e.team);
 }
 
-// 申込者本人用トークン: 紛らわしい文字を除いた12桁(4-4-4区切り)。
+// 申込者本人用トークン: 紛らわしい文字を除いた12桁(ハイフン無し。旧データは4-4-4区切りで、照合は両対応)。
 // 平文は申込者にのみ返し、DBには SHA-256 ハッシュのみ保持する(漏洩時も逆算不可)。
 function _genApplicantToken() {
   const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 32種(大文字+数字、I/O/0/1 除外)
   let s = "";
   // 256 % 32 == 0 なのでモジュロ偏り無し。crypto 乱数で12桁。
   while (s.length < 12) s += A[crypto.randomBytes(1)[0] % 32];
-  return s.slice(0, 4) + "-" + s.slice(4, 8) + "-" + s.slice(8, 12);
+  return s;   // ハイフン無し12桁。照合(_hashToken)はハイフン・空白を無視するので、旧形式(4-4-4)の番号もそのまま使える
 }
 function _hashToken(token) {
   const norm = String(token || "").replace(/[\s-]/g, "").toUpperCase();

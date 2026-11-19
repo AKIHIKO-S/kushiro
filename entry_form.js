@@ -2960,7 +2960,7 @@ function buildApplicantStatusHTML() {
   <div class="card">
     <form id="lookupForm" class="lookup">
       <input id="tokenInput" type="text" inputmode="latin" autocomplete="off"
-        placeholder="例: ABCD-EFGH-JKLM" aria-label="申込番号" />
+        placeholder="例: ABCDEFGHJKLM" aria-label="申込番号" />
       <button class="btn" type="submit">確認する</button>
     </form>
   </div>
