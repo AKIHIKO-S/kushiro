@@ -27,8 +27,9 @@ test("閉じる機能の API は通さない", () => {
     ["POST", "/api/tournaments/t1/bracket/generate"], ["GET", "/api/tournaments/t1/bracket/sheet"],
     ["POST", "/api/tournaments/t1/bracket/import-xlsx"], ["DELETE", "/api/tournaments/t1/brackets"],
     ["POST", "/api/tournaments/t1/league/generate"], ["POST", "/api/tournaments/t1/kumiawase/upload"],
-    ["GET", "/api/tournaments/t1/matches"], ["POST", "/api/matches/m1/finish"], ["POST", "/api/matches/m1/call"],
-    ["GET", "/api/tournaments/t1/operations"], ["GET", "/api/tournaments/t1/team-rosters"],
+    ["GET", "/api/tournaments/t1/matches"], ["POST", "/api/matches/m1/finish"], ["POST", "/api/matches/m1/correct"],
+    ["POST", "/api/matches/m1/referee"], ["PUT", "/api/matches/m1/referee-required"], ["POST", "/api/matches/m1/confirm-result"],
+    ["GET", "/api/tournaments/t1/team-rosters"],
     ["GET", "/api/tournaments/t1/podium"], ["GET", "/api/tournaments/t1/podium.xlsx"], ["GET", "/api/tournaments/t1/best8"],
     ["GET", "/api/tournaments/t1/standings.xlsx"], ["GET", "/api/tournaments/t1/match-cards.xlsx"],
     ["GET", "/api/tournaments/t1/receipts.html"],
@@ -68,6 +69,9 @@ test("申込・後日修正・シート反映・選手DBの API は通す", () =
     ["GET", "/api/players"], ["PUT", "/api/players/p1"], ["POST", "/api/players/p1/merge"], ["GET", "/api/player-merge/candidates"],
     ["GET", "/api/players/p1/affiliations"], ["POST", "/api/affiliations/a1/end"], ["GET", "/api/registered-teams"],
     ["POST", "/api/admin/snapshots/restore"], ["GET", "/api/owner/db-download"],
+    // 台の割り当て(進行管理のうちコート配置・呼ぶ・戻すだけ)
+    ["GET", "/api/tournaments/t1/operations"], ["PUT", "/api/tournaments/t1/court-layout"],
+    ["POST", "/api/matches/m1/call"], ["POST", "/api/matches/m1/uncall"], ["GET", "/api/public/tournaments/t1/ops-version"],
   ];
   kept.forEach(([m, p]) => assert.strictEqual(M.isApiAllowedInEntryMode(m, p), true, m + " " + p));
 });
@@ -137,7 +141,7 @@ test("実サーバ: 既定は申込集計モード。閉じた入口は案内さ
   const hidden = await fetch(BASE + "/api/public/tournaments");
   assert.strictEqual(hidden.status, 404);
   assert.strictEqual((await hidden.json()).app_mode, "entry");
-  for (const p of ["/API/public/tournaments", "/Api/tournaments/x/operations"]) {
+  for (const p of ["/API/public/tournaments", "/Api/tournaments/x/bracket/sheet"]) {
     assert.strictEqual((await fetch(BASE + p)).status, 404, p);
   }
   assert.strictEqual((await noFollow("/VIEWER/live/")).headers.get("location"), "/entry");

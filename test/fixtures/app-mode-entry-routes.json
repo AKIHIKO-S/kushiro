@@ -34,6 +34,7 @@
  "GET /api/players/:id/affiliations",
  "GET /api/public/open-tournaments",
  "GET /api/public/tournaments/:id/entry-template.xlsx",
+ "GET /api/public/tournaments/:id/ops-version",
  "GET /api/registered-teams",
  "GET /api/submissions/:sid/edit-view",
  "GET /api/sync/status",
@@ -57,6 +58,7 @@
  "GET /api/tournaments/:id/gas-stats",
  "GET /api/tournaments/:id/gas-sync",
  "GET /api/tournaments/:id/gas-sync/reconcile",
+ "GET /api/tournaments/:id/operations",
  "GET /api/tournaments/:id/player-matches",
  "GET /api/tournaments/:id/reception.html",
  "GET /api/tournaments/:id/submissions",
@@ -85,6 +87,8 @@
  "POST /api/forms/submit",
  "POST /api/import/players",
  "POST /api/mail/test",
+ "POST /api/matches/:id/call",
+ "POST /api/matches/:id/uncall",
  "POST /api/owner/operators/:id/disable",
  "POST /api/owner/operators/:id/name",
  "POST /api/owner/operators/:id/owner",
@@ -128,6 +132,7 @@
  "PUT /api/players/:id",
  "PUT /api/submissions/:sid",
  "PUT /api/tournaments/:id",
+ "PUT /api/tournaments/:id/court-layout",
  "PUT /api/tournaments/:id/entries/:pid/status",
  "PUT /api/tournaments/:id/entry-settings"
 ]
