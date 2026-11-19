@@ -53,7 +53,10 @@ test("オーナー権限の付与はキー保持者だけ・上限つき・剥�
   assert.equal((await grant(a.id, true, owner)).status, 200);
   // 付与後: ログイン中の同じ端末が、キー入力なしでオーナー操作に入れる
   assert.equal((await request("/api/owner/verify", { cookie: a.cookie })).status, 200);
-  assert.equal((await request("/api/owner/operators", { cookie: a.cookie })).status, 200);
+  const asGranted = await request("/api/owner/operators", { cookie: a.cookie });
+  assert.equal(asGranted.status, 200);
+  assert.equal((await asGranted.json()).can_grant, false);
+  assert.equal((await (await request("/api/owner/operators", { cookie: owner })).json()).can_grant, true);
   assert.equal((await request("/api/diagnostics", { cookie: a.cookie })).status, 200);
   assert.equal((await request("/api/tournaments", { cookie: a.cookie })).status, 200);
   const who = await (await request("/api/auth/session", { cookie: a.cookie })).json();

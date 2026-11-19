@@ -944,7 +944,8 @@ app.post("/api/auth/admin/activate", requireSameOrigin, rateLimit({ max: 8 }), a
 });
 
 app.get("/api/owner/operators", requireOwnerStrict, (req, res) => {
-  res.set("Cache-Control", "no-store").json({ accounts: db.operatorAccounts.list() });
+  // can_grant: 画面がオーナー権限の付与ボタンを出すかの判断材料(ページ表示後にキーを入れた場合もここで正しく分かる)
+  res.set("Cache-Control", "no-store").json({ accounts: db.operatorAccounts.list(), can_grant: isOwnerKeyHolder(req) });
 });
 app.post("/api/owner/operators/invite", requireSameOrigin, requireOwnerStrict, rateLimit({ max: 6 }), async (req, res, next) => {
   res.set("Cache-Control", "no-store");

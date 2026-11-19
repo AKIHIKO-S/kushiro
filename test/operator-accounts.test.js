@@ -101,7 +101,7 @@ test("運営アカウントの招待・ログイン・再設定・停止を本�
   assert.equal((await login(newPassword)).status, 401);
   const listing = await request("/api/owner/operators", { cookie: owner });
   assert.equal(listing.headers.get("cache-control"), "no-store");
-  assert.deepEqual(await listing.json(), { accounts: [{ id: principal.principal_id, email, status: "disabled", owner: false }] });
+  assert.deepEqual(await listing.json(), { accounts: [{ id: principal.principal_id, email, status: "disabled", owner: false }], can_grant: true });
 });
 
 test("招待の再発行・期限切れ・送信失敗で古いリンクが残らない", async t => {

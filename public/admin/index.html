@@ -9697,8 +9697,9 @@ const A = {
        const r = await A.ownerFetch("/api/owner/operators");
        if (!r.ok) { feedback.textContent = r.json?.error || "アカウントを取得できませんでした。"; return; }
        list.replaceChildren();
-       // 権限の付与・剥奪はオーナーキーで入った人だけに出す(サーバー側でも同じ判定で拒否する)
-       const keyHolder = !!(A.session && A.session.owner && A.session.kind !== "account");
+       // 権限の付与・剥奪はオーナーキーで入った人だけに出す。判定はサーバーの今のセッションが正
+       // (ページを開いた後でオーナーキーを入れても、ページ表示時の情報が古いまま残るため)
+       const keyHolder = r.json.can_grant === true;
        for (const account of r.json.accounts) {
          const disabled = account.status === "disabled";
          const label = disabled ? "再招待" : account.status === "active" ? "再設定メール" : "招待を再送";
