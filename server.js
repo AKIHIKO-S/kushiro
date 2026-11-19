@@ -41,7 +41,7 @@ const multer = require("multer");
 const appMode = require("./app-mode");
 const QRCode = require("qrcode");     // ローカルQR生成(会場オフラインで外部QRサービスに依存しないLAN接続案内用)
 const db = require("./db");
-const { MAX_OWNER_ACCOUNTS, PASSWORD_MIN, normalizeEmail, validEmail, validPassword, boundedPassword } = require("./lib/operator-accounts");
+const { MAX_OWNER_ACCOUNTS, PASSWORD_MIN, normalizeName, validName, normalizeEmail, validEmail, validPassword, boundedPassword } = require("./lib/operator-accounts");
 const reports = require("./reports");
 const importQuality = require("./tools/import_quality");   // 取込プレビューの品質警告(notices)を全経路へ後付け
 const rosterReader = require("./tools/roster_reader");       // ブック内の名簿と突合し取りこぼし/過大/表記揺れを検出
@@ -868,9 +868,9 @@ app.get("/api/auth/session", (req, res) => {
   const s = sessionOf(req);
   if (!s) return res.json({ authenticated: false });
   // kind: account=メールで入った運営アカウント / key=管理キー・オーナーの鍵で入ったセッション
-  // label: 画面右上に出す名前(アカウントはメールアドレス、鍵は操作担当コード)
+  // label: 画面右上に出す名前(アカウントは氏名、未登録ならメールアドレス。鍵は操作担当コード)
   const kind = s.kind === "account" ? "account" : "key";
-  const label = kind === "account" ? String(s.email || "") : String(s.principal_id || "");
+  const label = kind === "account" ? String(s.name || s.email || "") : String(s.principal_id || "");
   res.json({ authenticated: true, principal_type: s.principal_type, principal_id: s.principal_id, expires_at: s.expires_at, kind, label: label.slice(0, 120) });
 });
 app.delete("/api/auth/session", requireSession(["admin", "owner", "coach", "applicant", "player", "referee"]), (req, res) => {
@@ -926,7 +926,7 @@ app.post("/api/auth/admin/password-reset", requireSameOrigin, operatorResetIpLim
   const reset = db.operatorAccounts.issueReset(email);
   if (!reset) return;
   const link = new URL("/admin/", base);
-  link.hash = "operator-invite=" + reset.token;
+  link.hash = "operator-reset=" + reset.token;
   mailer.sendOperatorReset(email, link.href).then(
     () => db.logOwnerAction({ action: "運営アカウント:パスワード再設定メール " + accountAuditCode(reset.id) }),
     () => db.operatorAccounts.cancelInvite(reset.token));
@@ -934,9 +934,12 @@ app.post("/api/auth/admin/password-reset", requireSameOrigin, operatorResetIpLim
 app.post("/api/auth/admin/activate", requireSameOrigin, rateLimit({ max: 8 }), async (req, res, next) => {
   res.set("Cache-Control", "no-store");
   const { token, password } = req.body || {};
+  const name = normalizeName((req.body || {}).name);
+  if (name && !validName(name)) return res.status(400).json({ error: "氏名は40文字以内で入力してください" });
   if (!validPassword(password)) return res.status(400).json({ error: PASSWORD_RULE_MESSAGE });
   try {
-    const result = await db.operatorAccounts.accept(token, password);
+    const result = await db.operatorAccounts.accept(token, password, name);
+    if (result.needName) return res.status(400).json({ error: "氏名を入力してください" });
     if (result.busy) return res.status(429).json({ error: "時間をおいて、もう一度お試しください" });
     if (!result.id) return res.status(400).json({ error: "設定リンクが無効です。オーナーに再発行を依頼してください" });
     res.json({ ok: true });

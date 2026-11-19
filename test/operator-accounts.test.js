@@ -49,8 +49,13 @@ test("運営アカウントの招待・ログイン・再設定・停止を本�
   assert.equal(new URL(emails[0].link).pathname, "/admin/");
   const token = inviteToken();
   assert.equal((await post(activatePath, { token, password: "short" })).status, 400);
-  assert.equal((await post(activatePath, { token, password })).status, 200);
-  assert.equal((await post(activatePath, { token, password })).status, 400);
+  // 招待からの初回登録は氏名が必須(誰のアドレスか一覧で分かるように)
+  const noName = await post(activatePath, { token, password });
+  assert.equal(noName.status, 400);
+  assert.match((await noName.json()).error, /氏名/);
+  assert.equal((await post(activatePath, { token, password, name: "x".repeat(41) })).status, 400);
+  assert.equal((await post(activatePath, { token, password, name: "  運営  太郎 " })).status, 200);
+  assert.equal((await post(activatePath, { token, password, name: "運営 太郎" })).status, 400);
   const denied = await login("wrong");
   const unknown = await login("wrong", "nobody@example.invalid");
   assert.equal(denied.status, 401);
@@ -76,7 +81,7 @@ test("運営アカウントの招待・ログイン・再設定・停止を本�
   const who = async cookie => (await request("/api/auth/session", { cookie })).json();
   assert.deepEqual(
     (({ authenticated, principal_type, kind, label }) => ({ authenticated, principal_type, kind, label }))(await who(replaced)),
-    { authenticated: true, principal_type: "admin", kind: "account", label: email });
+    { authenticated: true, principal_type: "admin", kind: "account", label: "運営 太郎" });
   assert.equal((await who(legacy)).kind, "key");
   assert.equal((await who(owner)).principal_type, "owner");
   assert.deepEqual(await who(""), { authenticated: false });
@@ -101,7 +106,7 @@ test("運営アカウントの招待・ログイン・再設定・停止を本�
   assert.equal((await login(newPassword)).status, 401);
   const listing = await request("/api/owner/operators", { cookie: owner });
   assert.equal(listing.headers.get("cache-control"), "no-store");
-  assert.deepEqual(await listing.json(), { accounts: [{ id: principal.principal_id, email, status: "disabled", owner: false }], can_grant: true });
+  assert.deepEqual(await listing.json(), { accounts: [{ id: principal.principal_id, email, status: "disabled", name: "運営 太郎", owner: false }], can_grant: true });
 });
 
 test("招待の再発行・期限切れ・送信失敗で古いリンクが残らない", async t => {

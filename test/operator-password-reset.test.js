@@ -42,7 +42,7 @@ test("本人がパスワード再設定メールを受け取り、オーナー�
   const weak = await post("/api/auth/admin/activate", { token: tokenOf(emails[0]), password: "abcdef" });
   assert.equal(weak.status, 400);
   assert.match((await weak.json()).error, /6文字以上/);
-  assert.equal((await post("/api/auth/admin/activate", { token: tokenOf(emails[0]), password: first })).status, 200);
+  assert.equal((await post("/api/auth/admin/activate", { token: tokenOf(emails[0]), password: first, name: "再設定 花子" })).status, 200);
   const reset = body => post("/api/auth/admin/password-reset", body);
   // 別サイトからは受け付けない・形式不正は400
   assert.equal((await post("/api/auth/admin/password-reset", { email }, "https://other.example.invalid")).status, 403);
@@ -57,6 +57,7 @@ test("本人がパスワード再設定メールを受け取り、オーナー�
   assert.equal(resets.length, 1);
   assert.equal(resets[0].to, email);
   assert.equal(new URL(resets[0].link).origin, origin);
+  assert.match(new URL(resets[0].link).hash, /^#operator-reset=/);
   // 申込だけでは締め出されない(今のパスワードは使える)
   assert.equal((await post("/api/auth/admin/password", { email, password: first })).status, 200);
   // リンクから新しいパスワードを設定 → 古いパスワードは使えない・リンクは1回限り
@@ -65,6 +66,8 @@ test("本人がパスワード再設定メールを受け取り、オーナー�
   assert.equal((await post("/api/auth/admin/activate", { token: tokenOf(resets[0]), password: second })).status, 400);
   assert.equal((await post("/api/auth/admin/password", { email, password: first })).status, 401);
   assert.equal((await post("/api/auth/admin/password", { email, password: second })).status, 200);
+  // 再設定では氏名を聞かず、登録済みの氏名が残る
+  assert.equal(db.operatorAccounts.list().find(a => a.email === email).name, "再設定 花子");
   // 監査ログに担当コードで残し、メールアドレスは残さない
   assert.ok(db.getOwnerAudit(20).some(e => /^運営アカウント:パスワード再設定メール acct-[0-9a-f]{8}$/.test(e.action)));
   assert.ok(!JSON.stringify(db.getOwnerAudit(50)).includes(email));
@@ -89,7 +92,7 @@ test("再設定リンクは1時間で切れ、未設定・停止のアカウン�
   assert.equal(db.operatorAccounts.issueReset("none@example.invalid"), null);
   return (async () => {
     const again = db.operatorAccounts.issue(address);
-    assert.ok((await db.operatorAccounts.accept(again.token, "Unit-pw1")).id);
+    assert.ok((await db.operatorAccounts.accept(again.token, "Unit-pw1", "単体 確認")).id);
     const r = db.operatorAccounts.issueReset(address);
     assert.ok(r && r.token);
     clock.mock.mockImplementation(() => now + 60 * 60 * 1000 + 1);

@@ -36,7 +36,7 @@ test("オーナー権限の付与はキー保持者だけ・上限つき・剥�
   for (const address of ["grant-a@example.invalid", "grant-b@example.invalid", "grant-c@example.invalid"]) {
     assert.equal((await post("/api/owner/operators/invite", { email: address }, owner)).status, 201);
     const token = new URL(emails.at(-1).link).hash.split("=")[1];
-    assert.equal((await post("/api/auth/admin/activate", { token, password })).status, 200);
+    assert.equal((await post("/api/auth/admin/activate", { token, password, name: "付与 " + address[6] })).status, 200);
     const r = await post("/api/auth/admin/password", { email: address, password });
     accounts.push({ address, id: (await r.clone().json()).principal_id, cookie: getCookie(r) });
   }

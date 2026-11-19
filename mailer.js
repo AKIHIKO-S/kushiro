@@ -548,7 +548,7 @@ async function sendOperatorInvite(to, link) {
   const info = await getTransporter().sendMail({
     from: SMTP_FROM || SMTP_USER, to,
     subject: "KTTA Platform | 運営アカウントの設定",
-    text: "次のリンクから運営アカウントのパスワードを設定してください。リンクは発行後24時間、1回だけ有効です。\n\n"
+    text: "次のリンクから、氏名と運営アカウントのパスワードを設定してください。リンクは発行後24時間、1回だけ有効です。\n\n"
       + link + "\n\n心当たりがない場合は、このメールを破棄してください。",
   });
   if (!info.accepted?.length) throw new Error("招待メールを受け付けませんでした");
