@@ -253,21 +253,6 @@ test("同じ団体の中で同じ人がいても別団体の印は出さない(�
   assert.ok(crossOf(t, "同団体子", ev).every(e => !e.cross_dup.length));
 });
 
-test("シートへ送る形: 古いGASに新規申込として拾われない形で、申込の全行を持つ", () => {
-  const { sid, byEv } = setup();
-  const r = db.editSubmission(sid, { entries: [{ entrant_id: byEv("一般男子シングルス").entry_id, name: "架空 八郎" }] });
-  const p = db.buildSheetUpdatePayload(sid, r.group);
-  assert.strictEqual(p.action, "update");
-  assert.strictEqual(p.team_name, undefined);
-  assert.strictEqual(p.entries, undefined);
-  assert.strictEqual(p.update_entries.length, 3);
-  assert.ok(p.update_entries.every(e => e.entry_id));
-  assert.strictEqual(p.changes.length, 1);
-  assert.match(p.changes[0].summary, /架空 八郎/);
-  assert.strictEqual(p.submission.total_amount, 6300);
-  assert.ok(p.submission.ledger_key, "台帳の申込IDを持つ");
-});
-
 test("変化が無い保存は何も記録しない", () => {
   const { t, sid, byEv } = setup();
   const s = byEv("一般男子シングルス");
@@ -289,9 +274,6 @@ test("申込者は修正画面から種目を追加できる。申込番号は�
   assert.strictEqual(tok2, tok, "申込番号は変わらない");
   const ch = db.listEntryChanges(t.id).find(c => c.kind === "add");
   assert.ok(ch && /架空 花子/.test(ch.summary));
-  const p = db.buildSheetUpdatePayload(sid, r.group);
-  const added = v.entries.find(e => e.event === "一般女子シングルス");
-  assert.deepStrictEqual(p.added_refs, [added.entry_id.slice(0, 8)]);
 });
 
 test("種目の追加: 同じ内容の重複・定員超過・締切後(申込者)は断り、本部は締切後も追加できる", () => {
@@ -336,13 +318,12 @@ test("本部が出場者を直接直す・消すと、申込の変更履歴に�
   const v = db.getSubmissionEditView(sid, { admin: true });
   assert.strictEqual(v.counts.live, 2, "消した出場は申込の件数から外れる");
   assert.strictEqual(v.money, undefined, "金額は画面に出さない");
-  assert.deepStrictEqual(db.buildSheetUpdatePayload(sid, "").removed_refs, [d.id.slice(0, 8)]);
   // 申込に属さない出場
   const loose = db.createEntrant({ tournament_id: t.id, event: "一般男子シングルス", name: "手入力 選手", team: "x" });
   assert.strictEqual(db.recordAdminEntrantChange(loose, db.updateEntrant(loose.id, { surname: "手入力", given_name: "改" })), null);
 });
 
-test("併合された申込は台帳の申込IDを全部覚え、元の申込の行を正にする", () => {
+test("併合された申込は申込IDを全部覚え、元の申込の番号を先頭にする", () => {
   const { t, sid } = setup();
   const sub0 = require("better-sqlite3")(process.env.DB_PATH).prepare("SELECT op_id FROM entry_submissions WHERE id=?").get(sid);
   const r2 = db.createTeamEntry(t.id, {
@@ -353,7 +334,6 @@ test("併合された申込は台帳の申込IDを全部覚え、元の申込の
     ],
   }, "op-second");
   assert.ok(r2.merged, "一部重複の再送は元の申込へ併合される");
-  const p = db.buildSheetUpdatePayload(sid, "");
-  assert.strictEqual(p.submission.ledger_key, sub0.op_id, "元の申込の行を正にする");
-  assert.deepStrictEqual(p.submission.ledger_keys, [sub0.op_id, "op-second"]);
+  const keys = JSON.parse(require("better-sqlite3")(process.env.DB_PATH).prepare("SELECT ledger_keys FROM entry_submissions WHERE id=?").get(sid).ledger_keys);
+  assert.deepStrictEqual(keys, [sub0.op_id, "op-second"], "元の申込の番号を先頭に、併合した申込の番号を全部覚える");
 });

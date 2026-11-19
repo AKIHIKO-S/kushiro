@@ -50,24 +50,18 @@ after(() => {
   for (const ext of ["", "-wal", "-shm"]) try { fs.rmSync(DB + ext, { force: true }); } catch (e) {}
 });
 
-test("(a) 公開レスポンスに秘密フィールド(referee_token/passcode/entry_gas_url)が露出しない (sanitize契約)", async () => {
+test("(a) 公開レスポンスに秘密フィールド(referee_token/passcode)が露出しない (sanitize契約)", async () => {
   const t = await adminPost("/api/tournaments", { name: "smoke", date: "2027-01-01" });
   assert.ok(t.id, "大会作成");
-  // 秘密値を設定(entry_gas_url は entry-settings, referee_token は tournament PUT 経由を試す)
-  const SECRET_GAS = "https://script.google.com/SECRETGAS";
-  await adminPut(`/api/tournaments/${t.id}/entry-settings`, { entries_open: 1, entry_gas_url: SECRET_GAS, event_config: [] });
+  // 秘密値を設定(referee_token は tournament PUT 経由を試す)
   await adminPut(`/api/tournaments/${t.id}`, { referee_token: "SECRET_TOKEN_ZZZ", referee_passcode: "778899", referee_passcode_required: 1 });
   // 公開 GET (認証なし)
   const pub = await fetch(BASE + `/api/public/tournaments/${t.id}`).then(r => r.json());
   const s = JSON.stringify(pub);
   assert.ok(!s.includes("SECRET_TOKEN_ZZZ"), "referee_token の値が公開に漏れない");
   assert.ok(!s.includes("778899"), "referee_passcode の値が公開に漏れない");
-  assert.ok(!s.includes("SECRETGAS"), "entry_gas_url の値が公開に漏れない");
-  ["referee_token", "referee_passcode", "referee_passcode_required", "entry_gas_url"].forEach(k =>
+  ["referee_token", "referee_passcode", "referee_passcode_required"].forEach(k =>
     assert.ok(!(k in pub), `秘密キー ${k} 自体が公開レスポンスに存在しない`));
-  // 認証ありの管理GETには秘密が含まれる(=sanitizeは公開側だけ)=契約の片側。設定が確実な entry_gas_url で確認。
-  const adminView = await fetch(BASE + `/api/tournaments/${t.id}`, { headers: akhead }).then(r => r.json());
-  assert.strictEqual(adminView.entry_gas_url, SECRET_GAS, "管理GETには秘密(entry_gas_url)が含まれる=公開側だけ除去");
 });
 
 test("(a2) 公開 /matches の射影契約: next_match_id/next_slot は公開・内部列は落ちる", async () => {
@@ -379,19 +373,6 @@ test("(m) コート別 審判QR: 審判入力ON時に各コートのローカル
   // コート別キーは別コートのキーでは通らない(自分のコート限定の契約)。?base= 明示も尊重
   const r2 = await fetch(BASE + `/api/admin/tournaments/${t.id}/referee-court-qr?courts=2&base=http://192.168.50.9:3000`, { headers: akhead }).then(r => r.json());
   assert.ok(r2.courts[0].url.startsWith("http://192.168.50.9:3000/ref#tid="), "?base=明示が反映");
-});
-
-test("(n) gas-stats プロキシは requireAdmin(未認証拒否)・URL未設定は400 (#5 踏み台化対策)", async () => {
-  const t = await adminPost("/api/tournaments", { name: "GAS大会", date: "2027-01-01" });
-  // 管理キー無しは拒否(出口プロキシ踏み台化の遮断)
-  const noKey = await fetch(BASE + `/api/tournaments/${t.id}/gas-stats?gas_url=https://script.google.com/x`);
-  assert.ok(noKey.status === 401 || noKey.status === 503, "未認証は拒否: " + noKey.status);
-  // 認証あり・entry_gas_url 未設定・client gas_url も無し → 400(URL必須)
-  const noUrl = await fetch(BASE + `/api/tournaments/${t.id}/gas-stats`, { headers: akhead });
-  assert.strictEqual(noUrl.status, 400, "URL未設定は400");
-  // 非 script.google.com ホストは拒否(SSRF固定の回帰)
-  const bad = await fetch(BASE + `/api/tournaments/${t.id}/gas-stats?gas_url=` + encodeURIComponent("https://evil.example.com/x"), { headers: akhead });
-  assert.strictEqual(bad.status, 400, "別ホストは400");
 });
 
 test("(o) push subscribe は endpoint を検証(http/生IP/内部は拒否・既知プッシュhostのみ許可 / #8 SSRF)", async () => {

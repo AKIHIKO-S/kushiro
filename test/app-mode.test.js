@@ -3,7 +3,7 @@
 // 守らせる不変条件:
 //   ① モードは 環境変数 > 管理画面で選んだ値 > 既定 entry の順に決まる
 //   ② 閉じる機能(組合せ・試合・観戦・表彰・統計・監督/審判)の API は通さない
-//   ③ 申込・後日修正・シート反映・選手DBの API は通す
+//   ③ 申込・後日修正・選手DBの API は通す
 //   ④ 申込者が使う画面の fetch 先と、管理画面の残す操作の API がすべて通る
 //   ⑤ server.js の全 API のうち申込集計モードで通るものが、下の一覧と一致する(新しい入口の持ち込みを検知)
 // 実行: node --test test/app-mode.test.js
@@ -47,7 +47,7 @@ test("閉じる機能の API は通さない", () => {
   hidden.forEach(([m, p]) => assert.strictEqual(M.isApiAllowedInEntryMode(m, p), false, m + " " + p));
 });
 
-test("申込・後日修正・シート反映・選手DBの API は通す", () => {
+test("申込・後日修正・選手DBの API は通す", () => {
   const kept = [
     ["GET", "/api/app-mode"], ["GET", "/api/health"], ["GET", "/api/auth/session"], ["POST", "/api/auth/admin/session"],
     ["POST", "/api/auth/owner/session"], ["POST", "/api/auth/applicant/session"], ["PUT", "/api/owner/app-mode"],
@@ -57,14 +57,13 @@ test("申込・後日修正・シート反映・選手DBの API は通す", () =
     ["GET", "/api/tournaments/t1/desk/manual"], ["POST", "/api/tournaments/t1/desk/manual"],
     ["GET", "/api/tournaments/t1/reception.html"],
     ["GET", "/api/tournaments/t1/entry-issues"], ["POST", "/api/tournaments/t1/entry-issues/bulk-fix"],
-    ["GET", "/api/tournaments/t1/gas-sync"], ["POST", "/api/tournaments/t1/gas-sync/resend/s1"], ["GET", "/api/tournaments/t1/gas-sync/reconcile"],
     ["PUT", "/api/tournaments/t1/entry-settings"], ["POST", "/api/tournaments/t1/entry-settings/copy"],
-    ["GET", "/api/tournaments/t1/applicants.xlsx"], ["GET", "/api/tournaments/t1/aggregation.xlsx"], ["GET", "/api/tournaments/t1/gas-stats"],
+    ["GET", "/api/tournaments/t1/applicants.xlsx"], ["GET", "/api/tournaments/t1/aggregation.xlsx"],
     ["GET", "/api/tournaments/t1/entry-form.html"], ["GET", "/api/tournaments/t1/entry-form-config"],
     ["POST", "/api/public/tournaments/t1/submit-team-entry"], ["POST", "/api/public/tournaments/t1/entry"], ["GET", "/api/public/open-tournaments"],
     ["POST", "/api/forms/submit"], ["GET", "/api/applicant/edit-view"], ["POST", "/api/applicant/submission"], ["GET", "/api/applicant/me"],
     ["GET", "/api/submissions/s1/edit-view"], ["PUT", "/api/submissions/s1"],
-    ["POST", "/api/submissions/s1/sheet-resend"], ["POST", "/api/submissions/s1/mail-resend"],
+    ["POST", "/api/submissions/s1/mail-resend"],
     ["GET", "/api/entrants/e1"], ["PUT", "/api/entrants/e1"], ["DELETE", "/api/entrants/e1"], ["PUT", "/api/entrants/e1/link"],
     ["GET", "/api/players"], ["PUT", "/api/players/p1"], ["POST", "/api/players/p1/merge"], ["GET", "/api/player-merge/candidates"],
     ["GET", "/api/players/p1/affiliations"], ["POST", "/api/affiliations/a1/end"], ["GET", "/api/registered-teams"],

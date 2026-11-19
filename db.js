@@ -9379,83 +9379,6 @@ function getSubmissionById(submissionId) {
   return _submissionView(sub);
 }
 
-// ── 集計スプレッドシートへの反映状況 ────────────────────────────────
-// 「申込は受け付けたのにシートに無い」事故を二度と見逃さないための記録。
-// 中継のたびに結果を書き、管理画面が未反映の申込を一覧・再送できるようにする。
-
-// 中継結果を記録する。relay は relayEntryToGas の返り値。
-function recordGasRelay(submissionId, relay) {
-  if (!submissionId) return null;
-  const ok = !!(relay && relay.ok);
-  const status = !relay ? "" : (ok ? "ok" : "failed");
-  const parts = [];
-  if (relay) {
-    if (ok) {
-      if (relay.duplicate) parts.push("記録済み(再送)");
-      if (relay.ledger_row) parts.push("台帳" + relay.ledger_row + "行目");
-      if (relay.retried) parts.push("再送で成功");
-    } else {
-      if (relay.error) parts.push(String(relay.error));
-      if (Array.isArray(relay.problems) && relay.problems.length) parts.push(relay.problems.join(" / "));
-      if (relay.snippet) parts.push("応答: " + String(relay.snippet).slice(0, 120));
-    }
-  }
-  sqlite.prepare(
-    "UPDATE entry_submissions SET gas_status=?, gas_at=datetime('now','localtime'), gas_detail=? WHERE id=?"
-  ).run(status, parts.join(" / ").slice(0, 500), String(submissionId));
-  return { status, detail: parts.join(" / ") };
-}
-
-// 反映状況の集計と、未反映の申込一覧。
-// 「大会にGAS URLが設定されているか」も返す(未設定なら未反映は当然なので、画面で区別する)。
-function getGasSyncState(tournamentId) {
-  const t = stmts.getTournament.get(tournamentId);
-  if (!t) return { error: "大会が見つかりません" };
-  const configured = !!(t.entry_gas_url && String(t.entry_gas_url).trim());
-  const rows = sqlite.prepare(
-    `SELECT id, team_name, contact_name, contact_email, created_at,
-            COALESCE(gas_status,'') gas_status, COALESCE(gas_at,'') gas_at, COALESCE(gas_detail,'') gas_detail,
-            op_id, ledger_keys
-       FROM entry_submissions WHERE tournament_id=? AND COALESCE(gas_status,'') <> 'skipped'
-       ORDER BY created_at ASC`).all(String(tournamentId));
-  const counts = { ok: 0, failed: 0, unknown: 0 };
-  rows.forEach(r => {
-    if (r.gas_status === "ok") counts.ok++;
-    else if (r.gas_status === "failed") counts.failed++;
-    else counts.unknown++;                    // GAS未設定時や、この機能より前の申込
-  });
-  return {
-    configured, total: rows.length, counts,
-    pending: rows.filter(r => r.gas_status !== "ok"),
-    items: rows.map(({ op_id, ledger_keys, ...row }) => ({ ...row, sheet_key: _ledgerKeysOf({ op_id, ledger_keys })[0] || "" })),
-  };
-}
-
-// 再送に必要な申込原本を組み立てて返す(サーバが GAS へ送る payload の材料)。
-// 保存済みの原本(payload_json)を正本にする=受付時とまったく同じ内容を送り直せる。
-function getSubmissionForResend(submissionId) {
-  const sub = sqlite.prepare("SELECT * FROM entry_submissions WHERE id=?").get(String(submissionId));
-  if (!sub) return { error: "申込が見つかりません" };
-  let payload = null;
-  try { payload = sub.payload_json ? JSON.parse(sub.payload_json) : null; } catch (_) { payload = null; }
-  if (!payload || typeof payload !== "object") return { error: "申込の原本が読めません(手作業での追記が必要です)" };
-  let options = [];
-  try { options = sub.options_json ? (JSON.parse(sub.options_json) || []) : []; } catch (_) { options = []; }
-  return {
-    ok: true,
-    submission: sub,
-    payload: {
-      ...payload,
-      contact_name: payload.contact_name || payload.contact?.name || sub.contact_name,
-      contact_tel: payload.contact_tel || payload.contact?.tel || sub.contact_tel,
-      contact_email: payload.contact_email || payload.contact?.email || sub.contact_email,
-    },
-    op_id: _ledgerKeysOf(sub)[0] || "",
-    total_amount: sub.total_amount != null ? sub.total_amount : null,
-    option_items: options,
-  };
-}
-
 function claimEntryMail(submissionId = null, now = Date.now()) {
   return sqlite.prepare(`UPDATE entry_mail_jobs
     SET state='sending', due_at=@lease, attempts=attempts+1
@@ -10093,8 +10016,6 @@ function getSubmissionEditView(submissionId, opts) {
       team_name: sub.team_name || "", contact_name: sub.contact_name || "", ...contact,
       supervisor: subExtra.supervisor || "", advisor: subExtra.advisor || "", coach: subExtra.coach || "",
       answers: subExtra.answers || {},
-      sheet_status: sub.gas_status || "", sheet_upd_status: sub.sheet_upd_status || "",
-      sheet_upd_detail: opts.admin ? (sub.sheet_upd_detail || "") : undefined,
     },
     tournament: { id: t.id, name: t.name, date: t.date },
     entries, options,
@@ -10486,62 +10407,13 @@ function editSubmission(submissionId, patch, opts) {
       kind: c.kind, before: c.before, after: c.after, reason, actor, change_group: group,
     }));
     _recalcSubmissionTotal(sub.id);
-    sqlite.prepare(`UPDATE entry_submissions SET updated_at=datetime('now','localtime'), sheet_upd_status=? WHERE id=?`)
-      .run(t.entry_gas_url ? "pending" : "", sub.id);
+    sqlite.prepare(`UPDATE entry_submissions SET updated_at=datetime('now','localtime') WHERE id=?`).run(sub.id);
   });
   try { txn(); } catch (err) { if (err && err.editResult) return err.editResult; throw err; }
   const after = submissionStmts.getById.get(sub.id);
   return { ok: true, group, submission_id: sub.id, tournament: t, actor, reason,
     changes: changes.map(c => ({ kind: c.kind, event: c.event, summary: c.summary })),
     total_amount: after.total_amount || 0 };
-}
-
-// シートへ送る「申込の今の姿」。新規申込の payload とわざと形を変えてある
-// (team_name 等を最上位に置かない): 修正に未対応の古い GAS に届いた場合、必須項目不足で
-// 拒否され、新しい申込として二重に書き込まれる事故が起きないようにするため。
-function buildSheetUpdatePayload(submissionId, group) {
-  const sub = submissionStmts.getById.get(String(submissionId || ""));
-  if (!sub) return { error: "申込が見つかりません" };
-  if (sub.gas_status === "skipped") return { skipped: true };
-  const t = stmts.getTournament.get(sub.tournament_id);
-  if (!t) return { error: "大会が見つかりません" };
-  const cfgMap = _eventCfgOf(t);
-  const ents = sqlite.prepare(`SELECT * FROM entrants WHERE submission_id=? ORDER BY event, seed, furigana`).all(sub.id);
-  const money = _submissionMoney(t, sub, ents, null, cfgMap);
-  const subExtra = _parseObj(sub.extra_json);
-  let options = [];
-  try { options = sub.options_json ? (JSON.parse(sub.options_json) || []) : []; } catch (_) { options = []; }
-  const changes = group ? sqlite.prepare(
-    `SELECT * FROM entry_changes WHERE change_group=? ORDER BY rowid`).all(group).map(c => {
-      let after = null; try { after = c.after_json ? JSON.parse(c.after_json) : null; } catch (_) { after = null; }
-      let before = null; try { before = c.before_json ? JSON.parse(c.before_json) : null; } catch (_) { before = null; }
-      return { at: c.created_at, entry_id: c.entrant_id || "", event: c.event || "", kind: c.kind,
-        actor: c.actor === "admin" ? "本部" : "申込者", summary: _changeSummary(c.kind, before, after), reason: c.reason || "" };
-    }) : [];
-  return {
-    action: "update",
-    change_id: group || "",
-    tournament_id: t.id,
-    tournament_name: t.name,
-    form_schema: buildFormSchema(t),
-    submission: {
-      // 併合された申込は台帳行が複数ある。先頭(元の申込)の行に今の姿を書き、残りは「併合済」にする。
-      ledger_key: _ledgerKeysOf(sub)[0] || "",
-      ledger_keys: _ledgerKeysOf(sub),
-      team_name: sub.team_name || "", contact_name: sub.contact_name || "",
-      contact_tel: sub.contact_tel || "", contact_email: sub.contact_email || "",
-      supervisor: subExtra.supervisor || "", advisor: subExtra.advisor || "", coach: subExtra.coach || "",
-      extra: subExtra.answers || {},
-      total_amount: money.billed, entries_count: money.live, people: money.people,
-      option_items: options,
-    },
-    update_entries: ents.map(e => _entrantToPayloadEntry(e, t, cfgMap)),
-    // シートにまだ行が無くてよい出場(修正画面で追加した分)と、本部が削除した出場。
-    // どちらも申込の全履歴から作るので、何度送り直しても同じ結果になる。
-    added_refs: _changedRefs(sub.id, "add"),
-    removed_refs: _changedRefs(sub.id, "delete"),
-    changes,
-  };
 }
 
 // 本部が出場者を直接編集・削除したとき(PUT/DELETE /api/entrants/:id)も、申込に属する出場なら
@@ -10584,35 +10456,13 @@ function recordAdminEntrantChange(before, after, opts) {
       event: (after || before).event, kind, before: rowBefore, after: rowAfter,
       reason: _str(opts.reason, 200) || "管理画面の出場者編集", actor: "admin", change_group: group });
     _recalcSubmissionTotal(sub.id);
-    sqlite.prepare(`UPDATE entry_submissions SET updated_at=datetime('now','localtime'), sheet_upd_status=? WHERE id=?`)
-      .run(t && t.entry_gas_url ? "pending" : "", sub.id);
+    sqlite.prepare(`UPDATE entry_submissions SET updated_at=datetime('now','localtime') WHERE id=?`).run(sub.id);
   })();
   return { group, submission_id: sub.id, tournament: t, kind };
 }
 
-function _changedRefs(submissionId, kind) {
-  return sqlite.prepare(`SELECT DISTINCT entrant_id FROM entry_changes WHERE submission_id=? AND kind=? AND entrant_id<>''`)
-    .all(submissionId, kind).map(r => String(r.entrant_id).slice(0, 8));
-}
-
-function recordSheetUpdate(submissionId, relay) {
-  const ok = !!(relay && relay.ok);
-  const parts = [];
-  if (relay) {
-    if (ok) {
-      if (relay.updated_rows != null) parts.push("書換" + relay.updated_rows + "行");
-      if (relay.missing && relay.missing.length) parts.push("シートに無い行" + relay.missing.length + "件");
-    } else {
-      if (relay.error) parts.push(String(relay.error));
-      if (/必須項目が未入力/.test(String(relay.error || ""))) parts.push("GASが修正の反映に未対応です(スクリプトの貼り替えが必要)");
-    }
-  }
-  sqlite.prepare(`UPDATE entry_submissions SET sheet_upd_status=?, sheet_upd_at=datetime('now','localtime'), sheet_upd_detail=? WHERE id=?`)
-    .run(ok ? (relay.missing && relay.missing.length ? "partial" : "ok") : "failed", parts.join(" / ").slice(0, 500), String(submissionId));
-}
-
 // 申込の一覧(本部の「申込の一覧」画面)。金銭の収受は運営アプリでは扱わない(オーナー方針 2026-11-03)ので、
-// 件数・修正・シート反映・別団体との重複だけを返す。
+// 件数・修正・別団体との重複だけを返す。
 function getSubmissionList(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
@@ -10629,11 +10479,9 @@ function getSubmissionList(tournamentId) {
       entries: live.filter(isConfirmedEntry).length, pending: live.filter(e => e.status === "pending").length,
       cancelled: ents.length - live.length,
       cross_dup: live.reduce((n, e) => n + ((cross[e.id] || []).length ? 1 : 0), 0),
-      sheet_status: s.gas_status || "", sheet_upd_status: s.sheet_upd_status || "",
-      sheet_upd_detail: s.sheet_upd_detail || "",
     };
   }).sort((a, b) => String(a.team_name).localeCompare(String(b.team_name), "ja"));
-  return { ok: true, tournament: { id: t.id, name: t.name, date: t.date, gas: !!t.entry_gas_url }, rows, totals: summarizeEntries(all),
+  return { ok: true, tournament: { id: t.id, name: t.name, date: t.date }, rows, totals: summarizeEntries(all),
     unlinked: all.filter(e => !e.submission_id || !subs.find(s => s.id === e.submission_id)).length };
 }
 
@@ -10729,7 +10577,7 @@ function getEntryDesk(tournamentId) {
   const evCount = {}; evNames.forEach(n => { evCount[n] = 0; });
 
   const byRoute = { web: 0, excel: 0, manual: 0 };
-  let checks = 0, sheetUnknown = 0;
+  let checks = 0;
   const rows = subs.map(s => {
     const list = ents[s.id] || [];
     const live = list.filter(isConfirmedEntry);
@@ -10755,19 +10603,12 @@ function getEntryDesk(tournamentId) {
         issues.push({ key, type: m[0], title: m[1], entrant_id: e.id, detail });
       });
     });
-    const sheetBad = s.gas_status === "failed" || ["failed", "partial", "pending"].includes(s.sheet_upd_status || "");
     const mail = mailBy.get(s.id) || [];
     for (const job of mail) if (job.state === "failed" || (job.state === "pending" && job.attempts)) {
       issues.push({ key: `mail:${job.recipient}`, type: "mail", recipient: job.recipient,
         title: `${job.recipient === "admin" ? "運営通知" : "申込者控え"}を送信できていません`,
         detail: "申込は保存済みです。メールだけを再送できます。" });
     }
-    if (t.entry_gas_url && sheetBad && s.gas_status !== "skipped") {
-      issues.push({ key: `sheet:${s.id}`, type: "sheet", title: "シートに届いていません", entrant_id: "",
-        resend: s.gas_status === "failed" ? "initial" : "update",
-        detail: "本部には保存済みです。もう一度シートへ送れます" });
-    }
-    if (t.entry_gas_url && route === "web" && !s.gas_status) sheetUnknown++;
     checks += issues.length;
     return {
       submission_id: s.id, team_name: s.team_name || "", contact_name: s.contact_name || "",
@@ -10784,10 +10625,10 @@ function getEntryDesk(tournamentId) {
   const sumAll = summarizeEntries(all);
   return {
     tournament: { id: t.id, name: t.name, date: t.date || "", venue: t.venue || "", deadline: t.entry_deadline || "",
-      days_left: _deskDaysLeft(t), state: _deskState(t), gas: !!t.entry_gas_url },
+      days_left: _deskDaysLeft(t), state: _deskState(t) },
     events: evNames.map(n => ({ name: n, count: evCount[n] || 0 })),
     totals: { teams: rows.filter(r => r.entries > 0).length, entries: sumAll.confirmed, submissions: subs.length,
-      checks, by_route: byRoute, sheet_unknown: sheetUnknown },
+      checks, by_route: byRoute },
     unlinked: all.filter(e => isConfirmedEntry(e) && (!e.submission_id || !ents[e.submission_id] || !subTeam.hasOwnProperty(e.submission_id))).length,
     rows,
   };
@@ -11900,7 +11741,6 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
         sqlite.prepare("INSERT INTO entry_mail_jobs (submission_id, recipient) VALUES (?, 'applicant'), (?, 'admin')")
           .run(submissionId, submissionId);
       }
-      if (opts.skip_sheet) sqlite.prepare("UPDATE entry_submissions SET gas_status='skipped' WHERE id=?").run(submissionId);
       if (opId) sqlite.prepare(`UPDATE entry_submissions SET ledger_keys=? WHERE id=?`).run(JSON.stringify([opId]), submissionId);
     }
   });
@@ -12823,65 +12663,6 @@ function fieldLabelOf(cfg, key) {
   return lbl || FIELD_LABELS[key] || String(key);
 }
 
-// フォーム定義から「集計シートに必要な列」を導出する(案: 定義が正本・列は導出)。
-// 主催者がフォームに項目を足す/可視化すると、この関数の出力が変わり、GAS 側がその通りに列を作る。
-// 返り値の columns.* は [{key, label}] で、key は値の取り出し口:
-//   素のキー(furigana/grade/player_gender/advisor…) = 構造項目 / "cust:xxx" = 自由項目
-// 種目ごとに可視状態が違う場合は「1種目でも hidden でなければ列を作る」(union)。
-// シートは全種目共通の1枚なので、union にしないと一部種目の回答が落ちる。
-function buildFormSchema(tournament) {
-  const cfg = resolveFieldConfig(tournament);
-  let evCfg = [];
-  try {
-    const raw = tournament && tournament.event_config;
-    evCfg = typeof raw === "string" ? JSON.parse(raw || "[]") : (raw || []);
-  } catch (_) { evCfg = []; }
-  if (!Array.isArray(evCfg)) evCfg = [];
-  const evNames = evCfg.map(c => c && c.name).filter(Boolean);
-  // 「どこか1種目でも表示される」= 列を作る対象
-  const visibleAnywhere = (key) => {
-    const base = cfg.fields[key] || "hidden";
-    if (base !== "hidden") return true;
-    return evNames.some(ev => {
-      const ov = cfg.event_overrides[ev];
-      return ov && ov[key] && ov[key] !== "hidden";
-    });
-  };
-  const col = (key) => ({ key, label: fieldLabelOf(cfg, key) });
-  const customOf = (scope) => (cfg.custom || [])
-    .filter(c => c && c.key && (c.scope === "player" ? "player" : "submission") === scope)
-    .map(c => ({ key: "cust:" + c.key, label: String(c.label || c.key) }));
-
-  // 申込台帳(1申込=1行)に足す列。
-  // 固定列は「受付日時・大会名・団体名・責任者・電話・メール・種目数・人数・合計」だけに絞ってあり、
-  // 引率顧問・顧問・コーチ・通信欄は**フォームで聞いている大会だけ**列になる
-  // (聞いていない項目の空列が全大会に並ぶと、集計シートが読みにくくなるため)。
-  const ledger = [];
-  ["supervisor", "advisor", "coach", "note"].forEach(k => {
-    if (visibleAnywhere(k)) ledger.push(col(k));
-  });
-  ledger.push(...customOf("submission"));
-
-  // 選手行シート(シングルス/団体/ダブルス/ミックス)に足す列。氏名・年齢・チーム名・区分は固定列。
-  // 生年月日は「年齢」列で用が足り、かつ個人情報を集計表に増やさないため既定では列にしない。
-  const player = [];
-  ["furigana", "grade", "player_gender", "player_region", "first_time"].forEach(k => { if (visibleAnywhere(k)) player.push(col(k)); });
-  player.push(...customOf("player"));
-
-  return {
-    version: 2,
-    generated_at: new Date().toISOString(),
-    tournament_id: (tournament && tournament.id) || "",
-    columns: { ledger, player },
-    // シートの「運営ボード」が種目の埋まり具合と締切までの日数を出すための設定(個人情報は含まない)
-    events: evCfg.filter(c => c && c.name).map(c => ({
-      name: String(c.name), type: c.type || "singles",
-      capacity: parseInt(c.capacity) || 0, fee: parseInt(c.fee) || 0, fee_unit: c.fee_unit === "person" ? "person" : "entry",
-    })),
-    deadline: entryDeadlineAt(tournament) || "",
-  };
-}
-
 // field_config を保存前に検証・無害化する(クライアント/API から任意JSONが来る前提)。
 // custom key を英数字_のみに制限し、属性インジェクション/querySelector 破綻/フォーム送信不能を防ぐ(F2/M2)。
 // 不正キー・予約キー(構造フィールドと衝突)・重複・想定外 type/scope は捨てる。
@@ -13145,7 +12926,6 @@ function updateEntrySettings(tournamentId, settings) {
       field_config = ?,
       category = ?,
       organizer = ?,
-      entry_gas_url = ?,
       updated_at = datetime('now','localtime')
     WHERE id = ?
   `).run(
@@ -13173,7 +12953,6 @@ function updateEntrySettings(tournamentId, settings) {
     fldCfg,
     settings.category || t.category || "general",
     settings.organizer || t.organizer || "",
-    settings.entry_gas_url !== undefined ? settings.entry_gas_url : (t.entry_gas_url || ""),
     tournamentId
   );
   return stmts.getTournament.get(tournamentId);
@@ -15451,13 +15230,12 @@ module.exports = {
   getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII,
   importPlayerRegistry, getEntryDeskList, getEntryDesk, syncPlayerRegistry, planPlayerRegistrySync, registryFromSheetRows,
   matchPersonToPlayers, getPlayerMatchReview, resolveEntrantPlayerMatch, rematchTournamentPlayers,
-  resolveFieldConfig, DEFAULT_FIELD_CONFIG, buildFormSchema, fieldLabelOf, sanitizeFieldConfig,
+  resolveFieldConfig, DEFAULT_FIELD_CONFIG, fieldLabelOf, sanitizeFieldConfig,
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel, entryClosedReason: _entryClosedReason,
   getManualSubmissionView, createManualSubmission, publicEntryOperationId,
   applicantReplaceEntrant, applicantCancelEntrant, applicantReplaceEntrantBySubmission, applicantCancelEntrantBySubmission, listEntryChanges,
-  findCrossGroupDuplicates, getSubmissionEditView, editSubmission, recordAdminEntrantChange, buildSheetUpdatePayload, recordSheetUpdate, getSubmissionList,
+  findCrossGroupDuplicates, getSubmissionEditView, editSubmission, recordAdminEntrantChange, getSubmissionList,
   copyEntrySettings, listEntrySettingSources,
-  recordGasRelay, getGasSyncState, getSubmissionForResend,
   claimEntryMail, finishEntryMail, retryEntryMail, getEntryMailContent,
   resolveEntryOptions, sanitizeEntryOptions, priceEntryOptions,
   findEntrantDataIssues, fixEntrant, bulkFixEntrantInference,

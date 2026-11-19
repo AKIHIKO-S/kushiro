@@ -355,7 +355,7 @@
         ({ pending: "送信待ち", sending: "送信中", sent: "メールサーバー受付済み", failed: "送信失敗", skipped: "送信対象外" }[m.state] || "未確認"))),
       r.issues.map(i => h("div", { class: "ed-issue" + (i.type === "dup" ? " ed-issue--dup" : "") },
         h("b", {}, i.title), h("br"), i.detail,
-        ["sheet", "mail"].includes(i.type) ? h("div", {}, h("button", { class: "ed-btn", type: "button", onclick: (e) => resend(r, i, e.currentTarget) }, i.type === "mail" ? "このメールを再送" : "もう一度シートへ送る")) : null)),
+        i.type === "mail" ? h("div", {}, h("button", { class: "ed-btn", type: "button", onclick: (e) => resend(r, i, e.currentTarget) }, "このメールを再送")) : null)),
       h("ul", { class: "ed-plist" }, r.players.map(p => h("li", { class: p.status === "cancelled" ? "is-cancelled" : "" },
         h("b", {}, p.label), h("small", {}, p.event + (p.kana ? "・" + p.kana : "") + (p.status === "cancelled" ? "・取り消し済み" : "") + (p.status === "pending" ? "・承認待ち" : ""))))),
       h("div", { class: "ed-btns" },
@@ -366,13 +366,11 @@
 
   async function resend(r, i, btn) {
     btn.disabled = true;
-    const url = i.type === "mail" ? "/api/submissions/" + r.submission_id + "/mail-resend" : i.resend === "initial"
-      ? "/api/tournaments/" + S.tid + "/gas-sync/resend/" + r.submission_id
-      : "/api/submissions/" + r.submission_id + "/sheet-resend";
+    const url = "/api/submissions/" + r.submission_id + "/mail-resend";
     let res = null;
-    try { res = await api().post(url, i.type === "mail" ? { recipient: i.recipient } : {}); } catch (_) {}
+    try { res = await api().post(url, { recipient: i.recipient }); } catch (_) {}
     if (!res || res.error) { btn.disabled = false; return toast((res && res.error) || "送れませんでした", "err"); }
-    toast(i.type === "mail" ? "メールの再送を予約しました" : "シートへ送りました", "ok");
+    toast("メールの再送を予約しました", "ok");
     closeSheet();
     reload();
   }

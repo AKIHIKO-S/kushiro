@@ -167,8 +167,6 @@ test("選手登録用の項目: 必須チェック・支部の保存・集計シ
   const e = db.getEntrant(r.entrant_ids[0]);
   assert.strictEqual(e.region, "釧路");
   assert.strictEqual(JSON.parse(e.player_match).p1.status, "new");
-  const cols = db.buildFormSchema(db.getTournament(t.id)).columns.player.map(c => c.key);
-  assert.ok(cols.includes("player_region") && cols.includes("first_time"));
 });
 
 test("選手の統合で消える側の氏名が別名に残り、自動照合で一致する。取り消すと戻る", () => {

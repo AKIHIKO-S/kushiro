@@ -49,13 +49,6 @@ test("種目ごとに項目の必須/非表示を変えられる", () => {
     "団体種目だけ必須に上書きされている");
 });
 
-test("種目別に1つでも表示される項目は集計シートの列になる(union)", () => {
-  const t = mkTournament({
-    version: 2, fields: { grade: "hidden" },
-    event_overrides: { "中学男子団体": { grade: "required" } }, custom: [],
-  });
-  assert.deepStrictEqual(db.buildFormSchema(t).columns.player.map(c => c.key), ["grade"]);
-});
 
 test("上書きが無ければ大会レベルの設定に従う", () => {
   const t = mkTournament({ version: 2, fields: { furigana: "required" }, event_overrides: {}, custom: [] });

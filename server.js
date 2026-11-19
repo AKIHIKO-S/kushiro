@@ -1159,77 +1159,6 @@ app.post("/api/public/tournaments/:id/entry", entryRateLimit, async (req, res) =
 });
 
 // 新方式: 申込フォーム (entry_form.js) からの team-style POST 受け口
-// 申込ペイロードを GAS Web App へサーバー側から中継する (server→GAS は CORS 制約なし)。
-// ブラウザからの直POSTを廃し、ここで中継することで「保存成功なのに送信エラー誤表示」を解消。
-// 失敗しても申込受付(DB保存)は成立済みのため、結果オブジェクトを返すだけで例外は投げない。
-// GAS への中継。**HTTPステータスだけで成否を判断してはいけない。**
-// Apps Script のウェブアプリは、スクリプトが {ok:false,error:...} を返しても HTTP 200 で応答する。
-// 以前はここで resp.ok(=ステータス)だけを見ていたため、GAS が「必須項目が未入力」「記録できません
-// でした」を返しても中継成功と記録され、申込者には「受け付けました」と表示されていた
-// (シートに申込が無い事故の再現経路)。応答本文を読んで ok を判定する。
-const GAS_RELAY_TIMEOUT_MS = 25000;   // GAS は集計再計算等で数秒〜十数秒かかる。8秒では短すぎた
-async function relayEntryToGasOnce(gasUrl, payload) {
-  if (typeof fetch !== "function") return { ok: false, error: "fetch 利用不可" };
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GAS_RELAY_TIMEOUT_MS);
-  try {
-    const resp = await fetch(gasUrl, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(payload),
-      redirect: "follow",
-      signal: controller.signal,
-    });
-    const text = await resp.text().catch(() => "");
-    if (!resp.ok) {
-      return { ok: false, status: resp.status, error: `GAS応答 HTTP ${resp.status}`, retryable: resp.status >= 500 };
-    }
-    let body = null;
-    try { body = JSON.parse(text); } catch (_) { body = null; }
-    if (!body || typeof body !== "object") {
-      // JSON で返ってこないのは、GAS のログイン画面(アクセス権が「全員」でない)やエラーHTMLの可能性が高い。
-      const hint = /accounts\.google\.com|ログイン|Sign in/i.test(text)
-        ? "GASのアクセス権が「全員」になっていない可能性があります"
-        : "GASがJSON以外を返しました";
-      return { ok: false, status: resp.status, error: hint, retryable: false, snippet: String(text).slice(0, 200) };
-    }
-    if (body.ok !== true) {
-      return { ok: false, status: resp.status, error: String(body.error || "GASが反映成功を確認できる応答を返しませんでした"),
-        problems: Array.isArray(body.problems) ? body.problems : undefined, retryable: false };
-    }
-    const out = { ok: true, status: resp.status, verified: body.verified !== false,
-      duplicate: !!body.duplicate, ledger_row: body.ledger_row || null };
-    // 申込後の修正(action=update)の結果。どの行を書き換え、どれがシートに無かったかを管理画面に出す
-    if (body.action === "update") {
-      out.updated_rows = body.updated_rows || 0;
-      out.appended_rows = body.appended_rows || 0;
-      out.cancelled_rows = body.cancelled_rows || 0;
-      out.missing = Array.isArray(body.missing) ? body.missing.slice(0, 50) : [];
-    }
-    return out;
-  } catch (e) {
-    const isTimeout = e && e.name === "AbortError";
-    return { ok: false, error: isTimeout ? "timeout" : String(e && e.message || e), retryable: true };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// 通信の失敗(タイムアウト・切断・5xx)は1回だけ再送する。
-// GAS 側は申込ID(op_id)を台帳に持ち、重複を弾くので二重登録にならない。
-// GAS が「失敗」と明示した場合(必須項目不足など)は再送しても同じなので繰り返さない。
-async function relayEntryToGas(gasUrl, payload) {
-  const first = await relayEntryToGasOnce(gasUrl, payload);
-  if (first.ok || !first.retryable) {
-    if (!first.ok) console.warn("[GAS relay] 失敗:", first.error);
-    return first;
-  }
-  console.warn("[GAS relay] 失敗(再送します):", first.error);
-  const second = await relayEntryToGasOnce(gasUrl, payload);
-  if (!second.ok) console.warn("[GAS relay] 再送も失敗:", second.error);
-  return { ...second, retried: true, first_error: first.error };
-}
-
 // ── スパム対策: Cloudflare Turnstile 検証 + ハニーポット (無償・無人運用) ──
 // TURNSTILE_SECRET を設定した瞬間に有効化。未設定なら素通り(他の対策=スクリーニング/レート制限/承認は機能)。
 const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET || "";
@@ -1342,53 +1271,8 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
       const created = r.entrant_ids && r.entrant_ids.length > 0;
       if (created) scheduleEntryMail(r.submission_id);
 
-      // GAS 連携が設定されていればサーバー側から中継 (スプレッドシート反映、best-effort)。
-      // server→GAS は CORS 制約なし。ブラウザ直POSTの誤エラーを解消する要。
-      let gasRelay = null;
-      if (r.entry_count > 0 && tournament && tournament.entry_gas_url
-          && /^https:\/\/script\.google\.com\//.test(tournament.entry_gas_url)) {
-        // op_id を body に載せて中継する(op_id は X-Op-Id ヘッダ由来で payload に無いため、
-        // これを渡さないと GAS 側の op_id 冪等が発火しない=再送でシート重複)。
-        // form_schema(申込フォームの項目定義から導出した必要列)も同梱する。GAS はこれに従って
-        // 不足列を作る=「フォームに項目を足したのにシートに列が無い」が構造的に起きない。
-        // 旧バージョンの GAS は未知キーを無視するだけなので、この同梱は後方互換。
-        // 金額はサーバが確定した値だけを送る。クライアントが送ってきた total_amount で
-        // シートを書くと、フォームの計算違いや改造がそのまま台帳に載るため。
-        const relayPayload = { ...payload, action: "create", tournament_id: tournament.id, tournament_name: tournament.name, form_schema: db.buildFormSchema(tournament) };
-        if (opId) relayPayload.op_id = opId;
-        // 控えメールをこちらから送る構成なら、GAS 側には送らせない(申込者に同じ内容が2通届く)。
-        // 残すのはこちら側にする: 控えに申込番号が入っていて、申込後の選手差し替え画面で使うため。
-        if (mailer.isEnabled() && !r.error && Array.isArray(r.entrant_ids) && r.entrant_ids.length > 0) {
-          relayPayload.suppress_reply_mail = true;
-        }
-        if (r && !r.error) {
-          if (r.total_amount != null) relayPayload.total_amount = r.total_amount;
-          if (Array.isArray(r.options)) relayPayload.option_items = r.options;
-          // 集計シートの各行にエントリーIDを載せる。シートの行から申込・選手を一意に辿れるようにする。
-          // 重複でスキップされた行があると位置がずれるので、作成時に控えた位置(entry_index)で戻す。
-          if (Array.isArray(r.created_entries) && Array.isArray(relayPayload.entries)) {
-            relayPayload.entries = r.created_entries.map(ce => ({ ...payload.entries[ce.entry_index], entry_id: ce.entry_id }));
-          }
-        }
-        gasRelay = await relayEntryToGas(tournament.entry_gas_url, relayPayload);
-        // 結果を申込原本に刻む。ログに流すだけだと「どの申込が漏れたか」を後から特定できない
-        // (実際にそれで事故の原因究明ができなかった)。管理画面の未反映一覧と再送はこれを読む。
-        if (r && r.submission_id) {
-          try { db.recordGasRelay(r.submission_id, gasRelay); }
-          catch (e) { console.error("[GAS relay] 記録失敗:", e && e.message); }
-        }
-        // 届いていないなら主催者に即知らせる。GAS 側は自分が動けたときしか通知できないので、
-        // 「GAS まで到達しなかった」場合の通報はサーバー側の責任になる。
-        if (!gasRelay.ok && mailer.isEnabled() && tournament) {
-          mailer.sendGasRelayFailure({
-            tournament, formData: payload, relay: gasRelay,
-            adminUrl: `${appOriginOf(req)}/admin#tournament/${req.params.id}`,
-          }).catch(e => console.error("[GAS relay] 失敗通知メール失敗:", e && e.message));
-        }
-      }
-
       const { contact: _contact, ...base } = r;
-      res.status(201).json({ ...base, mail: created ? { queued: true } : null, gas: gasRelay ? { ok: !!gasRelay.ok } : null });
+      res.status(201).json({ ...base, mail: created ? { queued: true } : null });
     } catch (e) {
       recordError(e, req, res, 500);
       res.status(500).json({ error: "申込処理エラー: " + e.message });
@@ -1423,7 +1307,6 @@ app.post("/api/applicant/entrants/:id/replace", requireSession(["applicant"]), a
       });
     }
   } catch (e) { recordError(e, req, res, 0); }
-  await relaySheetUpdate(r.tournament, req.auth.principal_id, "");
   res.json(db.getSubmissionById(req.auth.principal_id));
 });
 
@@ -1440,29 +1323,10 @@ app.post("/api/applicant/entrants/:id/cancel", requireSession(["applicant"]), as
       });
     }
   } catch (e) { recordError(e, req, res, 0); }
-  await relaySheetUpdate(r.tournament, req.auth.principal_id, "");
   res.json(db.getSubmissionById(req.auth.principal_id));
 });
 
 // ── 申込後の修正(申込者・本部共通) ─────────────────────────────
-// 修正したら「その申込の今の姿」をシートへ送る。シートに書けなくても修正自体は成立させ、
-// 結果を申込原本に刻む(管理画面の「シート」列と再送ボタンがそれを読む)。
-async function relaySheetUpdate(tournament, submissionId, group) {
-  if (!tournament || !tournament.entry_gas_url) return null;
-  let parsed = null;
-  try { parsed = new URL(tournament.entry_gas_url); } catch { parsed = null; }
-  if (!parsed || parsed.protocol !== "https:" || parsed.hostname !== "script.google.com") return null;
-  const payload = db.buildSheetUpdatePayload(submissionId, group || "");
-  if (payload.error) return { ok: false, error: payload.error };
-  if (payload.skipped) return null;
-  if (payload.tournament_id !== tournament.id || !payload.submission.ledger_key) {
-    return { ok: false, error: "大会またはシートの照合キーを確認できません" };
-  }
-  const relay = await relayEntryToGas(tournament.entry_gas_url, payload);
-  db.recordSheetUpdate(submissionId, relay);
-  return relay;
-}
-
 async function notifyEdit(req, r) {
   try {
     if (mailer.isEnabled() && r.tournament && r.changes && r.changes.length) {
@@ -1489,13 +1353,9 @@ app.post("/api/applicant/submission", requireSession(["applicant"]), async (req,
   const r = db.editSubmission(req.auth.principal_id,
     { contact: b.contact, options: b.options, entries: b.entries, add: b.add, reason: b.reason }, { actor: "applicant" });
   if (r.error) return res.status(400).json({ error: r.error });
-  let sheet = null;
-  if (!r.unchanged) {
-    sheet = await relaySheetUpdate(r.tournament, r.submission_id, r.group);
-    await notifyEdit(req, r);
-  }
+  if (!r.unchanged) await notifyEdit(req, r);
   res.json({ ok: true, unchanged: !!r.unchanged, changes: r.changes || [],
-    sheet_ok: sheet ? !!sheet.ok : null, view: db.getSubmissionEditView(req.auth.principal_id, { admin: false }) });
+    view: db.getSubmissionEditView(req.auth.principal_id, { admin: false }) });
 });
 
 // 本部による修正
@@ -1510,21 +1370,8 @@ app.put("/api/submissions/:sid", requireAdmin, async (req, res) => {
   const r = db.editSubmission(req.params.sid,
     { contact: b.contact, options: b.options, entries: b.entries, add: b.add, reason: b.reason }, { actor: "admin" });
   if (r.error) return res.status(400).json({ error: r.error });
-  let sheet = null;
-  if (!r.unchanged) sheet = await relaySheetUpdate(r.tournament, r.submission_id, r.group);
-  res.json({ ok: true, unchanged: !!r.unchanged, changes: r.changes || [], sheet,
+  res.json({ ok: true, unchanged: !!r.unchanged, changes: r.changes || [],
     view: db.getSubmissionEditView(req.params.sid, { admin: true }) });
-});
-
-// 今の内容でシートを書き直す(修正の反映に失敗していたとき用)。変更履歴は追記しない。
-app.post("/api/submissions/:sid/sheet-resend", requireAdmin, async (req, res) => {
-  const v = db.getSubmissionEditView(req.params.sid, { admin: true });
-  if (v.error) return res.status(404).json(v);
-  const t = db.getTournament(v.tournament.id);
-  if (!requireGasUrl(t, res)) return;
-  const sheet = await relaySheetUpdate(t, req.params.sid, "");
-  if (!sheet || !sheet.ok) return res.status(400).json({ error: (sheet && sheet.error) || "反映できませんでした", sheet });
-  res.json({ ok: true, sheet });
 });
 
 app.post("/api/submissions/:sid/mail-resend", requireAdmin, (req, res) => {
@@ -1619,129 +1466,6 @@ app.post("/api/tournaments/:id/desk/manual-template/read", requireAdmin,
 // 変更履歴(管理画面の申込管理で表示)
 app.get("/api/tournaments/:id/entry-changes", requireAdmin, (req, res) => {
   res.json({ items: db.listEntryChanges(req.params.id, req.query.limit) });
-});
-
-// ── 集計スプレッドシートへの反映状況(取りこぼしを見つけて直す) ──────────
-// 「申込は受け付けたのにシートに無い」を、気づける・直せる状態にするためのAPI群。
-
-// 送信先ホストを script.google.com に固定する(任意URLへの踏み台/SSRF防止)。
-// 申込の中継(submit-team-entry)と gas-stats が既に同じ制約を掛けており、ここだけ緩めない。
-function requireGasUrl(t, res) {
-  const url = (t && t.entry_gas_url) || "";
-  if (!url) { res.status(400).json({ error: "この大会に集計スプレッドシートのURLが設定されていません" }); return null; }
-  let parsed = null;
-  try { parsed = new URL(url); } catch { parsed = null; }
-  if (!parsed || parsed.protocol !== "https:" || parsed.hostname !== "script.google.com") {
-    res.status(400).json({ error: "集計スプレッドシートのURLは https://script.google.com/... 形式である必要があります" });
-    return null;
-  }
-  return url;
-}
-
-// 反映状況の一覧(未反映がどれかを名指しする)
-app.get("/api/tournaments/:id/gas-sync", requireAdmin, (req, res) => {
-  const r = db.getGasSyncState(req.params.id);
-  if (r.error) return res.status(404).json(r);
-  res.json(r);
-});
-
-// 1件を再送する。受付時に保存した原本をそのまま送り直す(内容が変質しない)。
-// GAS 側は申込IDで重複を弾くので、既に入っていれば二重登録にならない。
-async function resendOne(tournament, submissionId) {
-  const src = db.getSubmissionForResend(submissionId);
-  if (src.error) return { ok: false, error: src.error };
-  if (src.submission.tournament_id !== tournament.id) return { ok: false, error: "この大会の申込ではありません" };
-  if (src.submission.gas_status === "skipped") return { ok: false, error: "この申込はシート反映の対象外です" };
-  if (!src.op_id) return { ok: false, error: "シートの照合キーがないため再送できません" };
-  const relayPayload = { ...src.payload, action: "create", tournament_id: tournament.id, tournament_name: tournament.name, form_schema: db.buildFormSchema(tournament), suppress_reply_mail: true };
-  if (src.op_id) relayPayload.op_id = src.op_id;
-  if (src.total_amount != null) relayPayload.total_amount = src.total_amount;
-  if (Array.isArray(src.option_items) && src.option_items.length) relayPayload.option_items = src.option_items;
-  const relay = await relayEntryToGas(tournament.entry_gas_url, relayPayload);
-  db.recordGasRelay(submissionId, relay);
-  // 受付後に修正されている申込は、原本を入れただけでは古い内容のままなので今の姿で上書きする
-  if (relay.ok && src.submission.updated_at) {
-    const update = await relaySheetUpdate(tournament, submissionId, "");
-    if (!update?.ok || update.missing?.length) return { ok: false, error: "初回は反映済みですが、最新の修正を反映できませんでした", relay };
-  }
-  return { ok: !!relay.ok, relay, team_name: src.submission.team_name };
-}
-
-app.post("/api/tournaments/:id/gas-sync/resend/:sid", requireAdmin, async (req, res) => {
-  const t = db.getTournament(req.params.id);
-  if (!t) return res.status(404).json({ error: "大会が見つかりません" });
-  if (!requireGasUrl(t, res)) return;
-  const r = await resendOne(t, req.params.sid);
-  if (!r.ok) return res.status(400).json({ error: r.error || (r.relay && r.relay.error) || "再送に失敗しました", relay: r.relay });
-  res.json({ ok: true, relay: r.relay });
-});
-
-// 未反映をまとめて再送する。件数が多いと GAS の実行時間上限に当たるので順番に送る。
-app.post("/api/tournaments/:id/gas-sync/resend-all", requireAdmin, async (req, res) => {
-  const t = db.getTournament(req.params.id);
-  if (!t) return res.status(404).json({ error: "大会が見つかりません" });
-  if (!requireGasUrl(t, res)) return;
-  const state = db.getGasSyncState(req.params.id);
-  const pending = state.pending || [];
-  // GAS は直列でしか捌けない(スクリプトロック)ので1件ずつ送る。1件あたり最長25秒かかりうるため、
-  // 件数ではなく**経過時間**で打ち切る。件数で切ると、遅いときにHTTPがゲートウェイタイムアウトして
-  // 「送ったのか送っていないのか分からない」状態になる(それが最も困る)。
-  const BUDGET_MS = 40000;
-  const started = Date.now();
-  const results = [];
-  for (const p of pending) {
-    if (results.length && Date.now() - started > BUDGET_MS) break;   // 最低1件は必ず試す
-    const r = await resendOne(t, p.id);
-    results.push({ id: p.id, team_name: p.team_name, ok: r.ok, error: r.ok ? null : (r.error || (r.relay && r.relay.error)) });
-  }
-  const okN = results.filter(x => x.ok).length;
-  res.json({ ok: true, sent: results.length, succeeded: okN, failed: results.length - okN,
-    remaining: Math.max(0, pending.length - results.length), results });
-});
-
-// 締切前の全件突合。シートに実際に何が入っているかを読み、DB側の申込と突き合わせる。
-// 中継の記録が「成功」でも、後からシートを人が消していれば気づけないため、シート自身に聞く。
-app.get("/api/tournaments/:id/gas-sync/reconcile", requireAdmin, async (req, res) => {
-  const t = db.getTournament(req.params.id);
-  if (!t) return res.status(404).json({ error: "大会が見つかりません" });
-  const gasUrl = requireGasUrl(t, res);
-  if (!gasUrl) return;
-  if (typeof fetch !== "function") return res.status(500).json({ error: "fetch 利用不可" });
-
-  const url = gasUrl + (gasUrl.indexOf("?") >= 0 ? "&" : "?")
-    + "action=entry_ids&tournament_id=" + encodeURIComponent(req.params.id);
-  let sheet = null;
-  try {
-    const resp = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(25000) });
-    const text = await resp.text();
-    try { sheet = JSON.parse(text); } catch (_) { sheet = null; }
-    if (!sheet || sheet.ok !== true) {
-      return res.status(502).json({ error: "スプレッドシートの内容を読めませんでした。GASを最新版に更新してください",
-        detail: String(text).slice(0, 200) });
-    }
-  } catch (e) {
-    return res.status(502).json({ error: "スプレッドシートに接続できませんでした: " + String(e && e.message || e) });
-  }
-
-  const state = db.getGasSyncState(req.params.id);
-  const inSheet = new Set((sheet.ids || []).map(String));
-  const unknown = sheet.has_id_column ? state.items.filter(s => !s.sheet_key) : [];
-  // 申込IDで突き合わせる。IDが無い旧シートでは件数比較に落とす(黙って全欠損と言わない)。
-  const missing = sheet.has_id_column
-    ? state.items.filter(s => s.sheet_key && !inSheet.has(s.sheet_key))
-    : [];
-  res.json({
-    ok: true,
-    matched_by: sheet.has_id_column ? "申込ID" : "件数のみ",
-    comparable: !!sheet.has_id_column,
-    unknown_count: unknown.length,
-    db_count: state.total,
-    sheet_count: sheet.count || 0,
-    missing_count: sheet.has_id_column ? missing.length : Math.max(0, state.total - (sheet.count || 0)),
-    missing: missing.map(s => ({ id: s.id, team_name: s.team_name, contact_name: s.contact_name, created_at: s.created_at })),
-    note: sheet.has_id_column ? null
-      : "このシートには申込ID列がありません(GASが旧版)。件数だけの比較なので、どの申込が欠けているかは特定できません。",
-  });
 });
 
 // 申込設定のコピー元候補(去年の同じ大会などを選ぶ)
@@ -3017,15 +2741,9 @@ app.put("/api/entrants/:id", requireAdmin, (req, res) => {
   if (cur && occStale(cur, req.body)) return sendConflict(res, cur);
   const e = db.updateEntrant(req.params.id, stripOcc(req.body) || {});
   if (!e) return res.status(404).json({ error: "エントリーが見つかりません" });
-  relayAdminEntrantChange(db.recordAdminEntrantChange(cur, e));
+  db.recordAdminEntrantChange(cur, e);
   res.json(e);
 });
-// 申込に属する出場を本部が直したら、変更履歴に残したうえでシートへ送る。画面を待たせないよう
-// 応答とは切り離す(結果は申込原本の「シート」欄に残り、失敗は参加料画面から再送できる)。
-function relayAdminEntrantChange(rec) {
-  if (!rec || !rec.tournament) return;
-  relaySheetUpdate(rec.tournament, rec.submission_id, rec.group).catch(e => recordError(e, null, null, 0));
-}
 // 枠の編集グリッドのDB検索編集: 既存 entrant のメンバー(本人/相方)を選手マスタにリンク上書き。
 app.post("/api/entrants/:id/member-from-player", requireAdmin, (req, res) => {
   const b = req.body || {};
@@ -3042,7 +2760,7 @@ app.delete("/api/entrants/:id", requireAdmin, (req, res) => {
     return sendBracketConflict(res, e.tournament_id, e.event);
   }
   db.deleteEntrant(req.params.id);
-  relayAdminEntrantChange(e ? db.recordAdminEntrantChange(e, null) : null);
+  if (e) db.recordAdminEntrantChange(e, null);
   res.json({ ok: true, bracket_rev: e ? db.bracketRev(e.tournament_id, e.event) : null });
 });
 // マスタDBへのリンク
@@ -4061,41 +3779,6 @@ app.get("/api/tournaments/:id/entry-form-config", requireOpenEntryOrAdmin, (req,
     entry_options: db.resolveEntryOptions(tournament),
     entry_payment_note: tournament.entry_payment_note || "",   // 参加料の案内文(大会に保存された値)
   });
-});
-
-// GAS スプレッドシートの集計を取得 (サーバー経由でプロキシ・CORS回避)
-// GET /api/tournaments/:id/gas-stats?gas_url=...
-// 外部通信を行うため、コスト/クォータ悪用防止に専用レート制限 + タイムアウトを付与 (H1/H2対策)
-const gasProxyRateLimit = rateLimit({ windowMs: 60000, max: 20,
-  message: "集計取得が多すぎます。しばらく待って再試行してください。" });
-app.get("/api/tournaments/:id/gas-stats", requireAdmin, gasProxyRateLimit, async (req, res) => {
-  const tournament = db.getTournament(req.params.id);
-  // 集計先URLは大会設定の entry_gas_url を正本にする(クライアント供給URLでの出口プロキシ踏み台化を防止 / #5)。
-  // 後方互換: 未設定の大会のみ、クライアント gas_url を許容(ホスト固定検証は同一・requireAdmin 済)。
-  const gasUrl = (tournament && tournament.entry_gas_url) || req.query.gas_url || "";
-  if (!gasUrl) return res.status(400).json({ error: "この大会にGAS集計URL(entry_gas_url)が設定されていません" });
-  // ホストを script.google.com に固定 (任意URLへの踏み台/SSRF防止)
-  let parsed;
-  try { parsed = new URL(gasUrl); } catch { parsed = null; }
-  if (!parsed || parsed.protocol !== "https:" || parsed.hostname !== "script.google.com") {
-    return res.status(400).json({ error: "GAS集計URLは https://script.google.com/... 形式である必要があります" });
-  }
-  try {
-    const tournamentId = tournament ? tournament.id : req.params.id;
-    const sep = gasUrl.includes("?") ? "&" : "?";
-    const fullUrl = gasUrl + sep + "action=stats&tournament_id=" + encodeURIComponent(tournamentId);
-    // Node 18+ なら fetch がネイティブ。GAS は googleusercontent へ 302 するため redirect は follow。
-    // 8秒でタイムアウト (ハング・スローロリス対策)。
-    const r = await fetch(fullUrl, { redirect: "follow", signal: AbortSignal.timeout(8000) });
-    const txt = await r.text();
-    let data;
-    // 本番では GAS 生応答(raw)を反射しない(内部詳細/PII反射の抑止 / #5)。
-    try { data = JSON.parse(txt); }
-    catch { return res.status(502).json({ error: "GAS 応答が JSON ではありません", ...(IS_PROD ? {} : { raw: txt.slice(0, 200) }) }); }
-    res.json(data);
-  } catch (err) {
-    res.status(502).json({ error: IS_PROD ? "GAS 通信失敗" : ("GAS 通信失敗: " + err.message) });
-  }
 });
 
 // 申込団体別 (内訳付き) JSON 出力
@@ -5270,7 +4953,7 @@ app.put("/api/tournaments/:id/entries/:pid/status", requireAdmin, (req, res) => 
   const before = db.getEntrant(req.params.pid);
   const r = db.setEntrantStatus(req.params.pid, status);
   if (r.error) return res.status(404).json(r);
-  if (before) relayAdminEntrantChange(db.recordAdminEntrantChange(before, db.getEntrant(req.params.pid)));
+  if (before) db.recordAdminEntrantChange(before, db.getEntrant(req.params.pid));
   res.json(r);
 });
 app.put("/api/tournaments/:id/entries/:pid/seed", requireAdmin, (req, res) => {
@@ -5311,7 +4994,7 @@ app.post("/api/tournaments/:id/entries/:pid/fix", requireAdmin, (req, res) => {
   const before = db.getEntrant(req.params.pid);
   const r = db.fixEntrant(req.params.pid, req.body || {});
   if (r.error) return res.status(400).json(r);
-  if (before) relayAdminEntrantChange(db.recordAdminEntrantChange(before, db.getEntrant(req.params.pid)));
+  if (before) db.recordAdminEntrantChange(before, db.getEntrant(req.params.pid));
   res.json(r);
 });
 // 申込の選手照合(案A): 自動一致・要確認・新規候補の一覧と、人による確定。
@@ -5592,11 +5275,10 @@ const _gasExtUrl = () => process.env.GAS_EXTERNAL_URL || "";
 // フォーム送信プロキシ: フロント→ /api/forms/submit → GAS
 // GAS URL をブラウザ側 HTML に埋め込まない。env 未設定時は 503 を返す。
 // GAS Web App は処理完了後に必ず 302 (Location: script.googleusercontent.com) を返す仕様のため、
-// redirect:"follow" で追従する(relayEntryToGas / GET /api/tournaments/:id/gas-stats と同じパターン)。
-// ここは DB 保存を持たず GAS が唯一の記録先のため、relayEntryToGas のように ok/status へ要約せず、
+// redirect:"follow" で追従する。
+// ここは DB 保存を持たず GAS が唯一の記録先のため、ok/status へ要約せず、
 // GAS の実応答ボディ({ok:true,row:N} / {ok:false,error:"..."})をそのままブラウザへ返す。
 // タイムアウトは既定22秒(env GAS_FORMS_TIMEOUT_MS で上書き可)。
-//   他箇所(relayEntryToGas/gas-stats)の8秒は「失敗しても付随情報に過ぎない」経路向けの値で、
 //   この経路はGAS側がLockService待機(最大15秒)+スプレッドシート書込+4件メール送信を伴うため
 //   短すぎると誤検知するリスクがある。フロント(external_forms.js)側の中断が25秒のため、
 //   それより短い22秒のままにして「サーバー側で先に綺麗な504 JSONを返す」関係を維持する。
@@ -5826,7 +5508,7 @@ function lanIPv4s() {
 }
 // テスト時(require('../server'))はサーバを起動せず app と内部関数だけ公開する。
 // 本番(node server.js)は require.main===module が真になり従来どおり起動・常駐する。
-module.exports = { app, _resolveEvents, __test__: { relayEntryToGas, relayEntryToGasOnce, deliverEntryMail } };
+module.exports = { app, _resolveEvents, __test__: { deliverEntryMail } };
 
 if (require.main === module) {
 setInterval(() => scheduleEntryMail(), 15000).unref();

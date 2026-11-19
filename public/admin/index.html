@@ -2656,20 +2656,6 @@ const A = {
    : "「+ 新規大会」から作成してください (テンプレ利用可)",
  });
 
- // 5. GAS URL (大会ごと localStorage; いずれかに設定されているか)
- let hasGas = false;
- try {
- for (const t of (A.state.tournaments || [])) {
- if (localStorage.getItem("tt_gas_url_" + t.id)) { hasGas = true; break; }
- }
- } catch {}
- items.push({
- ok: hasGas,
- label: "GAS Web App URL が設定されている (任意・申込フォーム用)",
- detail: hasGas ? "1 件以上の大会で設定済"
-   : "申込フォームを使う場合は各大会の「申込フォーム生成」で設定してください",
- });
-
  const allOk = items.every(c => c.ok);
  return { allOk, items };
  },
@@ -3047,7 +3033,6 @@ const A = {
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openPlayerMatch(t) }, "選手の照合"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openManualSubmission(t, () => A.openTournament(t.id)) }, "本部で申込を登録"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openEntryChanges(t) }, "変更履歴"),
- h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.fetchGasStats(t) }, "シートの集計を取得"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.downloadApplicantsXlsx(t) }, "申込一覧をExcel"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.downloadAggregation(t) }, "集計表をExcel"),
  h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openAuthedHtmlWindow(`/api/tournaments/${t.id}/reception.html`, "受付名簿") }, "受付名簿を印刷"),
@@ -3057,7 +3042,6 @@ const A = {
  if (!A.entryOnly) panel.appendChild(A.renderFlowGuide(t));
 
  // ─── トーナメント表 (Excel/PDF 取込) ───
- // 申込・名簿・領収書・集計は GAS 側で処理。本システムは試合運営に特化。
  if (!A.entryOnly) panel.appendChild(h("div", { className: "card" },
  h("div", { className: "card-head" },
  h("div", { className: "card-title" }, "トーナメント表 (取込)"),
@@ -3195,15 +3179,14 @@ const A = {
  const s1 = t.entries_open && !t.entry_closed_reason ? chip("● 受付中", "ok") : chip("受付停止 / 未設定", "warn");
  mk(1, "申込フォームを作る・公開",
    "WordPress/Jimdoに貼る埋込コードと公開URLを発行。受付ON/OFFと締切を設定。", s1, [
-   h("button", { className: "btn btn-sm", onClick: () => A.openEntryFormGenerator(t) }, "フォーム設定 / 埋込"),
+   h("button", { className: "btn btn-sm", onClick: () => A.openEntryFormGenerator(t) }, "フォーム設定"),
    h("button", { className: "btn btn-sm btn-ghost", onClick: () => window.open(`/entry/${t.id}`, "_blank") }, "プレビュー"),
  ]);
 
  const s2 = chip("確認中…", "");
  mk(2, "申込を確認する",
-   "届いた申込を一覧で確認・承認。Googleフォームの集計とも連携できます。", s2, [
+   "届いた申込を一覧で確認・承認します。", s2, [
    h("button", { className: "btn btn-sm", onClick: () => { A._entriesTid = t.id; A.showTab("entries"); } }, "申込一覧を見る"),
-   h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.fetchGasStats(t) }, "Googleフォーム集計を取得"),
  ]);
 
  const s3 = chip("確認中…", "");
@@ -3344,40 +3327,17 @@ const A = {
  // ── 申込フォーム セクション (scheduled / preparation 大会用) ──
 
  // ─── 領収書発行マネージャー ───
- // (A) GAS から申込リスト取得 → 団体ごとに一括発行
- // (B) 任意入力 (空フォーム) で個別発行
+ // 任意入力 (空フォーム) で個別発行
  async openReceiptManager(t) {
-   const gasUrl = localStorage.getItem("tt_gas_url_" + t.id) || "";
    const body = h("div", {},
      h("div", { className: "text-sm mb-3",
        style: { padding: "10px 14px", background: "#eff6ff",
          borderLeft: "3px solid #2563eb", borderRadius: "0 4px 4px 0" } },
        "領収書をブラウザ上で発行・印刷できます。"),
 
-     // ─── A. GAS 連携 一括発行 ───
-     h("h3", { className: "text-sm font-bold mt-3 mb-2" },
-       "① 申込団体から一括発行 (GAS連携)"),
-     h("div", { className: "field" },
-       h("label", { className: "field-label" }, "GAS Web App URL"),
-       h("input", { className: "input", id: "rcvGasUrl",
-         value: gasUrl,
-         placeholder: "https://script.google.com/macros/s/.../exec",
-         onInput: (e) => { localStorage.setItem("tt_gas_url_" + t.id, e.target.value); } }),
-     ),
-     h("div", { className: "flex gap-2 mb-3" },
-       h("button", { className: "btn btn-sm",
-         onClick: () => A.fetchAndShowReceipts(t) },
-         "Googleフォームから取得して領収書発行"),
-     ),
-     h("div", { id: "rcvList_" + t.id,
-       style: { maxHeight: "300px", overflow: "auto",
-         padding: "8px", background: "#fff",
-         border: "1px solid var(--border)", borderRadius: "6px",
-         marginBottom: "16px", display: "none" } }),
-
      // ─── B. フリー入力 ───
      h("h3", { className: "text-sm font-bold mt-4 mb-2" },
-       "② 任意入力で個別発行 (空の領収書)"),
+       "任意入力で個別発行"),
      h("div", { className: "two-col" },
        h("div", { className: "field" },
          h("label", { className: "field-label" }, "宛名 (必須)"),
@@ -3408,79 +3368,6 @@ const A = {
    const foot = h("button", { className: "btn btn-ghost",
      onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる");
    openModal("領収書 発行 / 管理", body, foot);
- },
-
- // GAS から申込リストを取得して一括領収書発行
- async fetchAndShowReceipts(t) {
-   const url = document.getElementById("rcvGasUrl").value.trim();
-   if (!url) return toast("Googleフォーム連携用のURLを入力してください", "err");
-   const target = document.getElementById("rcvList_" + t.id);
-   target.style.display = "block";
-   target.innerHTML = "<em>取得中...</em>";
-   try {
-     const r = await api.get(`/api/tournaments/${t.id}/gas-stats?gas_url=` + encodeURIComponent(url));
-     // gas-stats からは集計を取得。明細は別 API (list) が必要
-     // 一旦 ledger 系を取りに行く: list endpoint
-     const sep = url.includes("?") ? "&" : "?";
-     const listUrl = `/api/tournaments/${t.id}/gas-stats?gas_url=` + encodeURIComponent(url);
-     // 簡易: gas-stats のレスポンスからチーム別集計を表示
-     if (!r.ok && r.error) {
-       target.innerHTML = `<span style="color:#dc2626">取得失敗: ${r.error}</span>`;
-       return;
-     }
-     const evtCount = Object.values(r.by_event || {}).reduce((s, n) => s + n, 0);
-     target.innerHTML =
-       `<div style="margin-bottom:8px"><strong>申込状況:</strong> ${r.teams_count}団体・${evtCount}件・合計¥${(r.total_amount||0).toLocaleString("ja-JP")}</div>` +
-       `<div class="text-xs text-sub mb-2">団体別の個別領収書を発行するには、各団体名と金額を下の「任意入力」欄に入力してください。</div>` +
-       `<button class="btn btn-sm" id="rcvBulkBtn">一括発行プレビュー (全団体まとめて表示)</button>`;
-     const bulkBtn = document.getElementById("rcvBulkBtn");
-     if (bulkBtn) bulkBtn.onclick = () => A.previewBulkReceipts(t, r, url);
-   } catch (e) {
-     target.innerHTML = `<span style="color:#dc2626">通信エラー: ${e.message}</span>`;
-   }
- },
-
- // 一括領収書プレビュー (全団体まとめて HTML 表示)
- async previewBulkReceipts(t, stats, gasUrl) {
-   // 申込台帳の各団体の合計金額をもとに領収書を1枚ずつ作成
-   // GAS の集計のみだと団体名→金額の細かい情報がないため、
-   // 簡易版: 集計用シートの内容を expand する
-   const issuer = "釧路卓球協会 会長 山本 満";
-   const win = window.open("", "_blank");
-   const today = new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" });
-   const html = `<!DOCTYPE html><html><head>
-<meta charset="UTF-8"><title>領収書一括</title>
-<style>
-  body { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; padding: 20px; }
-  .receipt { border: 2px solid #1c1917; padding: 24px;
-    margin-bottom: 30px; max-width: 600px; page-break-after: always; }
-  .receipt h1 { text-align: center; font-size: 28px; margin-bottom: 20px;
-    border-bottom: 3px double #1c1917; padding-bottom: 10px; }
-  .receipt .row { display: flex; justify-content: space-between;
-    padding: 6px 0; border-bottom: 1px dashed #999; margin-bottom: 8px; }
-  .receipt .amt { font-size: 26px; font-weight: 700; color: #b91c1c; }
-  .receipt .issuer { text-align: right; margin-top: 30px; font-size: 14px; }
-  @media print { body { padding: 0; } .no-print { display: none; } }
-</style></head><body>
-<div class="no-print" style="margin-bottom:20px;text-align:center">
-  <button onclick="window.print()" style="padding:10px 20px;background:#1e2a4a;color:#fff;border:none;border-radius:6px;cursor:pointer">印刷</button>
-  <button onclick="window.close()" style="padding:10px 20px;margin-left:8px">閉じる</button>
-</div>
-<p>※ 集計用シートをもとに <strong>大会全体の概要領収書</strong> を作成しました。<br>
-団体ごとに個別発行するには「任意入力で個別発行」セクションで宛名を入力してください。</p>
-<div class="receipt">
-  <h1>領 収 書</h1>
-  <div class="row"><span>No.</span><span>#0001</span></div>
-  <div class="row"><span>発行日</span><span>${today}</span></div>
-  <div class="row"><strong>宛名</strong><span style="font-size:20px">${esc(stats.teams_count + " 団体 様")}</span></div>
-  <div class="row"><strong>金額</strong><span class="amt">¥ ${(stats.total_amount||0).toLocaleString("ja-JP")} -</span></div>
-  <div class="row"><strong>但し</strong><span>${esc(t.name + " 参加料として")}</span></div>
-  <div class="issuer">${esc(issuer)} 　(印)</div>
-  <p style="text-align:center;margin-top:20px;color:#666">上記の通り領収いたしました。</p>
-</div>
-</body></html>`;
-   win.document.write(html);
-   win.document.close();
  },
 
  // フリー入力で個別領収書発行
@@ -3537,49 +3424,6 @@ const A = {
    win.document.write(html);
    win.document.close();
    toast("領収書を新しいタブで開きました", "ok");
- },
-
- // ── GAS スプレッドシートから集計取得 ──
- async fetchGasStats(t) {
- const gasUrl = localStorage.getItem("tt_gas_url_" + t.id);
- if (!gasUrl) {
- return toast("Googleフォーム連携用のURLが未設定です。「フォーム設定」から設定してください。", "err");
- }
- // 専用の表示先 div があればそこに、無ければモーダルで表示 (div は現状未生成のため null 安全に)
- const target = document.getElementById("gasStats_" + t.id);
- let modalBox = null;
- const render = (html) => {
-   if (target) { target.style.display = "block"; target.innerHTML = html; return; }
-   if (!modalBox) { modalBox = h("div", {}); openModal("Googleフォーム 申込集計", modalBox, null); }
-   modalBox.innerHTML = html;
- };
- render("<em>スプレッドシートに問い合わせ中...</em>");
- try {
- const r = await api.get(`/api/tournaments/${t.id}/gas-stats?gas_url=` + encodeURIComponent(gasUrl));
- if (!r.ok) {
- render(`<span style="color:#dc2626">取得失敗: ${esc(r.error || "")}</span>`);
- return;
- }
- const byEv = r.by_event || {};
- const evRows = Object.entries(byEv)
- .map(([ev, n]) => `<tr><td>${esc(ev)}</td><td style="text-align:right;font-family:monospace">${n}件</td></tr>`)
- .join("");
- render(
- `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:8px">
-   <div><div style="font-size:9px;letter-spacing:.1em;text-transform:uppercase">申込団体</div>
-     <div style="font-size:22px;font-weight:700;font-family:monospace">${r.teams_count || 0}</div></div>
-   <div><div style="font-size:9px;letter-spacing:.1em;text-transform:uppercase">出場選手数</div>
-     <div style="font-size:22px;font-weight:700;font-family:monospace">${r.entries_count || 0}</div></div>
-   <div><div style="font-size:9px;letter-spacing:.1em;text-transform:uppercase">申込件数</div>
-     <div style="font-size:22px;font-weight:700;font-family:monospace">${r.applications_count || 0}</div></div>
-   <div><div style="font-size:9px;letter-spacing:.1em;text-transform:uppercase">参加料合計</div>
-     <div style="font-size:22px;font-weight:700;font-family:monospace">¥${(r.total_amount || 0).toLocaleString("ja-JP")}</div></div>
- </div>
- ${evRows ? `<table style="width:100%;font-size:11px;border-collapse:collapse">${evRows}</table>` : ""}
- <div style="font-size:10px;color:#6b7280;margin-top:6px">最終更新: ${r.updated_at ? new Date(r.updated_at).toLocaleString("ja-JP") : "不明"}</div>`);
- } catch (e) {
- render(`<span style="color:#dc2626">通信エラー: ${esc(e.message)}</span>`);
- }
  },
 
  // ── 観戦ビュー共有セクション (参加者・保護者向けライブ) ──
@@ -3793,24 +3637,17 @@ const A = {
      h("button", { className: "btn btn-ghost", onClick: (e) => e.target.closest(".modal-bg")?.remove() }, "閉じる"), { size: "lg" });
  },
 
- // 申込の一覧: 申込ごとの出場件数・別団体との重複・シート反映を一覧し、修正をここから行う。
+ // 申込の一覧: 申込ごとの出場件数・別団体との重複を一覧し、修正をここから行う。
  // 金銭の収受(参加料・入金)は協会が別で管理するので扱わない(オーナー方針 2026-11-03)。
  async openSubmissionList(t) {
    const body = h("div", {});
    let bg = null;
-   const SHEET = { ok: ["反映済", "#166534"], partial: ["一部", "#92400e"], failed: ["失敗", "#991b1b"], pending: ["未反映", "#92400e"], skipped: ["対象外", "#57534e"] };
    // 絞り込み(再読込しても保つ)。当日受付では「団体名で探す」が最も使われる
    let q = "", filt = "all";
-   const FILTERS = [["all", "すべて"], ["cross", "別団体と重複"], ["sheet", "シート未反映"]];
-   const sheetState = (r) => r.sheet_status === "skipped" ? "skipped" : r.sheet_status === "failed" ? "failed" : (r.sheet_upd_status || r.sheet_status);
-   const sheetNg = (r) => ["failed", "partial", "pending"].includes(sheetState(r));
-   const resend = (r) => api.post(r.sheet_status === "failed"
-     ? `/api/tournaments/${t.id}/gas-sync/resend/${r.submission_id}`
-     : `/api/submissions/${r.submission_id}/sheet-resend`, {});
+   const FILTERS = [["all", "すべて"], ["cross", "別団体と重複"]];
    const match = (r) => {
      if (q && !((r.team_name || "") + " " + (r.contact_name || "")).includes(q)) return false;
      if (filt === "cross") return r.cross_dup > 0;
-     if (filt === "sheet") return sheetNg(r);
      return true;
    };
    // 受付用のCSV(Excelで開けるようBOM付き)。電話・メールは含めない
@@ -3827,7 +3664,6 @@ const A = {
      if (!d || d.error) { body.replaceChildren(h("div", { className: "text-sm", style: { color: "#b91c1c" } }, (d && d.error) || "読み込めませんでした")); return; }
      const parts = [];
      const crossRows = d.rows.filter(r => r.cross_dup > 0);
-     const ngRows = d.rows.filter(sheetNg);
      const live = d.rows.reduce((s, r) => s + (r.entries || 0), 0);
      parts.push(h("div", { className: "text-sm", style: { marginBottom: "10px" } },
        `申込原本 ${d.rows.length}件・確定出場 ${d.totals?.confirmed ?? live}件・承認待ち ${d.totals?.pending ?? 0}件`,
@@ -3842,54 +3678,34 @@ const A = {
      search.addEventListener("input", () => { q = search.value.trim(); drawRows(); });
      const chips = h("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
        ...FILTERS.map(([v, l]) => h("button", { className: "btn btn-sm" + (filt === v ? "" : " btn-ghost"), onClick: () => { filt = v; load(); } },
-         l + (v === "cross" && crossRows.length ? `（${crossRows.length}）` : v === "sheet" && ngRows.length ? `（${ngRows.length}）` : ""))));
+         l + (v === "cross" && crossRows.length ? `（${crossRows.length}）` : ""))));
      parts.push(h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "8px" } },
        search, chips,
        h("button", { className: "btn btn-sm btn-ghost", onClick: () => {
          const blob = new Blob([csvOf(d)], { type: "text/csv" });
          const a = h("a", { href: URL.createObjectURL(blob), download: `${t.name}_申込一覧.csv` });
          document.body.appendChild(a); a.click(); a.remove();
-       } }, "CSVで保存"),
-       (d.tournament.gas && ngRows.length) ? h("button", { className: "btn btn-sm", onClick: async (e) => {
-         e.target.disabled = true;
-         let ok = 0, ng = 0;
-         for (const r of ngRows) {
-           const x = await resend(r);
-           if (x && !x.error) ok++; else ng++;
-         }
-         toast(`シートへ再送: 成功 ${ok}件` + (ng ? `・失敗 ${ng}件` : ""), ng ? "err" : "ok");
-         load();
-       } }, `未反映 ${ngRows.length}件をまとめて再送`) : null));
+       } }, "CSVで保存")));
      parts.push(tbWrap);
      const rowsTable = () => {
        const tbl = h("table", { className: "tbl", style: { minWidth: "600px" } });
        tbl.appendChild(h("thead", {}, h("tr", {},
          h("th", {}, "団体"), h("th", { style: { textAlign: "right" } }, "確定出場"), h("th", {}, "注意"),
-         d.tournament.gas ? h("th", {}, "シート") : null, h("th", {}, ""))));
+         h("th", {}, ""))));
        const tb = h("tbody", {});
        const shownRows = d.rows.filter(match);
        shownRows.forEach(r => {
-         const sh = SHEET[sheetState(r)];
          tb.appendChild(h("tr", {},
            h("td", { className: "text-sm" }, h("b", {}, r.team_name || "(団体名なし)"), h("div", { className: "text-xs text-sub" }, (r.contact_name || "") + (r.updated_at ? "・修正 " + r.updated_at : ""))),
            h("td", { className: "text-sm", style: { textAlign: "right" } }, r.entries + "件" + (r.pending ? `（承認待ち${r.pending}）` : "") + (r.cancelled ? `（取消・却下${r.cancelled}）` : "")),
            h("td", { className: "text-xs" }, r.cross_dup
              ? h("span", { style: { color: "#991b1b", fontWeight: "700" }, title: "出場一覧の赤い印で相手の団体と種目を確認できます" }, `別団体と重複 ${r.cross_dup}件`)
              : "—"),
-           d.tournament.gas ? h("td", { className: "text-xs", title: r.sheet_upd_detail || "" },
-             sh ? h("span", { style: { color: sh[1], fontWeight: "700" } }, sh[0]) : "—",
-             sheetNg(r)
-               ? h("button", { className: "btn btn-sm btn-ghost", style: { marginLeft: "4px" }, onClick: async (e) => {
-                   e.target.disabled = true;
-                   const x = await resend(r);
-                   toast(x.error ? x.error : "シートを今の内容で書き直しました", x.error ? "err" : "ok");
-                   load();
-                 } }, "再送") : null) : null,
            h("td", { style: { whiteSpace: "nowrap" } },
              h("button", { className: "btn btn-sm btn-ghost", onClick: () => A.openSubmissionEdit(t, r.submission_id, load) }, "修正"))));
        });
-       if (!d.rows.length) tb.appendChild(h("tr", {}, h("td", { colSpan: 5, className: "text-sub text-sm" }, "申込フォームからの申込はまだありません")));
-       else if (!shownRows.length) tb.appendChild(h("tr", {}, h("td", { colSpan: 5, className: "text-sub text-sm" }, "条件に合う申込はありません")));
+       if (!d.rows.length) tb.appendChild(h("tr", {}, h("td", { colSpan: 4, className: "text-sub text-sm" }, "申込フォームからの申込はまだありません")));
+       else if (!shownRows.length) tb.appendChild(h("tr", {}, h("td", { colSpan: 4, className: "text-sub text-sm" }, "条件に合う申込はありません")));
        tbl.appendChild(tb);
        return h("div", { style: { overflowX: "auto" } }, tbl);
      };
@@ -4004,7 +3820,7 @@ const A = {
    editor.injectCss();
    const form = h("div", {});
    editor.render(form, view, { admin: true, manual: true });
-   const notice = h("p", { className: "text-sm text-sub" }, "締切後も本部で登録できます。手入力の申込は集計シートには送られません。");
+   const notice = h("p", { className: "text-sm text-sub" }, "締切後も本部で登録できます。");
    const feedback = h("div", { role: "alert", className: "text-sm" });
    // Excelで一括登録: 読み取った内容を画面で確認してから、下の「申込を登録する」と同じ口で登録する
    let bulk = null;   // 読み取り済みの { contact, add }
@@ -4101,8 +3917,7 @@ const A = {
      const x = await api.put(`/api/submissions/${sid}`, payload);
      save.disabled = false;
      if (x.error) return toast(x.error, "err");
-     const sh = x.sheet;
-     toast("修正を保存しました" + (sh && !sh.ok ? "（シートへの反映に失敗: 一覧の「再送」で送り直せます）" : sh && sh.ok ? "・シートに反映しました" : ""), sh && !sh.ok ? "err" : "ok");
+     toast("修正を保存しました", "ok");
      m.remove();
      if (onDone) onDone();
    } }, "保存する");
@@ -4121,8 +3936,6 @@ const A = {
  if (!fieldCfg.fields) fieldCfg.fields = {};
  if (!Array.isArray(fieldCfg.custom)) fieldCfg.custom = [];
  if (!fieldCfg.field_meta || typeof fieldCfg.field_meta !== "object") fieldCfg.field_meta = {};
- // GAS URL: 優先順位 = サーバーDB > localStorage
- let gasUrl = t.entry_gas_url || localStorage.getItem("tt_gas_url_" + t.id) || "";
  let adminEmail = localStorage.getItem("tt_admin_email") || "";
  let deadline = "";
  // 参加料の案内文。大会に保存された値を正本にする(上部団体の大会など、当日払いでない場合がある)。
@@ -4148,11 +3961,11 @@ const A = {
  tbody.appendChild(h("tr", {},
  h("td", {}, h("input", { className: "input", value: ev.name,
  style: { width: "100%", boxSizing: "border-box", padding: "7px 8px" },
- onInput: (e) => { ev.name = e.target.value; refreshCode(); } })),
+ onInput: (e) => { ev.name = e.target.value; } })),
  h("td", {},
  h("select", { className: "input",
  style: { width: "100%", boxSizing: "border-box", padding: "7px 6px" },
- onChange: (e) => { ev.type = e.target.value; renderEventsTable(); refreshCode(); } },
+ onChange: (e) => { ev.type = e.target.value; renderEventsTable(); } },
  h("option", { value: "singles", selected: ev.type === "singles" ? "" : null }, "個人戦"),
  h("option", { value: "doubles", selected: ev.type === "doubles" ? "" : null }, "ダブルス"),
  h("option", { value: "team", selected: ev.type === "team" ? "" : null }, "団体戦"),
@@ -4160,17 +3973,17 @@ const A = {
  h("td", {}, h("input", { className: "input", type: "number", inputmode: "numeric",
  style: { width: "100%", boxSizing: "border-box", padding: "7px 8px", textAlign: "right" },
  value: ev.fee || 0,
- onInput: (e) => { ev.fee = parseInt(e.target.value) || 0; refreshCode(); } })),
+ onInput: (e) => { ev.fee = parseInt(e.target.value) || 0; } })),
  h("td", {}, h("input", { className: "input", type: "number", inputmode: "numeric",
  style: { width: "100%", boxSizing: "border-box", padding: "7px 8px", textAlign: "right" },
  value: ev.fee_student != null && ev.fee_student !== "" ? ev.fee_student : "",
  placeholder: "同額",
  title: "中高校生の料金。空欄なら一般と同額",
- onInput: (e) => { ev.fee_student = e.target.value === "" ? "" : (parseInt(e.target.value) || 0); refreshCode(); } })),
+ onInput: (e) => { ev.fee_student = e.target.value === "" ? "" : (parseInt(e.target.value) || 0); } })),
  h("td", {}, h("select", { className: "input",
  style: { width: "100%", boxSizing: "border-box", padding: "7px 4px", fontSize: "12px" },
  title: "1申込あたり=1チーム/1ペアでこの金額。1人あたり=人数分を掛ける(例: まりもオープンの団体戦は1人1,000円)",
- onChange: (e) => { ev.fee_unit = e.target.value || undefined; refreshCode(); } },
+ onChange: (e) => { ev.fee_unit = e.target.value || undefined; } },
  h("option", { value: "", selected: ev.fee_unit !== "person" ? "" : null }, "1申込あたり"),
  h("option", { value: "person", selected: ev.fee_unit === "person" ? "" : null }, "1人あたり"))),
  h("td", {}, h("input", { className: "input", type: "number", inputmode: "numeric", min: "0",
@@ -4178,30 +3991,30 @@ const A = {
  value: ev.capacity != null && ev.capacity !== "" && ev.capacity !== 0 ? ev.capacity : "",
  placeholder: "上限なし",
  title: "この種目の申込上限(枠数)。満員になると申込フォームで受付終了と表示され、選べなくなります",
- onInput: (e) => { ev.capacity = parseInt(e.target.value) || 0; refreshCode(); } })),
+ onInput: (e) => { ev.capacity = parseInt(e.target.value) || 0; } })),
  h("td", {},
  ev.type === "team"
  ? h("div", { style: { display: "flex", flexDirection: "column", gap: "4px" } },
  h("input", { className: "input", type: "number", inputmode: "numeric",
  style: { width: "100%", boxSizing: "border-box", padding: "6px 8px", textAlign: "right" },
  value: ev.per_team || 6, title: "団体メンバーの人数(入力欄の数=最大)",
- onInput: (e) => { ev.per_team = parseInt(e.target.value) || 6; refreshCode(); } }),
+ onInput: (e) => { ev.per_team = parseInt(e.target.value) || 6; } }),
  h("input", { className: "input", type: "number", inputmode: "numeric", min: "0",
  style: { width: "100%", boxSizing: "border-box", padding: "6px 8px", textAlign: "right", fontSize: "12px" },
  value: ev.per_team_min || "", placeholder: "最少人数",
  title: "成立に必要な最少人数。要項の「4人以上」「3〜4人」「6〜8人」の下限。空欄なら下限なし",
- onInput: (e) => { ev.per_team_min = parseInt(e.target.value) || 0; refreshCode(); } }),
+ onInput: (e) => { ev.per_team_min = parseInt(e.target.value) || 0; } }),
  h("input", { className: "input", type: "text",
  style: { width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "12px" },
  value: ev.tie_format || "", placeholder: "例 S,S,D,S,S",
  title: "団体戦の対戦形式。S=シングルス D=ダブルス をカンマ区切り(例 S,S,D,S,S=5試合)。数字だけなら試合数。空欄なら結果はチームスコア直接入力。",
- onInput: (e) => { ev.tie_format = e.target.value; refreshCode(); } }))
+ onInput: (e) => { ev.tie_format = e.target.value; } }))
  : h("button", { className: "btn btn-sm btn-ghost", style: { fontSize: "12px", padding: "5px 8px" },
      title: "年代別など、申込者が選ぶ参加区分を定義(区分ごとに料金も設定可)",
-     onClick: () => A.openEntryCategoriesEditor(ev, t, () => { renderEventsTable(); refreshCode(); }) },
+     onClick: () => A.openEntryCategoriesEditor(ev, t, () => { renderEventsTable(); }) },
      "参加区分 " + (Array.isArray(ev.entry_categories) && ev.entry_categories.length ? "(" + ev.entry_categories.length + ")" : "設定"))),
  h("td", {}, h("button", { className: "btn btn-sm btn-danger",
- onClick: () => { events.splice(idx, 1); renderEventsTable(); refreshCode(); } },
+ onClick: () => { events.splice(idx, 1); renderEventsTable(); } },
  "削除")),
  ));
  });
@@ -4226,7 +4039,7 @@ const A = {
      h("button", { type: "button", className: "btn btn-sm btn-ghost", onClick: () => {
        ["name_split", "furigana", "player_team", "grade", "player_gender", "player_region", "first_time"]
          .forEach(k => { fieldCfg.fields[k] = "required"; });
-       renderFieldCfg(); refreshCode();
+       renderFieldCfg();
        toast("選手登録用の項目を必須にしました（保存で反映）", "ok");
      } }, "選手登録用の項目をまとめて必須にする"),
      h("span", { className: "text-xs text-sub" }, "姓・名、せい・めい、所属、学年、性別、支部、出場経験")));
@@ -4236,27 +4049,27 @@ const A = {
      grid.appendChild(h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" } },
        h("span", { style: { fontSize: "12.5px" } }, label),
        h("select", { className: "input", style: { width: "108px", padding: "5px 6px", fontSize: "12px" },
-         onChange: (e) => { fieldCfg.fields[key] = e.target.value; refreshCode(); } },
+         onChange: (e) => { fieldCfg.fields[key] = e.target.value; } },
          h("option", { value: "required", selected: cur === "required" ? "" : null }, "必須"),
          h("option", { value: "optional", selected: cur === "optional" ? "" : null }, "任意"),
          h("option", { value: "hidden", selected: cur === "hidden" ? "" : null }, "非表示"))));
    });
    fieldCfgBox.appendChild(grid);
-   // 標準項目の表示名・説明文の変更(任意)。フォームの見出しと集計シートの列名が同時に変わる。
+   // 標準項目の表示名・説明文の変更(任意)。フォームの見出しが変わる。
    const metaOf = (key) => (fieldCfg.field_meta[key] = fieldCfg.field_meta[key] || {});
    const metaDetails = h("details", { style: { margin: "4px 0 8px" } },
      h("summary", { style: { fontSize: "12px", cursor: "pointer", color: "var(--muted)" } },
-       "項目の表示名・説明文を変える(任意。集計シートの列名も同じ名前になります)"));
+       "項目の表示名・説明文を変える(任意)"));
    STD_FIELDS.forEach(([key, label]) => {
      const m = fieldCfg.field_meta[key] || {};
      metaDetails.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", margin: "4px 0" } },
        h("span", { style: { fontSize: "12px", width: "110px", flexShrink: "0" } }, label),
        h("input", { className: "input", style: { flex: "1", padding: "4px 7px", fontSize: "12px" },
          value: m.label || "", placeholder: "表示名(空欄=標準)",
-         onInput: (e) => { metaOf(key).label = e.target.value; refreshCode(); } }),
+         onInput: (e) => { metaOf(key).label = e.target.value; } }),
        h("input", { className: "input", style: { flex: "1.4", padding: "4px 7px", fontSize: "12px" },
          value: m.help || "", placeholder: "説明文(入力欄の下に表示)",
-         onInput: (e) => { metaOf(key).help = e.target.value; refreshCode(); } })));
+         onInput: (e) => { metaOf(key).help = e.target.value; } })));
    });
    fieldCfgBox.appendChild(metaDetails);
 
@@ -4293,7 +4106,6 @@ const A = {
                const bag = fieldCfg.event_overrides[evName] || (fieldCfg.event_overrides[evName] = {});
                if (v) bag[key] = v; else delete bag[key];
                if (!Object.keys(bag).length) delete fieldCfg.event_overrides[evName];
-               refreshCode();
              } },
              h("option", { value: "", selected: !cur ? "" : null }, "既定"),
              h("option", { value: "required", selected: cur === "required" ? "" : null }, "必須"),
@@ -4304,7 +4116,7 @@ const A = {
      ovTable.appendChild(ovBody);
      ovDetails.appendChild(ovTable);
      ovDetails.appendChild(h("div", { className: "text-xs text-sub", style: { marginTop: "6px" } },
-       "「既定」は上の設定に従います。集計シートの列は、どれか1種目でも表示される項目に作られます"));
+       "「既定」は上の設定に従います"));
    }
    fieldCfgBox.appendChild(ovDetails);
 
@@ -4316,41 +4128,41 @@ const A = {
        h("div", { style: { display: "flex", flexDirection: "column", gap: "1px" } },
          h("button", { className: "btn btn-sm btn-ghost", style: { padding: "0 6px", fontSize: "10px", lineHeight: "1.5" },
            title: "上へ", disabled: ci === 0 ? "" : null,
-           onClick: () => { const t2 = fieldCfg.custom[ci - 1]; fieldCfg.custom[ci - 1] = c; fieldCfg.custom[ci] = t2; renderFieldCfg(); refreshCode(); } }, "▲"),
+           onClick: () => { const t2 = fieldCfg.custom[ci - 1]; fieldCfg.custom[ci - 1] = c; fieldCfg.custom[ci] = t2; renderFieldCfg(); } }, "▲"),
          h("button", { className: "btn btn-sm btn-ghost", style: { padding: "0 6px", fontSize: "10px", lineHeight: "1.5" },
            title: "下へ", disabled: ci === fieldCfg.custom.length - 1 ? "" : null,
-           onClick: () => { const t2 = fieldCfg.custom[ci + 1]; fieldCfg.custom[ci + 1] = c; fieldCfg.custom[ci] = t2; renderFieldCfg(); refreshCode(); } }, "▼")),
+           onClick: () => { const t2 = fieldCfg.custom[ci + 1]; fieldCfg.custom[ci + 1] = c; fieldCfg.custom[ci] = t2; renderFieldCfg(); } }, "▼")),
        h("input", { className: "input", style: { flex: "1 1 130px", padding: "5px 7px", fontSize: "12px" }, value: c.label || "", placeholder: "項目名",
-         onInput: (e) => { c.label = e.target.value; refreshCode(); } }),
+         onInput: (e) => { c.label = e.target.value; } }),
        h("select", { className: "input", style: { width: "94px", padding: "5px", fontSize: "12px" },
-         onChange: (e) => { c.type = e.target.value; renderFieldCfg(); refreshCode(); } },
+         onChange: (e) => { c.type = e.target.value; renderFieldCfg(); } },
          h("option", { value: "text", selected: c.type === "text" ? "" : null }, "テキスト"),
          h("option", { value: "select", selected: c.type === "select" ? "" : null }, "選択式"),
          h("option", { value: "checkbox", selected: c.type === "checkbox" ? "" : null }, "チェック")),
        h("select", { className: "input", style: { width: "100px", padding: "5px", fontSize: "12px" },
-         onChange: (e) => { c.scope = e.target.value; renderFieldCfg(); refreshCode(); } },
+         onChange: (e) => { c.scope = e.target.value; renderFieldCfg(); } },
          h("option", { value: "submission", selected: c.scope !== "player" ? "" : null }, "申込単位"),
          h("option", { value: "player", selected: c.scope === "player" ? "" : null }, "選手ごと")),
        h("label", { style: { fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" } },
          h("input", { type: "checkbox", checked: c.required ? "" : null,
-           onChange: (e) => { c.required = e.target.checked; refreshCode(); } }), "必須"),
+           onChange: (e) => { c.required = e.target.checked; } }), "必須"),
        (c.type === "select"
          ? h("input", { className: "input", style: { flex: "1 1 130px", padding: "5px 7px", fontSize: "12px" },
              value: (c.options || []).join(", "), placeholder: "選択肢をカンマ区切り",
-             onInput: (e) => { c.options = e.target.value.split(",").map(s => s.trim()).filter(Boolean); refreshCode(); } })
+             onInput: (e) => { c.options = e.target.value.split(",").map(s => s.trim()).filter(Boolean); } })
          : h("span", { style: { flex: "1 1 130px" } })),
        h("button", { className: "btn btn-sm btn-danger", style: { padding: "4px 8px" },
-         onClick: () => { fieldCfg.custom.splice(ci, 1); renderFieldCfg(); refreshCode(); } }, "削除")));
+         onClick: () => { fieldCfg.custom.splice(ci, 1); renderFieldCfg(); } }, "削除")));
      // 2段目: 説明文・入力制限(テキストのみ)・表示条件
      const others = fieldCfg.custom.filter((o) => o !== c && o.key);
      box.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "4px", paddingLeft: "24px" } },
        h("input", { className: "input", style: { flex: "1.5 1 150px", padding: "4px 7px", fontSize: "11.5px" },
          value: c.help || "", placeholder: "説明文(入力欄の下に表示)",
-         onInput: (e) => { c.help = e.target.value; refreshCode(); } }),
+         onInput: (e) => { c.help = e.target.value; } }),
        (c.type === "text"
          ? h("select", { className: "input", style: { width: "96px", padding: "4px", fontSize: "11.5px" },
              title: "入力できる文字の種類",
-             onChange: (e) => { c.input = e.target.value || undefined; refreshCode(); } },
+             onChange: (e) => { c.input = e.target.value || undefined; } },
              h("option", { value: "", selected: !c.input ? "" : null }, "自由入力"),
              h("option", { value: "number", selected: c.input === "number" ? "" : null }, "数字のみ"),
              h("option", { value: "tel", selected: c.input === "tel" ? "" : null }, "電話番号"))
@@ -4358,14 +4170,14 @@ const A = {
        (c.type === "text"
          ? h("input", { className: "input", type: "number", style: { width: "78px", padding: "4px 6px", fontSize: "11.5px" },
              value: c.maxlen || "", placeholder: "字数上限", title: "文字数の上限(空欄=制限なし)",
-             onInput: (e) => { c.maxlen = parseInt(e.target.value) || undefined; refreshCode(); } })
+             onInput: (e) => { c.maxlen = parseInt(e.target.value) || undefined; } })
          : null),
        h("select", { className: "input", style: { flex: "1 1 140px", padding: "4px", fontSize: "11.5px" },
          title: "この項目を表示する条件(別の自由項目が入力・チェックされたときだけ出す)",
          onChange: (e) => {
            if (e.target.value) c.when = { key: e.target.value, equals: (c.when && c.when.equals) || undefined };
            else c.when = undefined;
-           renderFieldCfg(); refreshCode();
+           renderFieldCfg();
          } },
          h("option", { value: "" }, "いつも表示"),
          ...others.map((o) => h("option", { value: o.key, selected: c.when && c.when.key === o.key ? "" : null },
@@ -4374,14 +4186,14 @@ const A = {
          ? h("input", { className: "input", style: { width: "110px", padding: "4px 6px", fontSize: "11.5px" },
              value: c.when.equals || "", placeholder: "特定の値(任意)",
              title: "空欄=何か入力があれば表示。値を入れるとその値のときだけ表示(選択式の条件に)",
-             onInput: (e) => { c.when.equals = e.target.value || undefined; refreshCode(); } })
+             onInput: (e) => { c.when.equals = e.target.value || undefined; } })
          : null)));
      fieldCfgBox.appendChild(box);
    });
    fieldCfgBox.appendChild(h("button", { className: "btn btn-sm btn-ghost", style: { marginTop: "4px" },
      onClick: () => {
        fieldCfg.custom.push({ key: "opt" + Math.random().toString(36).slice(2, 7), label: "新しい項目", type: "text", required: false, scope: "submission" });
-       renderFieldCfg(); refreshCode();
+       renderFieldCfg();
      } }, "+ 自由項目を追加"));
  };
  renderFieldCfg();
@@ -4402,144 +4214,31 @@ const A = {
      optBox.appendChild(h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginBottom: "5px", padding: "6px", background: "var(--bg)", borderRadius: "6px" } },
        h("input", { className: "input", style: { flex: "1 1 140px", padding: "5px 7px", fontSize: "12px" },
          value: o.label || "", placeholder: "項目名（例: お弁当）",
-         onInput: (e) => { o.label = e.target.value; refreshCode(); } }),
+         onInput: (e) => { o.label = e.target.value; } }),
        h("input", { className: "input", type: "number", min: "0", style: { width: "96px", padding: "5px 7px", fontSize: "12px", textAlign: "right" },
          value: o.price || 0, title: "単価(円)",
-         onInput: (e) => { o.price = parseInt(e.target.value) || 0; refreshCode(); } }),
+         onInput: (e) => { o.price = parseInt(e.target.value) || 0; } }),
        h("span", { className: "text-xs text-sub" }, "円 /"),
        h("input", { className: "input", style: { width: "62px", padding: "5px 7px", fontSize: "12px" },
          value: o.unit || "個", title: "単位(個・名など)",
-         onInput: (e) => { o.unit = e.target.value; refreshCode(); } }),
+         onInput: (e) => { o.unit = e.target.value; } }),
        h("input", { className: "input", type: "number", min: "0", style: { width: "86px", padding: "5px 7px", fontSize: "12px", textAlign: "right" },
          value: o.max || "", placeholder: "上限なし", title: "1申込あたりの上限数(空欄=上限なし)",
-         onInput: (e) => { o.max = parseInt(e.target.value) || 0; refreshCode(); } }),
+         onInput: (e) => { o.max = parseInt(e.target.value) || 0; } }),
        h("input", { className: "input", style: { flex: "1 1 150px", padding: "5px 7px", fontSize: "12px" },
          value: o.note || "", placeholder: "補足（フォームに表示）",
-         onInput: (e) => { o.note = e.target.value; refreshCode(); } }),
+         onInput: (e) => { o.note = e.target.value; } }),
        h("button", { className: "btn btn-sm btn-danger", style: { padding: "4px 8px" },
-         onClick: () => { entryOptions.splice(oi, 1); renderOptions(); refreshCode(); } }, "削除")));
+         onClick: () => { entryOptions.splice(oi, 1); renderOptions(); } }, "削除")));
    });
    optBox.appendChild(h("button", { className: "btn btn-sm btn-ghost", style: { marginTop: "4px" },
      onClick: () => {
        // 既定は空欄。特定の品目を初期値にすると「毎回それが要る」と誤解されるため。
        entryOptions.push({ key: "opt" + Math.random().toString(36).slice(2, 7), label: "", price: 0, unit: "個", max: 0, note: "" });
-       renderOptions(); refreshCode();
+       renderOptions();
      } }, "+ オプションを追加"));
  };
  renderOptions();
-
- // 埋込先プラットフォーム選択 (WordPress / Jimdo)。STUDIO 埋込は廃止(旧設定は WordPress に吸収)。
- let platform = localStorage.getItem("tt_embed_platform_" + t.id) || "wordpress";
- if (platform === "studio") platform = "wordpress";
-
- // 埋込コードプレビューエリア
- const codeArea = h("textarea", {
- readOnly: "", rows: 7,
- style: { width: "100%", fontFamily: "monospace", fontSize: "11px",
- background: "#0f172a", color: "#e2e8f0", padding: "10px",
- borderRadius: "4px", border: "none" },
- });
- const codeWarning = h("div", { id: "embedWarn",
- style: { fontSize: "11px", marginTop: "6px", color: "#dc2626" } });
-
- const refreshCode = async () => {
- // events を URL に乗せると長さ制限 (~7KB) で 404 になるため、
- // サーバー側に event_config として保存し、URL は最小化
- const qs = new URLSearchParams();
- if (gasUrl) qs.set("gas_url", gasUrl);  // GAS URL 任意 (空なら本サーバーへ自動POST)
- if (deadline) qs.set("deadline", deadline);
- if (paymentNote) qs.set("payment_note", paymentNote);
- // events は URL に乗せない (server が tournament.event_config から読み込む)
- const origin = A.publicOrigin();
- // ★新方式: /entry/<id> = 自己完結フォーム (GAS不要、自サーバーへ直接POST)
- const formUrl = origin + `/entry/${t.id}` +
-   (qs.toString() ? `?${qs}` : "");
-
- // エラーチェック
- const warnings = [];
- const errors = [];
- if (gasUrl && !/^https:\/\/script\.google\.com\//.test(gasUrl)) {
-   errors.push("GAS Web App URL は https://script.google.com/macros/... 形式である必要があります。");
- }
- // GAS URL が未設定の場合は本サーバーが受け口になる (警告不要)
-
- // プラットフォーム別コード生成
- // 注意: Jimdo は <style>/<script> をサニタイズで削除することがあるため、
- // HTTPS iframe 方式に統一 (Render の HTTPS URL で動作)
- let code = "";
- if (!formUrl.startsWith("https://")) {
-   errors.push("[致命] iframe方式は HTTPS 必須。「本番URL設定」で https:// で始まる URL を設定してください。");
- }
- // iframe 高さ自動調整リスナ (スクリプト可のサイト=STUDIO/独自HTML等で有効。
- // スクリプトを除去するCMS=一部Jimdo では無視され固定高にフォールバックするだけで無害)。
- // 送信元オリジンを厳格に照合し、自分の申込フォームからの高さ通知のみ反映。
- const resizeScript =
-   `\n<script>\n` +
-   `/* KTTA 申込フォーム iframe 高さ自動調整 (任意・無害) */\n` +
-   `(function(){var O=${JSON.stringify(origin)},T=${JSON.stringify(String(t.id))};\n` +
-   `window.addEventListener("message",function(e){if(e.origin!==O)return;var d=e.data;\n` +
-   `if(!d||d.__ktta_entry_form!==true||d.id!==T)return;\n` +
-   `var f=document.querySelector('iframe[data-ktta-entry="'+T+'"]');if(!f)return;\n` +
-   `if(d.scrollIntoView){try{f.scrollIntoView({behavior:"smooth",block:"start"});}catch(_){}return;}\n` +
-   `if(typeof d.height==="number"&&d.height>200){var nh=d.height+"px";if(f.style.height!==nh)f.style.height=nh;}});})();\n` +
-   `<\/script>`;
- if (platform === "wordpress") {
-   // WordPress「カスタムHTML」ブロック用。iframe + 高さ自動調整スクリプト(プラグイン不要・
-   // レスポンシブ)。カスタムHTMLブロックは iframe と inline script を通すのでそのまま動く。
-   code =
-     `<!-- ${t.name} 申込フォーム / WordPress「カスタムHTML」ブロックに貼付 -->\n` +
-     `<div style="width:100%;max-width:840px;margin:24px auto;padding:0">\n` +
-     `  <iframe src="${formUrl}"\n` +
-     `          data-ktta-entry="${t.id}"\n` +
-     `          width="100%" height="1600"\n` +
-     `          frameborder="0" scrolling="no"\n` +
-     `          style="border:0;display:block;width:100%;max-width:100%;background:#fff;border-radius:10px"\n` +
-     `          title="${t.name} 申込フォーム"\n` +
-     `          loading="lazy"\n` +
-     `          allow="clipboard-write"></iframe>\n` +
-     `</div>` + resizeScript;
- } else if (platform === "jimdo") {
-   // Jimdo: HTTPS iframe (Jimdo の HTML埋込ウィジェットで動作)
-   code =
-     `<!-- ${t.name} 申込フォーム (Jimdo HTML埋込ウィジェット用) -->\n` +
-     `<div style="width:100%;max-width:840px;margin:20px auto;padding:0">\n` +
-     `  <iframe src="${formUrl}"\n` +
-     `          data-ktta-entry="${t.id}"\n` +
-     `          width="100%" height="1600"\n` +
-     `          frameborder="0" scrolling="auto"\n` +
-     `          style="border:0;display:block;width:100%;background:#fff;border-radius:8px"\n` +
-     `          title="${t.name} 申込フォーム"\n` +
-     `          loading="lazy"\n` +
-     `          allow="clipboard-write"></iframe>\n` +
-     `</div>` + resizeScript;
- }
- codeArea.value = code;
-
- // URL プレビューを更新
- const urlA = document.getElementById("embedUrlPreview");
- if (urlA) { urlA.href = formUrl; urlA.textContent = formUrl; }
-
- const wn = document.getElementById("embedWarn");
- if (wn) {
-   let html = "";
-   if (errors.length) {
-     html += "<div style='padding:8px 10px;background:#fef2f2;border:1.5px solid #dc2626;border-radius:5px;margin-bottom:6px'>" +
-       "<strong style='color:#991b1b'>[致命エラー] 修正してください:</strong><br>" +
-       errors.map(e => "・" + e).join("<br>") +
-       "</div>";
-   }
-   if (warnings.length) {
-     html += "<div style='padding:8px 10px;background:#fef3c7;border:1px solid #d97706;border-radius:5px;color:#78350f'>" +
-       "<strong>[注意]</strong><br>" + warnings.map(w => "・" + w).join("<br>") +
-       "</div>";
-   }
-   if (!errors.length && !warnings.length) {
-     html = "<div style='padding:8px 10px;background:#f0fdf4;border:1px solid #15803d;border-radius:5px;color:#14532d'>" +
-       "<strong>[OK]</strong> エラーチェック合格。このまま貼付可能です。</div>";
-   }
-   wn.innerHTML = html;
- }
- };
 
  // ── 他の大会から設定をコピー(毎年の大会は申込の決まりもほぼ同じ) ──
  const copyBox = h("div", { style: { padding: "12px 14px", background: "#f8fafc",
@@ -4605,22 +4304,18 @@ const A = {
      entry_options: entryOptions,  // 有料オプション(サーバ側で sanitize される)
      entry_payment_note: paymentNote,   // 参加料の案内文(埋込URLではなく大会に持たせる)
      organizer: orgEl ? orgEl.value.trim() : (t.organizer || "釧路卓球協会"),
-     entry_gas_url: gasUrl || "",  // GAS URL も DB に保存
    });
    if (r && r.error) throw new Error(r.error);
    // localStorage にも保存 (将来 admin で参照しやすいよう)
-   if (gasUrl) localStorage.setItem("tt_gas_url_" + t.id, gasUrl);
    if (adminEmail) localStorage.setItem("tt_admin_email", adminEmail);
    // 画面が持っている大会データも更新しておく
    t.entries_open = openEl ? openEl.checked : t.entries_open;
    t.entry_deadline = dlEl ? dlEl.value : t.entry_deadline;
    t.organizer = orgEl ? orgEl.value.trim() : t.organizer;
-   t.entry_gas_url = gasUrl;
    const statusMsg = (openEl && openEl.checked) ? "受付中" : "停止中";
    const cN = (fieldCfg.custom || []).length, oN = (entryOptions || []).length;
    return `${events.length}種目 / ${statusMsg}`
-     + (cN ? ` / 自由項目${cN}` : "") + (oN ? ` / オプション${oN}` : "")
-     + (gasUrl ? " / GAS連携" : "");
+     + (cN ? ` / 自由項目${cN}` : "") + (oN ? ` / オプション${oN}` : "");
  };
 
  const body = h("div", {},
@@ -4680,56 +4375,19 @@ const A = {
    + "下の「保存して閉じる」か「この画面の設定をすべてサーバーに保存」を押すまで反映されません。"),
  ),
 
- h("div", { className: "text-sm mb-3",
- style: { padding: "10px 14px", background: "#f0fdf4",
- borderLeft: "3px solid #059669", borderRadius: "0 4px 4px 0" } },
- h("strong", {}, "WordPress モード(推奨): "),
- "「カスタムHTML」ブロックに貼るだけ。プラグイン不要で、iframe の高さが内容に合わせて自動調整されレスポンシブに表示されます。",
- h("br", {}),
- h("strong", {}, "Jimdo モード: "),
- "Jimdo の HTML 埋込ウィジェット用(HTTPS iframe)。"),
-
- // プラットフォーム切替
- h("div", { className: "field" },
- h("label", { className: "field-label" }, "埋込先プラットフォーム"),
- h("div", { className: "flex gap-2" },
- h("button", { className: "btn btn-sm embed-plat-btn" + (platform === "wordpress" ? "" : " btn-ghost"),
-   onClick: () => { platform = "wordpress";
-     localStorage.setItem("tt_embed_platform_" + t.id, platform);
-     refreshCode();
-     // ボタンの active 切替
-     document.querySelectorAll(".embed-plat-btn").forEach(b => {
-       b.classList.toggle("btn-ghost", b.dataset.plat !== platform);
-     });
-   },
-   "data-plat": "wordpress",
- }, "WordPress (推奨)"),
- h("button", { className: "btn btn-sm embed-plat-btn" + (platform === "jimdo" ? "" : " btn-ghost"),
-   onClick: () => { platform = "jimdo";
-     localStorage.setItem("tt_embed_platform_" + t.id, platform);
-     refreshCode();
-     document.querySelectorAll(".embed-plat-btn").forEach(b => {
-       b.classList.toggle("btn-ghost", b.dataset.plat !== platform);
-     });
-   },
-   "data-plat": "jimdo",
- }, "Jimdo"),
- ),
- ),
-
  h("h3", { className: "text-sm font-bold mt-3 mb-2" }, "① 種目・料金設定"),
  h("div", { style: { overflowX: "auto", marginBottom: "2px", paddingBottom: "2px" } }, eventsTable),
  h("div", { className: "flex gap-2 mt-2", style: { flexWrap: "wrap" } },
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => {
  events.push({ name: "新種目", type: "singles", fee: 700 });
- renderEventsTable(); refreshCode();
+ renderEventsTable();
  } }, "+ 空の種目を追加"),
  h("button", { className: "btn btn-sm btn-ghost",
- onClick: () => A.openEventCatalogPicker(events, () => { renderEventsTable(); refreshCode(); }) },
+ onClick: () => A.openEventCatalogPicker(events, () => { renderEventsTable(); }) },
  "+ カタログから追加"),
  h("button", { className: "btn btn-sm btn-ghost",
- onClick: () => A.openUserEventTemplates(events, () => { renderEventsTable(); refreshCode(); }) },
+ onClick: () => A.openUserEventTemplates(events, () => { renderEventsTable(); }) },
  "テンプレ管理 / 読込"),
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => {
@@ -4749,77 +4407,32 @@ const A = {
    "「選手ごと」の自由項目は選手1名ごとに、「申込単位」は申込1件につき1つ表示されます。"),
  fieldCfgBox,
 
- h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "③ GAS / メール設定"),
- h("div", { className: "field" },
- h("label", { className: "field-label" }, "GAS Web App URL (受信先)"),
- h("input", { className: "input",
- placeholder: "https://script.google.com/macros/s/AKfycb.../exec",
- value: gasUrl,
- onInput: (e) => { gasUrl = e.target.value; refreshCode(); } }),
- h("div", { className: "text-xs text-sub mt-1" },
- "gas/entry_form_handler.gs を Google スプレッドシートに設置し、ウェブアプリとしてデプロイした URL"),
- // 受付中なのに未設定だと、申込がどこにも送られないまま溜まる。空欄の意味を明示する。
- (!gasUrl ? h("div", { className: "text-xs mt-1",
-   style: { padding: "8px 10px", background: "#fef3c7", border: "1px solid #d97706",
-     borderRadius: "6px", color: "#78350f", lineHeight: "1.7" } },
-   h("strong", {}, "未設定です。"),
-   "この欄が空のあいだ、申込は本部システムにだけ保存され、スプレッドシートには送られません",
-   "（申込自体は失われません）。集計シートを使うならURLを登録してください。") : null),
- ),
+ h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "③ メール・お知らせ設定"),
  h("div", { className: "two-col" },
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "管理者メール (任意通知)"),
  h("input", { className: "input", type: "email", value: adminEmail,
- onInput: (e) => { adminEmail = e.target.value; refreshCode(); } })),
+ onInput: (e) => { adminEmail = e.target.value; } })),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "申込締切日 (表示用)"),
  h("input", { className: "input", value: deadline,
  placeholder: "例: 6月26日(金)まで",
- onInput: (e) => { deadline = e.target.value; refreshCode(); } })),
+ onInput: (e) => { deadline = e.target.value; } })),
  ),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "支払い方法の案内"),
  h("input", { className: "input", value: paymentNote,
- onInput: (e) => { paymentNote = e.target.value; refreshCode(); } })),
+ onInput: (e) => { paymentNote = e.target.value; } })),
 
  h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "④ オプション (弁当・懇親会など)"),
  optBox,
 
- h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "⑤ 埋込コード (HTML)"),
+ h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "⑤ 保存と申込フォームのURL"),
  h("div", { className: "text-xs text-sub mb-2",
    style: { padding: "8px 10px", background: "#fffbeb",
             borderLeft: "3px solid #f59e0b", borderRadius: "0 4px 4px 0" } },
-   "重要: 「種目をサーバーに保存」を押してから埋込コードをコピーしてください。" +
-   "保存しないと申込フォームに種目が表示されない場合があります。"),
- // URL のフィージビリティを示すバナー
- h("div", { id: "embedUrlInfo",
-   style: { padding: "8px 12px", background: "var(--bg)",
-            border: "1px solid var(--border)", borderRadius: "6px",
-            marginBottom: "8px", fontSize: "11px", fontFamily: "monospace",
-            wordBreak: "break-all" } },
-   h("div", { className: "text-xs text-sub" }, "発行されるフォームURL:"),
-   h("a", { id: "embedUrlPreview", href: "#", target: "_blank",
-     style: { color: "var(--pri)", textDecoration: "none" } }, ""),
-   h("div", { style: { marginTop: "6px" } },
-     h("button", { className: "btn btn-sm btn-ghost",
-       style: { padding: "3px 10px", fontSize: "11px" },
-       onClick: async () => {
-         const u = document.getElementById("embedUrlPreview").href;
-         if (!u || u === "#") return toast("URL未生成", "err");
-         try {
-           const r = await fetch(u, { method: "HEAD" });
-           if (r.ok) toast("URL接続 OK (HTTP " + r.status + ")", "ok");
-           else toast("HTTP " + r.status + "。設定を見直してください", "err");
-         } catch (e) {
-           toast("通信エラー: " + e.message + " (Renderスリープ中？数秒待って再試行)", "err");
-         }
-       } }, "URLが正しいか確認"),
-     " ",
-     h("button", { className: "btn btn-sm btn-ghost",
-       style: { padding: "3px 10px", fontSize: "11px" },
-       onClick: () => A.openPublicOriginConfig() }, "本番URL設定変更"))),
- codeArea,
- codeWarning,
+   "申込は、下の「公開申込 URL」を案内して行います。設定を変えたら、先に保存してください。" +
+   "保存しないと、申込フォームに反映されない場合があります。"),
  h("div", { className: "flex gap-2 mt-2 flex-wrap" },
  h("button", { className: "btn btn-sm",
    style: { background: "#15803d", color: "#fff" },
@@ -4829,16 +4442,10 @@ const A = {
    catch (err) { toast("保存失敗: " + err.message, "err"); }
    finally { btn.disabled = false; }
  } }, "▼ この画面の設定をすべてサーバーに保存"),
- h("button", { className: "btn btn-sm",
- onClick: () => {
- codeArea.select(); document.execCommand("copy");
- toast("コピーしました", "ok");
- } }, "コードをコピー"),
  h("a", { className: "btn btn-sm btn-ghost",
  onClick: (e) => {
  e.preventDefault();
  const qs = new URLSearchParams();
- if (gasUrl) qs.set("gas_url", gasUrl);
  if (adminEmail) qs.set("admin_email", adminEmail);
  if (deadline) qs.set("deadline", deadline);
  if (paymentNote) qs.set("payment_note", paymentNote);
@@ -4871,45 +4478,11 @@ const A = {
  ),
  h("div", { style: { fontSize: "11px", color: "#78350f", marginTop: "6px",
  lineHeight: "1.6" } },
- "GAS 設定なしで動作します。申込は本サーバーに直接保存されます。"),
+ "申込は本サーバーに直接保存されます。このURLをそのまま案内してください。"),
  ),
 
- h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "④ セットアップ手順"),
- h("div", { className: "text-sm",
- style: { padding: "12px", background: "#f9fafb", borderRadius: "4px",
- whiteSpace: "pre-wrap", fontSize: "12px", lineHeight: "1.7" } },
- h("strong", {}, "■ 申込先 (デフォルト: 本サーバー自己完結)"),
- h("br", {}),
- "・GAS URL を空欄にすると、申込は本サーバーに直接保存されます。\n" +
- "・既存の GAS スプレッドシートを使う場合のみ「GAS Web App URL」を設定してください。\n",
- h("br", {}),
- h("strong", {}, "■ GAS スプレッドシート設定 (任意)"),
- h("br", {}),
- "1. Google スプレッドシートを新規作成\n" +
- "2. 拡張機能 → Apps Script を開く\n" +
- "3. tabletennis/gas/entry_form_handler.gs の内容を貼り付け\n" +
- "4. プロジェクト設定 → スクリプトプロパティ:\n" +
- "     ADMIN_EMAIL = 主催者メールアドレス\n" +
- "     ASSOCIATION_NAME = 釧路卓球協会\n" +
- "5. デプロイ → 新しいデプロイ → 種類:ウェブアプリ\n" +
- "     アクセス: 全員、実行ユーザー: 自分\n" +
- "6. デプロイ URL を上記「GAS Web App URL」欄にコピー\n",
- h("br", {}),
- h("strong", {}, "■ Jimdo に貼付ける場合 (推奨)"),
- h("br", {}),
- "1. Jimdo の編集モードで、フォームを置きたい場所に\n" +
- "   「+ コンテンツ追加」→「ウィジェット/HTML」を選択\n" +
- "2. 上記のコード (Jimdo モード) を全て貼り付け\n" +
- "3. 「保存」を押す → 即座にフォーム表示\n",
- h("br", {}),
- h("strong", {}, "■ WordPress に貼付ける場合(推奨)"),
- h("br", {}),
- "1. 投稿/固定ページの編集で「+」→「カスタムHTML」ブロックを追加\n" +
- "2. 上記のコード (WordPress モード) を貼り付けて公開/更新\n" +
- "3. iframe の高さは内容に合わせて自動調整されます(プラグイン不要)"),
  );
 
- refreshCode();
 
  const foot = h("div", { className: "flex gap-2" },
  h("button", { className: "btn btn-ghost",
@@ -4930,7 +4503,7 @@ const A = {
  }
  } }, "保存して閉じる"),
  );
- openModal("申込フォーム生成 (WordPress / Jimdo 埋込)", body, foot, { size: "lg" });
+ openModal("申込フォームの設定", body, foot, { size: "lg" });
  },
 
  // ── 種目カタログ ピッカー (デフォルト種目から複数選択) ──
@@ -5707,18 +5280,17 @@ const A = {
  ),
  ));
  card.appendChild(inner);
- // 申込集計・領収書は GAS が本式 → 補助機能として折りたたみに降格 (#151)
+ // 申込集計・領収書は補助機能として折りたたみに降格 (#151)
  card.appendChild(h("details", { className: "subtools" },
  h("summary", {}, "申込集計・帳票 (補助)"),
  h("div", { className: "subtools-body" },
  h("div", { className: "subtools-note" },
- "申込の集計・領収書・受付管理は Google スプレッドシート (GAS) が本式です。",
- "下記は手元での確認・予備用の補助機能です。"),
+ "手元での確認・予備用の補助機能です。"),
  h("div", { className: "flex gap-2 flex-wrap" },
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.downloadAggregation(t) }, "集計表ダウンロード"),
  h("button", { className: "btn btn-sm btn-ghost", style: { background: "#ecfdf5", color: "#065f46", borderColor: "#a7f3d0" },
- onClick: () => A.downloadApplicantsXlsx(t), title: "申込一覧をExcel(.xlsx)で出力。Googleスプレッドシートの代替" }, "申込一覧をExcel"),
+ onClick: () => A.downloadApplicantsXlsx(t), title: "申込一覧をExcel(.xlsx)で出力" }, "申込一覧をExcel"),
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.openReceiptsDialog(t) }, "領収書一括出力"),
  h("button", { className: "btn btn-sm btn-ghost",
@@ -6285,9 +5857,6 @@ const A = {
  let placedByEvent = {};   // event → Set(entrant_id) (bracket_round=1のリーフ)
  const compareBar = h("div", { style: { marginBottom: "10px" } });
  const qualityBar = h("div", { style: { marginBottom: "12px" } });
- // 集計スプレッドシートに届いたか。過去に「申込は来ていたのにシートに無い」事故があったため、
- // 申込一覧を開いたら必ず目に入る位置に出す。
- const gasBar = h("div", { style: { marginBottom: "12px" } });
  const tabStrip = h("div", { className: "flex", style: { gap: "6px", flexWrap: "wrap", marginBottom: "12px" } });
  const tableWrap = h("div", { style: { overflow: "auto", maxHeight: "calc(86vh - 210px)" } });
  const summary = h("div", { className: "text-sub", style: { fontSize: "13px", marginBottom: "10px" } });
@@ -6360,89 +5929,6 @@ const A = {
          check: "申込一覧の上の「データ不整合」の件数が減ったこと、直した人の行を確かめてください。", backup: r.backup });
      } });
  };
- // ── 集計スプレッドシートへの反映状況 ──
- let gasState = null;
- const loadGas = async () => {
-   try { gasState = await api.get(`/api/tournaments/${t.id}/gas-sync`); }
-   catch (e) { gasState = null; }
-   renderGas();
- };
- const renderGas = () => {
-   clear(gasBar);
-   if (!gasState || gasState.error) return;
-   if (!gasState.total) return;               // 申込ゼロなら出さない
-   // 未連携のときに何も出さないと、申込がどこへ行ったのか分からないまま溜まる
-   // (実際に「申込データがどこに飛んでいるか分かりません」という報告が出た)。
-   // 申込があるのに連携していないなら、それ自体を知らせる。
-   if (!gasState.configured) {
-     gasBar.appendChild(h("div", { style: { display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap",
-       padding: "10px 14px", borderRadius: "8px", background: "#fef3c7", border: "1px solid #d97706" } },
-       h("span", { style: { fontWeight: 700, color: "#78350f" } }, "スプレッドシート未連携"),
-       h("span", { className: "text-xs", style: { color: "#78350f", lineHeight: "1.7" } },
-         `申込 ${gasState.total} 件は本部システムに保存されていますが、スプレッドシートには送られていません。`
-         + "集計シートを使うなら、フォーム設定で「GAS Web App URL」を登録してください。"
-         + "登録後は「未反映をシートへ再送」で過去の申込もまとめて送れます。"),
-       h("button", { className: "btn btn-sm", style: { marginLeft: "auto" },
-         onClick: () => A.openEntryFormGenerator(t) }, "フォーム設定を開く")));
-     return;
-   }
-   const failed = gasState.counts.failed || 0;
-   const unknown = gasState.counts.unknown || 0;
-   const okN = gasState.counts.ok || 0;
-   const pendingN = failed + unknown;
-   const bad = pendingN > 0;
-   const box = h("div", { style: { display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap",
-     padding: "10px 14px", borderRadius: "8px",
-     background: bad ? "#fee2e2" : "#ecfdf5", border: "1px solid " + (bad ? "#dc2626" : "#10b981") } },
-     h("span", { style: { fontWeight: 700, color: bad ? "#991b1b" : "#065f46" } },
-       bad ? `スプレッドシート未反映 ${pendingN} 件` : `スプレッドシート反映済み ${okN} 件`),
-     h("span", { className: "text-xs", style: { color: bad ? "#991b1b" : "#065f46" } },
-       `(全 ${gasState.total} 件中 反映済 ${okN}` + (failed ? ` / 失敗 ${failed}` : "")
-         + (unknown ? ` / 不明 ${unknown}` : "") + ")"));
-   if (unknown && !failed) {
-     box.appendChild(h("span", { className: "text-xs", style: { color: "#991b1b" } },
-       "「不明」はこの機能を入れる前の申込です。突合で確認できます。"));
-   }
-   box.appendChild(h("div", { style: { marginLeft: "auto", display: "flex", gap: "6px", flexWrap: "wrap" } },
-     h("button", { className: "btn btn-sm", title: "スプレッドシートを実際に読んで、DBの申込と1件ずつ突き合わせます",
-       onClick: async (e) => {
-         e.target.disabled = true; e.target.textContent = "確認中…";
-         try {
-           const r = await api.get(`/api/tournaments/${t.id}/gas-sync/reconcile`);
-           if (r.error) { toast(r.error, "err"); return; }
-           if (!r.comparable) { toast(`件数のみ比較: Platform ${r.db_count}件 / シート ${r.sheet_count}件。申込単位の照合はできません。`, "warn"); }
-           else if (r.unknown_count) { toast(`シート未確認 ${r.missing_count}件・照合キー不明 ${r.unknown_count}件`, "warn"); }
-           else if (!r.missing_count) { toast(`${r.db_count}件の申込IDをシートで確認しました。変更内容は未照合です。`, "ok"); }
-           else {
-             const names = (r.missing || []).slice(0, 5).map(m => m.team_name || m.contact_name).join("、");
-             toast(`シートに無い申込が ${r.missing_count} 件あります${names ? ": " + names : ""}`, "err");
-           }
-           await loadGas();
-         } catch (err) { toast("突合に失敗: " + err.message, "err"); }
-         finally { e.target.disabled = false; e.target.textContent = "シートと突合"; }
-       } }, "シートと突合"),
-     bad ? h("button", { className: "btn btn-sm", style: { background: "#dc2626", color: "#fff", borderColor: "#b91c1c" },
-       title: "受付時と同じ内容をもう一度シートへ送ります。既に入っている申込は重複しません",
-       onClick: async (e) => {
-         if (!confirm(`未反映の ${pendingN} 件をスプレッドシートへ再送します。\n\n受付時と同じ内容を送り直します。既に入っている申込は重複しません。\n\nよろしいですか？`)) return;
-         e.target.disabled = true; e.target.textContent = "再送中…";
-         try {
-           const r = await api.post(`/api/tournaments/${t.id}/gas-sync/resend-all`, {});
-           if (r.error) { toast(r.error, "err"); return; }
-           toast(`${r.succeeded}件を反映しました` + (r.failed ? ` / ${r.failed}件は失敗` : "")
-             + (r.remaining ? ` / 残り${r.remaining}件はもう一度押してください` : ""), r.failed ? "err" : "ok");
-           if (r.failed) {
-             const ng = (r.results || []).filter(x => !x.ok).slice(0, 3)
-               .map(x => `${x.team_name || x.id}: ${x.error || "原因不明"}`).join(" / ");
-             if (ng) toast(ng, "err");
-           }
-           await loadGas();
-         } catch (err) { toast("再送に失敗: " + err.message, "err"); }
-         finally { e.target.disabled = false; e.target.textContent = "未反映をシートへ再送"; }
-       } }, "未反映をシートへ再送") : null));
-   gasBar.appendChild(box);
- };
-
  const renderQuality = () => {
    clear(qualityBar);
    if (!issueTotal) return;
@@ -6647,7 +6133,6 @@ const A = {
    refreshShibu();
    if (activeTab !== "all" && !eventsList().includes(activeTab)) activeTab = "all";
    renderQuality(); renderTabs(); renderCompare(); renderTable();
-   loadGas();   // シート反映状況は独立して読む(失敗しても一覧は出す)
  };
  // ── フィルタバー(検索/状態/性別/支部) ──
  const mkSel = (defs, onCh) => { const s = h("select", { className: "input input-sm", style: { width: "auto" } },
@@ -7220,8 +6705,8 @@ const A = {
  // 旧「生成済みの表を編集」は統合エディタ(sheetBtn)に一本化(オーナー要望 2026-07-18)。
  const btnBar = h("div", { className: "flex gap-2", style: { flexWrap: "wrap", alignItems: "center", margin: "0 0 10px" } }, sheetBtn, genBtn, previewBtn, clearBracketsBtn, bulkDelBtn);
  const body = A.entryOnly
-   ? h("div", {}, summary, gasBar, qualityBar, tabStrip, filterBar, tableWrap)
-   : h("div", {}, summary, gasBar, compareBar, qualityBar, tabStrip, btnBar, previewBox, filterBar, ssNote, tableWrap);
+   ? h("div", {}, summary, qualityBar, tabStrip, filterBar, tableWrap)
+   : h("div", {}, summary, compareBar, qualityBar, tabStrip, btnBar, previewBox, filterBar, ssNote, tableWrap);
  if (opts && opts.panel) {
    // 専用ページ(タブ)描画: モーダルを開かず、高さ制限も外して画面全体で見せる
    tableWrap.style.maxHeight = "";

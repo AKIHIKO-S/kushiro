@@ -271,10 +271,3 @@ test("未記入行の必須を外す仕組みがフォームに組み込まれ�
   assert.ok(bodyOf("removeEntry", "rowDivision").includes("ttFormSync()"), "行削除時に同期");
 });
 
-// ── 列スキーマとの整合 ─────────────────────────────────────
-test("条件つき項目も集計シートの列になる(未回答は空欄で埋まるだけ)", () => {
-  const t = openTournament();
-  const s = db.buildFormSchema(t);
-  const keys = s.columns.ledger.map(c => c.key);
-  assert.ok(keys.includes("cust:stay_nights"), "条件つき項目の列が作られる: " + JSON.stringify(keys));
-});
