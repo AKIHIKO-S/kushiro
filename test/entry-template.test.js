@@ -115,3 +115,31 @@ test("満員の種目はテンプレに出さない・列定義は大会設定�
   const cols = eventColumns({ ...CFG, fields: { ...CFG.fields, player_region: "required" } }, EVENTS[0]);
   assert.ok(cols.some(c => c.key === "region" && c.req));
 });
+
+test("本部の一括登録: 列は氏名・ふりがな・所属・区分だけ。読み取り結果を手入力登録の形に変える", () => {
+  const { adminTemplateConfig, adminTemplateEvents, toManualPatch } = require("../lib/entry-template");
+  const evs = adminTemplateEvents([
+    { name: "中学男子シングルス", type: "singles", category: "middle", age_check: { mode: "birthdate" } },
+    { name: "一般ダブルス", type: "doubles", entry_categories: [{ value: "general", label: "一般", short: "一般" }, { value: "stu", label: "中高生", short: "中高" }] },
+    { name: "団体戦", type: "team", per_team: 3, per_team_min: 2 },
+  ]);
+  const cfg = adminTemplateConfig(CFG);
+  const base = buildEntryTemplate({ tournament: T, events: evs, fieldConfig: cfg, admin: true });
+  assert.deepStrictEqual(headers(base, "中学男子シングルス"), ["氏名（必須）", "ふりがな", "所属"], "学年・性別・生年月日などの列は出さない");
+  const buf = fill(base, {
+    "申込者": [["B5", "釧路中学校"]],
+    "中学男子シングルス": [["A6", "釧路 太郎"], ["B6", "くしろ たろう"], ["C6", "釧路中"]],
+    "一般ダブルス": [["A6", "甲 一"], ["B6", "こう いち"], ["D6", "乙 二"], ["E6", "おつ に"], ["G6", "中高"]],
+    "団体戦": [["A6", "釧路A"], ["B6", "甲"], ["C6", "乙"]],
+  });
+  const out = readEntryTemplate(buf, { events: evs, fieldConfig: cfg, admin: true });
+  const p = toManualPatch(out, evs);
+  assert.strictEqual(p.contact.team_name, "釧路中学校");
+  assert.deepStrictEqual(p.add[0], { event: "中学男子シングルス", name: "釧路 太郎", furigana: "くしろ たろう", team: "釧路中" });
+  assert.strictEqual(p.add[1].division, "stu", "区分の表示名を登録用の値に直す");
+  assert.deepStrictEqual([p.add[1].name1, p.add[1].name2], ["甲 一", "乙 二"]);
+  assert.deepStrictEqual(p.add[2], { event: "団体戦", team_name: "釧路A", members: ["甲", "乙"] });
+  // 連絡先は本部登録では任意(申込者シートの見出しに(必須)が付かない)
+  const cws = XLSX.read(base, { type: "buffer" }).Sheets["申込者"];
+  assert.ok(!/必須/.test(cws["A6"].v), "責任者は本部登録では必須にしない: " + cws["A6"].v);
+});

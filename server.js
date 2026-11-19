@@ -1571,6 +1571,51 @@ app.post("/api/tournaments/:id/desk/manual", requireAdmin, (req, res) => {
   res.status(r.replayed ? 200 : 201).json({ ok: true, submission_id: r.submission_id, replayed: !!r.replayed });
 });
 
+// 本部の一括登録(締切後も可): Excelテンプレの書き出しと、記入済みファイルの読み取り(登録はしない)。
+// 読み取り結果は画面で確認させ、登録は上の desk/manual(同じ受付規則・冪等)で行う=書き込み経路を増やさない。
+app.get("/api/tournaments/:id/desk/manual-template.xlsx", requireAdmin, (req, res) => {
+  const t = db.getTournament(req.params.id);
+  if (!t) return res.status(404).json({ error: "大会が見つかりません" });
+  try {
+    const buf = entryTemplate.buildEntryTemplate({ tournament: t, admin: true,
+      events: entryTemplate.adminTemplateEvents(_resolveEvents(t)),
+      fieldConfig: entryTemplate.adminTemplateConfig(db.resolveFieldConfig(t)) });
+    const fname = `本部登録テンプレート_${String(t.name || "大会").replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 40)}.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="desk-template.xlsx"; filename*=UTF-8''${encodeURIComponent(fname)}`);
+    res.setHeader("Cache-Control", "no-store");
+    res.send(buf);
+  } catch (e) {
+    console.error("[desk-template] 作成に失敗:", e && e.message);
+    res.status(500).json({ error: "テンプレートを作成できませんでした" });
+  }
+});
+app.post("/api/tournaments/:id/desk/manual-template/read", requireAdmin,
+  express.text({ limit: "2mb", type: ["text/plain", "application/json"] }), (req, res) => {
+    const t = db.getTournament(req.params.id);
+    if (!t) return res.status(404).json({ error: "大会が見つかりません" });
+    let body = req.body;
+    try { if (typeof body === "string") body = JSON.parse(body); } catch (_) { body = null; }
+    const b64 = body && typeof body.file === "string" ? body.file.replace(/^data:[^,]*,/, "") : "";
+    const buf = Buffer.from(b64, "base64");
+    if (!buf.length || buf.length > 1024 * 1024) return res.status(400).json({ error: "ファイルが空か、大きすぎます(1MBまで)" });
+    const sig = buf.slice(0, 4).toString("hex");
+    if (sig !== "504b0304" && sig !== "d0cf11e0") return res.status(400).json({ error: "Excelファイル(.xlsx)を選んでください" });
+    try {
+      const events = entryTemplate.adminTemplateEvents(_resolveEvents(t));
+      const out = entryTemplate.readEntryTemplate(buf, { events, admin: true,
+        fieldConfig: entryTemplate.adminTemplateConfig(db.resolveFieldConfig(t)) });
+      if (out.error) return res.status(400).json({ error: out.error });
+      const patch = entryTemplate.toManualPatch(out, events);
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ...patch, warnings: out.warnings || [],
+        summary: (out.events || []).map(e => ({ event: e.name, count: e.rows.length })) });
+    } catch (e) {
+      console.error("[desk-template] 読み取りに失敗:", e && e.message);
+      res.status(400).json({ error: "Excelファイルを読み取れませんでした" });
+    }
+  });
+
 // 変更履歴(管理画面の申込管理で表示)
 app.get("/api/tournaments/:id/entry-changes", requireAdmin, (req, res) => {
   res.json({ items: db.listEntryChanges(req.params.id, req.query.limit) });

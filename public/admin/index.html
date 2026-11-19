@@ -4001,6 +4001,55 @@ const A = {
    editor.render(form, view, { admin: true, manual: true });
    const notice = h("p", { className: "text-sm text-sub" }, "締切後も本部で登録できます。手入力の申込は集計シートには送られません。");
    const feedback = h("div", { role: "alert", className: "text-sm" });
+   // Excelで一括登録: 読み取った内容を画面で確認してから、下の「申込を登録する」と同じ口で登録する
+   let bulk = null;   // 読み取り済みの { contact, add }
+   const bulkBox = h("div", { style: { border: "1px solid var(--border)", borderRadius: "10px", padding: "12px", margin: "10px 0" } });
+   const bulkMsg = h("div", { className: "text-sm", role: "status", style: { whiteSpace: "pre-line", marginTop: "8px", lineHeight: "1.7" } });
+   const bulkRegister = h("button", { type: "button", className: "btn", hidden: true }, "この内容で登録する");
+   const fileIn = h("input", { type: "file", accept: ".xlsx,.xls", style: { display: "none" }, onChange: () => {
+     const f = fileIn.files && fileIn.files[0];
+     if (!f) return;
+     bulk = null; bulkRegister.hidden = true;
+     if (f.size > 1024 * 1024) { bulkMsg.textContent = "ファイルが大きすぎます(1MBまで)。"; fileIn.value = ""; return; }
+     bulkMsg.textContent = "読み込んでいます…";
+     const rd = new FileReader();
+     rd.onload = async () => {
+       try {
+         const r = await api.post(path + "-template/read", { file: String(rd.result || "") });
+         fileIn.value = "";
+         if (!r || r.error) { bulkMsg.textContent = (r && r.error) || "読み取れませんでした。"; return; }
+         if (!r.add.length) { bulkMsg.textContent = "登録できる記入がありませんでした。テンプレートに記入してから読み込んでください。"; return; }
+         if (!r.contact.team_name) { bulkMsg.textContent = "「申込者」シートの団体名が空です。団体名を書いてから読み込んでください。"; return; }
+         bulk = { contact: r.contact, add: r.add };
+         bulkMsg.textContent = "団体名: " + r.contact.team_name + "\n" + r.summary.map(x => x.event + " " + x.count + "件").join(" / ") +
+           "\n合計 " + r.add.length + "件を登録します。" + (r.warnings.length ? "\n" + r.warnings.join("\n") : "");
+         bulkRegister.hidden = false;
+       } catch { bulkMsg.textContent = "通信できませんでした。"; }
+     };
+     rd.readAsDataURL(f);
+   } });
+   bulkRegister.onclick = async () => {
+     if (!bulk) return;
+     if (!window.confirm(bulk.contact.team_name + " の " + bulk.add.length + "件を登録します。よろしいですか？")) return;
+     bulkRegister.disabled = true;
+     try {
+       const result = await api.post(path, { ...bulk, request_id: requestId });
+       if (!result?.ok) { bulkMsg.textContent = result?.error || "登録を確認できませんでした。"; return; }
+       modal.remove();
+       toast("本部で " + bulk.add.length + "件を一括登録しました", "ok");
+       if (onDone) onDone();
+     } catch { bulkMsg.textContent = "通信を確認できませんでした。同じ内容でもう一度押してください(二重登録にはなりません)。"; }
+     finally { bulkRegister.disabled = false; }
+   };
+   bulkBox.append(
+     h("div", { style: { fontWeight: 700, marginBottom: "6px" } }, "Excelで一括登録"),
+     h("div", { className: "text-sm text-sub", style: { lineHeight: "1.7" } }, "1つの団体の選手を、テンプレートに記入してまとめて登録します(氏名・ふりがな・所属・参加区分)。締切後も登録できます。"),
+     h("div", { className: "flex gap-2 flex-wrap", style: { marginTop: "8px" } },
+       h("button", { type: "button", className: "btn btn-sm btn-ghost", style: { minHeight: "44px" },
+         onClick: () => A.downloadAuthedFile(path + "-template.xlsx", `本部登録テンプレート_${t.name || "tournament"}.xlsx`) }, "テンプレートをダウンロード"),
+       h("button", { type: "button", className: "btn btn-sm", style: { minHeight: "44px" }, onClick: () => fileIn.click() }, "記入したExcelを読み込む"),
+       fileIn, bulkRegister),
+     bulkMsg);
    const requestId = crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, "0")).join("");
    let modal;
    const save = h("button", { type: "button", className: "btn", onClick: async () => {
@@ -4023,7 +4072,7 @@ const A = {
        save.disabled = false;
      }
    } }, "申込を登録する");
-   modal = openModal(`本部で申込を登録 — ${t.name}`, h("div", {}, notice, form, feedback),
+   modal = openModal(`本部で申込を登録 — ${t.name}`, h("div", {}, notice, bulkBox, form, feedback),
      h("div", { className: "flex gap-2" }, h("button", { type: "button", className: "btn btn-ghost", onClick: () => modal.remove() }, "閉じる"), save), { size: "lg" });
  },
 
