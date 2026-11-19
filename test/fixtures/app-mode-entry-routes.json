@@ -85,6 +85,7 @@
  "POST /api/import/players",
  "POST /api/mail/test",
  "POST /api/owner/operators/:id/disable",
+ "POST /api/owner/operators/:id/name",
  "POST /api/owner/operators/:id/owner",
  "POST /api/owner/operators/invite",
  "POST /api/owner/player-registry/sync",

@@ -9713,33 +9713,41 @@ const A = {
        const keyHolder = r.json.can_grant === true;
        for (const account of r.json.accounts) {
          const disabled = account.status === "disabled";
+         // 確認の文面は氏名を先に(未登録ならメール)。操作の取り違えを防ぐためメールも併記する
+         const who = account.name ? account.name + "（" + account.email + "）" : account.email;
          const label = disabled ? "再招待" : account.status === "active" ? "再設定メール" : "招待を再送";
          const retry = h("button", { className: "btn btn-sm btn-ghost", style: { minHeight: "44px" },
            "aria-label": account.email + " の" + label, onClick: () => {
-             if (!window.confirm(account.email + " に設定メールを送りますか？")) return;
+             if (!window.confirm(who + " に設定メールを送りますか？")) return;
              change("/api/owner/operators/invite", { email: account.email }, "設定メールを送りました。");
            } }, label);
          const stop = h("button", { className: "btn btn-sm btn-ghost", style: { minHeight: "44px" },
            "aria-label": account.email + " を停止", onClick: () => {
-             if (!window.confirm(account.email + " の利用を停止しますか？ ログイン中の端末もログアウトします。")) return;
+             if (!window.confirm(who + " の利用を停止しますか？ ログイン中の端末もログアウトします。")) return;
              change("/api/owner/operators/" + encodeURIComponent(account.id) + "/disable", {}, "アカウントを停止しました。");
            } }, "停止");
          const ownerBtn = keyHolder && (account.owner || account.status === "active")
            ? h("button", { className: "btn btn-sm btn-ghost", style: { minHeight: "44px" },
              "aria-label": account.email + (account.owner ? " のオーナー権限を外す" : " にオーナー権限を付ける"), onClick: () => {
                const ask = account.owner
-                 ? account.email + " のオーナー権限を外しますか？ ログイン中の端末でも、次の操作から運営権限に戻ります。"
-                 : account.email + " にオーナー権限を付けますか？ このアカウントはメールでログインするだけで、システム管理・運営アカウント管理・個人情報の書き出しなどを使えるようになります。";
+                 ? who + " のオーナー権限を外しますか？ ログイン中の端末でも、次の操作から運営権限に戻ります。"
+                 : who + " にオーナー権限を付けますか？ このアカウントはメールでログインするだけで、システム管理・運営アカウント管理・個人情報の書き出しなどを使えるようになります。";
                if (!window.confirm(ask)) return;
                change("/api/owner/operators/" + encodeURIComponent(account.id) + "/owner", { granted: !account.owner },
                  account.owner ? "オーナー権限を外しました。" : "オーナー権限を付けました。");
              } }, account.owner ? "オーナー権限を外す" : "オーナー権限を付ける")
            : null;
+         const nameBtn = h("button", { className: "btn btn-sm btn-ghost", style: { minHeight: "44px" },
+           "aria-label": who + " の氏名を" + (account.name ? "直す" : "登録する"), onClick: () => {
+             const v = window.prompt("右上の「ログイン中」に表示する氏名(40文字まで・空欄で未登録に戻す)", account.name || "");
+             if (v === null) return;
+             change("/api/owner/operators/" + encodeURIComponent(account.id) + "/name", { name: v.trim() }, "氏名を保存しました。");
+           } }, account.name ? "氏名を直す" : "氏名を登録");
          list.append(h("li", { style: { padding: "10px 0", borderBottom: "1px solid var(--border)" } },
            h("div", { style: { fontWeight: 700, overflowWrap: "anywhere" } }, account.name || "（氏名未登録）"),
            h("div", { className: "text-sm", style: { overflowWrap: "anywhere" } }, account.email),
            h("div", { className: "text-xs text-sub" }, labels[account.status] + (account.owner ? "・オーナー権限あり" : "")),
-           h("div", { className: "flex gap-2 flex-wrap" }, retry, disabled ? null : stop, ownerBtn)));
+           h("div", { className: "flex gap-2 flex-wrap" }, nameBtn, retry, disabled ? null : stop, ownerBtn)));
        }
        if (!r.json.accounts.length) list.append(h("li", { className: "text-sm text-sub" }, "まだ個別アカウントはありません。"));
        if (feedback.textContent === "読み込み中…") feedback.textContent = "";

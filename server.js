@@ -982,6 +982,16 @@ app.post("/api/owner/operators/:id/disable", requireSameOrigin, requireOwnerStri
   auditOwner(req, "運営アカウント:停止 " + accountAuditCode(req.params.id));
   res.json({ ok: true });
 });
+// 運営アカウントの氏名の登録・修正(右上の「ログイン中」表示に使う)。空欄で未登録に戻す。
+app.post("/api/owner/operators/:id/name", requireSameOrigin, requireOwnerStrict, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const name = String((req.body || {}).name == null ? "" : (req.body || {}).name).trim();
+  const r = db.operatorAccounts.setName(req.params.id, name);
+  if (r.error === "not_found") return res.status(404).json({ error: "アカウントが見つかりません" });
+  if (r.error) return res.status(400).json({ error: "氏名は40文字までで入力してください" });
+  auditOwner(req, "運営アカウント:氏名を" + (r.name ? "登録 " : "未登録に戻す ") + accountAuditCode(req.params.id));
+  res.json({ ok: true, name: r.name });
+});
 // 運営アカウントへのオーナー権限の付与・剥奪。オーナーキー保持者だけ・上限つき・監査ログに記録。
 app.post("/api/owner/operators/:id/owner", requireSameOrigin, requireOwnerStrict, requireOwnerKeyHolder, (req, res) => {
   res.set("Cache-Control", "no-store");
