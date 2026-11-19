@@ -86,6 +86,7 @@
       h("nav", { class: "ed-top__nav", "aria-label": "主な画面" },
         h("a", { href: "#list", "aria-current": active === "list" ? "page" : null }, "大会"),
         h("a", { href: last ? "#desk/" + last : "#list", "aria-current": active === "desk" ? "page" : null }, "受付"),
+        h("a", { href: "#players" }, "選手DB"),
         h("a", { href: "#more", "aria-current": active === "more" ? "page" : null }, "その他")),
       who());
   }
