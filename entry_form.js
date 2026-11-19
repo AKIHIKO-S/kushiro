@@ -1268,6 +1268,20 @@ function buildEntryFormHTML(tournament, events, opts) {
   #eventsContainer .btn-del { border-radius: 6px !important; }
   #ttRail { background: var(--st-white) !important; border-radius: 12px; border: 1px solid var(--st-line) !important; overflow: hidden; }
   .fee-tag, .cap-tag { border-radius: 4px !important; }
+  /* Excelで一括入力 */
+  .xl-import { padding: 18px 20px !important; }
+  .xl-import .xl-lead { font-size: 14px; line-height: 1.8; margin: 0 0 12px; color: var(--st-ink); }
+  .xl-import .xl-acts { display: flex; flex-wrap: wrap; gap: 10px; }
+  .xl-import .xl-btn { display: inline-flex; align-items: center; justify-content: center; min-height: var(--st-tap, 46px);
+    padding: 0 20px; border-radius: 999px; border: 1.5px solid var(--st-navy); background: var(--st-white); color: var(--st-navy);
+    font: 700 14px/1 var(--st-jp); text-decoration: none; cursor: pointer; }
+  .xl-import .xl-btn.primary { background: var(--st-navy); color: #fff; }
+  .xl-import .xl-btn:focus-visible { outline: 3px solid var(--st-blue); outline-offset: 2px; }
+  .xl-import input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .xl-import .xl-result { margin-top: 12px; font-size: 14px; line-height: 1.8; white-space: pre-line; }
+  .xl-import .xl-result.ok { background: var(--st-sky); border-radius: 8px; padding: 10px 14px; color: var(--st-navy); }
+  .xl-import .xl-result.ng { background: #fdf0f0; border-radius: 8px; padding: 10px 14px; color: #8a1c1c; }
+  .xl-import .xl-note { font-size: 12.5px; color: var(--st-mute); margin: 10px 0 0; line-height: 1.7; }
 
 
 </style>
@@ -1286,6 +1300,18 @@ ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v
 ${closedNotice}
 <p><a href="/entry/status?tournament=${encodeURIComponent(tournament.id)}" target="_top" class="st-link" style="display:inline-flex;align-items:center;min-height:44px">申込済みの方：申込番号で追加・修正する</a></p>
 <p class="st-note" style="font-size:13px;line-height:1.7;margin:0 0 12px">送信すると申込番号(申込ID)を発行し、控えメールにも記載します。あとから修正・種目の追加をするときはこの番号が必要です。修正した内容は同じ申込に上書きされます。同じ選手を同じ種目に重ねて申し込むことはできません。</p>
+
+${closedReason ? "" : `<div class="form-section xl-import" id="xlImport">
+  <h2><span class="en" aria-hidden="true">EXCEL</span>Excelで一括入力</h2>
+  <p class="xl-lead">人数が多いときは、テンプレートに記入して読み込むと、下の入力欄に自動で入ります。読み込んだあと、内容を確かめてから送信してください。</p>
+  <div class="xl-acts">
+    <a class="xl-btn" href="${assetOrigin}/api/public/tournaments/${encodeURIComponent(tournament.id)}/entry-template.xlsx" download>テンプレートをダウンロード</a>
+    <label class="xl-btn primary" for="xlFile">記入したExcelを読み込む</label>
+    <input type="file" id="xlFile" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="ttImportExcel(this)">
+  </div>
+  <div class="xl-result" id="xlResult" role="status" aria-live="polite" hidden></div>
+  <p class="xl-note">読み込んだだけでは申込になりません。すでに入力した欄は、読み込んだ内容で上書きされます。</p>
+</div>`}
 
 <form id="entryForm" onsubmit="return submitForm(event)">
 
@@ -2554,6 +2580,168 @@ function ttRailUpdate() {
 
 // 表示条件つき項目の連動 + 未記入行の必須解除(入力のたびに評価し直す。件数は高々数十なので全走査で足りる)
 function ttFormSync() { ttWhenSync(); ttSyncRowRequired(); ttRailUpdate(); }
+
+// ── Excelで一括入力: 読み取り結果をフォームの入力欄へ流し込む(送信はいつもの手順) ──
+function ttXq(row, name) { return row.querySelector('[name="' + name + '"]'); }
+function ttXset(el, v) {
+  if (!el) return false;
+  v = String(v == null ? "" : v).trim();
+  if (el.tagName === "SELECT") {
+    var hit = null;
+    Array.prototype.forEach.call(el.options, function (o) {
+      if (!hit && o.value && (o.value === v || o.text === v || o.text.replace("支部", "") === v.replace("支部", ""))) hit = o;
+    });
+    if (!hit) return false;
+    el.value = hit.value;
+  } else {
+    el.value = v;
+  }
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}
+function ttXdigits(v) {
+  return String(v || "").replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+}
+function ttXgrade(v) {
+  v = ttXdigits(v).replace(/[ 　]/g, "");
+  if (v === "一般" || v === "社会人") return "一般";
+  var m = v.match(/^(小|中|高)[^0-9]*([0-9])/);
+  return m ? m[1] + m[2] : v;
+}
+function ttXgender(v) {
+  v = String(v || "").trim();
+  if (/^(男|M|m|male)/.test(v)) return "男";
+  if (/^(女|F|f|female)/.test(v)) return "女";
+  return v;
+}
+function ttXdate(v) {
+  var p = ttXdigits(v).split(/[^0-9]+/).filter(Boolean);
+  if (p.length < 3 || p[0].length !== 4) return "";
+  return p[0] + "-" + ("0" + p[1]).slice(-2) + "-" + ("0" + p[2]).slice(-2);
+}
+function ttXname(row, target, s1, s2, v, miss, label) {
+  if (!v) return;
+  var a = ttXq(row, s1);
+  if (a) {
+    var parts = String(v).replace(/　/g, " ").split(" ").filter(Boolean);
+    ttXset(a, parts[0] || "");
+    ttXset(ttXq(row, s2), parts.slice(1).join(" "));
+    if (parts.length < 2) miss.push(label + "「" + v + "」は姓と名の間に空白がないため、姓の欄に入れました");
+    ttJoin(a);
+  } else {
+    ttXset(ttXq(row, target), v);
+  }
+}
+function ttXperson(row, base, nameT, s1, s2, teamName, p, miss, label) {
+  ttXname(row, nameT, s1, s2, p.name, miss, label);
+  if (p.team) ttXset(ttXq(row, teamName), p.team);
+  if (p.furigana) ttXname(row, base + "_furi", base + "_fsei", base + "_fmei", p.furigana, [], label);
+  if (p.grade && !ttXset(ttXq(row, base + "_grade"), ttXgrade(p.grade))) miss.push(label + "の学年「" + p.grade + "」");
+  if (p.birthdate) {
+    var d = ttXdate(p.birthdate), el = ttXq(row, base + "_bdate");
+    if (d && el) { ttXset(el, d); if (typeof ttUpdateAge === "function") ttUpdateAge(el); }
+    else if (el) miss.push(label + "の生年月日「" + p.birthdate + "」");
+  }
+  if (p.age) ttXset(ttXq(row, base + "_age"), ttXdigits(p.age).replace(/[^0-9]/g, ""));
+  if (p.gender && !ttXset(ttXq(row, base + "_pgender"), ttXgender(p.gender))) miss.push(label + "の性別「" + p.gender + "」");
+  if (p.region && !ttXset(ttXq(row, base + "_region"), p.region)) miss.push(label + "の支部「" + p.region + "」");
+  if (p.first_time) {
+    var want = p.first_time.indexOf("初") >= 0 ? "初めて" : "出場したことがある";
+    var r = row.querySelector('input[name="' + base + '_first"][value="' + want + '"]');
+    if (r) { r.checked = true; r.dispatchEvent(new Event("change", { bubbles: true })); }
+  }
+  Object.keys(p.custom || {}).forEach(function (k) {
+    var el = ttXq(row, base + "_cust_" + k), v = p.custom[k];
+    if (!el) return;
+    if (el.type === "checkbox") { el.checked = !/^(いいえ|なし|無|0|×)$/.test(String(v).trim()); el.dispatchEvent(new Event("change", { bubbles: true })); }
+    else if (!ttXset(el, v)) miss.push(label + "の" + k + "「" + v + "」");
+  });
+}
+function ttXdivision(row, v, miss, label) {
+  if (!v) return;
+  var hit = null;
+  row.querySelectorAll(".div-seg input").forEach(function (r) {
+    if (!hit && (r.getAttribute("data-label") === v || r.value === v)) hit = r;
+  });
+  if (hit) { hit.checked = true; hit.dispatchEvent(new Event("change", { bubbles: true })); }
+  else miss.push(label + "の参加区分「" + v + "」");
+}
+function ttXnextRow(idx) {
+  var c = document.getElementById("members_" + idx);
+  if (!c) return null;
+  var free = Array.prototype.filter.call(c.children, function (r) { return !ttRowIsUsed(r); });
+  if (free.length) return free[0];
+  addEntry(idx);
+  return c.lastElementChild;
+}
+function ttApplyImport(data) {
+  var miss = [], count = 0, evCount = 0;
+  var c = data.contact || {};
+  Object.keys(c).forEach(function (k) { ttXset(document.querySelector('#entryForm [name="' + k + '"]'), c[k]); });
+  (data.events || []).forEach(function (ie) {
+    var idx = EVENTS.findIndex(function (e) { return e.name === ie.name; });
+    if (idx < 0 || !document.getElementById("members_" + idx)) return;
+    var det = document.getElementById("members_" + idx).closest("details");
+    if (det) det.open = true;
+    evCount++;
+    (ie.rows || []).forEach(function (rec, i) {
+      var row = ttXnextRow(idx);
+      if (!row) return;
+      var label = ie.name + " " + (i + 1) + "行目";
+      if (ie.type === "team") {
+        var tn = row.querySelector('input[name$="_name"]');
+        var base = tn ? tn.name.slice(0, -5) : "";
+        ttXset(tn, rec.team_name);
+        (rec.members || []).forEach(function (m, k) { ttXset(ttXq(row, base + "_m" + k), m); });
+      } else if (ie.type === "doubles") {
+        var n1 = row.querySelector('input[name$="_n1"]');
+        var b = n1 ? n1.name.slice(0, -3) : "";
+        [1, 2].forEach(function (n) {
+          ttXperson(row, b + "_" + n, b + "_n" + n, b + "_ns" + n, b + "_nm" + n, b + "_t" + n, rec["p" + n] || {}, miss, label + " 選手" + n);
+        });
+      } else {
+        var nm = row.querySelector('input[name$="_name"]');
+        var sb = nm ? nm.name.slice(0, -5) : "";
+        ttXperson(row, sb, sb + "_name", sb + "_nsei", sb + "_nmei", sb + "_team", rec, miss, label);
+      }
+      ttXdivision(row, rec.division, miss, label);
+      count++;
+    });
+  });
+  ttFormSync();
+  recalcTotal();
+  return { count: count, evCount: evCount, miss: miss };
+}
+function ttImportExcel(inp) {
+  var f = inp.files && inp.files[0];
+  var box = document.getElementById("xlResult");
+  var show = function (ok, text) { box.hidden = false; box.className = "xl-result " + (ok ? "ok" : "ng"); box.textContent = text; };
+  if (!f) return;
+  if (f.size > 1024 * 1024) { show(false, "ファイルが大きすぎます(1MBまで)。"); inp.value = ""; return; }
+  show(true, "読み込んでいます…");
+  var rd = new FileReader();
+  rd.onload = function () {
+    fetch(SUBMIT_URL.replace(/submit-team-entry$/, "entry-template/read"), {
+      method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ file: String(rd.result || "") }),
+    }).then(function (r) { return r.json().catch(function () { return { error: "読み取りに失敗しました" }; }); })
+      .then(function (d) {
+        inp.value = "";
+        if (!d || d.error) { show(false, (d && d.error) || "読み取りに失敗しました"); return; }
+        var res = ttApplyImport(d);
+        var lines = [];
+        if (!res.count && !Object.keys(d.contact || {}).length) lines.push("読み込める記入がありませんでした。テンプレートに記入してから読み込んでください。");
+        else lines.push(res.evCount + "種目・" + res.count + "件を入力欄に入れました。内容を確かめてから「申込内容を送信」を押してください。");
+        (d.warnings || []).forEach(function (w) { lines.push(w); });
+        if (res.miss.length) lines.push("次の値は選択肢に合わないため入れていません。フォームで選び直してください:\\n・" + res.miss.slice(0, 12).join("\\n・") + (res.miss.length > 12 ? "\\n・ほか" + (res.miss.length - 12) + "件" : ""));
+        show(res.count > 0 && !res.miss.length, lines.join("\\n"));
+      })
+      .catch(function () { inp.value = ""; show(false, "通信できませんでした。電波の良い場所でもう一度お試しください。"); });
+  };
+  rd.onerror = function () { show(false, "ファイルを開けませんでした。"); };
+  rd.readAsDataURL(f);
+}
 document.getElementById("entryForm").addEventListener("input", ttFormSync);
 document.getElementById("entryForm").addEventListener("change", ttFormSync);
 

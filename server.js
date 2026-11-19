@@ -5629,6 +5629,66 @@ app.get("/entry/status", (req, res) => {
 // Jimdo 等への iframe 埋込にも、単独URL公開にもこの URL を使用。
 // 既存 /api/tournaments/:id/entry-form.html と同じ HTML を返すが
 // デフォルトで「自己サーバーに POST」する設定にする (GAS 不要)。
+// 申込フォームの「Excelで一括入力」。テンプレの配布と、記入済みファイルの読み取りだけを行う。
+// 読み取り結果はフォームの入力欄へ流し込むだけで、登録は通常の送信(submit-team-entry)に任せる
+// =必須チェック・同じ種目の重複・申込番号の発行を二重に持たない。
+const entryTemplate = require("./lib/entry-template");
+function _templateEvents(tournament) {
+  const cap = db.getEntryCapacityState(tournament.id);
+  const full = new Set(((cap && cap.events) || []).filter(c => c.full).map(c => c.event));
+  return _resolveEvents(tournament).map(e => ({ ...e, full: full.has(e.name) }));
+}
+app.get("/api/public/tournaments/:id/entry-template.xlsx", entryRateLimit, requireOpenEntryOrAdmin, (req, res) => {
+  try {
+    const tournament = req.entryTournament;
+    const buf = entryTemplate.buildEntryTemplate({ tournament, events: _templateEvents(tournament),
+      fieldConfig: db.resolveFieldConfig(tournament) });
+    const fname = `申込テンプレート_${String(tournament.name || "大会").replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 40)}.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="entry-template.xlsx"; filename*=UTF-8''${encodeURIComponent(fname)}`);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Robots-Tag", "noindex");
+    res.send(buf);
+  } catch (e) {
+    console.error("[entry-template] 作成に失敗:", e && e.message);
+    res.status(500).json({ error: "テンプレートを作成できませんでした" });
+  }
+});
+app.post("/api/public/tournaments/:id/entry-template/read",
+  entryRateLimit,
+  express.text({ limit: "2mb", type: ["text/plain", "application/json"] }),
+  requireOpenEntryOrAdmin,
+  (req, res) => {
+    const origin = req.get("Origin");
+    if (origin && origin !== appOriginOf(req) && !CORS_ALLOW_ORIGINS.has(origin)) {
+      return res.status(403).json({ error: "許可されていない送信元です" });
+    }
+    let body = req.body;
+    try { if (typeof body === "string") body = JSON.parse(body); } catch (_) { body = null; }
+    const b64 = body && typeof body.file === "string" ? body.file.replace(/^data:[^,]*,/, "") : "";
+    if (!b64) return res.status(400).json({ error: "ファイルが空です" });
+    const buf = Buffer.from(b64, "base64");
+    if (!buf.length || buf.length > 1024 * 1024) {
+      return res.status(400).json({ error: "ファイルが大きすぎます(1MBまで)。テンプレートの .xlsx を読み込んでください。" });
+    }
+    // .xlsx は zip(PK)。古い .xls(OLE)も SheetJS で読めるので許す。それ以外は読まない。
+    const sig = buf.slice(0, 4).toString("hex");
+    if (sig !== "504b0304" && sig !== "d0cf11e0") {
+      return res.status(400).json({ error: "Excelファイル(.xlsx)を選んでください。" });
+    }
+    try {
+      const tournament = req.entryTournament;
+      const out = entryTemplate.readEntryTemplate(buf, { events: _templateEvents(tournament),
+        fieldConfig: db.resolveFieldConfig(tournament) });
+      if (out.error) return res.status(400).json({ error: out.error });
+      res.setHeader("Cache-Control", "no-store");
+      res.json(out);
+    } catch (e) {
+      console.error("[entry-template] 読み取りに失敗:", e && e.message);
+      res.status(400).json({ error: "Excelファイルを読み取れませんでした。" });
+    }
+  });
+
 app.get("/entry/:id", requireOpenEntryOrAdmin, (req, res) => {
   try {
     const tournament = req.entryTournament;

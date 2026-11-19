@@ -34,7 +34,7 @@ const ENTRY_MODE_API = [
   [/^\/api\/sync\/(push|now|status)$/],   // 試合を直接書き込む sync/matches・sync/tournament は閉じる
   // 公開の申込
   [/^\/api\/public\/open-tournaments$/],
-  [/^\/api\/public\/tournaments\/[^/]+\/(entry|submit-team-entry)$/],
+  [/^\/api\/public\/tournaments\/[^/]+\/(entry|submit-team-entry|entry-template\.xlsx|entry-template\/read)$/],
   [/^\/api\/forms\/submit$/],
   [/^\/api\/events-catalog$/],
   [/^\/api\/used-events$/],

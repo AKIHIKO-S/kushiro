@@ -7,7 +7,6 @@
  "DELETE /api/registered-teams/:id",
  "DELETE /api/submissions/:id/pii",
  "DELETE /api/tournaments/:id",
- "GET /api/entry-desk/tournaments",
  "GET /api/admin/qr",
  "GET /api/admin/snapshots",
  "GET /api/app-mode",
@@ -17,6 +16,7 @@
  "GET /api/diagnostics",
  "GET /api/entrants/:id",
  "GET /api/entrants/:id/suggest-player",
+ "GET /api/entry-desk/tournaments",
  "GET /api/events-catalog",
  "GET /api/export/all",
  "GET /api/health",
@@ -33,6 +33,7 @@
  "GET /api/players/:id",
  "GET /api/players/:id/affiliations",
  "GET /api/public/open-tournaments",
+ "GET /api/public/tournaments/:id/entry-template.xlsx",
  "GET /api/registered-teams",
  "GET /api/submissions/:sid/edit-view",
  "GET /api/sync/status",
@@ -59,6 +60,7 @@
  "GET /api/tournaments/:id/reception.html",
  "GET /api/tournaments/:id/submissions",
  "GET /api/used-events",
+ "POST /api/admin/export-log",
  "POST /api/admin/purge-submission-pii",
  "POST /api/admin/snapshots",
  "POST /api/admin/snapshots/download",
@@ -100,6 +102,7 @@
  "POST /api/players/normalize-categories",
  "POST /api/players/rename-team",
  "POST /api/public/tournaments/:id/entry",
+ "POST /api/public/tournaments/:id/entry-template/read",
  "POST /api/public/tournaments/:id/submit-team-entry",
  "POST /api/registered-teams",
  "POST /api/submissions/:sid/mail-resend",
@@ -123,6 +126,5 @@
  "PUT /api/submissions/:sid",
  "PUT /api/tournaments/:id",
  "PUT /api/tournaments/:id/entries/:pid/status",
- "PUT /api/tournaments/:id/entry-settings",
- "POST /api/admin/export-log"
+ "PUT /api/tournaments/:id/entry-settings"
 ]
