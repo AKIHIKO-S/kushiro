@@ -5486,7 +5486,7 @@ const staticOpts = {
 };
 
 // ── アセットのキャッシュ破棄 ───────────────────────────────────────
-// デプロイ(サーバ再起動)ごとに変わるバージョンを、index HTML 内の /shared/*.js,css
+// デプロイ(サーバ再起動)ごとに変わるバージョンを、index HTML 内の /shared/ と受付台帳のアセット
 // 参照に注入する。これにより古い common.js 等がブラウザに残り続ける事故を根絶
 // (例: TT.playerStatsSection is not a function)。
 const ASSET_VER = Date.now().toString(36);
@@ -5496,7 +5496,7 @@ function _serveVersionedHtml(file, cacheControl = "no-cache") {
       if (err) return res.status(404).type("html").send("<h1>not found</h1>");
       // js/css に加え、ほぼ不変のアイコン(svg/png/webp)・サブディレクトリ(/shared/assets/...)も版付与し
       // immutable 化に乗せる(毎回再検証の往復を消す)。href/src の ?v= 既存分は付け替える。
-      const out = html.replace(/(\/shared\/[A-Za-z0-9_.\-/]+\.(?:js|css|svg|png|webp))(\?v=[^"']*)?/g, `$1?v=${ASSET_VER}`);
+      const out = html.replace(/(\/shared\/[A-Za-z0-9_.\-/]+\.(?:js|css|svg|png|webp)|\/admin\/entry-desk\.(?:js|css))(\?v=[^"']*)?/g, `$1?v=${ASSET_VER}`);
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.setHeader("Cache-Control", cacheControl);
       res.send(out);
