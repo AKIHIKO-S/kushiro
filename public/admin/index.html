@@ -5992,7 +5992,7 @@ const A = {
  return toast("出場選手が未登録です。先に取込を行ってください。", "err");
  }
  // ② 管理キー付き fetch → Blob DL(requireAdmin のためヘッダ必須)
- return A.downloadAuthedFile(`/api/tournaments/${t.id}/aggregation.xlsx`, `集計表_${t.name || "tournament"}.xlsx`);
+ return A.downloadAuthedFile(`/api/tournaments/${t.id}/aggregation.xlsx`, `申込集計_${t.name || "tournament"}.xlsx`);
  } catch (e) {
  toast("ダウンロード失敗: " + e.message, "err");
  }

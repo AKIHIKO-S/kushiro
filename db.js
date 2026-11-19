@@ -10793,6 +10793,118 @@ function getEntryDesk(tournamentId) {
   };
 }
 
+// 申込の集計Excel(lib/entry-workbook.js)の元データ。受付台帳と同じ「申込団体」単位でまとめる。
+// 取消・却下以外は全部入れる(承認待ち・重複の疑い・入力不備も名簿に載せ、確認事項に理由を書く)。
+// 生年月日・メール・電話は返さない。
+function getEntryExport(tournamentId) {
+  const t = stmts.getTournament.get(tournamentId);
+  if (!t) return { error: "大会が見つかりません" };
+  const subs = submissionStmts.listByTournament.all(t.id);
+  const all = sqlite.prepare(`SELECT * FROM entrants WHERE tournament_id=? ORDER BY applied_at, rowid`).all(t.id)
+    .filter(e => !["cancelled", "rejected"].includes(e.status || ""));
+  let cross = {};
+  try { cross = findCrossGroupDuplicates(t.id); } catch (err) { console.error("export cross dup:", err.message); }
+  let data = [];
+  try { data = findEntrantDataIssues(t.id).items || []; } catch (err) { console.error("export issues:", err.message); }
+  const dataBy = {}; data.forEach(d => { dataBy[d.id] = d.issues || []; });
+  const subTeam = {}; subs.forEach(s => { subTeam[s.id] = s.team_name || ""; });
+  const entSub = {}; all.forEach(e => { entSub[e.id] = e.submission_id || ""; });
+
+  let cfg = [];
+  try { cfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []); } catch (_) { cfg = []; }
+  if (!Array.isArray(cfg)) cfg = [];
+  const cfgBy = {}; cfg.forEach(c => { if (c && c.name) cfgBy[String(c.name)] = c; });
+  const kindOf = e => {
+    const c = cfgBy[e.event];
+    if (c && ["singles", "doubles", "team"].includes(c.type)) return c.type;
+    if (entrantMembers(e).length) return "team";
+    return e.is_doubles ? "doubles" : "singles";
+  };
+  const events = [];
+  cfg.forEach(c => { if (c && c.name && !events.some(x => x.name === String(c.name))) events.push({ name: String(c.name), kind: "" }); });
+  all.forEach(e => { if (e.event && !events.some(x => x.name === e.event)) events.push({ name: e.event, kind: "" }); });
+  events.forEach(ev => { const e = all.find(x => x.event === ev.name); ev.kind = e ? kindOf(e) : ((cfgBy[ev.name] || {}).type || "singles"); });
+
+  const feeOf = e => {
+    const n = parseInt(e.fee, 10);
+    if (n > 0) return n;
+    const c = cfgBy[e.event];
+    if (!c) return 0;
+    const student = e.category && e.category !== "general";
+    const fs = parseInt(c.fee_student, 10), f = parseInt(c.fee, 10);
+    return (student && fs >= 0) ? fs : (f >= 0 ? f : 0);
+  };
+  const custom = (resolveFieldConfig(t).custom || []).filter(c => c && c.key && c.label && c.scope === "player")
+    .map(c => ({ key: String(c.key), label: String(c.label).slice(0, 40) }));
+  const join = arr => arr.filter(v => v !== "" && v != null).join("\n");
+  const shape = e => {
+    let ex = {}; try { ex = e.extra_json ? JSON.parse(e.extra_json) : {}; } catch (_) { ex = {}; }
+    const kind = kindOf(e);
+    const people = kind === "doubles" ? (Array.isArray(ex.players) ? ex.players : [{}, {}])
+      : kind === "team" ? (Array.isArray(ex.members) ? ex.members : []) : [ex || {}];
+    const members = entrantMembers(e);
+    let name, kana, team;
+    if (kind === "doubles") {
+      name = join([e.name, e.partner_name]); kana = join([e.furigana, e.partner_furigana]);
+      team = (e.partner_team && e.partner_team !== e.team) ? join([e.team, e.partner_team]) : (e.team || "");
+    } else if (kind === "team") {
+      // 団体戦は個人名を1行に1人ずつ並べる(チーム名は所属欄)。メンバー未記入ならチーム名を出す。
+      const tname = e.team || e.name || "";
+      name = members.length ? members.join("\n") : tname;
+      kana = join(members.map(m => { const d = people.find(p => p && p.name === m); return d && d.furigana ? d.furigana : ""; }));
+      team = tname;
+    } else { name = e.name || ""; kana = e.furigana || ""; team = e.team || ""; }
+    const answers = {};
+    custom.forEach(c => {
+      const vals = people.map(p => p && p.answers && p.answers[c.key]).filter(v => v !== undefined && v !== "" && v !== false)
+        .map(v => v === true ? "はい" : String(v));
+      if (vals.length) answers[c.key] = vals.join("\n");
+    });
+    const checks = [];
+    if ((e.status || "confirmed") === "pending") checks.push("承認待ち");
+    (cross[e.id] || []).forEach(c => {
+      const other = subTeam[entSub[c.other_entrant_id]] || c.other_team || "別の団体";
+      const msg = "重複の疑い：" + other + "からも申込";
+      if (!checks.includes(msg)) checks.push(msg);
+    });
+    (dataBy[e.id] || []).forEach(d => {
+      const m = (_DESK_ISSUE[d.code] || [null, "内容を確認してください"])[1];
+      if (!checks.includes(m)) checks.push(m);
+    });
+    if (!String(e.name || "").trim() && kind !== "team") { if (!checks.includes("氏名が空欄です")) checks.push("氏名が空欄です"); }
+    const lines = Math.max(1, name.split("\n").length);
+    return {
+      id: e.id, event: e.event || "", kind, name_text: name, kana_text: kana, team_text: team,
+      class_text: e.age_group || (e.division && e.division !== "student" ? e.division : ""),
+      grade_text: join(people.map(p => p && p.grade ? String(p.grade) : "")),
+      age_text: join(people.map(p => p && p.age != null && p.age !== "" ? String(p.age) : "")),
+      answers, fee: feeOf(e), checks, lines,
+    };
+  };
+  const evOrder = {}; events.forEach((ev, i) => { evOrder[ev.name] = i; });
+  const groupsBy = new Map();
+  subs.forEach(s => groupsBy.set("s:" + s.id, { name: s.team_name || "（団体名なし）", contact_name: s.contact_name || "", entries: [] }));
+  all.forEach(e => {
+    let key = e.submission_id && groupsBy.has("s:" + e.submission_id) ? "s:" + e.submission_id : "";
+    if (!key) {
+      key = "t:" + (e.team || "");
+      if (!groupsBy.has(key)) groupsBy.set(key, { name: (e.team || "所属なし") + "（申込記録なし）", contact_name: "", entries: [] });
+    }
+    groupsBy.get(key).entries.push(shape(e));
+  });
+  const groups = [...groupsBy.values()].filter(g => g.entries.length).map(g => {
+    g.entries.sort((a, b) => (evOrder[a.event] ?? 999) - (evOrder[b.event] ?? 999));
+    g.fee_total = g.entries.reduce((n, e) => n + (e.fee || 0), 0);
+    return g;
+  }).sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  const now = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
+  return {
+    tournament: { id: t.id, name: t.name || "", date: t.date || "", venue: t.venue || "" },
+    events: events.filter(ev => all.some(e => e.event === ev.name)),
+    custom_fields: custom, groups, generated_at: now,
+  };
+}
+
 function createEntry(tournamentId, data) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
@@ -11377,6 +11489,44 @@ function _feeResolver(t) {
   return { resolveFee, feeQtyOf, hasEvent: (n) => !!feeMap[String(n)] };
 }
 
+// 公開フォームの受付前チェック: 同じ種目に同じ選手がすでに申し込まれていたら受け付けない(オーナー指示 2026-11-19)。
+// 照合は氏名だけ(空白・旧字を畳む)。所属違いでも止める=別団体からの二重申込を入口で防ぐ。
+// 同姓同名の別人だった場合は大会本部が管理画面から登録する(エラー文で案内)。
+// 返すのは申込者が自分で書いた氏名だけ(相手側の団体名などは出さない)。
+function _alreadyEnteredConflicts(tournamentId, entries) {
+  const nk = (n) => _foldNameVariants(_normName(n));
+  const rows = sqlite.prepare(`SELECT event, name, partner_name, is_doubles, team_members, note FROM entrants
+    WHERE tournament_id=? AND COALESCE(status,'confirmed') NOT IN ('cancelled','rejected')`).all(tournamentId);
+  const taken = {};
+  rows.forEach(e => {
+    const set = taken[e.event] = taken[e.event] || new Set();
+    const mem = entrantMembers(e);
+    const names = (mem && mem.length) ? mem : [e.name, e.is_doubles ? e.partner_name : ""];
+    names.forEach(n => { const k = nk(n); if (k.length >= 2) set.add(k); });
+  });
+  const hits = [];
+  const seen = {};
+  (entries || []).forEach(ent => {
+    if (!ent) return;
+    const ev = String(ent.event || "").trim();
+    if (!ev) return;
+    const type = ent.type || "singles";
+    const names = type === "team" ? (Array.isArray(ent.members) ? ent.members : [])
+      : (type === "doubles" || type === "mixed") ? [ent.name1, ent.name2] : [ent.name];
+    const mine = seen[ev] = seen[ev] || new Set();
+    names.forEach(n => {
+      const raw = String(n || "").trim();
+      const k = nk(raw);
+      if (k.length < 2) return;
+      const label = ev + " " + raw;
+      if ((taken[ev] && taken[ev].has(k)) && !hits.includes(label)) hits.push(label);
+      else if (mine.has(k) && !hits.includes(label + "(同じ申込の中で重複)")) hits.push(label + "(同じ申込の中で重複)");
+      mine.add(k);
+    });
+  });
+  return hits;
+}
+
 function createTeamEntry(tournamentId, formData, opId, opts) {
   opts = opts || {};
   const t = stmts.getTournament.get(tournamentId);
@@ -11411,6 +11561,14 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
 
   const entries = Array.isArray(formData.entries) ? formData.entries : [];
   if (!entries.length) return { error: "出場種目を1つ以上選択してください" };
+  if (opts.reject_registered && !intoSub) {
+    const hits = _alreadyEnteredConflicts(tournamentId, entries);
+    if (hits.length) {
+      return { error: "次の選手は、同じ種目にすでに申込があります。\n" + hits.slice(0, 10).join("\n")
+        + "\n申込内容の修正・追加は、控えメールの申込番号から行ってください。別人(同姓同名)の場合は大会本部へご連絡ください。",
+        validation: true, already_entered: hits };
+    }
+  }
 
   // ── 入力制限 (DoS / スパム / 巨大データ投入 対策) ──
   if (entries.length > 100) {
@@ -15233,6 +15391,7 @@ module.exports = {
   createSnapshot, listSnapshots, snapshotPath, restoreSnapshot, restoreFromUpload, hasOngoingTournament,
   // オーナー監査ログ (上級権限)
   logOwnerAction, getOwnerAudit,
+  getEntryExport,
   // 操作ログ + Undo
   snapshotMatchRows, collectForwardChain, recordOp, getOpLog, undoLastOp,
   // ベスト8 (準々決勝進出者)

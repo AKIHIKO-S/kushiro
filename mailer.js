@@ -268,8 +268,11 @@ async function sendConfirmationEmail(opts) {
     `下記の内容で承りました。`,
     ``,
     token ? `─────────────────────` : "",
-    token ? `■ 申込番号: ${token}` : "",
-    token ? `  この番号で申込内容を確認できます。大切に保管してください。` : "",
+    token ? `■ 申込番号(申込ID): ${token}` : "",
+    token ? `  申込内容の確認・修正・種目の追加には、この申込番号が必要です。` : "",
+    token ? `  修正した内容は、この申込番号の申込に上書きされます(新しい申込にはなりません)。` : "",
+    token ? `  同じ選手を同じ種目に改めて申し込むと、重複のため受け付けられません。` : "",
+    token ? `  大切に保管してください。` : "",
     statusUrl ? `  確認ページ: ${statusUrl}` : "",
     ``,
     `─────────────────────`,
@@ -317,9 +320,9 @@ async function sendConfirmationEmail(opts) {
   </p>
 
   ${token ? `<div style="margin:18px 0;padding:16px;border:2px dashed #b91c1c;border-radius:10px;text-align:center;background:#fffdf8;">
-    <div style="font-size:11px;letter-spacing:2px;color:#b91c1c;font-weight:bold;">申込番号</div>
+    <div style="font-size:11px;letter-spacing:2px;color:#b91c1c;font-weight:bold;">申込番号(申込ID)</div>
     <div style="font-size:24px;font-weight:bold;letter-spacing:2px;font-family:monospace;margin:4px 0;">${esc(token)}</div>
-    <div style="font-size:12px;color:#78716c;">この番号で申込内容を確認できます。大切に保管してください。</div>
+    <div style="font-size:12px;color:#57534e;line-height:1.7;">申込内容の確認・修正・種目の追加には、この申込番号が必要です。<br>修正した内容はこの申込に上書きされます(新しい申込にはなりません)。大切に保管してください。</div>
     ${statusUrl ? `<div style="margin-top:10px;"><a href="${esc(statusUrl)}" style="display:inline-block;padding:9px 18px;background:#b91c1c;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold;font-size:13px;">申込内容を確認する →</a></div>` : ""}
   </div>` : ""}
 

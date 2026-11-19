@@ -709,7 +709,7 @@ function buildEntryFormHTML(tournament, events, opts) {
     padding: 13px 18px; font-size: 13px; margin: 16px 0;
     border-radius: 0 8px 8px 0; color: var(--ink-2);
   }
-  .message {
+  .message { white-space: pre-line;
     padding: 18px; margin: 16px 0;
     border-radius: 10px; text-align: center;
     font-weight: 800; font-size: 15.5px; font-family: var(--gothic);
@@ -1247,6 +1247,7 @@ ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v
 </div>
 ${closedNotice}
 <p><a href="/entry/status?tournament=${encodeURIComponent(tournament.id)}" target="_top" class="st-link" style="display:inline-flex;align-items:center;min-height:44px">申込済みの方：申込番号で追加・修正する</a></p>
+<p class="st-note" style="font-size:13px;line-height:1.7;margin:0 0 12px">送信すると申込番号(申込ID)を発行し、控えメールにも記載します。あとから修正・種目の追加をするときはこの番号が必要です。修正した内容は同じ申込に上書きされます。同じ選手を同じ種目に重ねて申し込むことはできません。</p>
 
 <form id="entryForm" onsubmit="return submitForm(event)">
 
@@ -2258,9 +2259,9 @@ async function submitForm(e) {
       const statusUrl = token ? appOrigin + "/entry/status?tournament=" + encodeURIComponent(TOURNAMENT_ID) : "";
       const tokenBlock = token ? (
         '<div class="ticket">' +
-          '<div class="ticket-label">申込番号</div>' +
+          '<div class="ticket-label">申込番号(申込ID)</div>' +
           '<div class="ticket-code">' + escapeHtml(token) + '</div>' +
-          '<div class="ticket-note">この番号で申込内容をいつでも確認できます。' +
+          '<div class="ticket-note">申込内容の確認・修正・種目の追加には、この申込番号が必要です。修正内容はこの申込に上書きされます。' +
             (statusUrl ? '' : '控えメールにも記載しています。') + '</div>' +
           (statusUrl ? '<a class="ticket-link" href="' + statusUrl + '" target="_blank" rel="noopener">申込内容を確認する →</a>' : '') +
         '</div>'

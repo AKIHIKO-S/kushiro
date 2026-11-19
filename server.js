@@ -43,6 +43,7 @@ const QRCode = require("qrcode");     // ローカルQR生成(会場オフライ
 const db = require("./db");
 const { MAX_OWNER_ACCOUNTS, PASSWORD_MIN, normalizeName, validName, normalizeEmail, validEmail, validPassword, boundedPassword } = require("./lib/operator-accounts");
 const reports = require("./reports");
+const entryWorkbook = require("./lib/entry-workbook");
 const importQuality = require("./tools/import_quality");   // 取込プレビューの品質警告(notices)を全経路へ後付け
 const rosterReader = require("./tools/roster_reader");       // ブック内の名簿と突合し取りこぼし/過大/表記揺れを検出
 const entryForm = require("./entry_form");
@@ -1322,7 +1323,7 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
         return res.status(400).json({ error: "連絡先メールアドレスを正しく入力してください。" });
       }
       const r = db.createTeamEntry(req.params.id, { ...payload, source: "form" }, opId,
-        { enforce: true, explicit_additions: true, queue_mail: true });
+        { enforce: true, explicit_additions: true, queue_mail: true, reject_registered: true });
 
       // Platformで成立していない受付はシートへ送らない。
       if (r.error) {
@@ -3413,18 +3414,15 @@ app.get("/api/tournaments/:id/aggregation.xlsx", requireAdmin, (req, res) => {
   try {
     const tournament = db.getTournament(req.params.id);
     if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
-    const entrants = db.getEntrants(req.params.id);
-    if (!entrants.length) return res.status(400).json({ error: "出場選手が未登録です" });
-    const fees = {};
-    ["team_male","team_female","doubles_male","doubles_female",
-     "mixed_male","mixed_female","singles_male","singles_female",
-     "bento","party"].forEach(k => {
-      if (req.query[k] !== undefined) fees[k] = parseInt(req.query[k]) || 0;
-    });
-    const buf = reports.buildAggregationXlsx(tournament, entrants, { fees });
+    // 申込団体ごとの集計+全員の名簿+種目別名簿+領収書差し込み用(lib/entry-workbook.js)。
+    // 承認待ち・重複の疑いも名簿に載せ、確認事項欄に理由を出す。
+    const data = db.getEntryExport(req.params.id);
+    if (data.error) return res.status(404).json(data);
+    if (!data.groups.length) return res.status(400).json({ error: "申込がまだありません" });
+    const buf = entryWorkbook.buildEntryWorkbook(data);
     // バイナリ転送用に厳格な設定 (圧縮無効・キャッシュ無効・正確な長さ)
     const safeName = (tournament.name || "tournament").replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_");
-    const filename = encodeURIComponent(`集計表_${safeName}.xlsx`);
+    const filename = encodeURIComponent(`申込集計_${safeName}.xlsx`);
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=UTF-8''${filename}`);
     res.setHeader("Content-Length", Buffer.byteLength(buf));
