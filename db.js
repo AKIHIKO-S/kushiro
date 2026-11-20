@@ -10737,6 +10737,39 @@ function getEntryDesk(tournamentId) {
 // 申込の集計Excel(lib/entry-workbook.js)の元データ。受付台帳と同じ「申込団体」単位でまとめる。
 // 確定のみを名簿・参加費集計に入れる。承認待ちなどは確認用の行へ分ける。
 // 生年月日・メール・電話は返さない。
+// 区分の表示名(集計表・名簿用)。内部値(general など)をそのまま出さず、日本語にする。
+// 参加区分(entry_categories)があれば、その short/label を優先する。
+const _DIVISION_JA = { general: "一般", middle: "中学生", high: "高校生", elementary: "小学生", university: "大学生", junior: "ジュニア", senior: "シニア" };
+function divisionLabelFor(e, evCfg) {
+  const age = String(e.age_group || "").trim();
+  if (age) return _DIVISION_JA[age] || age;
+  const v = String(e.division || "").trim();
+  if (!v || v === "student") return "";
+  const cats = evCfg && Array.isArray(evCfg.entry_categories) ? evCfg.entry_categories : [];
+  const c = cats.find(x => x && String(x.value || x.label) === v);
+  if (c) return String(c.short || c.label || c.value);
+  return _DIVISION_JA[v] || v;
+}
+// 種目の参加料の併記用テキスト(例: 「¥2,000」「¥2,000（学生 ¥1,000）」「¥500（ホープス ¥400・カブ ¥300）」)。料金が未設定なら空。
+function eventFeeText(c) {
+  if (!c) return "";
+  const yen = n => "¥" + Number(n).toLocaleString("ja-JP");
+  const base = parseInt(c.fee, 10);
+  if (!(base >= 0)) return "";
+  const parts = [];
+  const cats = Array.isArray(c.entry_categories) ? c.entry_categories : [];
+  if (cats.length) {
+    cats.forEach(x => {
+      const f = parseInt(x && x.fee_override, 10);
+      if (f >= 0 && f !== base) parts.push(String(x.short || x.label || x.value) + " " + yen(f));
+    });
+  } else {
+    const s = parseInt(c.fee_student, 10);
+    if (s >= 0 && s !== base) parts.push("学生 " + yen(s));
+  }
+  return yen(base) + (parts.length ? "（" + parts.join("・") + "）" : "");
+}
+
 function getEntryExport(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return { error: "大会が見つかりません" };
@@ -10764,7 +10797,7 @@ function getEntryExport(tournamentId) {
   const eventName = e => e.event || "種目未設定";
   const confirmedByEvent = new Map(all.filter(isConfirmedEntry).map(e => [eventName(e), e]));
   const events = [...new Set([...cfg.filter(c => c?.name).map(c => String(c.name)), ...confirmedByEvent.keys()])]
-    .filter(name => confirmedByEvent.has(name)).map(name => ({ name, kind: kindOf(confirmedByEvent.get(name)) }));
+    .filter(name => confirmedByEvent.has(name)).map(name => ({ name, kind: kindOf(confirmedByEvent.get(name)), fee_text: eventFeeText(cfgBy[name]) }));
   const custom = (resolveFieldConfig(t).custom || []).filter(c => c && c.key && c.label && c.scope === "player")
     .map(c => ({ key: String(c.key), label: String(c.label).slice(0, 40) }));
   const join = arr => arr.filter(v => v !== "" && v != null).join("\n");
@@ -10808,7 +10841,7 @@ function getEntryExport(tournamentId) {
     const lines = Math.max(1, name.split("\n").length);
     return {
       id: e.id, event: eventName(e), kind, name_text: name, kana_text: kana, team_text: team,
-      class_text: e.age_group || (e.division && e.division !== "student" ? e.division : ""),
+      class_text: divisionLabelFor(e, cfgBy[e.event]),
       grade_text: join(people.map(p => p && p.grade ? String(p.grade) : "")),
       age_text: join(people.map(p => p && p.age != null && p.age !== "" ? String(p.age) : "")),
       answers, fee, checks, lines,
@@ -15300,7 +15333,7 @@ module.exports = {
   createEntry, createTeamEntry, getEntries,
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
-  getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII, deleteSubmission, findSameApplicantSubmission, isNameEnteredInEvent, getReceiptTeams, listDeletedSubmissions, restoreDeletedSubmission,
+  getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII, deleteSubmission, divisionLabelFor, eventFeeText, findSameApplicantSubmission, isNameEnteredInEvent, getReceiptTeams, listDeletedSubmissions, restoreDeletedSubmission,
   importPlayerRegistry, getEntryDeskList, getEntryDesk, syncPlayerRegistry, planPlayerRegistrySync, registryFromSheetRows,
   matchPersonToPlayers, getPlayerMatchReview, resolveEntrantPlayerMatch, rematchTournamentPlayers,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, fieldLabelOf, sanitizeFieldConfig,
