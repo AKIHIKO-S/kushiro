@@ -21,7 +21,7 @@ test("令和の日付", () => {
 
 test("既定の文面は元データどおり(但し書き=大会名入り・発行者)", () => {
   const d = rp.defaultsFor({ name: "会長杯兼高校釧根支部オープン", date: "2026-05-02" }, {});
-  assert.strictEqual(d.proviso, "大会参加費(会長杯兼高校釧根支部オープン)として、上記のとおり領収いたしました。");
+  assert.strictEqual(d.proviso, "大会参加費（会長杯兼高校釧根支部オープン）として、上記のとおり領収いたしました。");
   assert.strictEqual(d.date, "令和8年5月2日");
   assert.strictEqual(d.issuer, "釧路卓球協会　会長　山本　満");
   assert.strictEqual(rp.defaultsFor({ name: "x" }, { RECEIPT_ISSUER: "A会　会長　B" }).issuer, "A会　会長　B");
