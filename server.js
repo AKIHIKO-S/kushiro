@@ -5426,6 +5426,78 @@ app.post("/api/public/tournaments/:id/entry-template/read",
     }
   });
 
+// ── 申込フォームの入力補助(チーム名・選手名の候補) ────────────────────
+// チーム名は個人情報ではないので出す。選手名は「氏名とふりがなだけ」を、大会ごとのスイッチがONのときだけ出す。
+// 公開フォームから誰でも呼べるため、悪用(名簿の総当たり)を難しくする:
+//   ・受付中の大会のフォームからだけ(受付していない大会は404)
+//   ・フォームを開いたときに発行する短命チケット(30分・200回まで)が要る。チケットは再起動で無効になる
+//   ・1分あたり・1日あたりのIP別の回数制限。2文字以上の入力・最大5件
+//   ・送信元オリジンの確認(自分のオリジンと許可済みオリジンだけ)
+const SUGGEST_KEY = crypto.randomBytes(32);   // プロセスごとに作り直す(再起動で古いチケットは使えなくなる)
+const SUGGEST_TICKET_TTL_MS = 30 * 60 * 1000;
+const SUGGEST_TICKET_MAX_USE = 200;
+const SUGGEST_DAILY_MAX = 1500;
+const _suggestUse = new Map();      // nonce → 使った回数
+const _suggestDaily = new Map();    // "日付|IP" → 回数
+function _suggestSign(body) { return crypto.createHmac("sha256", SUGGEST_KEY).update(body).digest("hex").slice(0, 32); }
+function makeSuggestTicket(tournamentId) {
+  const body = [tournamentId, Date.now() + SUGGEST_TICKET_TTL_MS, crypto.randomBytes(8).toString("hex")].join(".");
+  return Buffer.from(body + "." + _suggestSign(body)).toString("base64url");
+}
+function useSuggestTicket(ticket, tournamentId) {
+  let raw = "";
+  try { raw = Buffer.from(String(ticket || ""), "base64url").toString(); } catch (_) { return false; }
+  const i = raw.lastIndexOf(".");
+  if (i < 0) return false;
+  const body = raw.slice(0, i), sig = raw.slice(i + 1);
+  const want = _suggestSign(body);
+  if (sig.length !== want.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) return false;
+  const [tid, exp, nonce] = body.split(".");
+  if (tid !== String(tournamentId) || Number(exp) < Date.now()) return false;
+  const n = (_suggestUse.get(nonce) || 0) + 1;
+  if (n > SUGGEST_TICKET_MAX_USE) return false;
+  _suggestUse.set(nonce, n);
+  return true;
+}
+setInterval(() => {   // 古い記録を掃除(メモリを増やし続けない)
+  if (_suggestUse.size > 5000) _suggestUse.clear();
+  const today = new Date().toISOString().slice(0, 10);
+  for (const k of _suggestDaily.keys()) if (!k.startsWith(today)) _suggestDaily.delete(k);
+}, 10 * 60 * 1000).unref();
+const suggestTicketRateLimit = rateLimit({ windowMs: 60000, max: 10 });
+const suggestRateLimit = rateLimit({ windowMs: 60000, max: 60 });
+function suggestGuard(req, res, next) {
+  const origin = req.get("Origin");
+  if (origin && origin !== appOriginOf(req) && !CORS_ALLOW_ORIGINS.has(origin)) {
+    return res.status(403).json({ error: "許可されていない送信元です" });
+  }
+  const day = new Date().toISOString().slice(0, 10) + "|" + clientIp(req);
+  const used = (_suggestDaily.get(day) || 0) + 1;
+  _suggestDaily.set(day, used);
+  if (used > SUGGEST_DAILY_MAX) return res.status(429).json({ error: "候補の取得が多すぎます。明日またお試しください。" });
+  if (!useSuggestTicket(req.get("X-Suggest-Ticket"), req.params.id)) {
+    return res.status(401).json({ error: "候補を使うには、フォームを開き直してください。" });
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex");
+  next();
+}
+app.post("/api/public/tournaments/:id/suggest-ticket", suggestTicketRateLimit, requireOpenEntryOrAdmin, (req, res) => {
+  const origin = req.get("Origin");
+  if (origin && origin !== appOriginOf(req) && !CORS_ALLOW_ORIGINS.has(origin)) {
+    return res.status(403).json({ error: "許可されていない送信元です" });
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ticket: makeSuggestTicket(req.entryTournament.id), players: !!req.entryTournament.entry_suggest_players });
+});
+app.get("/api/public/tournaments/:id/suggest/teams", suggestRateLimit, requireOpenEntryOrAdmin, suggestGuard, (req, res) => {
+  res.json({ items: db.suggestTeams(String(req.query.q || "").slice(0, 40)) });
+});
+app.get("/api/public/tournaments/:id/suggest/players", suggestRateLimit, requireOpenEntryOrAdmin, suggestGuard, (req, res) => {
+  if (!req.entryTournament.entry_suggest_players) return res.status(404).json({ error: "この大会では選手名の候補を出していません" });
+  res.json({ items: db.suggestPlayers(String(req.query.q || "").slice(0, 40), String(req.query.team || "").slice(0, 60)) });
+});
+
 app.get("/entry/:id", requireOpenEntryOrAdmin, (req, res) => {
   try {
     const tournament = req.entryTournament;
@@ -5504,7 +5576,7 @@ function lanIPv4s() {
 }
 // テスト時(require('../server'))はサーバを起動せず app と内部関数だけ公開する。
 // 本番(node server.js)は require.main===module が真になり従来どおり起動・常駐する。
-module.exports = { app, _resolveEvents, __test__: { deliverEntryMail } };
+module.exports = { app, _resolveEvents, __test__: { deliverEntryMail, makeSuggestTicket, useSuggestTicket } };
 
 if (require.main === module) {
 setInterval(() => scheduleEntryMail(), 15000).unref();

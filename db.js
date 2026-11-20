@@ -653,6 +653,7 @@ try {
   addTCol("field_config", "TEXT DEFAULT ''");
   addTCol("category", "TEXT DEFAULT 'general'"); // 公式戦/オープン/練習試合 等
   addTCol("organizer", "TEXT DEFAULT ''");
+  addTCol("entry_suggest_players", "INTEGER DEFAULT 0");   // 申込フォームで選手名の候補を出すか(標準OFF)
   // 大会レベル: 'district'(地区) | 'hokkaido'(全道) | 'national'(全国) | 'other'
   addTCol("level", "TEXT DEFAULT 'district'");
   // 対昨年 進捗レース: 「昨年の同大会」への手動リンク(系列リンクが無いため運営が指定)。
@@ -10529,6 +10530,51 @@ function listBackupToResend(tournamentId, limit) {
     .map(r => { let rows = []; try { rows = JSON.parse(r.rows_json) || []; } catch (_) {} return { id: r.id, rows }; });
 }
 
+// ── 申込フォームの入力補助(候補表示) ────────────────────────────────
+// 公開フォームから呼ばれるので、返す項目は最小限にする:
+//   チーム名 … 個人情報ではないので、登録チームと選手DBの所属から返す。
+//   選手名   … 氏名とふりがなだけ。所属・学年・生年月日・成績は返さない(同姓同名の見分けは申込後の自動照合に任せる)。
+// 呼び出し側(server.js)が、受付中の大会・チケット・回数制限・大会ごとのスイッチを確かめる。
+const SUGGEST_MIN_CHARS = 2;
+let _suggestCache = { at: 0, teams: [], players: [] };
+function _suggestSource() {
+  if (Date.now() - _suggestCache.at < 60000) return _suggestCache;   // 60秒キャッシュ(連続入力でDBを叩かない)
+  const teams = new Map();   // 正規化 → 表示名
+  const add = (n) => { const k = normalizeTeam(n); if (k && !teams.has(k)) teams.set(k, String(n).trim()); };
+  try { sqlite.prepare("SELECT name FROM registered_teams WHERE active=1").all().forEach(r => add(r.name)); } catch (_) {}
+  const players = sqlite.prepare("SELECT name, furigana, team, appearances FROM players WHERE merged_into IS NULL").all();
+  players.forEach(p => add(p.team));
+  _suggestCache = { at: Date.now(), teams: [...teams.entries()].map(([k, v]) => ({ key: k, name: v })),
+    players: players.map(p => ({ nameKey: String(p.name || "").replace(/[\s　]+/g, ""), name: normalizeName(p.name),
+      furiKey: _normFuri(p.furigana), furigana: normalizeName(p.furigana), teamKey: normalizeTeam(p.team), n: p.appearances || 0 })) };
+  return _suggestCache;
+}
+function __resetSuggestCache() { _suggestCache = { at: 0, teams: [], players: [] }; }   // テスト用
+function suggestTeams(q, limit) {
+  const key = normalizeTeam(q);
+  if (key.length < 1) return [];
+  const src = _suggestSource().teams;
+  const pre = src.filter(t => t.key.startsWith(key)), inc = src.filter(t => !t.key.startsWith(key) && t.key.includes(key));
+  return pre.concat(inc).slice(0, Math.max(1, Math.min(10, parseInt(limit) || 8))).map(t => t.name);
+}
+// team は「並べ替え」にだけ使う(絞り込みはしない)=別のチームで出場する人も選べる。
+function suggestPlayers(q, team, limit) {
+  const raw = String(q == null ? "" : q).replace(/[\s　]+/g, "");
+  if ([...raw].length < SUGGEST_MIN_CHARS) return [];
+  const nk = raw, fk = _normFuri(raw), tk = normalizeTeam(team);
+  const seen = new Set(), hits = [];
+  for (const p of _suggestSource().players) {
+    const byName = p.nameKey.startsWith(nk), byFuri = !!fk && p.furiKey.startsWith(fk);
+    if (!byName && !byFuri) continue;
+    const dedupe = p.name + "|" + p.furigana;
+    if (seen.has(dedupe)) continue;
+    seen.add(dedupe);
+    hits.push({ name: p.name, furigana: p.furigana, teamHit: tk && p.teamKey && (p.teamKey === tk || p.teamKey.includes(tk) || tk.includes(p.teamKey)) ? 1 : 0, n: p.n });
+  }
+  hits.sort((a, b) => (b.teamHit - a.teamHit) || (b.n - a.n) || a.furigana.localeCompare(b.furigana, "ja"));
+  return hits.slice(0, Math.max(1, Math.min(5, parseInt(limit) || 5))).map(h => ({ name: h.name, furigana: h.furigana }));
+}
+
 // 申込の一覧(本部の「申込の一覧」画面)。金銭の収受は運営アプリでは扱わない(オーナー方針 2026-11-03)ので、
 // 件数・修正・別団体との重複だけを返す。
 function getSubmissionList(tournamentId) {
@@ -12994,6 +13040,7 @@ function updateEntrySettings(tournamentId, settings) {
       field_config = ?,
       category = ?,
       organizer = ?,
+      entry_suggest_players = ?,
       updated_at = datetime('now','localtime')
     WHERE id = ?
   `).run(
@@ -13021,6 +13068,7 @@ function updateEntrySettings(tournamentId, settings) {
     fldCfg,
     settings.category || t.category || "general",
     settings.organizer || t.organizer || "",
+    settings.entry_suggest_players !== undefined ? (settings.entry_suggest_players ? 1 : 0) : (t.entry_suggest_players ? 1 : 0),
     tournamentId
   );
   return stmts.getTournament.get(tournamentId);
@@ -15302,7 +15350,7 @@ module.exports = {
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel, entryClosedReason: _entryClosedReason,
   getManualSubmissionView, createManualSubmission, publicEntryOperationId,
   applicantReplaceEntrant, applicantCancelEntrant, applicantReplaceEntrantBySubmission, applicantCancelEntrantBySubmission, listEntryChanges,
-  findCrossGroupDuplicates, getSubmissionEditView, editSubmission, recordAdminEntrantChange, getSubmissionList, buildBackupRows, recordBackupAttempt, finishBackup, getBackupState, listBackupToResend,
+  findCrossGroupDuplicates, getSubmissionEditView, editSubmission, recordAdminEntrantChange, getSubmissionList, suggestTeams, suggestPlayers, __resetSuggestCache, buildBackupRows, recordBackupAttempt, finishBackup, getBackupState, listBackupToResend,
   copyEntrySettings, listEntrySettingSources,
   claimEntryMail, finishEntryMail, retryEntryMail, getEntryMailContent,
   resolveEntryOptions, sanitizeEntryOptions, priceEntryOptions,

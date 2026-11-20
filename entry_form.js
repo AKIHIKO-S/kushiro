@@ -1057,6 +1057,20 @@ function buildEntryFormHTML(tournament, events, opts) {
     box-shadow: 0 10px 26px -14px rgba(48, 32, 16, .4);
   }
   #ttRemain.ok { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+  /* 入力補助(チーム名・選手名の候補)。サイト正典の白磁: 白地・墨の細罫・丹頂は使わない */
+  .tt-suggest {
+    position: absolute; z-index: 80; display: none; background: #fff;
+    border: 1px solid var(--ink); box-shadow: 0 12px 28px -16px rgba(48, 32, 16, .45);
+    font-family: var(--gothic);
+  }
+  .tt-suggest__item {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 10px; width: 100%;
+    min-height: 44px; padding: 8px 12px; text-align: left; font: inherit; font-size: 14px; color: var(--ink);
+    background: none; border: none; border-bottom: 1px solid var(--line); cursor: pointer;
+  }
+  .tt-suggest__item:last-child { border-bottom: none; }
+  .tt-suggest__item small { color: var(--ink-2); font-size: 12px; }
+  .tt-suggest__item:hover, .tt-suggest__item.is-on { background: #f4f1ea; }
   @media (prefers-reduced-motion: reduce) {
     #ttRail .bar { transition-duration: .01ms; }
   }
@@ -2691,6 +2705,155 @@ function ttImportExcel(inp) {
 }
 document.getElementById("entryForm").addEventListener("input", ttFormSync);
 document.getElementById("entryForm").addEventListener("change", ttFormSync);
+
+// ══ 入力補助: チーム名・選手名の候補(任意) ══
+// 候補は選ぶ前の「ヒント」で、無視して自由に入力できる(所属を自由に決められる大会がある)。
+// 選手名の候補は氏名とふりがなだけ。所属・学年などは出さない/入れない。候補が出ない環境でも入力は普通にできる。
+var TT_SUG = { base: SUBMIT_URL.replace(/submit-team-entry$/, ""), ticket: "", players: false, seq: 0, timer: null, box: null, cur: null, items: [], idx: -1 };
+function ttSugFetchTicket() {
+  return fetch(TT_SUG.base + "suggest-ticket", { method: "POST" })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (j) { if (j && j.ticket) { TT_SUG.ticket = j.ticket; TT_SUG.players = !!j.players; } return !!(j && j.ticket); })
+    .catch(function () { return false; });
+}
+// 入力欄の種類: "team"(所属・チーム名)/ "player"(氏名)/ ""(対象外)
+function ttSugKind(inp) {
+  if (!inp || inp.tagName !== "INPUT" || (inp.type && inp.type !== "text")) return "";
+  var n = inp.name || "";
+  var join = inp.getAttribute("data-join") || "";
+  if (join) return /(_name|_n[12])$/.test(join) ? "player" : "";
+  if (n === "team_name" || /_team$/.test(n) || /_t[12]$/.test(n) || /^ev\\d+_team\\d+_name$/.test(n)) return "team";
+  if (/^ev\\d+_p\\d+_name$/.test(n) || /^ev\\d+_pair\\d+_n[12]$/.test(n) || /^ev\\d+_team\\d+_m\\d+$/.test(n)) return "player";
+  return "";
+}
+// 氏名の入力欄から、その行の所属(並べ替えのヒントに使う)を探す
+function ttSugTeamOf(inp) {
+  var row = inp.closest(".entry-row") || document;
+  var n = inp.getAttribute("data-join") || inp.name || "";
+  var m;
+  var el = null;
+  if ((m = /^(ev\\d+_p\\d+)_/.exec(n))) el = row.querySelector('input[name="' + m[1] + '_team"]');
+  else if ((m = /^(ev\\d+_pair\\d+)_n([12])/.exec(n))) el = row.querySelector('input[name="' + m[1] + '_t' + m[2] + '"]');
+  else if ((m = /^(ev\\d+_team\\d+)_m/.exec(n))) el = row.querySelector('input[name="' + m[1] + '_name"]');
+  if (!el || !String(el.value || "").trim()) el = document.querySelector('input[name="team_name"]');
+  return el ? String(el.value || "").trim() : "";
+}
+function ttSugQuery(inp) {
+  var join = inp.getAttribute("data-join");
+  if (join) { var h = document.querySelector('input[name="' + join + '"]'); var scope = inp.closest(".entry-row") || document; h = scope.querySelector('input[name="' + join + '"]') || h; return h ? String(h.value || "") : String(inp.value || ""); }
+  return String(inp.value || "");
+}
+function ttSugClose() {
+  if (TT_SUG.box) TT_SUG.box.style.display = "none";
+  TT_SUG.items = []; TT_SUG.idx = -1;
+}
+function ttSugRender(inp, kind, items) {
+  if (!items.length) return ttSugClose();
+  if (!TT_SUG.box) {
+    TT_SUG.box = document.createElement("div");
+    TT_SUG.box.className = "tt-suggest";
+    TT_SUG.box.setAttribute("role", "listbox");
+    document.body.appendChild(TT_SUG.box);
+  }
+  var box = TT_SUG.box;
+  box.innerHTML = "";
+  items.forEach(function (it, i) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "tt-suggest__item";
+    b.setAttribute("role", "option");
+    var main = document.createElement("span");
+    main.textContent = kind === "team" ? it : it.name;
+    b.appendChild(main);
+    if (kind === "player" && it.furigana) { var s = document.createElement("small"); s.textContent = it.furigana; b.appendChild(s); }
+    b.addEventListener("mousedown", function (e) { e.preventDefault(); ttSugPick(i); });
+    b.addEventListener("touchstart", function (e) { e.preventDefault(); ttSugPick(i); }, { passive: false });
+    box.appendChild(b);
+  });
+  var r = inp.getBoundingClientRect();
+  box.style.left = (window.scrollX + r.left) + "px";
+  box.style.top = (window.scrollY + r.bottom + 2) + "px";
+  box.style.width = Math.max(220, r.width) + "px";
+  box.style.display = "block";
+  TT_SUG.cur = { inp: inp, kind: kind };
+  TT_SUG.items = items; TT_SUG.idx = -1;
+}
+function ttSugSet(el, v) { if (!el) return; el.value = v; el.dispatchEvent(new Event("input", { bubbles: true })); }
+function ttSugPick(i) {
+  var c = TT_SUG.cur, it = TT_SUG.items[i];
+  if (!c || it == null) return;
+  var inp = c.inp;
+  if (c.kind === "team") { ttSugSet(inp, it); ttSugClose(); return; }
+  var join = inp.getAttribute("data-join");
+  var scope = inp.closest(".entry-row") || document;
+  var target = join || inp.name || "";
+  var m, furiTarget = "";
+  if ((m = /^(ev\\d+_p\\d+)_name$/.exec(target))) furiTarget = m[1] + "_furi";
+  else if ((m = /^(ev\\d+_pair\\d+)_n([12])$/.exec(target))) furiTarget = m[1] + "_" + m[2] + "_furi";
+  else if ((m = /^(ev\\d+_team\\d+_m\\d+)$/.exec(target))) furiTarget = m[1] + "_x_furi";
+  var split = function (full) { var s = String(full || "").trim().split(/[\\s　]+/); return [s[0] || "", s.slice(1).join(" ")]; };
+  if (join) {
+    var parts = scope.querySelectorAll('[data-join="' + join + '"]');
+    var nm = split(it.name);
+    if (parts[0]) parts[0].value = nm[0];
+    if (parts[1]) parts[1].value = nm[1];
+    ttJoin(parts[0] || inp);
+  } else {
+    ttSugSet(inp, it.name);
+  }
+  if (furiTarget && it.furigana) {
+    var fparts = scope.querySelectorAll('[data-join="' + furiTarget + '"]');
+    if (fparts.length) {
+      var fm = split(it.furigana);
+      fparts[0].value = fm[0]; if (fparts[1]) fparts[1].value = fm[1];
+      ttJoin(fparts[0]);
+    } else {
+      var f = scope.querySelector('input[name="' + furiTarget + '"]');
+      if (f) ttSugSet(f, it.furigana);
+    }
+  }
+  ttSugClose();
+}
+function ttSugRequest(inp, kind) {
+  var q = ttSugQuery(inp).trim();
+  var minLen = kind === "team" ? 1 : 2;
+  if ([...q.replace(/[\\s　]+/g, "")].length < minLen) return ttSugClose();
+  if (kind === "player" && !TT_SUG.players) return;
+  if (!TT_SUG.ticket) return;
+  var mine = ++TT_SUG.seq;
+  var url = TT_SUG.base + "suggest/" + (kind === "team" ? "teams" : "players") + "?q=" + encodeURIComponent(q) +
+    (kind === "player" ? "&team=" + encodeURIComponent(ttSugTeamOf(inp)) : "");
+  fetch(url, { headers: { "X-Suggest-Ticket": TT_SUG.ticket } }).then(function (r) {
+    if (r.status === 401) { return ttSugFetchTicket().then(function () { return null; }); }
+    return r.ok ? r.json() : null;
+  }).then(function (j) {
+    if (mine !== TT_SUG.seq || !j || !Array.isArray(j.items)) return;   // 古い応答は捨てる
+    if (document.activeElement !== inp) return;
+    ttSugRender(inp, kind, j.items);
+  }).catch(function () {});
+}
+// 候補は補助機能。ここで何が起きても申込フォームの初期化を止めない
+try {
+  document.getElementById("entryForm").addEventListener("input", function (e) {
+    var inp = e.target, kind = ttSugKind(inp);
+    if (!kind) return;
+    clearTimeout(TT_SUG.timer);
+    TT_SUG.timer = setTimeout(function () { ttSugRequest(inp, kind); }, 250);
+  });
+  document.getElementById("entryForm").addEventListener("keydown", function (e) {
+    if (!TT_SUG.box || TT_SUG.box.style.display === "none" || !TT_SUG.items.length) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      TT_SUG.idx = (TT_SUG.idx + (e.key === "ArrowDown" ? 1 : -1) + TT_SUG.items.length) % TT_SUG.items.length;
+      Array.prototype.forEach.call(TT_SUG.box.children, function (el, i) { el.classList.toggle("is-on", i === TT_SUG.idx); });
+    } else if (e.key === "Enter" && TT_SUG.idx >= 0) {
+      e.preventDefault(); ttSugPick(TT_SUG.idx);
+    } else if (e.key === "Escape") { ttSugClose(); }
+  });
+  document.getElementById("entryForm").addEventListener("focusout", function () { setTimeout(ttSugClose, 150); });
+  window.addEventListener("resize", ttSugClose);   // 位置は文書座標で置くので、スクロールでは閉じない
+  ttSugFetchTicket();
+} catch (e) { /* 候補なしで続行 */ }
 
 // 初期化 (失敗しても安全網が案内を表示)
 try {

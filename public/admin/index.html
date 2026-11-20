@@ -4320,6 +4320,8 @@ const A = {
      entry_options: entryOptions,  // 有料オプション(サーバ側で sanitize される)
      entry_payment_note: paymentNote,   // 参加料の案内文(埋込URLではなく大会に持たせる)
      organizer: orgEl ? orgEl.value.trim() : (t.organizer || "釧路卓球協会"),
+     entry_suggest_players: (document.getElementById("efgSuggest") || {}).checked != null
+       ? document.getElementById("efgSuggest").checked : !!t.entry_suggest_players,
    });
    if (r && r.error) throw new Error(r.error);
    // localStorage にも保存 (将来 admin で参照しやすいよう)
@@ -4328,6 +4330,8 @@ const A = {
    t.entries_open = openEl ? openEl.checked : t.entries_open;
    t.entry_deadline = dlEl ? dlEl.value : t.entry_deadline;
    t.organizer = orgEl ? orgEl.value.trim() : t.organizer;
+   const sgEl = document.getElementById("efgSuggest");
+   if (sgEl) t.entry_suggest_players = sgEl.checked ? 1 : 0;
    const statusMsg = (openEl && openEl.checked) ? "受付中" : "停止中";
    const cN = (fieldCfg.custom || []).length, oN = (entryOptions || []).length;
    return `${events.length}種目 / ${statusMsg}`
@@ -4385,6 +4389,10 @@ const A = {
        style: { padding: "6px 10px", fontSize: "14px", flex: 1 } }),
    ),
  ),
+ h("label", { style: { display: "flex", alignItems: "flex-start", gap: "8px", marginTop: "12px", cursor: "pointer", fontSize: "13px", color: "#78350f" } },
+   h("input", { type: "checkbox", id: "efgSuggest", checked: t.entry_suggest_players ? "" : null, style: { width: "18px", height: "18px", marginTop: "2px" } }),
+   h("span", {}, h("b", {}, "申込フォームで選手名の候補を出す"),
+     h("br"), "所属を自由に決められる大会向け。氏名とふりがなだけを候補に出します（所属・学年などは出しません）。標準はOFFです。チーム名の候補は、この設定にかかわらず出ます。")),
  h("div", { style: { fontSize: "11px", color: "#78350f", marginTop: "8px", lineHeight: "1.6" } },
    "「受付中」になっていないと、公開URLにアクセスしても申込できません。",
    "この画面の設定（種目・料金・入力項目・自由項目・オプション・締切）は、"

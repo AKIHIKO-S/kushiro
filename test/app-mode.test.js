@@ -68,6 +68,7 @@ test("申込・後日修正・選手DBの API は通す", () => {
     ["GET", "/api/players"], ["PUT", "/api/players/p1"], ["POST", "/api/players/p1/merge"], ["GET", "/api/player-merge/candidates"],
     ["GET", "/api/players/p1/affiliations"], ["POST", "/api/affiliations/a1/end"], ["GET", "/api/registered-teams"],
     ["POST", "/api/admin/snapshots/restore"], ["GET", "/api/owner/db-download"],
+    ["POST", "/api/public/tournaments/t1/suggest-ticket"], ["GET", "/api/public/tournaments/t1/suggest/teams"], ["GET", "/api/public/tournaments/t1/suggest/players"],
     ["GET", "/api/tournaments/t1/sheet-backup"], ["POST", "/api/tournaments/t1/sheet-backup/resend"],
     // 台の割り当て(進行管理のうちコート配置・呼ぶ・戻すだけ)
     ["GET", "/api/tournaments/t1/operations"], ["PUT", "/api/tournaments/t1/court-layout"],
