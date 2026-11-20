@@ -2209,6 +2209,16 @@ function _sealUrl() {
   for (const [dir, url] of cands) for (const ext of [".png", ".jpg", ".jpeg"]) {
     try { const st = fs.statSync(path.join(dir, "seal" + ext)); if (st.isFile() && st.size > 0) return url + ext; } catch (_) { /* なければ次へ */ }
   }
+  // 登録済みの電子印鑑が無いときの代わり: 環境変数 RECEIPT_SEAL_FILE が指す画像ファイル(リポジトリの外に置く)をページへ埋め込む
+  const f = String(process.env.RECEIPT_SEAL_FILE || "").trim();
+  if (f) {
+    try {
+      const st = fs.statSync(f);
+      const ext = path.extname(f).toLowerCase();
+      const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[ext];
+      if (mime && st.isFile() && st.size > 0 && st.size < 3 * 1024 * 1024) return "data:" + mime + ";base64," + fs.readFileSync(f).toString("base64");
+    } catch (_) { /* 読めなければ印影なし */ }
+  }
   return "";
 }
 app.get("/api/tournaments/:id/receipt-print.html", requireAdmin, (req, res) => {
