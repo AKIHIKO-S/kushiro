@@ -10609,6 +10609,14 @@ const _DESK_ISSUE = {
   duplicate_entry: ["other", "同じ団体の中で重なっています"],
   player_link_mismatch: ["other", "選手の結びつけを確認してください"],
 };
+// 受付台帳に出す「全道大会に出場する意思」(選手ごと。ダブルスは2人ぶんを「／」でつなぐ)。未回答は空
+function _deskZendo(e) {
+  let ex = null; try { ex = e.extra_json ? JSON.parse(e.extra_json) : null; } catch (_) { ex = null; }
+  if (!ex) return "";
+  const one = p => (p && (p.zendo_intent === "あり" || p.zendo_intent === "なし")) ? p.zendo_intent : "";
+  if (Array.isArray(ex.players)) return ex.players.map(one).filter(Boolean).join("／");
+  return one(ex);
+}
 function _deskLabel(e) {
   const mem = entrantMembers(e);
   if (mem && mem.length && isTeamEntrant(e)) return `${e.display_name || e.name || e.team || ""}（${mem.length}名）`;
@@ -10718,6 +10726,7 @@ function getEntryDesk(tournamentId) {
         team_label: isTeamEntrant(e) ? String(e.display_name || e.name || e.team || "") : "",
         members: isTeamEntrant(e) ? entrantMembers(e) : [],
         kana: e.is_doubles && e.partner_name ? [e.furigana || "", e.partner_furigana || ""].filter(Boolean).join("・") : (e.furigana || ""),
+        zendo: _deskZendo(e),
         status: e.status || "confirmed" })),
       issues, mail: mail.map(({ recipient, state }) => ({ recipient, state })),
     };
@@ -10725,7 +10734,7 @@ function getEntryDesk(tournamentId) {
   const sumAll = summarizeEntries(all);
   return {
     tournament: { id: t.id, name: t.name, date: t.date || "", venue: t.venue || "", deadline: t.entry_deadline || "",
-      days_left: _deskDaysLeft(t), state: _deskState(t) },
+      days_left: _deskDaysLeft(t), state: _deskState(t), zendo_enabled: zendoEnabled(t) },
     events: evNames.map(n => ({ name: n, count: evCount.get(n) || 0 })),
     totals: { teams: rows.filter(r => r.entries > 0).length, entries: sumAll.confirmed, submissions: subs.length,
       checks, by_route: byRoute },
@@ -10768,6 +10777,13 @@ function eventFeeText(c) {
     if (s >= 0 && s !== base) parts.push("学生 " + yen(s));
   }
   return yen(base) + (parts.length ? "（" + parts.join("・") + "）" : "");
+}
+
+// 全道大会に出場する意思の項目を、この大会が聞いているか(大会全体、または種目ごとの上書きでONのとき)
+function zendoEnabled(t) {
+  const fc = resolveFieldConfig(t);
+  if ((fc.fields || {}).zendo_intent && fc.fields.zendo_intent !== "hidden") return true;
+  return Object.values(fc.event_overrides || {}).some(o => o && o.zendo_intent && o.zendo_intent !== "hidden");
 }
 
 function getEntryExport(tournamentId) {
@@ -10843,6 +10859,7 @@ function getEntryExport(tournamentId) {
       id: e.id, event: eventName(e), kind, name_text: name, kana_text: kana, team_text: team,
       class_text: divisionLabelFor(e, cfgBy[e.event]),
       grade_text: join(people.map(p => p && p.grade ? String(p.grade) : "")),
+      zendo_text: join(people.map(p => p && p.zendo_intent ? String(p.zendo_intent) : "")),
       age_text: join(people.map(p => p && p.age != null && p.age !== "" ? String(p.age) : "")),
       answers, fee, checks, lines,
     };
@@ -10872,6 +10889,7 @@ function getEntryExport(tournamentId) {
   return {
     tournament: { id: t.id, name: t.name || "", date: t.date || "", venue: t.venue || "" },
     events, custom_fields: custom, groups, review, generated_at: now,
+    zendo_enabled: zendoEnabled(t),
   };
 }
 
@@ -11337,6 +11355,9 @@ function _enforceRequiredFields(t, formData, entries) {
     if (stFor(evName, "grade") === "required" && miss(ex.grade)) return `${evName}: 学年を入力してください`;
     if (person && stFor(evName, "player_region") === "required" && miss(ex.player_region)) return `${evName}: 支部を選んでください`;
     if (person && stFor(evName, "first_time") === "required" && miss(ex.first_time)) return `${evName}: 初めて出場するかどうかを選んでください`;
+    // 全道大会に出場する意思(選手ごと)。「あり」「なし」だけを受け付ける
+    if (person && ex.zendo_intent != null && ex.zendo_intent !== "" && !["あり", "なし"].includes(String(ex.zendo_intent))) return `${evName}: 全道大会に出場する意思は「あり」か「なし」を選んでください`;
+    if (person && stFor(evName, "zendo_intent") === "required" && miss(ex.zendo_intent)) return `${evName}: 全道大会に出場する意思を選んでください`;
     // 選手ごとの自由項目。表示条件の参照先は「同じ選手の回答」→無ければ「申込単位の回答」の順で解決
     // (申込単位の「宿泊が必要」チェック→選手ごとの「宿泊日数」のような組合せを許すため)。
     const getVal = (k) => {
@@ -11395,7 +11416,7 @@ function _enforceRequiredFields(t, formData, entries) {
       if (stFor(evName, "player_team") === "required" && miss(ent.team)) return `${evName}: 所属を入力してください`;
       // singles は furigana を entrant 直列(ent.furigana)+ 学年/custom を extra_json で持つ。
       const m = checkSlot(evName, { furigana: ent.furigana, grade: ex.grade, answers: ex.answers,
-        player_region: ex.player_region, first_time: ex.first_time }, { name });
+        player_region: ex.player_region, first_time: ex.first_time, zendo_intent: ex.zendo_intent }, { name });
       if (m) return m;
     }
   }
@@ -12772,6 +12793,7 @@ const FIELD_LABELS = {
   team_name: "団体名", furigana: "ふりがな", player_team: "所属", grade: "学年",
   player_gender: "性別", birth_date: "生年月日", supervisor: "引率顧問", advisor: "顧問",
   coach: "コーチ", note: "備考", player_region: "支部", first_time: "出場経験", name_split: "氏名を姓・名に分ける",
+  zendo_intent: "全道大会に出場する意思",
 };
 const DEFAULT_FIELD_CONFIG = {
   version: 2,
@@ -12788,6 +12810,7 @@ const DEFAULT_FIELD_CONFIG = {
     name_split: "hidden",      // 氏名・ふりがなを姓/名に分けて聞く(選手登録つきの申込)。既定は従来の1欄
     player_region: "hidden",   // 選手ごとの支部 = 既定は非表示
     first_time: "hidden",      // 初めて出場する/出場したことがある = 既定は非表示(初出場=新規登録の候補)
+    zendo_intent: "hidden",    // 全道大会に出場する意思(あり/なし)= 既定は非表示(全道の出場権が絡む大会だけONにする)
   },
   custom: [],                  // 主催者定義の自由項目
   event_overrides: {},         // 種目名 → {key:"required|optional|hidden"} の上書き

@@ -1072,6 +1072,8 @@ function buildEntryFormHTML(tournament, events, opts) {
   .tt-suggest__item:last-child { border-bottom: none; }
   .tt-suggest__item small { color: var(--ink-2); font-size: 12px; }
   .tt-suggest__item:hover, .tt-suggest__item.is-on { background: #f4f1ea; }
+  .first-time.zendo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
+  .zendo-lb { font-size: 13px; font-weight: 700; flex: 1 0 100%; }
   .tt-dupwarn { grid-column: 1 / -1; font-size: 13px; line-height: 1.6; color: #7a4300; background: #fff4e0; border: 1px solid #e8c48a; border-radius: 4px; padding: 8px 10px; margin: 2px 0; }
   .tt-dupwarn[hidden] { display: none; }
   @media (prefers-reduced-motion: reduce) {
@@ -1689,6 +1691,15 @@ function playerFieldsHtml(prefix, ev, opts) {
       '<label><input type="radio" name="' + prefix + '_first" value="初めて"' + rq + ' onchange="recalcTotal()"> 初めて出場する</label>' +
       '<label><input type="radio" name="' + prefix + '_first" value="出場したことがある"' + rq + ' onchange="recalcTotal()"> 出場したことがある</label></div>';
   }
+  // 全道大会に出場する意思(選手ごと)。全道の出場権が絡む大会だけ、フォーム設定でONにする。団体メンバーには聞かない
+  const zd = forTeam ? "hidden" : fstFor(evName, "zendo_intent");
+  if (zd !== "hidden") {
+    const lb = escapeHtml(flabel("zendo_intent", "全道大会に出場する意思"));
+    const rq = zd === "required" ? " required" : "";
+    h += '<div class="first-time zendo" role="radiogroup" aria-label="' + lb + '"><span class="zendo-lb">' + lb + (zd === "required" ? " (必須)" : "") + '</span>' +
+      '<label><input type="radio" name="' + prefix + '_zendo" value="あり"' + rq + ' onchange="recalcTotal()"> あり</label>' +
+      '<label><input type="radio" name="' + prefix + '_zendo" value="なし"' + rq + ' onchange="recalcTotal()"> なし</label></div>';
+  }
   (FIELD_CFG.custom || []).filter(function (c) { return c && c.scope === "player"; }).forEach(function (c) {
     h += renderCustomClient(c, prefix + "_cust_" + c.key);
   });
@@ -2081,6 +2092,8 @@ function gatherFormData() {
       const rgn = q("_region"); if (rgn) ex.player_region = rgn;   // 支部(選手ごと)
       const ftEl = row.querySelector('[name$="' + token + '_first"]:checked');
       if (ftEl) ex.first_time = ftEl.value;                         // 出場経験(初めて/出場したことがある)
+      const zdEl = row.querySelector('[name$="' + token + '_zendo"]:checked');
+      if (zdEl) ex.zendo_intent = zdEl.value;                       // 全道大会に出場する意思(あり/なし)
       const bd = q("_bdate"); if (bd) ex.birth_date = bd;   // 年齢自動判定用(サーバが基準日で満年齢を検証)
       const ag = q("_age"); if (ag !== "") ex.age = parseInt(ag, 10);   // 紙の用紙と同じ「年齢」直接入力
       const answers = {};
@@ -2623,6 +2636,11 @@ function ttXperson(row, base, nameT, s1, s2, teamName, p, miss, label) {
     var want = p.first_time.indexOf("初") >= 0 ? "初めて" : "出場したことがある";
     var r = row.querySelector('input[name="' + base + '_first"][value="' + want + '"]');
     if (r) { r.checked = true; r.dispatchEvent(new Event("change", { bubbles: true })); }
+  }
+  if (p.zendo_intent) {
+    var wz = /^(あり|有|はい|○|する|出場する)/.test(String(p.zendo_intent).trim()) ? "あり" : "なし";
+    var rz = row.querySelector('input[name="' + base + '_zendo"][value="' + wz + '"]');
+    if (rz) { rz.checked = true; rz.dispatchEvent(new Event("change", { bubbles: true })); }
   }
   Object.keys(p.custom || {}).forEach(function (k) {
     var el = ttXq(row, base + "_cust_" + k), v = p.custom[k];

@@ -4091,6 +4091,14 @@ const A = {
        toast("選手登録用の項目を必須にしました（保存で反映）", "ok");
      } }, "選手登録用の項目をまとめて必須にする"),
      h("span", { className: "text-xs text-sub" }, "姓・名、せい・めい、所属、学年、性別、支部、出場経験")));
+   // 全道大会に出場する意思の確認。全道の出場権が絡む大会だけONにする(選手ごとに「あり/なし」を必須で聞く)。
+   // 種目によって要否が違うときは、下の「種目ごとに変える」で種目別に切り替えられる。
+   fieldCfgBox.appendChild(h("label", { style: { display: "flex", alignItems: "flex-start", gap: "8px", margin: "2px 0 10px", fontSize: "13px", cursor: "pointer" } },
+     h("input", { type: "checkbox", checked: (fieldCfg.fields.zendo_intent && fieldCfg.fields.zendo_intent !== "hidden") ? "" : null,
+       style: { width: "20px", height: "20px", marginTop: "1px" },
+       onChange: (e) => { fieldCfg.fields.zendo_intent = e.target.checked ? "required" : "hidden"; } }),
+     h("span", {}, h("b", {}, "全道出場意思の確認"), h("br"),
+       h("span", { className: "text-xs text-sub" }, "ONにすると、申込フォームの選手ごとに「全道大会に出場する意思: あり / なし」(必須)を出します。全道大会の出場権が絡む大会だけONにしてください。受付台帳の詳細と集計Excelにも列が出ます。"))));
    const grid = h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 14px", marginBottom: "10px" } });
    STD_FIELDS.forEach(([key, label]) => {
      const cur = fieldCfg.fields[key] || "hidden";
@@ -4126,7 +4134,7 @@ const A = {
    const PER_EVENT_FIELDS = [
      ["furigana", "ふりがな"], ["player_team", "所属"],
      ["grade", "学年"], ["player_gender", "性別"],
-     ["player_region", "支部"], ["first_time", "出場経験"],
+     ["player_region", "支部"], ["first_time", "出場経験"], ["zendo_intent", "全道出場意思"],
    ];
    const evNames = events.map(e => e && e.name).filter(Boolean);
    const ovDetails = h("details", { style: { margin: "4px 0 10px" } },
