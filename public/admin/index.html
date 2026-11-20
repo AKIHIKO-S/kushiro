@@ -1815,7 +1815,6 @@ const A = {
      if ((d.alerts || {}).mail_failed) alerts.push(h("li", {}, `メールを送れていない申込が ${d.alerts.mail_failed} 件あります（受付台帳の申込から、メールを再送できます）。`));
      if ((d.alerts || {}).sheet_failed) alerts.push(h("li", {}, `スプレッドシートの控えが未送信のものが ${d.alerts.sheet_failed} 件あります（申込の一覧の上から再送できます）。`));
      if (alerts.length) body.append(sec("対応が必要なもの"), h("ul", { style: { margin: 0, paddingLeft: "18px", lineHeight: 1.9 } }, ...alerts));
-     body.append(sec("新しい出来事（前に見てから）"));
      if (!d.items.length) body.append(h("p", { className: "text-sm text-sub" }, "新しい申込や変更は、ありません。"));
      else body.append(h("ul", { style: { listStyle: "none", margin: 0, padding: 0 } }, ...d.items.map(it => h("li", { style: { padding: "8px 0", borderBottom: "1px solid var(--border)" } },
        h("div", { className: "text-xs text-sub" }, String(it.at || "").slice(5, 16).replace("-", "/")),
