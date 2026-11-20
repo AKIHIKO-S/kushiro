@@ -1,5 +1,5 @@
 // 申込の受付制御(P3): 締切日時と定員の回帰テスト。
-//  - 締切は日付+時刻(JST)。時刻未設定なら締切日の終日まで受け付ける(従来互換)
+//  - 締切は日本時間の翌日0時。旧時刻設定は参照しない
 //  - 定員は「申込枠の数」(ダブルス=1ペア, 団体=1チームで1枠)。種目ごと/大会全体の2段
 //  - 満員種目はフォームで選べなくなり、締切超過はフォームを開いた時点で案内+送信停止
 // 実行: node --test test/entry-capacity.test.js
@@ -40,7 +40,7 @@ const submit = (t, entries) => db.createTeamEntry(t.id, {
 }, "op-" + Math.random().toString(36).slice(2), { enforce: true });
 const single = (name, ev) => ({ event: ev || "男子シングルス", type: "singles", name, team: "検証ク" });
 
-// ── 締切: 日付+時刻 ──────────────────────────────────────────
+// ── 締切: 日本時間の締切日末 ────────────────────────────────
 test("締切の時刻が未設定なら締切日の終日まで受け付ける(従来互換)", () => {
   const t = mkTournament({ entry_deadline: today(), entry_deadline_time: "" });
   assert.strictEqual(db.entryDeadlineAt(t), today() + " 23:59");
@@ -49,14 +49,10 @@ test("締切の時刻が未設定なら締切日の終日まで受け付ける(�
   assert.ok(!r.error, "締切日当日は受け付ける: " + r.error);
 });
 
-test("締切に時刻を設定すると、その時刻で締め切られる", () => {
-  const past = mkTournament({ entry_deadline: today(), entry_deadline_time: "00:01" });
-  const r = submit(past, [single("乙 二")]);
-  assert.ok(r.error && /申込締切/.test(r.error), "時刻超過で締切: " + r.error);
-  assert.match(r.error, /00:01/, "締切時刻が文言に出る");
-
-  const future = mkTournament({ entry_deadline: today(), entry_deadline_time: "23:59" });
-  assert.ok(!submit(future, [single("丙 三")]).error, "まだ締切前なら受け付ける");
+test("旧締切時刻が入力されていても締切日いっぱい受け付ける", () => {
+  const t = mkTournament({ entry_deadline: today(), entry_deadline_time: "00:01" });
+  assert.strictEqual(db.entryDeadlineAt(t), today() + " 23:59");
+  assert.ok(!submit(t, [single("乙 二")]).error);
 });
 
 test("締切日を過ぎていれば時刻に関係なく締切", () => {

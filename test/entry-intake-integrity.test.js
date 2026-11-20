@@ -2,6 +2,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { once } = require("node:events");
 const { Script } = require("node:vm");
+const XLSX = require("xlsx-js-style");
 
 process.env.DB_PATH = ":memory:";
 process.env.KTTA_APP_MODE = "entry";
@@ -14,6 +15,9 @@ const EVENT = "男子シングルス";
 const entrant = name => ({ event: EVENT, type: "singles", name, team: "架空クラブ" });
 const form = entries => ({ team_name: "架空クラブ", contact_name: "検証担当",
   contact_tel: "000-0000-0000", contact_email: "test@example.invalid", entries });
+const desks = id => `/api/tournaments/${id}/desk`;
+const exportPath = id => `/api/tournaments/${id}/aggregation.xlsx`;
+const sheetRows = (book, name) => XLSX.utils.sheet_to_json(book.Sheets[name], { header: 1 });
 
 function tournament(name, settings = {}) {
   const t = db.createTournament({ name, date: "2099-05-04" });
@@ -22,17 +26,25 @@ function tournament(name, settings = {}) {
   return t;
 }
 
-test("受付日は日本時間の翌日0時で終わり、公開一覧と送信が同じ条件を使う", t => {
+test("両モードで日本時間の翌日0時に終了し、公開一覧・台帳・送信が揃う", t => {
   const item = tournament("日付境界", { entry_deadline: "2099-04-30", entry_deadline_time: "17:00" });
-  t.mock.method(Date, "now", () => Date.parse("2099-04-30T14:59:59Z"));
-  assert.equal(db.entryDeadlineLabel(db.getTournament(item.id)), "2099-04-30");
-  assert.ok(db.getOpenTournaments().some(x => x.id === item.id));
-  assert.equal(db.getEntryCapacityState(item.id).closed, false);
-  assert.ok(db.createTeamEntry(item.id, form([entrant("検証 締切前")])).submission_id);
-  Date.now.mock.mockImplementation(() => Date.parse("2099-04-30T15:00:00Z"));
-  assert.equal(db.getEntryCapacityState(item.id).closed, true);
-  assert.ok(!db.getOpenTournaments().some(x => x.id === item.id));
-  assert.match(db.createTeamEntry(item.id, form([entrant("検証 締切後")])).error, /締切/);
+  const originalMode = process.env.KTTA_APP_MODE;
+  t.after(() => { process.env.KTTA_APP_MODE = originalMode; });
+  const clock = t.mock.method(Date, "now", () => 0);
+  for (const mode of ["entry", "full"]) {
+    process.env.KTTA_APP_MODE = mode;
+    clock.mock.mockImplementation(() => Date.parse("2099-04-30T14:59:59Z"));
+    assert.equal(db.entryDeadlineLabel(db.getTournament(item.id)), "2099-04-30");
+    assert.ok(db.getOpenTournaments().some(x => x.id === item.id));
+    assert.equal(db.getEntryCapacityState(item.id).closed, false);
+    assert.equal(db.getEntryDesk(item.id).tournament.state, "open");
+    assert.ok(db.createTeamEntry(item.id, form([entrant(`検証 締切前 ${mode}`)])).submission_id);
+    clock.mock.mockImplementation(() => Date.parse("2099-04-30T15:00:00Z"));
+    assert.equal(db.getEntryCapacityState(item.id).closed, true);
+    assert.equal(db.getEntryDesk(item.id).tournament.state, "closed");
+    assert.ok(!db.getOpenTournaments().some(x => x.id === item.id));
+    assert.match(db.createTeamEntry(item.id, form([entrant("検証 締切後")])).error, /締切/);
+  }
 });
 
 test("受付・本部登録・本人修正・確定件数を実HTTPで検証する", async t => {
@@ -104,6 +116,84 @@ test("受付・本部登録・本人修正・確定件数を実HTTPで検証す�
   const html = await print.text();
   assert.match(html, /確定出場 2件/);
   assert.doesNotMatch(html, /領収印|合計予定額/);
+});
+
+test("実HTTPの確定出場数が台帳・Excel・各印刷名簿で揃い、保存した参加費を出す", async t => {
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const originalMode = process.env.KTTA_APP_MODE;
+  t.after(() => { process.env.KTTA_APP_MODE = originalMode; });
+  const request = path => fetch(`http://127.0.0.1:${server.address().port}${path}`, {
+    headers: { "X-Admin-Key": process.env.ADMIN_KEY },
+  });
+  const item = tournament("架空帳票大会", { event_config: [{
+    name: EVENT, type: "singles", fee: 500, entry_categories: [
+      { value: "general", label: "一般" }, { value: "exempt", label: "免除", fee_override: 0 },
+    ],
+  }] });
+  const save = (name, division = "general") => {
+    const result = db.createTeamEntry(item.id, form([{ ...entrant(name), division }]));
+    assert.ok(result.ok, result.error);
+    return result.entrant_ids[0];
+  };
+  save("検証 保存額");
+  save("検証 免除", "exempt");
+  db.setEntrantStatus(save("検証 保留"), "pending");
+  db.updateEntrant(save("検証 取消"), { status: "cancelled" });
+  db.setEntrantStatus(save("検証 却下"), "rejected");
+  db.createEntrant({ tournament_id: item.id, ...entrant("検証 旧データ"), status: "confirmed" });
+  db.updateEntrySettings(item.id, { event_config: [{ name: EVENT, type: "singles", fee: 1500 }] });
+
+  for (const mode of ["entry", "full"]) {
+    process.env.KTTA_APP_MODE = mode;
+    const desk = await (await request(desks(item.id))).json();
+    assert.equal(desk.totals.entries, 3);
+    assert.equal(desk.totals.teams, 2);
+    assert.equal(desk.unlinked, 1);
+    assert.equal(desk.events.find(e => e.name === EVENT).count, 3);
+    assert.ok(desk.rows.some(r => r.issues.some(i => i.title === "承認待ち")));
+    const list = await (await request("/api/entry-desk/tournaments")).json();
+    const listed = list.items.find(row => row.id === item.id);
+    assert.deepEqual([listed.entries, listed.teams], [3, 2]);
+    const excel = await request(exportPath(item.id));
+    assert.equal(excel.status, 200);
+    const book = XLSX.read(Buffer.from(await excel.arrayBuffer()), { type: "buffer" });
+    assert.deepEqual(sheetRows(book, "集計用").at(-1).slice(3, 6), [3, 3, 500]);
+    const roster = sheetRows(book, "選手名簿").filter(r => /^検証 /.test(r[2] || ""));
+    assert.deepEqual(Object.fromEntries(roster.map(r => [r[2], r[8]])), {
+      "検証 保存額": 500, "検証 免除": 0, "検証 旧データ": "未確認",
+    });
+    const byEvent = sheetRows(book, EVENT);
+    assert.equal(byEvent.filter(r => /^検証 /.test(r[1] || "")).length, 3);
+    const review = sheetRows(book, "要確認").flat();
+    assert.ok(review.includes("検証 保留") && review.includes("承認待ち"));
+    assert.ok(review.includes("検証 旧データ"));
+    assert.ok(!review.includes("検証 取消") && !review.includes("検証 却下"));
+    const receipts = sheetRows(book, "領収書差し込み用").slice(4);
+    assert.deepEqual(receipts.map(r => r[3]).sort((a, b) => a - b), [0, 500]);
+    const print = await (await request(`/api/tournaments/${item.id}/reception.html`)).text();
+    assert.match(print, /確定出場 3件/);
+    assert.doesNotMatch(print, /検証 (保留|取消|却下)/);
+    if (mode === "full") {
+      assert.match(print, /保存済み参加費 ¥500（未確認 1件）/);
+      assert.match(print, /<td class="fee">¥0<\/td>/);
+      assert.doesNotMatch(print, /¥1,500/);
+      const byEventPrint = await (await request(`/api/tournaments/${item.id}/roster.html`)).text();
+      assert.match(byEventPrint, /検証 免除/);
+      assert.doesNotMatch(byEventPrint, /検証 (保留|取消|却下)/);
+    }
+  }
+
+  const pending = tournament("架空確認のみ");
+  const result = db.createTeamEntry(pending.id, form([entrant("検証 承認のみ")]));
+  assert.ok(result.ok, result.error);
+  db.setEntrantStatus(result.entrant_ids[0], "pending");
+  const response = await request(exportPath(pending.id));
+  assert.equal(response.status, 200);
+  const book = XLSX.read(Buffer.from(await response.arrayBuffer()), { type: "buffer" });
+  assert.ok(sheetRows(book, "要確認").flat().includes("検証 承認のみ"));
+  assert.ok(!sheetRows(book, "選手名簿").flat().includes("検証 承認のみ"));
 });
 
 test("締切未設定の大会は開催日翌日の日本時間0時に公開受付から外す", t => {

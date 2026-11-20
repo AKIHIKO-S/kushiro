@@ -43,6 +43,7 @@ function makeSource() {
 test("申込設定を他の大会からコピーできる", () => {
   const src = makeSource();
   const dst = db.createTournament({ name: "今年のヤサカ杯", date: "2027-06-01", venue: "アリーナ" });
+  db.updateEntrySettings(dst.id, { entry_deadline_time: "18:00" });
   const r = db.copyEntrySettings(dst.id, src.id, {});
   assert.ok(r.ok, r.error);
 
@@ -50,7 +51,7 @@ test("申込設定を他の大会からコピーできる", () => {
   const cfg = db.resolveFieldConfig(after);
   assert.strictEqual(cfg.fields.furigana, "required", "項目設定が引き継がれる");
   assert.strictEqual(cfg.fields.grade, "optional");
-  assert.strictEqual(after.entry_deadline_time, "17:00", "締切時刻は運用が同じなので引き継ぐ");
+  assert.strictEqual(after.entry_deadline_time, "18:00", "旧締切時刻は引き継がない");
   assert.strictEqual(after.entry_capacity, 120, "定員");
   assert.strictEqual(after.entry_max_events, 3, "1人あたりの種目数上限");
   assert.strictEqual(db.resolveEntryOptions(after).length, 1, "有料オプション");
@@ -161,13 +162,12 @@ test("大会作成時にテンプレートの申込プリセットが適用さ�
     entries_open: false,
     entry_preset: {
       field_config: { fields: { furigana: "required", grade: "required", player_team: "required" } },
-      entry_deadline_time: "17:00",
     },
   });
   const cfg = db.resolveFieldConfig(t);
   assert.strictEqual(cfg.fields.furigana, "required");
   assert.strictEqual(cfg.fields.grade, "required", "学生大会は学年を必ず聞く");
-  assert.strictEqual(t.entry_deadline_time, "17:00");
+  assert.strictEqual(t.entry_deadline_time, "");
 });
 
 test("個別指定はプリセットより優先される", () => {

@@ -10,7 +10,7 @@
 //     (既定の「当日受付でお支払い」は誤案内になるので大会ごとに案内文を持たせる)
 process.env.DB_PATH = "/tmp/ktta_princess_" + process.pid + ".db";
 
-const { test, after } = require("node:test");
+const { test, after, mock } = require("node:test");
 const assert = require("node:assert");
 const fs = require("fs");
 const path = require("path");
@@ -18,7 +18,10 @@ const vm = require("vm");
 const db = require("../db");
 const entryForm = require("../entry_form.js");
 
+// 第55回の受付期間内に固定し、公開受付の開催日チェックに影響されないようにする。
+const clock = mock.method(Date, "now", () => Date.parse("2026-08-01T00:00:00Z"));
 after(() => {
+  clock.mock.restore();
   for (const ext of ["", "-wal", "-shm"]) {
     try { fs.rmSync(process.env.DB_PATH + ext, { force: true }); } catch (e) {}
   }

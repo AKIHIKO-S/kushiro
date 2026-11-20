@@ -2,7 +2,7 @@
 // 削除依頼(deleteSubmissionPII)・保持期間超過(purgeOldSubmissionPII)で匿名化できること。
 // 実行: node --test test/pii-retention.test.js
 process.env.DB_PATH = "/tmp/ktta_pii_" + process.pid + ".db";
-const { test, after } = require("node:test");
+const { test, after, mock } = require("node:test");
 const assert = require("node:assert");
 const fs = require("fs");
 const db = require("../db");
@@ -14,9 +14,15 @@ let _seq = 0;
 function setupWithEntry(date, contact) {
   const t = db.createTournament({ name: "PII" + (++_seq), date });
   db.updateEntrySettings(t.id, { entries_open: 1, event_config: [{ name: EV, type: "singles", fee: 0 }] });
-  db.createTeamEntry(t.id, Object.assign({
-    team_name: "X", entries: [{ event: EV, type: "singles", name: "選手 一", team: "X" }],
-  }, contact));
+  const clock = mock.method(Date, "now", () => Date.parse(date + "T00:00:00+09:00"));
+  try {
+    const saved = db.createTeamEntry(t.id, Object.assign({
+      team_name: "X", entries: [{ event: EV, type: "singles", name: "選手 一", team: "X" }],
+    }, contact));
+    assert.ok(saved.ok, saved.error);
+  } finally {
+    clock.mock.restore();
+  }
   return t;
 }
 const contacts = (t) => db.getEntries(t.id).map(e => [e.contact_name, e.contact_email, e.contact_tel].join("|"));

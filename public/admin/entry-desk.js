@@ -144,7 +144,7 @@
         ? h("div", { class: "ed-tl" }, d.items.map(t => h("a", { class: "ed-tl__row", href: "#desk/" + encodeURIComponent(t.id) },
           h("span", { class: "ed-tl__name" }, t.name || "(名前なし)"),
           h("span", { class: "ed-tl__meta" }, meta(t)),
-          h("span", { class: "ed-tl__count" }, h("b", { class: "ed-num" }, t.entries), "出場・" + t.teams + "団体"))))
+          h("span", { class: "ed-tl__count" }, h("b", { class: "ed-num" }, t.entries), "出場・確定申込 " + t.teams + "件"))))
         : h("div", { class: "ed-tl" }, h("p", { class: "ed-empty" }, "まだ大会がありません。「大会をつくる」から始めてください。")));
   }
 
@@ -305,7 +305,7 @@
       rows.length ? null : empty));
     box.append(h("div", { class: "ed-totals ed-num" },
       d.events.map(e => h("div", {}, h("span", {}, e.short), h("b", {}, e.count))),
-      h("div", {}, h("span", {}, "出場 計"), h("b", {}, d.totals.entries))));
+      h("div", {}, h("span", {}, "確定出場 計"), h("b", {}, d.totals.entries))));
     box.append(h("div", { class: "ed-mobile-links ed-btns" },
       h("button", { class: "ed-btn", type: "button", onclick: copyUrl }, "申込URLをコピー"),
       h("button", { class: "ed-btn", type: "button", onclick: openForm }, "フォーム設定")));
@@ -326,9 +326,9 @@
         rows.length ? h("table", {},
           h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "団体"),
             d.events.map(e => h("th", { scope: "col", title: e.name, "aria-label": e.name }, e.short)),
-            h("th", { scope: "col" }, "出場"), h("th", { scope: "col" }, "経路"), h("th", { scope: "col" }, "受付"), h("th", { scope: "col" }, "確認"))),
+            h("th", { scope: "col" }, "確定出場"), h("th", { scope: "col" }, "経路"), h("th", { scope: "col" }, "受付"), h("th", { scope: "col" }, "確認"))),
           h("tbody", {}, rows.map(tr)),
-          h("tfoot", {}, h("tr", {}, h("td", {}, "合計 " + d.totals.teams + "団体"),
+          h("tfoot", {}, h("tr", {}, h("td", {}, "確定申込 " + d.totals.teams + "件"),
             d.events.map(e => h("td", { class: "num" }, e.count)), h("td", { class: "num" }, d.totals.entries), h("td", {}), h("td", {}), h("td", {}))))
           : h("div", { style: "padding:0 12px" }, empty)),
       h("aside", { class: "ed-side", "aria-label": "申込の中身" },

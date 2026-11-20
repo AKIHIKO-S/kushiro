@@ -10,7 +10,7 @@ const fs = require("fs");
 const os = require("os");
 const crypto = require("crypto");
 const { moveFile } = require("./lib/move-file");
-const { isConfirmedEntry, summarizeEntries } = require("./lib/entry-summary");
+const { isConfirmedEntry, savedEntryFee, summarizeEntries } = require("./lib/entry-summary");
 const { spawn } = require("child_process");
 // 子プロセス実行に上限を課す (#20): タイムアウトで SIGKILL し、stdout 肥大も打ち切る。
 // 不正/巨大な xlsx・pdf でパーサがハング/暴走しても、リクエストとサーバ全体を巻き込まない。
@@ -2161,7 +2161,7 @@ app.get("/api/tournaments/:id/roster.html", requireAdmin, (req, res) => {
 });
 
 // ── 受付名簿 HTML (紙の当日受付用・所属別 + 参加料/領収印欄・印刷可) ── (運営者限定)
-// Platform は「名簿 + 請求予定額(種目設定料金)」を出力するのみ。実際の入金・領収の管理は
+// Platform は「名簿 + 受付時に保存した金額」を出力するのみ。実際の入金・領収の管理は
 // スプレッドシート(GAS)/紙が正 → 会計と二重管理にならず競合しない。
 app.get("/api/tournaments/:id/reception.html", requireAdmin, (req, res) => {
   const t = db.getTournament(req.params.id);
@@ -2170,41 +2170,39 @@ app.get("/api/tournaments/:id/reception.html", requireAdmin, (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   const entryOnly = currentAppMode() === "entry";
-  res.send(buildReceptionHTML(t, entryOnly ? entrants.filter(isConfirmedEntry) : entrants, entryOnly));
+  res.send(buildReceptionHTML(t, entrants.filter(isConfirmedEntry), entryOnly));
 });
 
 function buildReceptionHTML(t, entrants, entryOnly = false) {
   const yen = (n) => "¥" + (parseInt(n) || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  let cfg = [];
-  try { cfg = JSON.parse(t.event_config || "[]"); } catch (e) {}
-  const feeMap = {};
-  (Array.isArray(cfg) ? cfg : []).forEach(c => { if (c && c.name) feeMap[String(c.name).trim()] = parseInt(c.fee) || 0; });
-  const feeOf = (ev) => feeMap[String(ev || "").trim()] || 0;
   const byTeam = Object.create(null);
   entrants.forEach(e => {
     const team = (e.team || "").trim() || "(所属未記入)";
     (byTeam[team] = byTeam[team] || []).push(e);
   });
   const teamNames = Object.keys(byTeam).sort((a, b) => a.localeCompare(b, "ja"));
-  let grand = 0, grandCount = 0;
+  let grand = 0, grandCount = 0, grandUnknown = 0;
   const sections = teamNames.map(team => {
     const list = byTeam[team];
-    let sub = 0;
+    let sub = 0, subUnknown = 0;
     const rows = list.map(e => {
-      const fee = feeOf(e.event); sub += fee; grand += fee; grandCount++;
+      const fee = savedEntryFee(e);
+      if (fee === null) { subUnknown++; grandUnknown++; }
+      else { sub += fee; grand += fee; }
+      grandCount++;
       const nm = (e.is_doubles && e.partner_name)
         ? (_escHtml(e.name) + " ・ " + _escHtml(e.partner_name)) : _escHtml(e.name);
       const furi = e.furigana ? `<span class="furi">${_escHtml(e.furigana)}</span>` : "";
       return `<tr><td class="chk"></td><td class="no">${e.bracket_number || ""}</td>` +
         `<td class="nm">${nm}${furi}</td><td class="ev">${_escHtml(e.event || "")}</td>` +
-        (entryOnly ? "" : `<td class="fee">${fee ? yen(fee) : ""}</td><td class="seal"></td>`) + "</tr>";
+        (entryOnly ? "" : `<td class="fee">${fee === null ? "未確認" : yen(fee)}</td><td class="seal"></td>`) + "</tr>";
     }).join("");
     return `<section class="team-sec"><h3>${_escHtml(team)} <span class="tc">${list.length}件</span></h3>` +
       `<table class="rcp-table"><thead><tr><th class="chk">受付</th><th class="no">No</th>` +
       `<th>氏名（ふりがな）</th><th>種目</th>` +
       (entryOnly ? "" : '<th class="fee">参加料</th><th class="seal">領収印</th>') + "</tr></thead>" +
       `<tbody>${rows}</tbody><tfoot><tr><td colspan="4" class="sub-l">小計（${list.length}件）</td>` +
-      (entryOnly ? "" : `<td class="fee">${yen(sub)}</td><td></td>`) + "</tr></tfoot></table></section>";
+      (entryOnly ? "" : `<td class="fee">${subUnknown === list.length ? "未確認" : yen(sub) + (subUnknown ? "<br>一部未確認" : "")}</td><td></td>`) + "</tr></tfoot></table></section>";
   }).join("");
   return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="robots" content="noindex">
 <title>${_escHtml(t.name)} 受付名簿</title><style>
@@ -2226,9 +2224,9 @@ h3{font-size:15px;margin:0 0 4px;border-bottom:2px solid #1c1917;padding-bottom:
 <button class="print-btn" onclick="window.print()">印刷 / PDF保存</button>
 <h1>${_escHtml(t.name)} 受付名簿</h1>
 <div class="meta">${_escHtml(t.date || "")}　${_escHtml(t.venue || "")}</div>
-<div class="grand">${entryOnly ? `確定出場 ${grandCount}件 / ${teamNames.length}団体` : `参加料 合計予定額　${yen(grand)}　（全${grandCount}件 / ${teamNames.length}団体）`}</div>
-${entryOnly ? "" : '<div class="note">※ 当日受付（紙）用。金額は申込種目の設定料金からの「請求予定額」です。実際の入金・領収の管理はスプレッドシート/紙が正です。受付欄・領収印欄に押印してご利用ください。</div>'}
-${sections || "<p>申込がまだありません。</p>"}
+<div class="grand">確定出場 ${grandCount}件 / ${teamNames.length}所属${entryOnly ? "" : `　｜　保存済み参加費 ${grandCount && grandUnknown === grandCount ? "未確認" : yen(grand)}${grandUnknown ? `（未確認 ${grandUnknown}件）` : ""}`}</div>
+${entryOnly ? "" : '<div class="note">参加費は受付時の保存額です。未確認は合計に含めません。入金・領収は別途確認してください。</div>'}
+${sections || "<p>確定した出場はまだありません。</p>"}
 </body></html>`;
 }
 
@@ -3222,11 +3220,10 @@ app.get("/api/tournaments/:id/aggregation.xlsx", requireAdmin, (req, res) => {
   try {
     const tournament = db.getTournament(req.params.id);
     if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
-    // 申込団体ごとの集計+全員の名簿+種目別名簿+領収書差し込み用(lib/entry-workbook.js)。
-    // 承認待ち・重複の疑いも名簿に載せ、確認事項欄に理由を出す。
+    // 確定出場のみを集計し、承認待ちは確認用シートへ分ける。
     const data = db.getEntryExport(req.params.id);
     if (data.error) return res.status(404).json(data);
-    if (!data.groups.length) return res.status(400).json({ error: "申込がまだありません" });
+    if (!data.groups.length && !data.review.length) return res.status(400).json({ error: "申込がまだありません" });
     const buf = entryWorkbook.buildEntryWorkbook(data);
     // バイナリ転送用に厳格な設定 (圧縮無効・キャッシュ無効・正確な長さ)
     const safeName = (tournament.name || "tournament").replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_");
@@ -3770,7 +3767,7 @@ app.get("/api/tournaments/:id/entry-form-config", requireOpenEntryOrAdmin, (req,
     field_config: db.resolveFieldConfig(tournament),   // 必須項目設定(空なら既定=現行フォーム相当)
     // 受付の制御(P3): 締切日時・定員の現在値と、種目ごとの受付済み枠数
     entry_deadline: tournament.entry_deadline || "",
-    entry_deadline_time: tournament.entry_deadline_time || "",
+    entry_deadline_time: "",
     entry_capacity: tournament.entry_capacity || 0,
     capacity: db.getEntryCapacityState(tournament.id),
     entry_options: db.resolveEntryOptions(tournament),

@@ -39,26 +39,21 @@
   // ── 申込プリセット(大会の性格ごとに「聞くこと」が決まっている) ──
   // 大会を作った時点で申込フォームの項目まで決まるようにする。
   // 生年月日は種目側の age_check(年代別クラスの資格判定)で出すため、ここには入れない。
-  // 締切時刻17:00は要項の慣例。定員は会場ごとに違うので既定を置かない(0=上限なし)。
+  // 締切は大会ごとの日付で設定する。定員は会場ごとに違うので既定を置かない(0=上限なし)。
   const ENTRY_STUDENT = {          // 中学・高校・小学生の大会
     field_config: { fields: { furigana: "required", grade: "required", player_team: "required", supervisor: "optional", advisor: "optional" } },
-    entry_deadline_time: "17:00",
   };
   const ENTRY_GENERAL = {          // 一般・オープン(学生が一般の部に出ることがある)
     field_config: { fields: { furigana: "required", grade: "optional", player_team: "required" } },
-    entry_deadline_time: "17:00",
   };
   const ENTRY_AGE_CLASS = {        // ラージボール等の年代別(生年月日は種目のage_checkで聞く)
     field_config: { fields: { furigana: "required", grade: "hidden", player_team: "required" } },
-    entry_deadline_time: "17:00",
   };
   const ENTRY_TEAM = {             // 団体戦(申込は監督・責任者が代表して出す)
     field_config: { fields: { furigana: "required", player_team: "optional", supervisor: "required", coach: "optional" } },
-    entry_deadline_time: "17:00",
   };
   const ENTRY_TEAM_STUDENT = {     // 中学の団体戦(学年が出場資格に効くので必ず聞く)
     field_config: { fields: { furigana: "required", grade: "required", player_team: "optional", supervisor: "required", advisor: "optional" } },
-    entry_deadline_time: "17:00",
   };
   // 上部団体(道連)の大会を支部で取りまとめるとき。団体戦の監督を聞き、学年は無い(成年の大会)。
   // 生年月日は種目側の age_check(年代別区分の資格判定)で聞くのでここには入れない。
@@ -83,7 +78,6 @@
           help: "カット主戦の方のみ「カット」とご記入ください（用紙の注記どおり）" },
       ],
     },
-    entry_deadline_time: "17:00",
     // 上部団体の大会は支部がまとめて送金するので、既定の「当日受付でお支払い」は誤案内になる。
     payment_note: "参加料は釧路卓球協会（釧路支部）が取りまとめて主催団体へ送金します。"
       + "個人・チームから直接お振込みされないようお願いします。支部への納入方法は別途ご連絡します。",

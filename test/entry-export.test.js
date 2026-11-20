@@ -1,7 +1,7 @@
 // 申込集計Excel(lib/entry-workbook.js)と、公開フォームの同一種目重複チェックの回帰テスト。
 // 守らせる不変条件:
 //   ① 名簿には個人名が必ず載る(シングルス・ダブルス2人・団体メンバー)
-//   ② 承認待ち・重複の疑いがあっても名簿に載せ、確認事項に理由を書く。取消は載せない
+//   ② 承認待ちは「要確認」のみ。重複の疑いがある確定出場は名簿にも残す。取消は載せない
 //   ③ 集計用は申込団体ごとの参加費。金額は3桁区切り
 //   ④ 公開フォームは、同じ種目にすでに申込がある選手を受け付けない(op_id の再送は従来どおり成功扱い)
 // 実行: node --test test/entry-export.test.js
@@ -60,18 +60,25 @@ test("名簿にシングルス・ダブルス2人・団体メンバーの個人�
   assert.ok(out["領収書差し込み用"].includes("集計検証大会 参加費として"));
 });
 
-test("承認待ち・別団体の重複の疑いも名簿に載り、確認事項に理由が出る。取消は載らない", () => {
+test("別団体の重複の疑いがある確定出場は名簿に残り、承認待ちは要確認のみ", () => {
   const t = setup();
   const a = sub(t, "甲クラブ", [{ event: "一般男子シングルス", type: "singles", name: "重複 候補", team: "甲クラブ" }]);
   const b = sub(t, "乙クラブ", [{ event: "一般男子シングルス", type: "singles", name: "重複 候補", team: "乙クラブ" }]);
   const c = sub(t, "丙クラブ", [{ event: "一般男子シングルス", type: "singles", name: "取消 予定", team: "丙クラブ" }]);
-  assert.ok(!a.error && !b.error && !c.error);
+  const p = sub(t, "丁クラブ", [{ event: "一般男子シングルス", type: "singles", name: "承認 保留", team: "丁クラブ" }]);
+  assert.ok(!a.error && !b.error && !c.error && !p.error);
   db.updateEntrant(c.entrant_ids[0], { status: "cancelled" });
+  db.setEntrantStatus(p.entrant_ids[0], "pending");
   const data = db.getEntryExport(t.id);
   const all = data.groups.flatMap(g => g.entries);
   assert.strictEqual(all.filter(e => e.name_text === "重複 候補").length, 2, "重複の疑いでも両方載る");
   assert.ok(all.every(e => e.name_text !== "取消 予定"), "取消は載らない");
+  assert.ok(all.every(e => e.name_text !== "承認 保留"), "承認待ちは集計しない");
   assert.ok(all.filter(e => e.name_text === "重複 候補").every(e => e.checks.some(x => /重複の疑い/.test(x))));
+  const { out } = sheetText(buildEntryWorkbook(data));
+  assert.match(out["要確認"], /承認 保留/);
+  assert.doesNotMatch(out["要確認"], /取消 予定/);
+  assert.doesNotMatch(out["選手名簿"], /承認 保留/);
 });
 
 test("公開フォーム: 同じ種目にすでに申込がある選手はエラー。同じ op_id の再送は成功扱い", () => {

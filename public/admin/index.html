@@ -4202,7 +4202,7 @@ const A = {
        A.openEntryFormGenerator(fresh && !fresh.error ? fresh : t);
      } }, "この設定をコピー")));
    copyBox.appendChild(h("div", { className: "text-xs text-sub", style: { marginTop: "6px", lineHeight: "1.6" } },
-     "引き写すもの: 入力してもらう項目・有料オプション・締切時刻・定員・1人あたりの種目数上限",
+     "引き写すもの: 入力してもらう項目・有料オプション・定員・1人あたりの種目数上限",
      h("br"),
      "引き写さないもの: 締切日・受付の開閉・申込データ(取り違えを防ぐため)"));
  };
@@ -5180,9 +5180,9 @@ const A = {
  "名簿 (印刷・支部色分け)"),
  h("button", { className: "btn btn-sm",
  style: { background: "#dcfce7", color: "#14532d", borderColor: "#86efac" },
- title: "当日受付(紙)用。所属別の名簿＋参加料(請求予定額)＋受付/領収印欄を印刷",
+ title: "当日受付用。所属別の確定名簿・保存済み参加費・受付欄を印刷",
  onClick: () => A.openAuthedHtmlWindow(`/api/tournaments/${t.id}/reception.html`, "受付名簿_"+(t.name||"")) },
- "受付名簿 (領収金額)"),
+ "受付名簿 (参加費付き)"),
  h("button", { className: "btn btn-sm btn-ghost",
  onClick: () => A.openEntrantsTab(t.id) }, "詳細編集"),
  ),
@@ -5519,19 +5519,9 @@ const A = {
  }
  },
 
- // ── 集計表ダウンロード (堅牢: 事前検証 → ブラウザネイティブDL) ──
+ // ── 集計表ダウンロード ──
  async downloadAggregation(t) {
- try {
- // ① 事前バリデーション (出場選手の有無確認)
- const stats = await api.get(`/api/tournaments/${t.id}/entrants/stats`);
- if (!stats || !Object.keys(stats).length) {
- return toast("出場選手が未登録です。先に取込を行ってください。", "err");
- }
- // ② 管理キー付き fetch → Blob DL(requireAdmin のためヘッダ必須)
  return A.downloadAuthedFile(`/api/tournaments/${t.id}/aggregation.xlsx`, `申込集計_${t.name || "tournament"}.xlsx`);
- } catch (e) {
- toast("ダウンロード失敗: " + e.message, "err");
- }
  },
  // ── 申込一覧 Excel ダウンロード (申込台帳・Googleスプレッドシート代替) ──
  async downloadApplicantsXlsx(t) {
@@ -6737,14 +6727,10 @@ const A = {
  h("div", { className: "es-sec-title" }, "1. 受付期間・主催"),
  h("div", { className: "two-col" },
  h("div", { className: "field" },
- h("label", { className: "field-label" }, "申込締切日"),
+ h("label", { className: "field-label", htmlFor: "esDeadline" }, "申込締切日"),
  h("input", { type: "date", className: "input", id: "esDeadline",
    value: t.entry_deadline || "" }),
- A.entryOnly ? h("div", { className: "text-xs text-sub" }, "締切日の翌日0時（日本時間）に公開受付を停止します。") : h("div", { style: { display: "flex", gap: "6px", alignItems: "center", marginTop: "6px" } },
-   h("span", { className: "text-xs text-sub" }, "締切時刻"),
-   h("input", { type: "time", className: "input", id: "esDeadlineTime",
-     style: { width: "110px" }, value: t.entry_deadline_time || "" }),
-   h("span", { className: "text-xs text-sub" }, "空欄=その日いっぱい"))),
+ h("div", { className: "text-xs text-sub" }, "締切日の翌日0時（日本時間）に公開受付を停止します。")),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "定員（大会全体）"),
  h("input", { type: "number", className: "input", id: "esCapacity", min: "0",
@@ -6804,7 +6790,6 @@ const A = {
  const data = {
  entries_open: document.getElementById("esOpen").checked,
  entry_deadline: document.getElementById("esDeadline").value,
- entry_deadline_time: document.getElementById("esDeadlineTime")?.value ?? t.entry_deadline_time ?? "",
  entry_capacity: parseInt(document.getElementById("esCapacity").value) || 0,
  entry_max_events: parseInt(document.getElementById("esMaxEvents").value) || 0,
  entry_events: currentEvents,
