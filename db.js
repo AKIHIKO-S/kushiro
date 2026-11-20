@@ -11455,6 +11455,42 @@ function _alreadyEnteredConflicts(tournamentId, entries) {
   return hits;
 }
 
+// 団体名の比較用の形(全角半角・空白・大文字小文字のゆれを吸収)
+function _teamKey(s) { return String(s == null ? "" : s).normalize("NFKC").toLowerCase().replace(/[\s\u3000]+/g, ""); }
+
+// 同じ団体名・同じ申込者名で、まだ有効な申込(取り消し・却下だけになっていないもの)があるか。
+// 同名の別団体・同じ団体の別の申込者は対象外。有効な申込があればその申込を返す(呼び出し側は中身を外へ出さない)。
+function findSameApplicantSubmission(tournamentId, teamName, contactName) {
+  const tk = _teamKey(teamName);
+  const ck = _foldNameVariants(_normName(contactName));
+  if (!tk || ck.length < 2) return null;
+  const subs = sqlite.prepare("SELECT id, team_name, contact_name FROM entry_submissions WHERE tournament_id=?").all(tournamentId);
+  const live = sqlite.prepare("SELECT 1 FROM entrants WHERE submission_id=? AND COALESCE(status,'confirmed') NOT IN ('cancelled','rejected') LIMIT 1");
+  for (const s of subs) {
+    if (_teamKey(s.team_name) !== tk) continue;
+    if (_foldNameVariants(_normName(s.contact_name)) !== ck) continue;
+    if (live.get(s.id)) return s;
+  }
+  return null;
+}
+
+// 同じ大会・同じ種目に、この名前の選手が既に申込まれているか(取り消し・却下は除く)。
+// 申込フォームの入力中の警告用。返すのは有無だけ(団体名・人数・申込番号は出さない)。
+// excludeSubmissionId: 自分の申込を直している最中は、その申込の出場を数えない。
+function isNameEnteredInEvent(tournamentId, event, name, excludeSubmissionId) {
+  const k = _foldNameVariants(_normName(name));
+  if (k.length < 2) return false;
+  const rows = sqlite.prepare(`SELECT name, partner_name, is_doubles, team_members, note, submission_id FROM entrants
+    WHERE tournament_id=? AND event=? AND COALESCE(status,'confirmed') NOT IN ('cancelled','rejected')`).all(tournamentId, String(event || ""));
+  for (const e of rows) {
+    if (excludeSubmissionId && e.submission_id === excludeSubmissionId) continue;
+    const mem = entrantMembers(e);
+    const names = (mem && mem.length) ? mem : [e.name, e.is_doubles ? e.partner_name : ""];
+    if (names.some(n => _foldNameVariants(_normName(n)) === k)) return true;
+  }
+  return false;
+}
+
 function createTeamEntry(tournamentId, formData, opId, opts) {
   opts = opts || {};
   const t = stmts.getTournament.get(tournamentId);
@@ -11489,6 +11525,11 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
 
   const entries = Array.isArray(formData.entries) ? formData.entries : [];
   if (!entries.length) return { error: "出場種目を1つ以上選択してください" };
+  // 公開フォームの二重送信の防止: 同じ団体・同じ申込者の有効な申込が既にあれば受け付けない(修正は申込番号から)
+  if (opts.reject_same_applicant && !intoSub && findSameApplicantSubmission(tournamentId, formData.team_name, formData.contact_name)) {
+    return { error: "この団体・申込者の申込は既にあります。内容の変更・追加は、控えメールの申込番号から行ってください。",
+      validation: true, duplicate_applicant: true };
+  }
   if (opts.reject_registered && !intoSub) {
     const hits = _alreadyEnteredConflicts(tournamentId, entries);
     if (hits.length) {
@@ -15259,7 +15300,7 @@ module.exports = {
   createEntry, createTeamEntry, getEntries,
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
-  getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII, deleteSubmission, getReceiptTeams, listDeletedSubmissions, restoreDeletedSubmission,
+  getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII, deleteSubmission, findSameApplicantSubmission, isNameEnteredInEvent, getReceiptTeams, listDeletedSubmissions, restoreDeletedSubmission,
   importPlayerRegistry, getEntryDeskList, getEntryDesk, syncPlayerRegistry, planPlayerRegistrySync, registryFromSheetRows,
   matchPersonToPlayers, getPlayerMatchReview, resolveEntrantPlayerMatch, rematchTournamentPlayers,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, fieldLabelOf, sanitizeFieldConfig,

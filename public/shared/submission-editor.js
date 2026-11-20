@@ -225,8 +225,45 @@
     if (!opts.manual) html += '<section class="se-sec">' + input("reason", "修正の理由（任意）", "", { placeholder: admin ? "例: 電話で依頼あり" : "例: 記入ミスのため" }) + "</section>";
     mount(container, '<div class="se">' + html + "</div>");
     wireAdd(container, view);
+    if (!admin && typeof opts.checkDuplicate === "function") wireDup(container, opts.checkDuplicate);
     container._seView = view;
     container._seInitial = collectRaw(container);
+  }
+
+  // 氏名を直したとき、同じ種目に同じ名前の選手が既に申込まれていそうなら、その欄の下に注意を出す(警告だけ)。
+  // 確認は呼び出し側の checkDuplicate(種目, 氏名) → Promise<boolean>。自分の申込の出場は数えない。
+  var DUP_MSG = "同じ名前の選手が、この種目に既に申込されている可能性があります。二重申込でないか確認してください";
+  function wireDup(container, check) {
+    if (container._seDupWired) return;
+    container._seDupWired = true;
+    var timers = {};
+    container.addEventListener("input", function (e) {
+      var el = e.target, k = el && el.getAttribute && el.getAttribute("data-k");
+      var m = k && /^e(\d+)\.(name|name1|name2)$/.exec(k);
+      if (!m) return;
+      clearTimeout(timers[k]);
+      timers[k] = setTimeout(function () {
+        var view = container._seView || {}, idx = +m[1];
+        var evSel = container.querySelector('[data-k="e' + idx + '.event"]');
+        var ev = evSel ? evSel.value : (((view.entries || [])[idx]) || {}).event;
+        var name = String(el.value || "").trim();
+        var box = el.parentNode.querySelector(".se-dup[data-for=\"" + k + "\"]");
+        var compact = name.replace(/[\s\u3000]+/g, "");
+        var show = function (on) {
+          if (!box) {
+            if (!on) return;
+            box = container.ownerDocument.createElement("div");
+            box.className = "se-dup"; box.setAttribute("data-for", k); box.setAttribute("role", "status"); box.textContent = DUP_MSG;
+            el.parentNode.appendChild(box);
+          }
+          box.hidden = !on;
+        };
+        if (!ev || compact.length < 2) return show(false);
+        check(ev, name).then(function (dup) {
+          if (String(el.value || "").trim().replace(/[\s\u3000]+/g, "") === compact) show(!!dup);   // 古い応答は捨てる
+        }).catch(function () {});
+      }, 500);
+    });
   }
 
   function collectRaw(container) {
@@ -343,6 +380,7 @@
     ".se-new{border-color:var(--ink-2,#6c6153)}.se-tag{display:inline-block;margin-left:8px;font-size:11px;font-weight:800;padding:1px 7px;border-radius:999px;background:var(--line,#e4dccb)}" +
     ".se-rm{margin-top:4px;min-height:44px;padding:0 12px;border:1px solid var(--line,#e4dccb);border-radius:8px;background:#fff;font:inherit;font-size:13px;cursor:pointer;color:inherit}" +
     ".se-addpick select{border-style:dashed}" +
+    ".se-dup{font-size:12.5px;line-height:1.6;color:#7a4300;background:#fff4e0;border:1px solid #e8c48a;border-radius:6px;padding:7px 9px;margin-top:6px}.se-dup[hidden]{display:none}" +
     ".se-slot{border-top:1px dashed var(--line,#e4dccb);padding-top:8px;margin-top:6px}.se-slot-h{font-size:12px;font-weight:800;margin-bottom:6px}";
   function injectCss(doc) {
     doc = doc || root.document;

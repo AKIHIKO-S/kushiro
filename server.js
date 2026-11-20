@@ -1281,7 +1281,7 @@ app.post("/api/public/tournaments/:id/submit-team-entry",
         return res.status(400).json({ error: "連絡先メールアドレスを正しく入力してください。" });
       }
       const r = db.createTeamEntry(req.params.id, { ...payload, source: "form" }, opId,
-        { enforce: true, explicit_additions: true, queue_mail: true, reject_registered: true });
+        { enforce: true, explicit_additions: true, queue_mail: true, reject_registered: true, reject_same_applicant: true });
 
       // Platformで成立していない受付はシートへ送らない。
       if (r.error) {
@@ -5356,6 +5356,46 @@ app.post("/api/public/tournaments/:id/suggest-ticket", suggestTicketRateLimit, r
   res.setHeader("Cache-Control", "no-store");
   res.json({ ticket: makeSuggestTicket(req.entryTournament.id), players: !!req.entryTournament.entry_suggest_players });
 });
+// 二重申込の事前警告(申込フォームの入力中)。「その名前が、この種目に既に申込されているか」の有無だけを返す。
+// 名簿の探り出しを難しくする: フォームを開いたときのチケット・1分あたり/1日あたりのIP別の回数制限・名前1件ずつの照会。
+// 団体名・人数・申込番号は返さない。
+const dupCheckRateLimit = rateLimit({ windowMs: 60000, max: 30 });
+const _dupDaily = new Map();
+const DUP_DAILY_MAX = 600;
+function _dupBudget(req, res) {
+  const day = new Date().toISOString().slice(0, 10) + "|" + clientIp(req);
+  const used = (_dupDaily.get(day) || 0) + 1;
+  _dupDaily.set(day, used);
+  if (_dupDaily.size > 5000) { const today = day.slice(0, 10); for (const k of _dupDaily.keys()) if (!k.startsWith(today)) _dupDaily.delete(k); }
+  if (used > DUP_DAILY_MAX) { res.status(429).json({ error: "確認が多すぎます。明日またお試しください。" }); return false; }
+  return true;
+}
+function _dupInput(req) {
+  const b = req.body || {};
+  return { event: String(b.event || "").slice(0, 100), name: String(b.name || "").slice(0, 100) };
+}
+app.post("/api/public/tournaments/:id/check-duplicate", dupCheckRateLimit, requireOpenEntryOrAdmin, (req, res, next) => {
+  const origin = req.get("Origin");
+  if (origin && origin !== appOriginOf(req) && !CORS_ALLOW_ORIGINS.has(origin)) return res.status(403).json({ error: "許可されていない送信元です" });
+  if (!useSuggestTicket(req.get("X-Suggest-Ticket"), req.params.id)) return res.status(401).json({ error: "フォームを開き直してください。" });
+  if (!_dupBudget(req, res)) return;
+  next();
+}, (req, res) => {
+  const { event, name } = _dupInput(req);
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex");
+  res.json({ duplicate: !!(event && name) && db.isNameEnteredInEvent(req.params.id, event, name, "") });
+});
+// 申込番号で入った本人が自分の申込を直している最中の確認。自分の申込の出場は数えない。
+app.post("/api/applicant/check-duplicate", dupCheckRateLimit, requireSession(["applicant"]), (req, res) => {
+  if (!_dupBudget(req, res)) return;
+  const sub = db.getSubmissionById(req.auth.principal_id);
+  if (!sub || sub.error) return res.status(404).json({ error: "申込が見つかりません" });
+  const { event, name } = _dupInput(req);
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ duplicate: !!(event && name) && db.isNameEnteredInEvent(sub.tournament_id || (sub.tournament && sub.tournament.id), event, name, req.auth.principal_id) });
+});
+
 app.get("/api/public/tournaments/:id/suggest/teams", suggestRateLimit, requireOpenEntryOrAdmin, suggestGuard, (req, res) => {
   res.json({ items: db.suggestTeams(String(req.query.q || "").slice(0, 40)) });
 });

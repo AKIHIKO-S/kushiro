@@ -35,7 +35,7 @@ const ENTRY_MODE_API = [
   [/^\/api\/import\/players$/],
   // 公開の申込
   [/^\/api\/public\/open-tournaments$/],
-  [/^\/api\/public\/tournaments\/[^/]+\/(entry|submit-team-entry|entry-template\.xlsx|entry-template\/read|suggest-ticket|suggest\/teams|suggest\/players)$/],
+  [/^\/api\/public\/tournaments\/[^/]+\/(entry|submit-team-entry|entry-template\.xlsx|entry-template\/read|suggest-ticket|suggest\/teams|suggest\/players|check-duplicate)$/],
   [/^\/api\/forms\/submit$/],
   [/^\/api\/events-catalog$/],
   [/^\/api\/used-events$/],

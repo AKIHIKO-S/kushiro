@@ -1071,6 +1071,8 @@ function buildEntryFormHTML(tournament, events, opts) {
   .tt-suggest__item:last-child { border-bottom: none; }
   .tt-suggest__item small { color: var(--ink-2); font-size: 12px; }
   .tt-suggest__item:hover, .tt-suggest__item.is-on { background: #f4f1ea; }
+  .tt-dupwarn { grid-column: 1 / -1; font-size: 13px; line-height: 1.6; color: #7a4300; background: #fff4e0; border: 1px solid #e8c48a; border-radius: 4px; padding: 8px 10px; margin: 2px 0; }
+  .tt-dupwarn[hidden] { display: none; }
   @media (prefers-reduced-motion: reduce) {
     #ttRail .bar { transition-duration: .01ms; }
   }
@@ -2867,6 +2869,54 @@ try {
   ttSugFetchTicket();
 } catch (e) { /* 候補なしで続行 */ }
 
+// ══ 二重申込の事前警告(入力中) ══
+// 同じ種目に、同じ名前の選手が既に申込まれていそうなときだけ、その欄に注意を出す。警告だけで送信は止めない(同姓同名の別人がいるため)。
+// サーバーには「種目と名前」を送り、「いる/いない」だけを受け取る。誰の申込か・何人かは分からない。
+var TT_DUP = { cache: {}, timers: {} };
+var TT_DUP_MSG = "同じ名前の選手が、この種目に既に申込されている可能性があります。二重申込でないか確認してください";
+function ttDupEvent(inp) {
+  var n = inp.getAttribute("data-join") || inp.name || "";
+  var m = /^ev(\\d+)_/.exec(n);
+  return m && EVENTS[+m[1]] ? EVENTS[+m[1]].name : "";
+}
+function ttDupWarnEl(inp) {
+  var join = inp.getAttribute("data-join"), scope = inp.closest(".entry-row") || document, anchor = inp;
+  if (join) { var ps = scope.querySelectorAll('[data-join="' + join + '"]'); anchor = ps[ps.length - 1] || inp; }
+  var key = join || inp.name;
+  var el = anchor.parentNode.querySelector('.tt-dupwarn[data-for="' + key + '"]');
+  if (!el) {
+    el = document.createElement("div"); el.className = "tt-dupwarn"; el.setAttribute("data-for", key);
+    el.setAttribute("role", "status"); el.hidden = true; el.textContent = TT_DUP_MSG;
+    anchor.insertAdjacentElement("afterend", el);
+  }
+  return el;
+}
+function ttDupCheck(inp) {
+  var ev = ttDupEvent(inp), name = ttSugQuery(inp).trim(), el = ttDupWarnEl(inp);
+  var compact = name.replace(/[\\s\u3000]+/g, "");
+  if (!ev || [...compact].length < 2) { el.hidden = true; return; }
+  var ck = ev + "|" + compact;
+  if (ck in TT_DUP.cache) { el.hidden = !TT_DUP.cache[ck]; return; }
+  if (!TT_SUG.ticket) return;
+  fetch(TT_SUG.base + "check-duplicate", { method: "POST",
+    headers: { "Content-Type": "application/json", "X-Suggest-Ticket": TT_SUG.ticket }, body: JSON.stringify({ event: ev, name: name }) })
+    .then(function (r) { if (r.status === 401) { return ttSugFetchTicket().then(function () { return null; }); } return r.ok ? r.json() : null; })
+    .then(function (j) {
+      if (!j || typeof j.duplicate !== "boolean") return;
+      TT_DUP.cache[ck] = j.duplicate;
+      if (ttSugQuery(inp).trim().replace(/[\\s\u3000]+/g, "") === compact) el.hidden = !j.duplicate;   // 古い応答は捨てる
+    }).catch(function () {});
+}
+try {
+  document.getElementById("entryForm").addEventListener("input", function (e) {
+    var inp = e.target;
+    if (ttSugKind(inp) !== "player") return;
+    var key = inp.getAttribute("data-join") || inp.name;
+    clearTimeout(TT_DUP.timers[key]);
+    TT_DUP.timers[key] = setTimeout(function () { ttDupCheck(inp); }, 500);
+  });
+} catch (e) { /* 警告なしで続行 */ }
+
 // 初期化 (失敗しても安全網が案内を表示)
 try {
   renderEvents();
@@ -3296,7 +3346,10 @@ function buildApplicantStatusHTML() {
       .then(function(x){
         if(!x.ok||x.j.error){ setMsg(esc(x.j.error||"修正画面を開けませんでした。")); return; }
         window.KTTASubEditor.injectCss();
-        window.KTTASubEditor.render(document.getElementById("editBody"), x.j, { admin:false });
+        window.KTTASubEditor.render(document.getElementById("editBody"), x.j, { admin:false, checkDuplicate:function(ev,name){
+          return fetch("/api/applicant/check-duplicate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({event:ev,name:name})})
+            .then(function(r){return r.ok?r.json():{};}).then(function(j){return !!j.duplicate;});
+        } });
         show("result",false); show("editPane",true);
         window.scrollTo(0,0);
       })
