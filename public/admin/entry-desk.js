@@ -68,7 +68,7 @@
   }
 
   // ── 状態 ──
-  const S = { view: "", tid: "", data: null, q: "", only: "all", picked: "", drawer: null, backBar: null, root: null, main: null, listBox: null };
+  const S = { view: "", tid: "", data: null, q: "", only: "all", picked: "", sort: "", dir: 1, ev: "", drawer: null, backBar: null, root: null, main: null, listBox: null };
 
   function ensureRoot() {
     if (S.root) return;
@@ -190,7 +190,7 @@
   // ── 受付 ──
   async function showDesk(tid, keep) {
     S.view = "desk";
-    if (S.tid !== tid) { closeDrawer(true); S.q = ""; S.only = "all"; S.picked = ""; S.data = null; }
+    if (S.tid !== tid) { closeDrawer(true); S.q = ""; S.only = "all"; S.sort = ""; S.dir = 1; S.ev = ""; S.picked = ""; S.data = null; }
     S.tid = tid;
     store.set("ktta.desk.last", tid);
     const scrollY = keep ? root.scrollY : 0;
@@ -233,14 +233,35 @@
 
   function visible() {
     const q = S.q.trim();
-    return S.data.rows.filter(r => {
+    const rows = S.data.rows.filter(r => {
+      if (S.ev && !((r.by_event && r.by_event[S.ev]) > 0)) return false;
       if (S.only === "warn" && !r.issues.length) return false;
       if (["web", "excel", "manual"].includes(S.only) && r.route !== S.only) return false;
       if (!q) return true;
       const hay = [r.team_name, r.contact_name].concat(r.players.map(p => p.label + " " + p.kana)).join(" ");
       return hay.indexOf(q) >= 0;
     });
+    // 並べ替え(見出しを押す / 並び順の選択)。同じ値のときは団体名の順を保つ
+    if (S.sort) {
+      const key = (r) => S.sort === "name" ? r.team_name : S.sort === "entries" ? r.entries : S.sort === "received" ? (r.received_at || "")
+        : S.sort === "issues" ? r.issues.length : S.sort.indexOf("ev:") === 0 ? ((r.by_event && r.by_event[S.sort.slice(3)]) || 0) : 0;
+      rows.sort((a, b) => {
+        const x = key(a), y = key(b);
+        const c = typeof x === "number" ? x - y : String(x).localeCompare(String(y), "ja");
+        return (c * S.dir) || String(a.team_name).localeCompare(String(b.team_name), "ja");
+      });
+    }
+    return rows;
   }
+  // 見出しを押したときの並べ替え(同じ見出しをもう一度押すと逆順、3回目で元の順)
+  const sortMark = (k) => S.sort === k ? (S.dir === 1 ? " ▲" : " ▼") : "";
+  const sortAria = (k) => S.sort === k ? (S.dir === 1 ? "ascending" : "descending") : "none";
+  function sortBy(key) {
+    const first = (key === "name") ? 1 : -1;   // 最初に押したときの向き(団体名は昇順、人数・日付は多い/新しい順)
+    if (S.sort === key) { if (S.dir === first) S.dir = -first; else { S.sort = ""; S.dir = 1; } } else { S.sort = key; S.dir = first; }
+    renderDesk();
+  }
+  const SORTS = [["", "団体名の順"], ["name", "団体名"], ["entries", "確定出場の多い順"], ["received", "受付の新しい順"], ["issues", "確認事項の多い順"]];
   const tagOf = (i) => h("span", { class: "ed-tag " + (i.type === "dup" ? "ed-tag--dup" : "ed-tag--warn") }, i.title);
 
   function headBox() {
@@ -286,7 +307,15 @@
       headBox(),
       h("div", { class: "ed-tools" },
         h("div", { class: "ed-find" }, search, h("button", { class: "ed-btn", type: "button", onclick: addSheet }, "申込を追加")),
-        h("div", { class: "ed-filters" }, chips)),
+        h("div", { class: "ed-filters" }, chips,
+          h("label", { class: "ed-sel" }, h("span", {}, "種目"),
+            h("select", { "aria-label": "種目で絞る", onchange: (e) => { S.ev = e.target.value; renderDesk(); } },
+              h("option", { value: "" }, "すべての種目"),
+              d.events.map(e => h("option", { value: e.name, selected: S.ev === e.name ? "" : null }, e.name)))),
+          h("label", { class: "ed-sel" }, h("span", {}, "並び順"),
+            h("select", { "aria-label": "並び順", onchange: (e) => { const v = e.target.value; S.sort = v; S.dir = (v === "name" || v === "") ? 1 : -1; renderDesk(); } },
+              SORTS.map(o => h("option", { value: o[0], selected: S.sort === o[0] ? "" : null }, o[1])),
+              S.sort.indexOf("ev:") === 0 ? h("option", { value: S.sort, selected: "" }, S.sort.slice(3) + "の多い順") : null)))),
       d.unlinked ? h("p", { class: "ed-routes" }, "申込番号のない出場（取込や以前の画面で入れた分）が " + d.unlinked + " 件あります。合計には入っていますが、団体の行には出ません。") : null,
       S.listBox,
     ]);
@@ -306,7 +335,7 @@
     const rows = visible();
     const empty = d.rows.length
       ? h("div", { class: "ed-empty" }, h("p", { style: "margin:0 0 8px" }, "条件に合う申込は見つかりません。"),
-        h("button", { class: "ed-btn", type: "button", onclick: () => { S.q = ""; S.only = "all"; renderDesk(); } }, "条件を消す"))
+        h("button", { class: "ed-btn", type: "button", onclick: () => { S.q = ""; S.only = "all"; S.ev = ""; renderDesk(); } }, "条件を消す"))
       : h("div", { class: "ed-empty" }, h("p", { style: "margin:0 0 8px" }, "まだ申込はありません。"),
         h("button", { class: "ed-btn", type: "button", onclick: copyUrl }, "申込URLをコピー"));
     // スマホの台帳
@@ -339,9 +368,9 @@
     box.append(h("div", { class: "ed-wrap" },
       h("div", { class: "ed-table", tabindex: "0", "aria-label": "申込の台帳" },
         rows.length ? h("table", {},
-          h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "団体"),
-            d.events.map(e => h("th", { scope: "col", class: "ed-ev" + gxClass(e.name), title: e.name, "aria-label": e.name }, e.name)),
-            h("th", { scope: "col" }, "確定出場"), h("th", { scope: "col" }, "経路"), h("th", { scope: "col" }, "受付"), h("th", { scope: "col" }, "確認"))),
+          h("thead", {}, h("tr", {}, h("th", { scope: "col", class: "ed-sortable", "aria-sort": sortAria("name"), onclick: () => sortBy("name"), title: "押すと団体名で並べ替え" }, "団体" + sortMark("name")),
+            d.events.map(e => h("th", { scope: "col", class: "ed-ev ed-sortable" + gxClass(e.name), title: e.name + "(押すと、この種目の多い順に並べ替え)", "aria-label": e.name, "aria-sort": sortAria("ev:" + e.name), onclick: () => sortBy("ev:" + e.name) }, e.name + sortMark("ev:" + e.name))),
+            h("th", { scope: "col", class: "ed-sortable", "aria-sort": sortAria("entries"), onclick: () => sortBy("entries") }, "確定出場" + sortMark("entries")), h("th", { scope: "col" }, "経路"), h("th", { scope: "col", class: "ed-sortable", "aria-sort": sortAria("received"), onclick: () => sortBy("received") }, "受付" + sortMark("received")), h("th", { scope: "col", class: "ed-sortable", "aria-sort": sortAria("issues"), onclick: () => sortBy("issues") }, "確認" + sortMark("issues")))),
           h("tbody", {}, rows.map(tr)),
           h("tfoot", {}, h("tr", {}, h("td", {}, "確定申込 " + d.totals.teams + "件"),
             d.events.map(e => h("td", { class: "num" }, e.count)), h("td", { class: "num" }, d.totals.entries), h("td", {}), h("td", {}), h("td", {}))))

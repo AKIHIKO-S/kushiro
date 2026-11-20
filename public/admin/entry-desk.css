@@ -264,3 +264,10 @@ html.desk-on .ed-backbar { display: none; }
 .ed-table thead th.ed-ev[class*="ed-gx-"] { background: var(--gx-tint); color: var(--gx-ink); box-shadow: inset 0 3px 0 var(--gx-ink); }
 .ed-group__h[class*="ed-gx-"] { background: var(--gx-tint); color: var(--gx-ink); border-top-color: var(--gx-ink); padding-left: 8px; padding-right: 8px; }
 .ed-group__h[class*="ed-gx-"] span { color: var(--gx-ink); }
+
+/* 並べ替え・種目の絞り込み */
+.ed-sel { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--st-mute); }
+.ed-sel select { min-height: 44px; max-width: 190px; padding: 0 8px; border: 1px solid var(--st-line); border-radius: 4px; background: var(--st-paper); font: inherit; font-size: 14px; font-weight: 500; color: var(--st-ink); }
+.ed-sortable { cursor: pointer; user-select: none; }
+.ed-sortable:hover { text-decoration: underline; }
+@media (max-width: 559px) { .ed-sel { flex: 1 1 100%; } .ed-sel select { flex: 1; max-width: none; } }
