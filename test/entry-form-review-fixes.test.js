@@ -186,7 +186,7 @@ test("0件の件数バッジが空の枠として残らない", () => {
 test("ダブルスは選手ごとに区切る(ふりがな・学年がどちらのものか読める)", () => {
   const h = html(mk(EV5), EV5);
   assert.match(h, /class="pair-side"/, "選手ごとのまとまりを作る");
-  assert.match(h, /class="pair-no">選手' \+ n \+ '</, "選手1 / 選手2 の見出しを付ける");
+  assert.match(h, /class="pair-no">選手' \+ n \+ \(n === 2 \? '<small class="pair-opt">（空欄でも申し込めます）<\/small>' : ''\) \+ '</, "選手1 / 選手2 の見出しを付ける(選手2は空欄でも申し込める旨つき)");
   assert.match(h, /\.entry-row \.pair-side \+ \.pair-side\s*\{[^}]*border-top:\s*1px dashed/,
     "区切りは破線1本(囲みは作らない)");
   // name属性は変えていない = 送信データの形は従来どおり
