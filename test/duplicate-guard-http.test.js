@@ -57,8 +57,8 @@ test("再送信の拒否・確認APIの出力・本人の自己除外", async t 
   const ses = await call("/api/auth/applicant/session", { token });
   assert.equal(ses.status, 200);
   const cookie = ses.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
-  const mine = await call("/api/applicant/check-duplicate", { event: M, name: "架空 太郎" }, { Cookie: cookie });
+  const mine = await call("/api/applicant/check-duplicate", { event: M, name: "架空 太郎" }, { Cookie: cookie, Origin: base });
   assert.deepEqual(await mine.json(), { duplicate: false }, "自分の出場は数えない");
-  const others = await call("/api/applicant/check-duplicate", { event: F, name: "架空 花子" }, { Cookie: cookie });
+  const others = await call("/api/applicant/check-duplicate", { event: F, name: "架空 花子" }, { Cookie: cookie, Origin: base });
   assert.deepEqual(await others.json(), { duplicate: true }, "他の申込の出場は数える");
 });
