@@ -10617,6 +10617,10 @@ function _deskZendo(e) {
   if (Array.isArray(ex.players)) return ex.players.map(one).filter(Boolean).join("／");
   return one(ex);
 }
+// ペア希望: ダブルスで、選手2が空(パートナーを探している)。種目の形式は大会設定のtypeか、申込時のis_doublesで見る
+function _isPairWish(e) {
+  return !!(e && e.is_doubles && !String(e.partner_name || "").trim() && String(e.name || "").trim() && !entrantMembers(e).length);
+}
 function _deskLabel(e) {
   const mem = entrantMembers(e);
   if (mem && mem.length && isTeamEntrant(e)) return `${e.display_name || e.name || e.team || ""}（${mem.length}名）`;
@@ -10700,6 +10704,10 @@ function getEntryDesk(tournamentId) {
         issues.push({ key, type: "dup", title: "別の団体と重複の疑い", entrant_id: e.id,
           detail: `${c.name} さんが ${other} からも同じ種目（${e.event}）に申し込んでいます` });
       });
+      if (_isPairWish(e)) {
+        issues.push({ key: `pair:${e.id}`, type: "other", title: "ペア希望", entrant_id: e.id,
+          detail: `${_deskLabel(e)}（${e.event}）は選手2が空欄です。パートナーを探している申込です` });
+      }
       (dataBy[e.id] || []).forEach(d => {
         const m = _DESK_ISSUE[d.code] || ["other", "内容を確認してください"];
         const key = `${d.code}:${e.id}`;
@@ -10727,6 +10735,7 @@ function getEntryDesk(tournamentId) {
         members: isTeamEntrant(e) ? entrantMembers(e) : [],
         kana: e.is_doubles && e.partner_name ? [e.furigana || "", e.partner_furigana || ""].filter(Boolean).join("・") : (e.furigana || ""),
         zendo: _deskZendo(e),
+        pair_wish: _isPairWish(e),
         status: e.status || "confirmed" })),
       issues, mail: mail.map(({ recipient, state }) => ({ recipient, state })),
     };
@@ -10825,7 +10834,7 @@ function getEntryExport(tournamentId) {
     const members = entrantMembers(e);
     let name, kana, team;
     if (kind === "doubles") {
-      name = join([e.name, e.partner_name]); kana = join([e.furigana, e.partner_furigana]);
+      name = join([e.name, e.partner_name || "（ペア希望）"]); kana = join([e.furigana, e.partner_furigana]);
       team = (e.partner_team && e.partner_team !== e.team) ? join([e.team, e.partner_team]) : (e.team || "");
     } else if (kind === "team") {
       // 団体戦は個人名を1行に1人ずつ並べる(チーム名は所属欄)。メンバー未記入ならチーム名を出す。
@@ -10844,6 +10853,7 @@ function getEntryExport(tournamentId) {
     if (!isConfirmedEntry(e)) checks.push("承認待ち");
     const fee = savedEntryFee(e);
     if (fee === null) checks.push("参加費の保存額を確認");
+    if (kind === "doubles" && !String(e.partner_name || "").trim() && String(e.name || "").trim()) checks.push("ペア希望(選手2が空欄)");
     (cross[e.id] || []).forEach(c => {
       const other = subTeam[entSub[c.other_entrant_id]] || c.other_team || "別の団体";
       const msg = "重複の疑い：" + other + "からも申込";
@@ -11452,7 +11462,8 @@ function _feeResolver(t) {
       const ms = Array.isArray(ent.members) ? ent.members.filter(m => String(m || "").trim()) : [];
       return Math.max(1, ms.length);
     }
-    if (type === "doubles" || type === "mixed") return 2;
+    // ダブルス/混合は記入された人数(ペア希望=片方だけなら1)。通常は2
+    if (type === "doubles" || type === "mixed") return Math.max(1, [ent.name1, ent.name2].filter(n => String(n || "").trim()).length);
     return 1;
   };
   const resolveFee = (evName, division, fallback, qty) => {
@@ -11767,11 +11778,13 @@ function createTeamEntry(tournamentId, formData, opId, opts) {
         canDedup = !!tn;
       } else if (type === "doubles" || type === "mixed") {
         // mixed=混合ダブルス。貼付フォーム(旧)や直APIが type:"mixed" を送るため doubles と同様に処理 (#269)
-        const n1 = String(ent.name1 || "").trim();
-        const n2 = String(ent.name2 || "").trim();
-        const team1 = String(ent.team1 || ent.team || "").trim();
-        const team2 = String(ent.team2 || ent.team1 || ent.team || "").trim();
+        let n1 = String(ent.name1 || "").trim();
+        let n2 = String(ent.name2 || "").trim();
+        let team1 = String(ent.team1 || ent.team || "").trim();
+        let team2 = String(ent.team2 || ent.team1 || ent.team || "").trim();
         if (!n1 && !n2) continue;
+        // ペア希望(片方だけ記入): 選手2だけが書かれていたら選手1として扱い、選手2は空のまま登録する
+        if (!n1 && n2) { n1 = n2; n2 = ""; team1 = String(ent.team2 || ent.team || "").trim() || team1; team2 = ""; }
         data = {
           ...common,
           name: n1, team: team1, partner_name: n2, partner_team: team2, is_doubles: true,

@@ -1072,6 +1072,9 @@ function buildEntryFormHTML(tournament, events, opts) {
   .tt-suggest__item:last-child { border-bottom: none; }
   .tt-suggest__item small { color: var(--ink-2); font-size: 12px; }
   .tt-suggest__item:hover, .tt-suggest__item.is-on { background: #f4f1ea; }
+  .pair-opt { font-weight: 500; font-size: 12px; color: var(--st-mute, #5c6068); margin-left: 6px; }
+  .pair-wish { font-size: 13px; line-height: 1.6; color: var(--st-warn, #8a6510); background: var(--st-warn-bg, #f6eedb); padding: 8px 10px; margin: 6px 0; }
+  .pair-wish[hidden] { display: none; }
   .first-time.zendo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
   .zendo-lb { font-size: 13px; font-weight: 700; flex: 1 0 100%; }
   .tt-dupwarn { grid-column: 1 / -1; font-size: 13px; line-height: 1.6; color: #7a4300; background: #fff4e0; border: 1px solid #e8c48a; border-radius: 4px; padding: 8px 10px; margin: 2px 0; }
@@ -1553,6 +1556,19 @@ function ttSyncRowRequired() {
       });
       return;
     }
+    // ダブルスは選手2が空欄でも申し込める(ペア希望)。選手2の欄は、何か書き始めたときだけ必須にする
+    var sides = row.querySelectorAll(".pair-side");
+    if (sides.length === 2) {
+      var wish = used && !ttMemberIsUsed(sides[1]);
+      row.querySelectorAll('[data-req-orig="1"]').forEach(function (el) {
+        var inSide2 = sides[1].contains(el);
+        var live = used && (!inSide2 || !wish);
+        if (live) el.setAttribute("required", ""); else el.removeAttribute("required");
+      });
+      var note = sides[1].querySelector(".pair-wish");
+      if (note) note.hidden = !wish;
+      return;
+    }
     row.querySelectorAll('[data-req-orig="1"]').forEach(function (el) {
       if (used) el.setAttribute("required", "");
       else el.removeAttribute("required");
@@ -1927,7 +1943,8 @@ function addEntry(eventIdx) {
     // 選手1のものか選手2のものか読めなくなる(項目数が大会設定で変わるため列がずれる)。
     // name属性は変えないので、送信データの形は従来どおり。
     const side = (n) => '<div class="pair-side">' +
-      '<div class="pair-no">選手' + n + '</div>' +
+      '<div class="pair-no">選手' + n + (n === 2 ? '<small class="pair-opt">（空欄でも申し込めます）</small>' : '') + '</div>' +
+      (n === 2 ? '<div class="pair-wish" role="status" hidden>ペア希望として申し込みます。選手2は空欄のまま登録され、パートナーは本部が探します。</div>' : '') +
       '<div class="entry-grid">' +
       (ttNameSplit(ev.name)
         ? ttSplitInputs('ev' + eventIdx + '_pair' + idx + '_n' + n, 'ev' + eventIdx + '_pair' + idx + '_ns' + n,
@@ -2196,7 +2213,7 @@ function buildSummaryText(data) {
     } else if (e.type === "doubles") {
       lines.push("・[ダブルス] " + e.event);
       lines.push("    " + (e.name1 || "") + " (" + (e.team1 || e.team || "") + ")");
-      lines.push("    " + (e.name2 || "") + " (" + (e.team2 || e.team1 || e.team || "") + ")");
+      lines.push("    " + (e.name2 ? (e.name2 + " (" + (e.team2 || e.team1 || e.team || "") + ")") : "(空欄) ペア希望として申し込みます"));
       lines.push("    参加料 ¥" + (e.fee || 0).toLocaleString("ja-JP") + (ttDivLabel(e.division) ? "（" + ttDivLabel(e.division) + "）" : ""));
     } else {
       lines.push("・" + e.event + ": " + (e.name || "") + " (" + (e.team || "") + ")");
@@ -2229,7 +2246,7 @@ function showConfirmModal(data) {
       if (e.type === "team") {
         memberText = "[団体] " + (e.team_name || "") + " (" + (e.members || []).join("、") + ")";
       } else if (e.type === "doubles") {
-        memberText = (e.name1 || "") + " / " + (e.name2 || "") + " (" + (e.team || "") + ")";
+        memberText = (e.name1 || "") + " / " + (e.name2 || "(空欄・ペア希望)") + " (" + (e.team || "") + ")";
       } else {
         memberText = (e.name || "") + " (" + (e.team || "") + ")";
       }

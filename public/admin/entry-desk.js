@@ -421,7 +421,7 @@
           kind === "team"
             ? [h("b", {}, (p.team_label || p.label)), h("small", {}, (p.members && p.members.length ? p.members.length + "名" : "") + (p.status === "cancelled" ? "・取り消し済み" : "") + (p.status === "pending" ? "・承認待ち" : "")),
               p.members && p.members.length ? h("small", { class: "ed-members" }, p.members.join("、")) : null]
-            : [h("b", {}, p.label), h("small", {}, (p.kana ? p.kana : "ふりがな空欄") + (S.data.tournament.zendo_enabled ? "・全道出場 " + (p.zendo || "未回答") : "") + (p.status === "cancelled" ? "・取り消し済み" : "") + (p.status === "pending" ? "・承認待ち" : ""))]))));
+            : [h("b", {}, p.label), h("small", {}, (p.kana ? p.kana : "ふりがな空欄") + (p.pair_wish ? "・ペア希望" : "") + (S.data.tournament.zendo_enabled ? "・全道出場 " + (p.zendo || "未回答") : "") + (p.status === "cancelled" ? "・取り消し済み" : "") + (p.status === "pending" ? "・承認待ち" : ""))]))));
     }));
   }
 
