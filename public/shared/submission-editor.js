@@ -55,6 +55,9 @@
     var f = view.form.fields || {};
     var out = "";
     if (shown(f, "grade")) out += input(prefix + "grade", view.form.labels.grade || "学年", (ex && ex.grade) || "");
+    // 全道大会に出場する意思(この大会が聞いているときだけ)。あり/なしの選択
+    if (shown(f, "zendo_intent")) out += input(prefix + "zendo_intent", view.form.labels.zendo_intent || "全道大会に出場する意思", (ex && ex.zendo_intent) || "",
+      { options: ["あり", "なし"], blank: true });
     (view.form.custom || []).filter(function (c) { return c.scope === "player"; }).forEach(function (c) {
       out += customInput(prefix, c, ex && ex.answers);
     });
@@ -233,13 +236,46 @@
   // 氏名を直したとき、同じ種目に同じ名前の選手が既に申込まれていそうなら、その欄の下に注意を出す(警告だけ)。
   // 確認は呼び出し側の checkDuplicate(種目, 氏名) → Promise<boolean>。自分の申込の出場は数えない。
   var DUP_MSG = "同じ名前の選手が、この種目に既に申込されている可能性があります。二重申込でないか確認してください";
+  // 団体メンバー(1行に1人)を直したとき、新しく書いた名前だけを確認する。最大8人まで(照会の回数を抑える)
+  function checkMembers(el, k, idx) {
+    var container = el.closest ? el.closest(".se") || el.parentNode : el.parentNode;
+    var root = el; while (root && !root._seView && root.parentNode) root = root.parentNode;
+    var view = (root && root._seView) || {}, init = (root && root._seInitial) || {};
+    var had = {}; String(init[k] || "").split(/\n/).forEach(function (l) { had[l.trim()] = true; });
+    var names = String(el.value || "").split(/\n/).map(function (l) { return l.trim(); })
+      .filter(function (l) { return l.replace(/[\s\u3000]+/g, "").length >= 2 && !had[l]; }).slice(0, 8);
+    var evSel = root && root.querySelector('[data-k="e' + idx + '.event"]');
+    var ev = evSel ? evSel.value : (((view.entries || [])[idx]) || {}).event;
+    var box = el.parentNode.querySelector('.se-dup[data-for="' + k + '"]');
+    var show = function (txt) {
+      if (!box) {
+        if (!txt) return;
+        box = el.ownerDocument.createElement("div");
+        box.className = "se-dup"; box.setAttribute("data-for", k); box.setAttribute("role", "status");
+        el.parentNode.appendChild(box);
+      }
+      box.textContent = txt || ""; box.hidden = !txt;
+    };
+    if (!ev || !names.length) return show("");
+    var cur = el.value, hits = [];
+    names.reduce(function (p, n) {
+      return p.then(function () { return checkFn(ev, n).then(function (d) { if (d) hits.push(n); }); });
+    }, Promise.resolve()).then(function () {
+      if (el.value !== cur) return;   // 古い応答は捨てる
+      show(hits.length ? hits.map(function (n) { return "「" + n + "」"; }).join("") + ": " + DUP_MSG : "");
+    }).catch(function () {});
+  }
+  var checkFn = null;
   function wireDup(container, check) {
     if (container._seDupWired) return;
     container._seDupWired = true;
+    checkFn = check;
     var timers = {};
     container.addEventListener("input", function (e) {
       var el = e.target, k = el && el.getAttribute && el.getAttribute("data-k");
       var m = k && /^e(\d+)\.(name|name1|name2)$/.exec(k);
+      var mm = k && /^e(\d+)\.members$/.exec(k);
+      if (mm) { clearTimeout(timers[k]); timers[k] = setTimeout(function () { checkMembers(el, k, +mm[1]); }, 700); return; }
       if (!m) return;
       clearTimeout(timers[k]);
       timers[k] = setTimeout(function () {

@@ -59,3 +59,17 @@ test("③' 任意に切り替えた大会では未回答でも通り、台帳に
   assert.ok(!apply(t, null).error);
   assert.strictEqual(db.getEntryDesk(t.id).rows[0].players[0].zendo, "");
 });
+
+test("④ 申込後の修正で全道出場意思を変えられる。「あり/なし」以外は受け付けない", () => {
+  const t = mk("全道修正大会", "required");
+  const a = apply(t, { zendo_intent: "あり" });
+  assert.ok(!a.error, a.error);
+  const view = db.getSubmissionEditView(a.submission_id, { admin: false });
+  assert.strictEqual(view.form.fields.zendo_intent, "required", "修正画面にも項目が渡る");
+  const id = view.entries[0].entry_id;
+  const bad = db.editSubmission(a.submission_id, { entries: [{ entrant_id: id, extra: { zendo_intent: "たぶん" } }] }, { actor: "applicant" });
+  assert.ok(bad.error, "不正な値は拒否");
+  const ok = db.editSubmission(a.submission_id, { entries: [{ entrant_id: id, extra: { zendo_intent: "なし" } }] }, { actor: "applicant" });
+  assert.ok(!ok.error, ok.error);
+  assert.strictEqual(db.getEntryDesk(t.id).rows[0].players[0].zendo, "なし");
+});

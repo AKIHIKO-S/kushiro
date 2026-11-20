@@ -291,3 +291,45 @@ html.desk-head-only .ed-backbar { display: none; }
   .ed-top__nav a::after { left: 5px; right: 5px; }
   .ed-top__nav { overflow-x: auto; scrollbar-width: none; }
 }
+
+/* ════ 大会運営モード(ベータ版)の見た目 ════
+   申込集計モードとは基調の色を変えて、いま どちらのモードか一目で分かるようにする。
+   申込集計=紺、大会運営=深い青緑。トークン(--st-navy など)をモードごとに差し替えるので、ボタン・ナビ・表の合計も一緒に変わる。 */
+.ed-top { border-top: 4px solid var(--st-navy); }
+html[data-app-mode="full"] { --st-navy: #0f5c63; --st-navy-d: #0a4248; --st-sky: #e3f1f2; --st-blue: #0f7f8a; }
+html[data-app-mode="full"] body { --kt-accent: #0f5c63; --kt-accent-d: #0a4248; --kt-accent-l: #e3f1f2;
+  --pri: #0f5c63; --pri-l: #0f7f8a; --pri-d: #0a4248; --pri-bg: #e3f1f2; --accent: #0f5c63; --accent-l: #0a4248; --accent-bg: #e3f1f2; }
+html[data-app-mode="full"] .ed-top { background: #f1f7f7; }
+html[data-app-mode="full"] .ed-top__sub { color: var(--st-navy); font-weight: 800; }
+
+/* 既存の画面(進行・選手DB・監督)を、申込集計の台帳と同じ作りに揃える: 余白、箱・影・グラデ・丸みをやめて罫で区切る */
+html.desk-head-only .container { max-width: 1200px; margin: 0 auto; padding: 8px 16px 48px !important; }
+@media (min-width: 960px) { html.desk-head-only .container { padding: 8px 28px 48px !important; } }
+html[data-app-mode="full"] .container h1, html[data-app-mode="full"] .container h2 { font-weight: 700; letter-spacing: 0; }
+html[data-app-mode="full"] .pdb-card { background: var(--st-paper); border: 0; border-bottom: var(--st-hair); border-radius: 0; box-shadow: none; transform: none; padding: 12px 4px; transition: none; }
+html[data-app-mode="full"] .pdb-card:hover { background: #f3f6f9; border-color: var(--st-line); transform: none; box-shadow: none; }
+html[data-app-mode="full"] .pdb-card .pdb-avatar { border-radius: 3px; background: var(--st-wash); color: var(--st-ink); border-top: 3px solid var(--st-line); }
+html[data-app-mode="full"] .pdb-card.male .pdb-avatar { background: var(--st-gx-male-tint); color: var(--st-gx-male-ink); border-top-color: var(--st-gx-male-ink); }
+html[data-app-mode="full"] .pdb-card.female .pdb-avatar { background: var(--st-gx-female-tint); color: var(--st-gx-female-ink); border-top-color: var(--st-gx-female-ink); }
+html[data-app-mode="full"] .pdb-card .pdb-name { font-size: 15px; }
+html[data-app-mode="full"] .pdb-card .pdb-furi, html[data-app-mode="full"] .pdb-card .pdb-meta { font-size: 12px; color: var(--st-mute); }
+html[data-app-mode="full"] .pdb-card .pdb-meta .pdb-branch, html[data-app-mode="full"] .pdb-card .pdb-meta .pdb-push,
+html[data-app-mode="full"] .pdb-stat { border-radius: 3px; background: var(--st-wash); color: var(--st-mute); font-size: 11px; }
+html[data-app-mode="full"] .pdb-stat.win { background: var(--st-ok-bg); color: var(--st-ok); }
+html[data-app-mode="full"] .pdb-stat.loss { background: var(--st-dup-bg); color: var(--st-dup); }
+html[data-app-mode="full"] .pdb-stat.medal { background: var(--st-warn-bg); color: var(--st-warn); }
+html[data-app-mode="full"] .pdb-winrate-bar { background: var(--st-line); border-radius: 0; }
+html[data-app-mode="full"] .pdb-winrate-bar > span { background: var(--st-ok); }
+html[data-app-mode="full"] .pdb-card .pdb-actions { opacity: 1; flex-direction: row; gap: 4px; }
+html[data-app-mode="full"] .pdb-card .pdb-actions button { min-height: 36px; border: var(--st-hair); border-radius: 4px; background: var(--st-white); color: var(--st-navy); }
+html[data-app-mode="full"] .op-tools-body { background: var(--st-paper); border: var(--st-hair); border-radius: 4px; box-shadow: none; }
+
+/* 大会運営モードは項目が多いので、幅が足りない間はナビを2段目へ回して重ならないようにする */
+@media (min-width: 561px) and (max-width: 1239px) {
+  html[data-app-mode="full"] .ed-top { height: auto; min-height: 56px; flex-wrap: wrap; row-gap: 0; padding-top: 6px; }
+  html[data-app-mode="full"] .ed-top__sub, html[data-app-mode="full"] .ed-top__org small { display: none; }
+  html[data-app-mode="full"] .ed-top__brand { flex: 1 1 auto; min-width: 0; }
+  html[data-app-mode="full"] .ed-top .admin-bell, html[data-app-mode="full"] .ed-top .admin-mode { margin-left: 0; }
+  html[data-app-mode="full"] .ed-top__nav { flex: 1 0 100%; margin-left: 0; border-top: 1px solid var(--st-line); order: 9; }
+  html[data-app-mode="full"] .ed-top__who { order: 5; }
+}

@@ -90,3 +90,9 @@ test("⑤ 警告の文面は一般的で、団体名・人数・申込番号の�
   const form = fs.readFileSync(require("path").join(__dirname, "..", "entry_form.js"), "utf8");
   assert.ok(form.includes("同じ名前の選手が、この種目に既に申込されている可能性があります。二重申込でないか確認してください"));
 });
+
+test("修正画面: 全道出場意思の欄と、団体メンバーの二重申込確認が組み込まれている", () => {
+  const src = fs.readFileSync(require("path").join(__dirname, "..", "public", "shared", "submission-editor.js"), "utf8");
+  assert.ok(src.includes('shown(f, "zendo_intent")') && src.includes('options: ["あり", "なし"]'), "全道出場意思の選択");
+  assert.ok(src.includes("checkMembers") && /\.members\$/.test(src.replace(/\\\\/g, "\\")), "団体メンバー欄の確認");
+});
