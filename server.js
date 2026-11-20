@@ -5132,11 +5132,6 @@ function _serveVersionedHtml(file, cacheControl = "no-cache") {
   };
 }
 app.get(["/admin", "/admin/", "/admin/index.html"], _serveVersionedHtml(path.join(publicDir, "admin", "index.html")));
-app.get(["/players", "/players/"], (req, res, next) => {
-  res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  res.setHeader("Cache-Control", "private, no-store");
-  next();
-}, requireSession(["admin", "owner"]), _serveVersionedHtml(path.join(__dirname, "lib", "player-directory-preview.html"), "private, no-store"));
 app.get(["/viewer", "/viewer/", "/viewer/index.html"], _serveVersionedHtml(path.join(publicDir, "viewer", "index.html")));
 app.get(["/viewer/live", "/viewer/live/", "/viewer/live/index.html"], _serveVersionedHtml(path.join(publicDir, "viewer", "live", "index.html")));
 app.get(["/ref", "/ref/", "/ref/index.html"], _serveVersionedHtml(path.join(publicDir, "ref", "index.html"))); // 審判結果入力 (限定トークン)
