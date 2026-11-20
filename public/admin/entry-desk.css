@@ -234,3 +234,22 @@ html.desk-on .ed-backbar { display: none; }
   .ed-drawer__head h2 { font-size: 24px; }
 }
 .ed-sheet-bg { z-index: 1000; }
+
+/* 種目ごとのまとまり */
+.ed-groups { margin-top: 14px; display: grid; gap: 18px; }
+.ed-group__h { margin: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0 6px;
+  border-top: 2px solid var(--st-ink); font-size: 16px; font-weight: 700; line-height: 1.4; }
+.ed-group__h span { font-size: 15px; color: var(--st-navy); }
+.ed-group .ed-plist { margin: 0; border-top: 0; }
+.ed-members { margin-top: 2px; line-height: 1.6; color: var(--st-ink); }
+
+/* パネルを開いている間は左の幅が狭いので、ヘッダーを折り返して重ならないようにする(PC) */
+@media (min-width: 960px) {
+  #entryDesk.is-drawer .ed-top { height: auto; min-height: 56px; flex-wrap: wrap; row-gap: 0; padding-top: 6px; }
+  #entryDesk.is-drawer .ed-top__sub, #entryDesk.is-drawer .ed-top__who, #entryDesk.is-drawer .ed-top__org small { display: none; }
+  #entryDesk.is-drawer .ed-top__logo { width: 36px; height: 36px; }
+  #entryDesk.is-drawer .ed-top__org { font-size: 18px; }
+  #entryDesk.is-drawer .ed-top__brand { flex: 1 1 auto; min-width: 0; }
+  #entryDesk.is-drawer .ed-top__nav { flex: 1 0 100%; margin-left: 0; border-top: 1px solid var(--st-line); order: 9; }
+  #entryDesk.is-drawer .ed-top .admin-bell, #entryDesk.is-drawer .ed-top .admin-mode { margin-left: 0; }
+}

@@ -393,6 +393,31 @@
     root.setTimeout(done, 400);
   }
 
+  // 出場者を種目ごとにまとめる。見出しは「種目名」と人数(個人=名・ダブルス=組・団体=チーム)。
+  // 団体戦はチーム名と人数を見出し直下に置き、メンバーを続ける。種目の並びは要項の順。
+  function eventGroups(r) {
+    const order = S.data.events.map(e => e.name);
+    const by = new Map();
+    r.players.forEach(p => { if (!by.has(p.event)) by.set(p.event, []); by.get(p.event).push(p); });
+    const names = [...by.keys()].sort((a, b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+    });
+    return h("div", { class: "ed-groups" }, names.map(ev => {
+      const list = by.get(ev);
+      const live = list.filter(p => p.status !== "cancelled");
+      const kind = (list[0] && list[0].kind) || "singles";
+      const unit = kind === "team" ? "チーム" : kind === "doubles" ? "組" : "名";
+      return h("section", { class: "ed-group" },
+        h("h3", { class: "ed-group__h" }, ev, h("span", { class: "ed-num" }, live.length + unit)),
+        h("ul", { class: "ed-plist" }, list.map(p => h("li", { class: p.status === "cancelled" ? "is-cancelled" : "" },
+          kind === "team"
+            ? [h("b", {}, (p.team_label || p.label)), h("small", {}, (p.members && p.members.length ? p.members.length + "名" : "") + (p.status === "cancelled" ? "・取り消し済み" : "") + (p.status === "pending" ? "・承認待ち" : "")),
+              p.members && p.members.length ? h("small", { class: "ed-members" }, p.members.join("、")) : null]
+            : [h("b", {}, p.label), h("small", {}, (p.kana ? p.kana : "ふりがな空欄") + (p.status === "cancelled" ? "・取り消し済み" : "") + (p.status === "pending" ? "・承認待ち" : ""))]))));
+    }));
+  }
+
   // 申込1件の中身(PCの右・スマホの下から出るシートで共通)
   function detail(r) {
     const t = tournamentObj();
@@ -405,8 +430,7 @@
       r.issues.map(i => h("div", { class: "ed-issue" + (i.type === "dup" ? " ed-issue--dup" : "") },
         h("b", {}, i.title), h("br"), i.detail,
         i.type === "mail" ? h("div", {}, h("button", { class: "ed-btn", type: "button", onclick: (e) => resend(r, i, e.currentTarget) }, "このメールを再送")) : null)),
-      h("ul", { class: "ed-plist" }, r.players.map(p => h("li", { class: p.status === "cancelled" ? "is-cancelled" : "" },
-        h("b", {}, p.label), h("small", {}, p.event + (p.kana ? "・" + p.kana : "") + (p.status === "cancelled" ? "・取り消し済み" : "") + (p.status === "pending" ? "・承認待ち" : ""))))),
+      eventGroups(r),
       h("div", { class: "ed-btns" },
         h("button", { class: "ed-btn ed-btn--main", type: "button", onclick: () => { closeSheet(); app().openSubmissionEdit(t, r.submission_id, reload); } }, "内容を直す"),
         live.length ? h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: () => cancelAsk(r, live) }, "この申込を取り消す") : null),

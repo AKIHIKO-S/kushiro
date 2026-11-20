@@ -10706,6 +10706,9 @@ function getEntryDesk(tournamentId) {
       by_event: byEvent,
       players: list.filter(e => !["rejected"].includes(e.status || "")).map(e => ({
         entrant_id: e.id, event: e.event, label: _deskLabel(e),
+        kind: isTeamEntrant(e) ? "team" : (e.is_doubles && e.partner_name ? "doubles" : "singles"),
+        team_label: isTeamEntrant(e) ? String(e.display_name || e.name || e.team || "") : "",
+        members: isTeamEntrant(e) ? entrantMembers(e) : [],
         kana: e.is_doubles && e.partner_name ? [e.furigana || "", e.partner_furigana || ""].filter(Boolean).join("・") : (e.furigana || ""),
         status: e.status || "confirmed" })),
       issues, mail: mail.map(({ recipient, state }) => ({ recipient, state })),
