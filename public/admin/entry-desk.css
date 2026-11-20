@@ -271,3 +271,12 @@ html.desk-on .ed-backbar { display: none; }
 .ed-sortable { cursor: pointer; user-select: none; }
 .ed-sortable:hover { text-decoration: underline; }
 @media (max-width: 559px) { .ed-sel { flex: 1 1 100%; } .ed-sel select { flex: 1; max-width: none; } }
+
+/* 大会運営モード(ベータ版)の大会ページ */
+.ed-card { margin: 0 var(--gut) 18px; padding: 14px 0 0; border-top: 2px solid var(--st-ink); }
+.ed-card h2 { margin: 0; font-size: 18px; font-weight: 700; }
+.ed-json { width: 100%; min-height: 140px; padding: 10px 12px; border: 1px solid var(--st-line); border-radius: var(--st-radius); background: var(--st-white);
+  font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.5; color: var(--st-ink); }
+.ed-file { max-width: 100%; font-size: 14px; }
+.ed-check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; min-height: 44px; }
+a.ed-btn { text-decoration: none; }

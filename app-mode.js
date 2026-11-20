@@ -99,4 +99,21 @@ function isHiddenPageInEntryMode(pagePath) {
   return !/\.(js|webmanifest|json|svg|png|ico|css)$/i.test(p);
 }
 
-module.exports = { MODES, DEFAULT_MODE, KV_KEY, resolveMode, isApiAllowedInEntryMode, isHiddenPageInEntryMode };
+// 大会運営モード(full)で閉じる入口。組合せの「配置する・自動で作る・画面で編集する」仕組みは外し、
+// 組合せは JSON の取り込み(POST /bracket/import)で入れる方針(2026-11-20 オーナー決定)。コードは消さず入口だけ閉じる(戻せる)。
+// 申込のフォーム作成・公開、申込の確認、名簿の作成は申込集計モードの機能なので、画面からも外している。
+const FULL_MODE_CLOSED = [
+  new RegExp(`^${T}/bracket/(generate|draw|advance-byes|draw-readiness|undo-draw|draw-log|draw-diff|proximity|swap-partner|swap-doubles-order|import-xlsx|roster-template\\.xlsx|resync-names|relink|set-seed-round|add-seed|promote-seed|print-log)$`),
+  new RegExp(`^${T}/bracket/sheet(/.*)?$`),
+  new RegExp(`^${T}/(kumiawase|league)/.*$`),
+  new RegExp(`^${T}/seed-suggestions(/apply)?$`),
+  new RegExp(`^${T}/entrants/upload-excel$`),
+  new RegExp(`^${T}/entries/[^/]+/seed$`),
+  /^\/api\/templates\/bracket-import\.xlsx$/,
+];
+function isApiClosedInFullMode(method, path) {
+  const p = String(path || "").replace(/\/+$/, "");
+  return FULL_MODE_CLOSED.some(re => re.test(p));
+}
+
+module.exports = { MODES, DEFAULT_MODE, KV_KEY, resolveMode, isApiAllowedInEntryMode, isHiddenPageInEntryMode, isApiClosedInFullMode };

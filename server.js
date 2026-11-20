@@ -797,6 +797,12 @@ function plainActor(value, fallback) {
 function currentAppMode() { return appMode.resolveMode(process.env.KTTA_APP_MODE, db.kvGet(appMode.KV_KEY)); }
 const ENTRY_LANDING = "/entry";
 app.use((req, res, next) => {
+  // 大会運営モードでは、組合せの配置・自動生成・画面編集の入口を閉じる(組合せはJSON取り込みで入れる)。
+  // 既存の回帰テストは旧経路を検査するので、KTTA_FULL_LEGACY=1(test/_setup.js)のときだけ素通しにする。
+  if (currentAppMode() === "full" && process.env.KTTA_FULL_LEGACY !== "1" && /^\/api\//i.test(req.path)
+    && appMode.isApiClosedInFullMode(req.method, req.path)) {
+    return res.status(404).json({ error: "この機能は大会運営モードでは使えません。組合せはJSONの取り込みで入れてください", app_mode: "full" });
+  }
   if (currentAppMode() !== "entry") return next();
   // Express の経路は大文字小文字を区別しないので、ゲート側も区別しない(/API/... のすり抜け防止)
   if (/^\/api\//i.test(req.path)) {

@@ -12,3 +12,6 @@ if (!process.env.SNAPSHOT_DIR) {
 }
 // 既定は申込集計モードだが、既存の回帰テストは全機能を対象にする。モード自体の検査は app-mode.test.js が子サーバの env で指定する。
 if (!process.env.KTTA_APP_MODE) process.env.KTTA_APP_MODE = "full";
+
+// 大会運営モードで閉じた組合せの旧経路(配置・自動生成)も、既存の回帰テストでは検査する。閉じる動作自体は app-mode.test.js が確かめる。
+if (!process.env.KTTA_FULL_LEGACY) process.env.KTTA_FULL_LEGACY = "1";

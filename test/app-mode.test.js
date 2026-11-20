@@ -182,3 +182,18 @@ test("実サーバ: 既定は申込集計モード。閉じた入口は案内さ
   assert.strictEqual(pub.status, 200);
   assert.strictEqual((await fetch(BASE + `/api/tournaments/${c.id}/submissions`, { headers: adm }).then(r => r.json())).rows.length, 1, "申込は消えていない");
 });
+
+test("大会運営モード: 組合せの配置・自動生成・画面編集の入口は閉じ、JSON取り込みと進行・観戦の入口は残る", () => {
+  const closed = [
+    ["POST", "/api/tournaments/t1/bracket/generate"], ["POST", "/api/tournaments/t1/bracket/draw"], ["POST", "/api/tournaments/t1/bracket/sheet/ops"],
+    ["POST", "/api/tournaments/t1/bracket/swap-partner"], ["POST", "/api/tournaments/t1/bracket/import-xlsx"], ["POST", "/api/tournaments/t1/league/generate"],
+    ["POST", "/api/tournaments/t1/kumiawase/upload"], ["GET", "/api/tournaments/t1/seed-suggestions"], ["POST", "/api/tournaments/t1/entrants/upload-excel"],
+    ["GET", "/api/templates/bracket-import.xlsx"],
+  ];
+  closed.forEach(([m, p]) => assert.strictEqual(M.isApiClosedInFullMode(m, p), true, m + " " + p));
+  const open = [
+    ["POST", "/api/tournaments/t1/bracket/import"], ["GET", "/api/tournaments/t1/bracket/export"], ["GET", "/api/tournaments/t1/bracket"],
+    ["POST", "/api/matches/m1/finish"], ["GET", "/api/tournaments/t1/operations"], ["GET", "/api/public/tournaments/t1/matches"],
+  ];
+  open.forEach(([m, p]) => assert.strictEqual(M.isApiClosedInFullMode(m, p), false, m + " " + p));
+});

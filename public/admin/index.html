@@ -1256,6 +1256,9 @@
 html[data-app-mode="entry"] .tab[data-tab="bracket-mgmt"],
 html[data-app-mode="entry"] .tab[data-tab="coaches"],
 html[data-app-mode="entry"] .em-hide { display: none !important; }
+/* 大会運営モード(ベータ版): 申込・名簿・組合せの作成は申込集計モード/JSON取り込みへ。進行・選手・監督だけ既存の画面を使う */
+html[data-app-mode="full"] .tab[data-tab="tournaments"], html[data-app-mode="full"] .tab[data-tab="entries"],
+html[data-app-mode="full"] .tab[data-tab="bracket-mgmt"], html[data-app-mode="full"] .tab[data-tab="import"] { display: none !important; }
 /* 未ログインのときは画面の中身を組み立てない。ログイン確認が終わるまでも同じ(一瞬でも中身を見せないため) */
 html.auth-pending .tabs, html.auth-pending .container, html.auth-pending #entryDesk, html.auth-pending .ed-backbar,
 html.auth-pending .admin-actions, html.auth-pending #connBadge,
@@ -1894,7 +1897,7 @@ const A = {
  // URLハッシュから画面を復元 (ブラウザ戻る/進む対応)
  handleHash() {
  // 申込集計モードは受付台帳(entry-desk.js)が画面を持つ。既存のタブへ移るときだけ下へ進む
- if (A.entryOnly && window.EntryDesk && window.EntryDesk.route(location.hash)) return;
+ if (window.EntryDesk && window.EntryDesk.route(location.hash)) return;
  const hash = location.hash.slice(1);
  if (!hash) { A.showTab("tournaments", true); return; }
  const [type, id] = hash.split("/");
@@ -1916,6 +1919,8 @@ const A = {
    toast("この画面は申込集計モードの間はお休みです。申込一覧を表示しました", "ok");
    name = "entries"; skipHash = false;
  }
+ // 大会運営モード(ベータ版)で閉じた画面へ来たら、大会の一覧へ案内する
+ if (!A.entryOnly && ["tournaments", "entries", "entrants", "bracket-mgmt", "import"].includes(name)) { location.hash = "#list"; return; }
  A.activeTab = name;
  // 進行管理タブから離れる時はポーリング停止＋SSEも閉じる
  // (#190 ポーリング残り / SSEを閉じないと裏で ops 受信→hiddenな #opMain へ再描画し続ける #264)

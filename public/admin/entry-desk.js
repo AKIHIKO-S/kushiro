@@ -76,20 +76,27 @@
     doc.body.insertBefore(S.root, doc.body.firstChild);
   }
 
+  const isFull = () => !app().entryOnly;   // 大会運営モード(ベータ版)
   function top(active) {
     const last = S.tid || store.get("ktta.desk.last");
+    const nav = isFull()
+      ? [h("a", { href: "#list", "aria-current": active === "list" || active === "tour" ? "page" : null }, "大会"),
+         h("a", { href: "#operations" }, "進行"),
+         h("a", { href: "#players" }, "選手DB"),
+         h("a", { href: "#coaches" }, "監督・申請"),
+         h("a", { href: "/viewer", target: "_blank", rel: "noopener" }, "観戦画面")]
+      : [h("a", { href: "#list", "aria-current": active === "list" ? "page" : null }, "大会"),
+         h("a", { href: last ? "#desk/" + last : "#list", "aria-current": active === "desk" ? "page" : null }, "受付"),
+         h("a", { href: "#players" }, "選手DB"),
+         h("a", { href: "#more", "aria-current": active === "more" ? "page" : null }, "その他")];
     return h("header", { class: "ed-top" },
       h("a", { class: "ed-top__brand", href: "#list" },
         h("img", { class: "ed-top__logo", src: "/shared/assets/ktta-logo-256.png", alt: "" }),
         h("span", { class: "ed-top__org" }, "釧路卓球協会", h("small", { lang: "en" }, "KUSHIRO TABLE TENNIS ASSOCIATION"))),
-      h("span", { class: "ed-top__sub" }, "申込の受付"),
+      h("span", { class: "ed-top__sub" }, isFull() ? "大会運営(ベータ版)" : "申込の受付"),
       (app().buildBell ? app().buildBell() : null),   // 通知の鈴(新しい申込・変更の数)
-      (app().buildModeSwitch ? app().buildModeSwitch() : null),   // 申込集計 / 大会運営(ベータ版) の切替(大会運営モードへ戻る入口)
-      h("nav", { class: "ed-top__nav", "aria-label": "主な画面" },
-        h("a", { href: "#list", "aria-current": active === "list" ? "page" : null }, "大会"),
-        h("a", { href: last ? "#desk/" + last : "#list", "aria-current": active === "desk" ? "page" : null }, "受付"),
-        h("a", { href: "#players" }, "選手DB"),
-        h("a", { href: "#more", "aria-current": active === "more" ? "page" : null }, "その他")),
+      (app().buildModeSwitch ? app().buildModeSwitch() : null),   // 申込集計 / 大会運営(ベータ版) の切替
+      h("nav", { class: "ed-top__nav", "aria-label": "主な画面" }, nav),
       who());
   }
   // 誰でログイン中か+ログアウト(狭い画面では「その他」の先頭に出す)
@@ -155,11 +162,11 @@
       if (by) items = items.slice().sort(by);
       listBox.textContent = "";
       listBox.append(items.length
-        ? h("div", { class: "ed-tl" }, items.map(t => h("a", { class: "ed-tl__row", href: "#desk/" + encodeURIComponent(t.id) },
+        ? h("div", { class: "ed-tl" }, items.map(t => h("a", { class: "ed-tl__row", href: (isFull() ? "#t/" : "#desk/") + encodeURIComponent(t.id) },
           h("span", { class: "ed-tl__name" }, t.name || "(名前なし)"),
           h("span", { class: "ed-tl__meta" }, meta(t)),
           h("span", { class: "ed-tl__count" }, h("b", { class: "ed-num" }, t.entries), "出場・確定申込 " + t.teams + "件"))))
-        : h("div", { class: "ed-tl" }, h("p", { class: "ed-empty" }, d.items.length ? "条件に合う大会は見つかりません。" : "まだ大会がありません。「大会をつくる」から始めてください。")));
+        : h("div", { class: "ed-tl" }, h("p", { class: "ed-empty" }, d.items.length ? "条件に合う大会は見つかりません。" : (isFull() ? "まだ大会がありません。大会は「申込集計」モードでつくります。" : "まだ大会がありません。「大会をつくる」から始めてください。"))));
     };
     const count = (st) => d.items.filter(t => st === "all" || t.state === st).length;
     const chip = (v, label) => { const b = h("button", { class: "ed-chip", type: "button", "aria-pressed": String(S.lstate === v),
@@ -167,8 +174,8 @@
     showList.chips = [chip("all", "すべて"), chip("open", "受付中"), chip("before", "受付前"), chip("closed", "終了")];
     S.main.textContent = "";
     S.main.append(
-      h("div", { class: "ed-head" }, h("h1", {}, "受付する大会を選ぶ"),
-        h("div", {}, h("button", { class: "ed-btn ed-btn--main", type: "button", onclick: () => app().newTournament() }, "大会をつくる"))),
+      h("div", { class: "ed-head" }, h("h1", {}, isFull() ? "運営する大会を選ぶ" : "受付する大会を選ぶ"),
+        isFull() ? null : h("div", {}, h("button", { class: "ed-btn ed-btn--main", type: "button", onclick: () => app().newTournament() }, "大会をつくる"))),
       d.items.length > 1 ? h("div", { class: "ed-tools" },
         h("div", { class: "ed-find" }, h("input", { class: "ed-search", type: "search", value: S.lq, placeholder: "大会名で探す", "aria-label": "大会を探す",
           oninput: (e) => { S.lq = e.target.value; renderTl(); } })),
@@ -178,6 +185,68 @@
               LSORTS.map(o => h("option", { value: o[0], selected: S.lsort === o[0] ? "" : null }, o[1])))))) : null,
       listBox);
     renderTl();
+  }
+
+  // ── 大会運営モード(ベータ版): 大会のページ。組合せはJSONの取り込みで入れる ──
+  async function showFullTournament(tid) {
+    S.view = "tour"; S.tid = tid;
+    frame("tour", h("p", { class: "ed-loading" }, "大会を読み込んでいます…"));
+    let t = null;
+    try { t = await api().get("/api/tournaments/" + encodeURIComponent(tid)); } catch (_) {}
+    if (S.view !== "tour" || S.tid !== tid) return;
+    if (!t || t.error || !t.id) {
+      S.main.textContent = "";
+      S.main.append(failBox(t && t.error ? t.error : "大会を読み込めませんでした。", () => showFullTournament(tid)));
+      return;
+    }
+    const note = h("p", { class: "ed-sub", role: "status", style: "margin:10px 0 0;white-space:pre-wrap" });
+    const area = h("textarea", { class: "ed-json", rows: "8", spellcheck: "false", placeholder: '組合せのJSONを貼り付けるか、下のボタンでファイルを選びます。\n形式: tabletennis-bracket-v1(完成した表)/ tabletennis-seed-list-v1(選手リスト)/ tabletennis-tournament-v1(複数種目)', "aria-label": "組合せのJSON" });
+    const file = h("input", { type: "file", accept: ".json,application/json", class: "ed-file", "aria-label": "JSONファイルを選ぶ" });
+    file.addEventListener("change", () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      if (f.size > 5 * 1024 * 1024) { note.textContent = "ファイルが大きすぎます(5MBまで)。"; return; }
+      const rd = new FileReader();
+      rd.onload = () => { area.value = String(rd.result || ""); note.textContent = f.name + " を読み込みました。内容を確かめて「取り込む」を押してください。"; };
+      rd.readAsText(f, "utf-8");
+    });
+    const force = h("input", { type: "checkbox", id: "edForce" });
+    const go = h("button", { class: "ed-btn ed-btn--main", type: "button" }, "取り込む");
+    go.addEventListener("click", async () => {
+      let obj = null;
+      try { obj = JSON.parse(area.value); } catch (e) { note.textContent = "JSONとして読めません: " + String(e.message || e).slice(0, 120); return; }
+      if (!obj || typeof obj !== "object") { note.textContent = "JSONの中身が空です。"; return; }
+      if (force.checked) obj.force = true;
+      go.disabled = true; note.textContent = "取り込んでいます…";
+      let res = null;
+      try { res = await api().post("/api/tournaments/" + encodeURIComponent(tid) + "/bracket/import", obj); } catch (_) {}
+      go.disabled = false;
+      if (!res || res.error) { note.textContent = "取り込めませんでした: " + ((res && res.error) || "通信できませんでした"); return; }
+      const parts = Array.isArray(res.imported) ? res.imported.map(r => (r.event || "") + (r.error ? "(失敗: " + r.error + ")" : "")) : [obj.event || ""];
+      note.textContent = "取り込みました: " + parts.filter(Boolean).join("、");
+      toast("組合せを取り込みました", "ok");
+    });
+    S.main.textContent = "";
+    S.main.append(
+      h("div", { class: "ed-head" }, h("div", {},
+        h("h1", {}, t.name || "(名前なし)"),
+        h("div", { class: "ed-head__meta" }, [t.date ? jpDate(t.date, true) : "", t.venue].filter(Boolean).join("・")))),
+      h("section", { class: "ed-card" },
+        h("h2", {}, "組合せを取り込む(JSON)"),
+        h("p", { class: "ed-sub", style: "margin:4px 0 10px" }, "組合せは、作ったJSONをここから取り込みます。取り込むと、その種目のトーナメント表が入れ替わります。"),
+        area,
+        h("div", { class: "ed-btns", style: "margin-top:10px;align-items:center" }, file,
+          h("label", { class: "ed-check" }, force, " 結果入力済みの種目でも取り込む")),
+        h("div", { class: "ed-btns", style: "margin-top:10px" }, go),
+        note),
+      h("section", { class: "ed-card" },
+        h("h2", {}, "試合を進める・見せる"),
+        h("div", { class: "ed-btns" },
+          h("button", { class: "ed-btn", type: "button", onclick: () => leaveTo("operations") }, "進行(台の割り当て・結果入力)"),
+          h("a", { class: "ed-btn", href: "/viewer", target: "_blank", rel: "noopener" }, "観戦画面を開く"))),
+      h("section", { class: "ed-card" },
+        h("h2", {}, "申込のこと"),
+        h("p", { class: "ed-sub", style: "margin:4px 0 0" }, "申込フォームの作成・公開、申込の確認、名簿づくりは「申込集計」モードで行います(右上の切替から)。")));
   }
 
   // ── その他(既存の画面への入口) ──
@@ -211,8 +280,8 @@
     if (!S.backBar) {
       const last = S.tid || store.get("ktta.desk.last");
       S.backBar = h("div", { class: "ed-backbar" },
-        h("a", { href: last ? "#desk/" + last : "#list" }, "← 受付へ戻る"),
-        h("span", {}, "申込集計モードの補助画面です"));
+        h("a", { href: isFull() ? "#list" : (last ? "#desk/" + last : "#list") }, isFull() ? "← 大会運営へ戻る" : "← 受付へ戻る"),
+        h("span", {}, isFull() ? "大会運営モード(ベータ版)の補助画面です" : "申込集計モードの補助画面です"));
       doc.body.insertBefore(S.backBar, doc.body.firstChild);
     }
   }
@@ -626,6 +695,12 @@
     const type = parts[0], id = parts[1];
     closeSheet(); closeDrawer(true);
     if (type === "list" || type === "" || type === "tournaments") { showList(); return true; }
+    if (isFull()) {
+      // 大会運営モード(ベータ版): 大会のページだけここで持つ。進行・選手DB・監督は既存の画面へ進む
+      if ((type === "t" || type === "desk" || type === "tournament") && id) { showFullTournament(decodeURIComponent(id)); return true; }
+      hide();
+      return false;
+    }
     if (type === "more") { showMore(); return true; }
     if ((type === "desk" || type === "t" || type === "tournament") && id) { showDesk(decodeURIComponent(id)); return true; }
     if (type === "desk") {
@@ -637,5 +712,5 @@
     return false;
   }
 
-  root.EntryDesk = { route, hide, refresh: () => (S.view === "desk" ? reload() : S.view === "list" ? showList() : null), shortEventName };
+  root.EntryDesk = { route, hide, refresh: () => (S.view === "desk" ? reload() : S.view === "list" ? showList() : S.view === "tour" ? showFullTournament(S.tid) : null), shortEventName };
 })(typeof window !== "undefined" ? window : globalThis);
