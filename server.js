@@ -2201,16 +2201,13 @@ app.get("/api/tournaments/:id/reception.html", requireAdmin, (req, res) => {
 
 // ── 領収書の印刷(申込集計モード) ── 印刷物を作るだけ。入金記録・発行履歴は保存しない。
 // 印影の画像は、設置されていれば(SEAL_DIR/seal.png 等。通常のリポジトリには入れない)ページに埋め込む。
-function _sealDataUri() {
-  const dirs = [process.env.SEAL_DIR || "", path.join(__dirname, "public", "shared", "assets")].filter(Boolean);
-  for (const dir of dirs) for (const ext of [".png", ".jpg", ".jpeg"]) {
-    try {
-      const f = path.join(dir, "seal" + ext);
-      const st = fs.statSync(f);
-      if (st.isFile() && st.size > 0 && st.size < 1.5 * 1024 * 1024) {
-        return "data:image/" + (ext === ".png" ? "png" : "jpeg") + ";base64," + fs.readFileSync(f).toString("base64");
-      }
-    } catch (_) { /* なければ次へ */ }
+function _sealUrl() {
+  // 通常モードの電子印鑑(管理設定からオーナーが登録)と同じ場所・同じURLを参照する。画像はリポジトリに入れない。
+  const cands = [];
+  if (process.env.SEAL_DIR) cands.push([process.env.SEAL_DIR, "/uploads/seal"]);
+  cands.push([path.join(__dirname, "public", "shared", "assets"), "/shared/assets/seal"]);
+  for (const [dir, url] of cands) for (const ext of [".png", ".jpg", ".jpeg"]) {
+    try { const st = fs.statSync(path.join(dir, "seal" + ext)); if (st.isFile() && st.size > 0) return url + ext; } catch (_) { /* なければ次へ */ }
   }
   return "";
 }
@@ -2223,7 +2220,7 @@ app.get("/api/tournaments/:id/receipt-print.html", requireAdmin, (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  res.send(rp.buildReceiptPrintHTML(t, { teams, excluded, defaults: rp.defaultsFor(t), sealDataUri: _sealDataUri(), pick: teams.some(x => x.name === pick) ? pick : "" }));
+  res.send(rp.buildReceiptPrintHTML(t, { teams, excluded, defaults: rp.defaultsFor(t), sealUrl: _sealUrl(), origin: (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "") || (req.protocol + "://" + req.get("host")), pick: teams.some(x => x.name === pick) ? pick : "" }));
 });
 
 function buildReceptionHTML(t, entrants, entryOnly = false) {

@@ -54,7 +54,7 @@ test("団体ごとの金額: 取消は除外・承認待ちは含めず注意・
 test("埋め込みデータの </script> でページが壊れない", () => {
   const html = rp.buildReceiptPrintHTML({ id: "t", name: "大会</script><b>" }, {
     teams: [{ name: "</script><img src=x>", entries: 1, amount: 700, warnings: [] }], excluded: [],
-    defaults: rp.defaultsFor({ name: "大会", date: "2026-05-02" }, {}), sealDataUri: "", pick: "",
+    defaults: rp.defaultsFor({ name: "大会", date: "2026-05-02" }, {}), sealUrl: "", pick: "",
   });
   assert.strictEqual((html.match(/<\/script>/g) || []).length, 1, "閉じタグは本来の1か所だけ");
   assert.ok(!html.includes("<img src=x>"));
