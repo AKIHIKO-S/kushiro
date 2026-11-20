@@ -1254,7 +1254,6 @@
  .pstat-bar i.hi{ background:#1a7a45; } .pstat-rp.hi{ color:#1a7a45; }
 /* 申込集計モード: 閉じた機能の入口を出さない(切替は 画面上部の「申込集計 / 通常」) */
 html[data-app-mode="entry"] .tab[data-tab="bracket-mgmt"],
-html[data-app-mode="entry"] .tab[data-tab="api"],
 html[data-app-mode="entry"] .tab[data-tab="coaches"],
 html[data-app-mode="entry"] .em-hide { display: none !important; }
 /* 未ログインのときは画面の中身を組み立てない。ログイン確認が終わるまでも同じ(一瞬でも中身を見せないため) */
@@ -1341,8 +1340,6 @@ html body .toast { z-index: 100001; }
    <div class="op-tools-body">
    <button class="tab" data-tab="bracket-mgmt">トーナメント管理</button>
    <button class="tab" data-tab="import">インポート/エクスポート</button>
-   <button class="tab" data-tab="external-forms">外部申込フォーム</button>
-   <button class="tab" data-tab="api">API連携</button>
    <button class="tab" data-tab="coaches">監督・申請 <span id="coachReqBadge" class="tab-badge" style="display:none"></span></button>
    </div>
  </details>
@@ -1572,83 +1569,6 @@ html body .toast { z-index: 100001; }
  </div>
  </div>
 
- <!-- API連携 -->
- <div class="tab-panel hidden" id="tab-external-forms">
- <div class="card">
- <div class="card-head"><div class="card-title">外部大会 申込フォーム</div></div>
- <p class="text-sm mb-3">各フォームは新しいタブで開きます。</p>
- <div style="display:flex;flex-direction:column;gap:12px;max-width:480px;">
-   <a href="/forms/masters2026" target="_blank" rel="noopener"
-      style="display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;text-decoration:none;color:inherit;font-weight:700;">
-     <span>2026北海道卓球選手権大会（マスターズの部）</span>
-   </a>
-   <a href="/forms/largeball-national2026" target="_blank" rel="noopener"
-      style="display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;text-decoration:none;color:inherit;font-weight:700;">
-     <span>第39回全国ラージボール卓球大会 北海道予選</span>
-   </a>
-   <a href="/forms/largeball-alljapan2026" target="_blank" rel="noopener"
-      style="display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;text-decoration:none;color:inherit;font-weight:700;">
-     <span>第9回全日本ラージボール卓球選手権大会 北海道予選</span>
-   </a>
- </div>
- </div>
- </div>
-
- <div class="tab-panel hidden" id="tab-api">
- <div class="card">
- <div class="card-head"><div class="card-title">外部の大会進行運営アプリとつなぐ（技術者向け）</div></div>
- <p class="text-sm mb-3">大会進行運営アプリから試合結果を POST で送信してください。送信されたデータは自動的にデータベースに反映されます。</p>
-
- <div class="field">
- <label class="field-label">エンドポイント（試合バルク投入）</label>
- <code style="display:block; padding:10px; background:#f1f5f9; border-radius:6px; font-size:12px">POST <span id="apiBase"></span>/api/sync/matches</code>
- </div>
-
- <div class="field">
- <label class="field-label">大会丸ごとアップサート</label>
- <code style="display:block; padding:10px; background:#f1f5f9; border-radius:6px; font-size:12px">POST <span id="apiBase2"></span>/api/sync/tournament</code>
- </div>
-
-
- <div class="field">
- <label class="field-label">リクエストボディ例（試合バルク投入）</label>
- <pre style="padding:12px; background:#0f172a; color:#e2e8f0; border-radius:6px; font-size:11px; overflow-x:auto">{
- "tournament_id": "大会ID",
- "matches": [
- {
- "event": "男子シングルス",
- "round": "決勝",
- "match_no": 1,
- "winner_name": "山田 太郎",
- "winner_team": "A高校",
- "loser_name": "鈴木 次郎",
- "loser_team": "B高校",
- "sets": [[11,8],[9,11],[11,6],[11,9]],
- "played_at": "2024-04-18 13:30"
- }
- ]
-}</pre>
- </div>
- <p class="text-sm text-sub">選手IDが分からない場合は名前と所属で自動マッチングされます。</p>
- </div>
-
- <div class="card">
- <div class="card-head"><div class="card-title">公開API（認証不要）</div></div>
- <table class="tbl">
- <thead><tr><th>用途</th><th>エンドポイント</th></tr></thead>
- <tbody>
- <tr><td>選手一覧</td><td><code>GET /api/public/players</code></td></tr>
- <tr><td>選手詳細</td><td><code>GET /api/public/players/:id</code></td></tr>
- <tr><td>大会一覧</td><td><code>GET /api/public/tournaments</code></td></tr>
- <tr><td>大会詳細</td><td><code>GET /api/public/tournaments/:id</code></td></tr>
- <tr><td>試合一覧</td><td><code>GET /api/public/tournaments/:id/matches</code></td></tr>
- <tr><td>検索</td><td><code>GET /api/public/search?q=...</code></td></tr>
- <tr><td>更新検知</td><td><code>GET /api/public/last-updated</code></td></tr>
- </tbody>
- </table>
- </div>
- </div>
-
 </div>
 
 <script src="/shared/common.js"></script>
@@ -1729,7 +1649,7 @@ const A = {
      h("div", { className: "text-sm mb-3",
        style: { padding: "10px 14px", background: "#fef3c7",
          borderLeft: "3px solid #d97706", borderRadius: "0 4px 4px 0" } },
-       "WordPress / Jimdo への埋込が動作するには、本番ドメイン (HTTPS) が必須です。" +
+       "申込フォームのURLやメールのリンクに使う、本番の公開アドレス (HTTPS) です。" +
        "本サーバーをデプロイしている公開 URL を入力してください。"),
      h("div", { className: "field" },
        h("label", { className: "field-label" }, "本番公開URL"),
@@ -1759,15 +1679,10 @@ const A = {
        document.querySelector(".modal-bg")?.remove();
      } }, "クリア"),
    );
-   openModal("本番公開URL 設定 (WordPress/Jimdo 埋込用)", body, foot);
+   openModal("本番公開URL 設定", body, foot);
  },
 
  async init() {
- // API URL表示
- const origin = location.origin;
- document.getElementById("apiBase").textContent = origin;
- document.getElementById("apiBase2").textContent = origin;
-
  // 画面を組み立てる前にモードを確定する(閉じた機能の入口を一瞬でも出さないため)
  try {
    const m = await fetch("/api/app-mode", { credentials: "same-origin" }).then(r => r.json());
@@ -1892,13 +1807,13 @@ const A = {
      A.showTab("tournaments", true);
    }
  } else {
-   A.showTab(["tournaments","entries","players","operations","entrants","bracket-mgmt","import","external-forms","api","coaches"].includes(type) ? type : "tournaments", true);
+   A.showTab(["tournaments","entries","players","operations","entrants","bracket-mgmt","import","coaches"].includes(type) ? type : "tournaments", true);
  }
  },
 
  showTab(name, skipHash) {
  // 申込集計モードで閉じた画面へURL直打ち・履歴で来たら、エラーにせず申込一覧へ案内する
- if (A.entryOnly && ["entrants", "bracket-mgmt", "api", "coaches"].includes(name)) {
+ if (A.entryOnly && ["entrants", "bracket-mgmt", "coaches"].includes(name)) {
    toast("この画面は申込集計モードの間はお休みです。申込一覧を表示しました", "ok");
    name = "entries"; skipHash = false;
  }
@@ -1913,7 +1828,7 @@ const A = {
  document.querySelectorAll(".tab").forEach(t =>
  t.classList.toggle("active", t.dataset.tab === name));
  // 案A: オーバーフロー(設定・連携)内のタブがactiveのとき summary もactive表示にし、選択でポップオーバーを閉じる
- const NAV_OVERFLOW = ["bracket-mgmt", "import", "external-forms", "api", "coaches"];
+ const NAV_OVERFLOW = ["bracket-mgmt", "import", "coaches"];
  document.getElementById("navMoreSummary")?.classList.toggle("active", NAV_OVERFLOW.includes(name));
  document.getElementById("navMore")?.removeAttribute("open");
  document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
@@ -2672,7 +2587,7 @@ const A = {
  ok: isHttps,
  label: "公開URL が HTTPS",
  detail: isHttps ? pubOrig
-   : "「本番URL設定」から https:// で始まる公開ドメインを設定してください (WordPress/Jimdo埋込に必須)",
+   : "「本番URL設定」から https:// で始まる公開ドメインを設定してください (申込URLやメールのリンクに必要)",
  });
 
  // 3. 印鑑画像 (確認は難しいので存在チェックは別途)
@@ -3110,8 +3025,6 @@ const A = {
  href: "/viewer/live/?t=" + encodeURIComponent(t.id), target: "_blank" },
  "観戦ビュー"),
  h("button", { className: "btn btn-sm btn-ghost",
-   onClick: () => A.openWidgetEmbed(t) }, "サイト埋込ウィジェット"),
- h("button", { className: "btn btn-sm btn-ghost",
    onClick: () => A.downloadMatchCards(t) }, "対戦票 (審判用)"),
  ),
  ),
@@ -3213,7 +3126,7 @@ const A = {
 
  const s1 = t.entries_open && !t.entry_closed_reason ? chip("● 受付中", "ok") : chip("受付停止 / 未設定", "warn");
  mk(1, "申込フォームを作る・公開",
-   "WordPress/Jimdoに貼る埋込コードと公開URLを発行。受付ON/OFFと締切を設定。", s1, [
+   "申込の公開URLを確認し、受付ON/OFFと締切を設定。", s1, [
    h("button", { className: "btn btn-sm", onClick: () => A.openEntryFormGenerator(t) }, "フォーム設定"),
    h("button", { className: "btn btn-sm btn-ghost", onClick: () => window.open(`/entry/${t.id}`, "_blank") }, "プレビュー"),
  ]);
@@ -3315,47 +3228,6 @@ const A = {
  },
 
  // ─── 観戦ビュー共有 (QR等) ───
-
- // ─── サイト埋込ウィジェット (Jimdo / STUDIO 用) #197 ───
- openWidgetEmbed(t) {
- const origin = (A.publicOrigin && A.publicOrigin()) || location.origin;
- const typeSel = h("select", { className: "input" },
-   h("option", { value: "live" }, "進行中の試合"),
-   h("option", { value: "results" }, "最近の結果"));
- const themeSel = h("select", { className: "input" },
-   h("option", { value: "light" }, "ライト (白)"),
-   h("option", { value: "dark" }, "ダーク (黒)"));
- const codeBox = h("textarea", { className: "input", rows: 3, readOnly: true,
-   style: { fontFamily: "var(--font-mono, monospace)", fontSize: "11px" } });
- const preview = h("iframe", { title: "preview",
-   style: { width: "100%", height: "380px", border: "1px solid var(--border)",
-     borderRadius: "8px", background: "#fff" } });
- const refresh = () => {
-   const url = `${origin}/widget/?t=${encodeURIComponent(t.id)}&type=${typeSel.value}&theme=${themeSel.value}`;
-   codeBox.value = `<iframe src="${url}" style="width:100%;max-width:560px;height:420px;border:0" loading="lazy" title="${esc(t.name)} ライブ"></iframe>`;
-   preview.src = url;
- };
- typeSel.addEventListener("change", refresh);
- themeSel.addEventListener("change", refresh);
- const body = h("div", {},
-   h("div", { className: "text-sm text-sub", style: { marginBottom: "10px", lineHeight: "1.7" } },
-     "Jimdo / STUDIO の「HTML / 埋め込み」ブロックに下のコードを貼ると、",
-     h("strong", {}, "大会のライブ状況が自動更新"), "で表示されます。",
-     h("br", {}), "課金は一切発生しません（自分のサーバーのデータを表示するだけ）。",
-     (!A.publicOrigin || !A.publicOrigin()) ? h("div", { className: "text-xs",
-       style: { color: "#b45309", marginTop: "4px" } },
-       "※ 公開URL未設定のため現在のドメインで生成しています。「管理設定」で本番URL(https)を設定すると確実です。") : null),
-   h("div", { className: "two-col" },
-     h("div", { className: "field" }, h("label", { className: "field-label" }, "表示内容"), typeSel),
-     h("div", { className: "field" }, h("label", { className: "field-label" }, "テーマ"), themeSel)),
-   h("div", { className: "field" }, h("label", { className: "field-label" }, "埋め込みコード"), codeBox),
-   h("button", { className: "btn btn-sm", style: { marginBottom: "12px" },
-     onClick: async () => { try { await navigator.clipboard.writeText(codeBox.value); toast("コピーしました", "ok"); }
-       catch { toast("コピーに失敗しました", "err"); } } }, "コードをコピー"),
-   h("div", { className: "field" }, h("label", { className: "field-label" }, "プレビュー"), preview));
- openModal("サイト埋込ウィジェット (Jimdo / STUDIO)", body, null);
- refresh();
- },
 
  // ─── 申込管理セクション ───────────────────────────
  // ── 出場選手セクション (大会内に内包) ──
@@ -3987,8 +3859,6 @@ const A = {
  if (!fieldCfg.fields) fieldCfg.fields = {};
  if (!Array.isArray(fieldCfg.custom)) fieldCfg.custom = [];
  if (!fieldCfg.field_meta || typeof fieldCfg.field_meta !== "object") fieldCfg.field_meta = {};
- let adminEmail = localStorage.getItem("tt_admin_email") || "";
- let deadline = "";
  // 参加料の案内文。大会に保存された値を正本にする(上部団体の大会など、当日払いでない場合がある)。
  let paymentNote = (config.entry_payment_note || t.entry_payment_note
    || "参加料は、大会当日の開会式前に受付でお支払いください。");
@@ -4360,7 +4230,6 @@ const A = {
    });
    if (r && r.error) throw new Error(r.error);
    // localStorage にも保存 (将来 admin で参照しやすいよう)
-   if (adminEmail) localStorage.setItem("tt_admin_email", adminEmail);
    // 画面が持っている大会データも更新しておく
    t.entries_open = openEl ? openEl.checked : t.entries_open;
    t.entry_deadline = dlEl ? dlEl.value : t.entry_deadline;
@@ -4466,18 +4335,7 @@ const A = {
    "「選手ごと」の自由項目は選手1名ごとに、「申込単位」は申込1件につき1つ表示されます。"),
  fieldCfgBox,
 
- h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "③ メール・お知らせ設定"),
- h("div", { className: "two-col" },
- h("div", { className: "field" },
- h("label", { className: "field-label" }, "管理者メール (任意通知)"),
- h("input", { className: "input", type: "email", value: adminEmail,
- onInput: (e) => { adminEmail = e.target.value; } })),
- h("div", { className: "field" },
- h("label", { className: "field-label" }, "申込締切日 (表示用)"),
- h("input", { className: "input", value: deadline,
- placeholder: "例: 6月26日(金)まで",
- onInput: (e) => { deadline = e.target.value; } })),
- ),
+ h("h3", { className: "text-sm font-bold mt-4 mb-2" }, "③ お知らせ"),
  h("div", { className: "field" },
  h("label", { className: "field-label" }, "支払い方法の案内"),
  h("input", { className: "input", value: paymentNote,
@@ -4501,17 +4359,6 @@ const A = {
    catch (err) { toast("保存失敗: " + err.message, "err"); }
    finally { btn.disabled = false; }
  } }, "▼ この画面の設定をすべてサーバーに保存"),
- h("a", { className: "btn btn-sm btn-ghost",
- onClick: (e) => {
- e.preventDefault();
- const qs = new URLSearchParams();
- if (adminEmail) qs.set("admin_email", adminEmail);
- if (deadline) qs.set("deadline", deadline);
- if (paymentNote) qs.set("payment_note", paymentNote);
- // プレビューは URL に events を乗せる (DB未保存でも見られる)
- qs.set("events", JSON.stringify(events));
- window.open(`/entry/${t.id}?${qs}`, "_blank");
- }, href: "#" }, "プレビューを開く (保存前)"),
  ),
 
  // ★公開申込URL を目立つカードで表示
@@ -6879,7 +6726,7 @@ const A = {
      color: t.entries_open ? "#15803d" : "#b91c1c" } },
  t.entries_open ? "受付中" : "停止中"),
  h("div", { className: "text-xs text-sub mt-1" },
- "ON にすると Jimdo/STUDIO 経由の申込を受付けます"),
+ "ON にすると、公開の申込URLから申込を受け付けます"),
  ),
  ),
 

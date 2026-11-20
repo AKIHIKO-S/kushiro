@@ -48,7 +48,6 @@ const entryWorkbook = require("./lib/entry-workbook");
 const importQuality = require("./tools/import_quality");   // 取込プレビューの品質警告(notices)を全経路へ後付け
 const rosterReader = require("./tools/roster_reader");       // ブック内の名簿と突合し取りこぼし/過大/表記揺れを検出
 const entryForm = require("./entry_form");
-const externalForms = require("./external_forms");
 const mailer = require("./mailer");
 const { conditional } = require("./lib/http-cache");          // 条件付きGET(ETag/304)で未変化ポーリングを軽量化
 const { installServerHardening } = require("./lib/lifecycle"); // HTTPタイムアウト調整 + graceful shutdown
@@ -413,15 +412,10 @@ app.use((req, res, next) => {
   // 検索エンジン索引を全面禁止 (#271): 参加者(未成年含む)の氏名・所属が
   // 検索結果から「思わぬところ」で閲覧される事故を防ぐ。robots.txt と二重で抑止。
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  // 外部サイトへの iframe 埋込を許すのは観戦ウィジェット(/widget)だけ。
-  // X-Frame-Options:SAMEORIGIN を付けると外部ドメインで真っ白になるため、そこだけ frame-ancestors * を使う。
-  // 申込フォーム(/entry/...)は個人情報を扱うので、他のサイトへの埋込を許さない(クリックジャッキング対策)。
-  const p = req.path || "";
-  const embeddable = p.startsWith("/widget");
+  // 他のサイトへの iframe 埋込は、どのページも許さない(クリックジャッキング対策)。
   // Content-Security-Policy: 既知の外部リソース(Googleフォント / QR生成画像)だけ許可し他を遮断。
   // インラインscript/styleはアプリ構造上 'unsafe-inline' が必要だが、外部scriptの注入・
   // connect でのデータ持ち出し・object/base は塞ぐ(XSS時の被害を限定)。
-  // frame-ancestors は埋込許可パスのみ * 、それ以外は 'self' (クリックジャッキング対策)。
   res.setHeader("Content-Security-Policy", [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
@@ -431,10 +425,10 @@ app.use((req, res, next) => {
     "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
-    "frame-ancestors " + (embeddable ? "*" : "'self'"),
+    "frame-ancestors 'self'",
   ].join("; "));
-  // 旧ブラウザ向けクリックジャッキング対策フォールバック (埋込パス以外)
-  if (!embeddable) res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  // 旧ブラウザ向けクリックジャッキング対策フォールバック
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("X-XSS-Protection", "0");
   // HTTPS 配信時のみ HSTS (nginx/Caddy 経由の x-forwarded-proto を信頼)
@@ -5029,32 +5023,6 @@ app.put("/api/tournaments/:id/entry-settings", requireAdmin, (req, res) => {
   res.json(r);
 });
 
-// ═══ 大会運営アプリ連携API ═══════════════════════════
-// 外部アプリから POST で試合結果をバルク送信
-app.post("/api/sync/matches", requireAdmin, (req, res) => {
-  const { tournament_id, matches } = req.body;
-  if (!tournament_id || !Array.isArray(matches)) {
-    return res.status(400).json({ error: "tournament_id と matches が必要です" });
-  }
-  const result = db.bulkImportMatches(tournament_id, matches);
-  res.json(result);
-});
-
-// 大会全体をまとめてアップサート
-app.post("/api/sync/tournament", requireAdmin, (req, res) => {
-  const { tournament, matches } = req.body;
-  if (!tournament) return res.status(400).json({ error: "tournament が必要です" });
-  let tid = tournament.id;
-  let existing = tid ? db.getTournament(tid) : null;
-  if (!existing) { const t = db.createTournament(tournament); tid = t.id; }
-  else { db.updateTournament(tid, tournament); }
-  let matchResult = { created: 0, updated: 0 };
-  if (Array.isArray(matches)) {
-    matchResult = db.bulkImportMatches(tid, matches);
-  }
-  res.json({ tournament_id: tid, ...matchResult });
-});
-
 // ═══ インポート/エクスポート ══════════════════════════
 app.get("/api/export/all", requireOwner, (req, res) => { auditOwner(req, "export_all", ""); res.json(db.exportAllData()); });
 app.post("/api/import/players", requireAdmin, (req, res) => {
@@ -5243,7 +5211,6 @@ app.get(["/players", "/players/"], (req, res, next) => {
 }, requireSession(["admin", "owner"]), _serveVersionedHtml(path.join(__dirname, "lib", "player-directory-preview.html"), "private, no-store"));
 app.get(["/viewer", "/viewer/", "/viewer/index.html"], _serveVersionedHtml(path.join(publicDir, "viewer", "index.html")));
 app.get(["/viewer/live", "/viewer/live/", "/viewer/live/index.html"], _serveVersionedHtml(path.join(publicDir, "viewer", "live", "index.html")));
-app.get(["/widget", "/widget/", "/widget/index.html"], _serveVersionedHtml(path.join(publicDir, "widget", "index.html")));
 app.get(["/ref", "/ref/", "/ref/index.html"], _serveVersionedHtml(path.join(publicDir, "ref", "index.html"))); // 審判結果入力 (限定トークン)
 
 // ルートスコープ Service Worker(アプリ本体のオフラインキャッシュ・network-first)。
@@ -5258,7 +5225,6 @@ app.get("/sw.js", (req, res) => {
 app.use("/shared", cacheMw, express.static(path.join(publicDir, "shared"), staticOpts));
 app.use("/admin", cacheMw, express.static(path.join(publicDir, "admin"), staticOpts));
 app.use("/viewer", cacheMw, express.static(path.join(publicDir, "viewer"), staticOpts));
-app.use("/widget", cacheMw, express.static(path.join(publicDir, "widget"), staticOpts)); // 観戦ウィジェット(外部サイトへの埋込)
 app.use("/ref", cacheMw, express.static(path.join(publicDir, "ref"), staticOpts)); // 審判結果入力ページ
 
 // 運用マニュアル (Markdown)
@@ -5271,84 +5237,6 @@ for (const docName of ["OPERATIONS.md", "UPDATE_WORKFLOW.md",
     res.sendFile(f);
   });
 }
-
-// ── 外部大会申込フォーム (公開) ───────────────────────────
-// GAS_EXTERNAL_URL 環境変数に GAS Web App URL を設定して運用。
-const _gasExtUrl = () => process.env.GAS_EXTERNAL_URL || "";
-
-// フォーム送信プロキシ: フロント→ /api/forms/submit → GAS
-// GAS URL をブラウザ側 HTML に埋め込まない。env 未設定時は 503 を返す。
-// GAS Web App は処理完了後に必ず 302 (Location: script.googleusercontent.com) を返す仕様のため、
-// redirect:"follow" で追従する。
-// ここは DB 保存を持たず GAS が唯一の記録先のため、ok/status へ要約せず、
-// GAS の実応答ボディ({ok:true,row:N} / {ok:false,error:"..."})をそのままブラウザへ返す。
-// タイムアウトは既定22秒(env GAS_FORMS_TIMEOUT_MS で上書き可)。
-//   この経路はGAS側がLockService待機(最大15秒)+スプレッドシート書込+4件メール送信を伴うため
-//   短すぎると誤検知するリスクがある。フロント(external_forms.js)側の中断が25秒のため、
-//   それより短い22秒のままにして「サーバー側で先に綺麗な504 JSONを返す」関係を維持する。
-const FORMS_SUBMIT_TIMEOUT_MS = parseInt(process.env.GAS_FORMS_TIMEOUT_MS, 10) || 22000;
-app.post("/api/forms/submit", async (req, res) => {
-  const gasUrl = _gasExtUrl();
-  if (!gasUrl) return res.status(503).json({ ok: false, error: "GAS URL が設定されていません(GAS_EXTERNAL_URL)" });
-  if (typeof fetch !== "function") {
-    return res.status(500).json({ ok: false, error: "サーバー内部エラー(fetch 利用不可)" });
-  }
-
-  let gasRes;
-  try {
-    gasRes = await fetch(gasUrl, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(req.body || {}),
-      redirect: "follow",                                  // GAS は googleusercontent へ 302 する仕様(必須)
-      signal: AbortSignal.timeout(FORMS_SUBMIT_TIMEOUT_MS),
-    });
-  } catch (err) {
-    const isTimeout = err && (err.name === "TimeoutError" || err.name === "AbortError");
-    if (isTimeout) return res.status(504).json({ ok: false, error: "GAS通信タイムアウト" });
-    console.warn("[forms/submit] GAS通信エラー:", err && err.message);
-    return res.status(502).json({
-      ok: false,
-      error: IS_PROD ? "GAS通信エラー" : ("GAS通信エラー: " + (err && err.message || String(err))),
-    });
-  }
-
-  let raw;
-  try { raw = await gasRes.text(); }
-  catch (err) {
-    console.warn("[forms/submit] GAS応答の読み取りに失敗:", err && err.message);
-    return res.status(502).json({ ok: false, error: "GAS応答の読み取りに失敗しました" });
-  }
-
-  let data;
-  try { data = JSON.parse(raw); }
-  catch (_) {
-    console.warn("[forms/submit] GAS応答がJSONではありません:", gasRes.status, "bytes=" + raw.length);
-    return res.status(502).json({
-      ok: false,
-      error: "GAS応答がJSONではありません",
-      ...(IS_PROD ? {} : { raw: raw.slice(0, 200) }),
-    });
-  }
-
-  // GAS の実ボディ({ok:true,row:N} / {ok:false,error:"..."})とステータス(通常200)をそのまま転送
-  res.status(gasRes.status).json(data);
-});
-app.get("/forms/masters2026", (req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.setHeader("Cache-Control", "no-store");
-  res.send(externalForms.buildMasters2026FormHTML({ gas_url: _gasExtUrl() }));
-});
-app.get("/forms/largeball-national2026", (req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.setHeader("Cache-Control", "no-store");
-  res.send(externalForms.buildLargeballNational2026FormHTML({ gas_url: _gasExtUrl() }));
-});
-app.get("/forms/largeball-alljapan2026", (req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.setHeader("Cache-Control", "no-store");
-  res.send(externalForms.buildLargeballAllJapan2026FormHTML({ gas_url: _gasExtUrl() }));
-});
 
 // ── Phase4: 申込者本人の閲覧ページ /entry/status?token=… ───
 // 申込番号(トークン)で自分の申込内容を確認する(閲覧のみ)。:id ルートより前に置く。
@@ -5509,10 +5397,9 @@ app.get("/entry/:id", requireOpenEntryOrAdmin, (req, res) => {
 
     const html = entryForm.buildEntryFormHTML(tournament, events, {
       submit_url: postUrl,
-      admin_email: req.query.admin_email || "",
-      deadline: db.entryDeadlineLabel(tournament) || req.query.deadline || "",
-      payment_note: tournament.entry_payment_note || req.query.payment_note || "",
-      notes: req.query.notes || "",
+      // 締切・参加料の案内は大会の設定だけから作る(URLの引数で書き換えさせない)
+      deadline: db.entryDeadlineLabel(tournament) || "",
+      payment_note: tournament.entry_payment_note || "",
       turnstile_sitekey: process.env.TURNSTILE_SITEKEY || "",
       field_config: db.resolveFieldConfig(tournament),   // 必須項目設定(空なら既定=現行フォーム相当)
       capacity: db.getEntryCapacityState(tournament.id), // 定員・残り枠(満員種目は選べなくする)

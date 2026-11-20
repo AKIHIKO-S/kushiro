@@ -83,7 +83,6 @@
  "POST /api/entrants/:id/member-from-player",
  "POST /api/entrants/:id/player-match",
  "POST /api/entrants/:id/resolve-branch",
- "POST /api/forms/submit",
  "POST /api/import/players",
  "POST /api/mail/test",
  "POST /api/matches/:id/call",

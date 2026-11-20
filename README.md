@@ -27,7 +27,6 @@
 | **H2H** | 選手プロフィールに対戦相手別戦績(勝率)、種目別統計 |
 | レーティング | 試合結果からElo方式で自動計算(S/A/B/C/D) |
 | 戦績 | 優勝・準優勝・3位を手動でも登録可 |
-| 外部連携 | `/api/sync/matches`でバルク投入、名前マッチング自動 |
 | フォント | BIZ UDPGothic / UDゴシック(ユニバーサルデザイン) |
 
 ## クイックスタート (ローカル)
@@ -48,46 +47,14 @@ npm run dev
 
 代替ホスティング: Fly.io / Railway 等の Docker 系 PaaS（同梱の `Dockerfile` を利用、SQLite 永続化に Volume が必要）、または国内 VPS(さくら/ConoHa)。GitHub Pages は静的のみのため単独では動かない。
 
-## 大会進行運営アプリからの連携
-
-試合結果を POST するだけで自動反映されます。選手IDは名前から自動マッチング。
-
-```bash
-curl -X POST https://your-app.example.com/api/sync/matches \
-  -H "Content-Type: application/json" \
-  -H "X-Admin-Key: your-admin-key" \
-  -d '{
-    "tournament_id": "TOURNAMENT_UUID",
-    "matches": [
-      {
-        "event": "男子シングルス",
-        "round": "決勝",
-        "match_no": 1,
-        "winner_name": "山田 太郎",
-        "winner_team": "A高校",
-        "loser_name": "鈴木 次郎",
-        "loser_team": "B高校",
-        "sets": [[11,8],[9,11],[11,6],[11,9]]
-      }
-    ]
-  }'
-```
-
-大会ごと一括アップサート:
-
-```bash
-POST /api/sync/tournament
-{ "tournament": { "name": "...", "date": "..." }, "matches": [...] }
-```
-
 ## アーキテクチャ
 
 ```
 ┌─────────────┐     ┌──────────────┐
 │   /viewer   │◀───▶│              │
 │  (公開閲覧) │ HTTP│  Express     │
-└─────────────┘     │  + SQLite    │◀── /api/sync/matches
-┌─────────────┐     │  (WAL, FK)   │   (外部大会アプリ)
+└─────────────┘     │  + SQLite    │
+┌─────────────┐     │  (WAL, FK)   │
 │   /admin    │◀───▶│              │
 │  (X-Admin)  │     └──────────────┘
 └─────────────┘            │
@@ -470,8 +437,6 @@ admin の進行管理タブ → 「📥 JSON 読込」ボタンから利用可�
 - `POST/PUT/DELETE /api/tournaments[/:id]`
 - `POST /api/tournaments/:id/matches` 試合追加
 - `PUT/DELETE /api/matches/:id`
-- `POST /api/sync/matches` 試合バルク投入
-- `POST /api/sync/tournament` 大会丸ごとアップサート
 - `GET /api/export/all` 全データJSON
 - `POST /api/import/players` 選手一括登録
 

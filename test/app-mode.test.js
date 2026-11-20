@@ -61,7 +61,7 @@ test("申込・後日修正・選手DBの API は通す", () => {
     ["GET", "/api/tournaments/t1/applicants.xlsx"], ["GET", "/api/tournaments/t1/aggregation.xlsx"],
     ["GET", "/api/tournaments/t1/entry-form-config"],
     ["POST", "/api/public/tournaments/t1/submit-team-entry"], ["POST", "/api/public/tournaments/t1/entry"], ["GET", "/api/public/open-tournaments"],
-    ["POST", "/api/forms/submit"], ["GET", "/api/applicant/edit-view"], ["POST", "/api/applicant/submission"], ["GET", "/api/applicant/me"],
+    ["GET", "/api/applicant/edit-view"], ["POST", "/api/applicant/submission"], ["GET", "/api/applicant/me"],
     ["GET", "/api/submissions/s1/edit-view"], ["PUT", "/api/submissions/s1"],
     ["POST", "/api/submissions/s1/mail-resend"],
     ["GET", "/api/entrants/e1"], ["PUT", "/api/entrants/e1"], ["DELETE", "/api/entrants/e1"], ["PUT", "/api/entrants/e1/link"],
@@ -78,11 +78,11 @@ test("申込・後日修正・選手DBの API は通す", () => {
 });
 
 test("公開画面: 閲覧・観戦・審判・埋込・トップは閉じ、申込と画面の部品は残す", () => {
-  ["/", "/viewer", "/viewer/", "/viewer/index.html", "/viewer/live", "/viewer/live/index.html", "/ref", "/ref/", "/widget", "/widget/index.html"]
+  ["/", "/viewer", "/viewer/", "/viewer/index.html", "/viewer/live", "/viewer/live/index.html", "/ref", "/ref/"]
     .forEach(p => assert.strictEqual(M.isHiddenPageInEntryMode(p), true, p));
   // Express の経路は大文字小文字を区別しないので、書き方を変えてもすり抜けない
-  ["/VIEWER", "/Viewer/live/", "/Ref/", "/WIDGET/"].forEach(p => assert.strictEqual(M.isHiddenPageInEntryMode(p), true, p));
-  ["/entry", "/entry/t1", "/entry/status", "/forms/masters2026", "/admin", "/admin/", "/viewer/sw.js", "/viewer/manifest.webmanifest", "/shared/common.js", "/viewerx"]
+  ["/VIEWER", "/Viewer/live/", "/Ref/"].forEach(p => assert.strictEqual(M.isHiddenPageInEntryMode(p), true, p));
+  ["/entry", "/entry/t1", "/entry/status", "/admin", "/admin/", "/viewer/sw.js", "/viewer/manifest.webmanifest", "/shared/common.js", "/viewerx"]
     .forEach(p => assert.strictEqual(M.isHiddenPageInEntryMode(p), false, p));
 });
 
@@ -134,7 +134,7 @@ test("実サーバ: 既定は申込集計モード。閉じた入口は案内さ
   const adm = { "Content-Type": "application/json", "X-Admin-Key": ADMIN };
 
   assert.deepStrictEqual(await fetch(BASE + "/api/app-mode").then(r => r.json()), { mode: "entry", locked: false });
-  for (const p of ["/", "/viewer", "/viewer/live/?t=x", "/ref/", "/widget/", "/no-such-page"]) {
+  for (const p of ["/", "/viewer", "/viewer/live/?t=x", "/ref/", "/no-such-page"]) {
     const r = await noFollow(p);
     assert.strictEqual(r.status, 302, p);
     assert.strictEqual(r.headers.get("location"), "/entry", p);

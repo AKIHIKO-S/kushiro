@@ -31,7 +31,7 @@ const ENTRY_MODE_API = [
   [/^\/api\/export\/all$/],
   [/^\/api\/admin\/export-log$/, ["POST"]],
   [/^\/api\/import\/players$/],
-  [/^\/api\/sync\/(push|now|status)$/],   // 試合を直接書き込む sync/matches・sync/tournament は閉じる
+  [/^\/api\/sync\/(push|now|status)$/],
   // 公開の申込
   [/^\/api\/public\/open-tournaments$/],
   [/^\/api\/public\/tournaments\/[^/]+\/(entry|submit-team-entry|entry-template\.xlsx|entry-template\/read|suggest-ticket|suggest\/teams|suggest\/players)$/],
@@ -89,7 +89,7 @@ function isApiAllowedInEntryMode(method, apiPath) {
 function isHiddenPageInEntryMode(pagePath) {
   const p = String(pagePath || "").toLowerCase();
   if (p === "/") return true;
-  if (!/^\/(viewer|ref|widget)(\/|$)/.test(p)) return false;
+  if (!/^\/(viewer|ref)(\/|$)/.test(p)) return false;
   return !/\.(js|webmanifest|json|svg|png|ico|css)$/i.test(p);
 }
 
