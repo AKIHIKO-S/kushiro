@@ -1749,10 +1749,9 @@ const A = {
  },
  // 右上に「誰で入っているか」と役割を出す
  // ヘッダーのモード切替。運営アカウントの通常権限で切り替えられる(オーナー確認は要らない)。データは消えない
- renderModeSwitch() {
-   const box = document.getElementById("adminMode");
-   if (!box) return;
-   box.textContent = "";
+ // モード切替の2つのボタン。ヘッダーと、申込の受付画面(受付台帳)の上部の両方に置く(受付画面ではヘッダーが隠れるため)
+ buildModeSwitch() {
+   const box = h("span", { className: "admin-mode", role: "group", "aria-label": "運営アプリのモード" });
    const mk = (mode, label) => {
      const on = (A.entryOnly ? "entry" : "full") === mode;
      const b = h("button", { type: "button", "aria-pressed": on ? "true" : "false",
@@ -1771,6 +1770,12 @@ const A = {
      return b;
    };
    box.append(mk("entry", "申込集計"), mk("full", "通常"));
+   return box;
+ },
+ renderModeSwitch() {
+   const box = document.getElementById("adminMode");
+   if (!box) return;
+   box.replaceChildren(...A.buildModeSwitch().childNodes);
    box.hidden = false;
  },
  renderWho(session) {
@@ -4298,7 +4303,7 @@ const A = {
  h("label", { style: { display: "flex", alignItems: "flex-start", gap: "8px", marginTop: "12px", cursor: "pointer", fontSize: "13px", color: "#78350f" } },
    h("input", { type: "checkbox", id: "efgSuggest", checked: t.entry_suggest_players ? "" : null, style: { width: "18px", height: "18px", marginTop: "2px" } }),
    h("span", {}, h("b", {}, "申込フォームで選手名の候補を出す"),
-     h("br"), "所属を自由に決められる大会向け。氏名とふりがなだけを候補に出します（所属・学年などは出しません）。標準はOFFです。チーム名の候補は、この設定にかかわらず出ます。")),
+     h("br"), "所属を自由に決められる大会向け。氏名・ふりがな・所属を候補に出し、選ぶと所属も入ります（学年・生年月日などは出しません。所属は後から直せます）。標準はOFFです。チーム名の候補は、この設定にかかわらず出ます。")),
  h("div", { style: { fontSize: "11px", color: "#78350f", marginTop: "8px", lineHeight: "1.6" } },
    "「受付中」になっていないと、公開URLにアクセスしても申込できません。",
    "この画面の設定（種目・料金・入力項目・自由項目・オプション・締切）は、"

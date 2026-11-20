@@ -83,6 +83,7 @@
         h("img", { class: "ed-top__logo", src: "/shared/assets/ktta-logo-256.png", alt: "" }),
         h("span", { class: "ed-top__org" }, "釧路卓球協会", h("small", { lang: "en" }, "KUSHIRO TABLE TENNIS ASSOCIATION"))),
       h("span", { class: "ed-top__sub" }, "申込の受付"),
+      (app().buildModeSwitch ? app().buildModeSwitch() : null),   // 申込集計 / 通常 の切替(通常モードへ戻る入口)
       h("nav", { class: "ed-top__nav", "aria-label": "主な画面" },
         h("a", { href: "#list", "aria-current": active === "list" ? "page" : null }, "大会"),
         h("a", { href: last ? "#desk/" + last : "#list", "aria-current": active === "desk" ? "page" : null }, "受付"),

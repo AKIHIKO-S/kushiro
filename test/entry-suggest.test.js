@@ -2,9 +2,9 @@
 //
 // 守らせる不変条件:
 //   ① チーム名の候補は、登録チームと選手DBの所属から前方一致→部分一致の順で返る
-//   ② 選手名の候補は氏名とふりがなだけ(所属・学年などを返さない)。2文字未満は返さない。最大5件
+//   ② 選手名の候補は氏名・ふりがな・所属だけ(学年・生年月日などを返さない)。2文字未満は返さない。最大5件
 //   ③ 所属は並べ替えのヒントにだけ使い、絞り込まない(別のチームで出場する人も候補に出る)
-//   ④ 統合済みの選手は出ない。同じ氏名・ふりがなは1件にまとめる
+//   ④ 統合済みの選手は出ない。同じ氏名・ふりがな・所属は1件にまとめる(所属が違う同姓同名は別々に出る)
 //   ⑤ チケットは大会ごと・期限つき・回数つき。改ざん・別の大会・使い切りは通らない
 //   ⑥ 大会のスイッチは標準OFFで、保存できる
 //   ⑦ 申込フォームのHTMLが、候補の部品を含み、全スクリプトが構文として読める
@@ -40,12 +40,12 @@ test("① チーム名の候補: 前方一致が先、部分一致が後。空�
   assert.ok(inc.includes("鶴居クラブ"), "部分一致も出る: " + JSON.stringify(inc));
 });
 
-test("② 選手名の候補は氏名とふりがなだけ。2文字未満は返さない", () => {
+test("② 選手名の候補は氏名・ふりがな・所属だけ。2文字未満は返さない", () => {
   _flush();
   assert.deepStrictEqual(db.suggestPlayers("釧", ""), [], "1文字は返さない");
   const r = db.suggestPlayers("釧路", "");
   assert.ok(r.length >= 3, JSON.stringify(r));
-  r.forEach(x => assert.deepStrictEqual(Object.keys(x).sort(), ["furigana", "name"], "氏名とふりがな以外は返さない"));
+  r.forEach(x => assert.deepStrictEqual(Object.keys(x).sort(), ["furigana", "name", "team"], "氏名・ふりがな・所属以外は返さない"));
   const byKana = db.suggestPlayers("くしろ", "");
   assert.ok(byKana.some(x => x.name === "釧路 太郎"), "ふりがなでも探せる");
   const kata = db.suggestPlayers("クシロ", "");
@@ -60,10 +60,13 @@ test("③ 所属は並べ替えのヒントだけ。絞り込まない", () => {
   assert.ok(r.some(x => x.name === "釧路 太郎") && r.some(x => x.name === "釧路 次郎"), "別のチームの人も出る");
 });
 
-test("④ 統合済みは出ない。同じ氏名・ふりがなは1件にまとめる", () => {
+test("④ 統合済みは出ない。同じ氏名・ふりがな・所属は1件にまとめ、所属が違う同姓同名は別々に出る", () => {
   _flush();
   const same = db.suggestPlayers("同名", "");
-  assert.strictEqual(same.length, 1, "同姓同名は1件: " + JSON.stringify(same));
+  assert.deepStrictEqual(same.map(x => x.team).sort(), ["A卓球クラブ", "B卓球クラブ"], "所属が違えば2件: " + JSON.stringify(same));
+  db.createPlayer({ name: "同名 太郎", furigana: "どうめい たろう", team: "A卓球クラブ" });
+  _flush();
+  assert.strictEqual(db.suggestPlayers("同名", "").length, 2, "同じ所属の重複は1件にまとめる");
   const p = db.createPlayer({ name: "統合 済", furigana: "とうごう すみ", team: "X" });
   db.mergePlayers ? null : null;
   require("better-sqlite3")(process.env.DB_PATH).prepare("UPDATE players SET merged_into=? WHERE id=?").run("someone", p.id);
@@ -132,6 +135,7 @@ test("⑧ 候補の部品の動き: 入力欄の種類の判定と、選んだ�
   class El {
     constructor(name, o = {}) { this.name = name; this.type = "text"; this.tagName = "INPUT"; this.value = ""; this.o = o; this.fired = 0; }
     getAttribute(k) { return this.o[k] == null ? null : this.o[k]; }
+    setAttribute(k, v) { this.o[k] = v; }
     closest() { return this.row || null; }
     dispatchEvent() { this.fired++; }
   }
@@ -183,13 +187,28 @@ test("⑧ 候補の部品の動き: 入力欄の種類の判定と、選んだ�
   // 分けない氏名・ダブルスの選手2: 氏名とふりがなが入る。所属は触らない
   const name1 = mk("ev1_pair0_n2"), furi1 = mk("ev1_pair0_2_furi"), team1 = mk("ev1_pair0_t2");
   [name1, furi1, team1].forEach(e => { e.row = row; });
-  team1.value = "元のチーム";
+  team1.value = "自分で書いた所属";
   sandbox.TT_SUG.cur = { inp: name1, kind: "player" };
-  sandbox.TT_SUG.items = [{ name: "釧路 次郎", furigana: "くしろ じろう" }];
+  sandbox.TT_SUG.items = [{ name: "釧路 次郎", furigana: "くしろ じろう", team: "釧路高校" }];
   sandbox.ttSugPick(0);
   assert.strictEqual(name1.value, "釧路 次郎");
   assert.strictEqual(furi1.value, "くしろ じろう");
-  assert.strictEqual(team1.value, "元のチーム", "所属は書き換えない");
+  assert.strictEqual(team1.value, "自分で書いた所属", "自分で書いた所属は上書きしない");
+  // 所属が空欄なら入る。候補から入れた所属は、別の候補を選ぶと入れ替わる。書き換えた所属は、そのまま残る
+  team1.value = "";
+  sandbox.TT_SUG.items = [{ name: "釧路 次郎", furigana: "くしろ じろう", team: "釧路高校" }];   // 選ぶと候補は閉じて空になるので、毎回入れ直す
+  sandbox.TT_SUG.cur = { inp: name1, kind: "player" };
+  sandbox.ttSugPick(0);
+  assert.strictEqual(team1.value, "釧路高校", "空欄の所属には入る");
+  sandbox.TT_SUG.items = [{ name: "根室 三郎", furigana: "ねむろ さぶろう", team: "根室中学校" }];
+  sandbox.TT_SUG.cur = { inp: name1, kind: "player" };
+  sandbox.ttSugPick(0);
+  assert.strictEqual(team1.value, "根室中学校", "候補から入れた所属は、別の候補で入れ替わる");
+  team1.value = "根室中学校(A)";
+  sandbox.TT_SUG.items = [{ name: "釧路 太郎", furigana: "くしろ たろう", team: "釧路中学校" }];
+  sandbox.TT_SUG.cur = { inp: name1, kind: "player" };
+  sandbox.ttSugPick(0);
+  assert.strictEqual(team1.value, "根室中学校(A)", "自分で直した所属は残る");
 
   // チーム名: 選ぶとその欄に入る
   const tm = mk("team_name");

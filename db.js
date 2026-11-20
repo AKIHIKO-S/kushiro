@@ -10531,7 +10531,7 @@ function listBackupToResend(tournamentId, limit) {
 // ── 申込フォームの入力補助(候補表示) ────────────────────────────────
 // 公開フォームから呼ばれるので、返す項目は最小限にする:
 //   チーム名 … 個人情報ではないので、登録チームと選手DBの所属から返す。
-//   選手名   … 氏名とふりがなだけ。所属・学年・生年月日・成績は返さない(同姓同名の見分けは申込後の自動照合に任せる)。
+//   選手名   … 氏名・ふりがな・所属だけ(オーナー指示 2026-11-20: 選ぶと所属も入るように)。学年・生年月日・成績は返さない。
 // 呼び出し側(server.js)が、受付中の大会・チケット・回数制限・大会ごとのスイッチを確かめる。
 const SUGGEST_MIN_CHARS = 2;
 let _suggestCache = { at: 0, teams: [], players: [] };
@@ -10544,7 +10544,7 @@ function _suggestSource() {
   players.forEach(p => add(p.team));
   _suggestCache = { at: Date.now(), teams: [...teams.entries()].map(([k, v]) => ({ key: k, name: v })),
     players: players.map(p => ({ nameKey: String(p.name || "").replace(/[\s　]+/g, ""), name: normalizeName(p.name),
-      furiKey: _normFuri(p.furigana), furigana: normalizeName(p.furigana), teamKey: normalizeTeam(p.team), n: p.appearances || 0 })) };
+      furiKey: _normFuri(p.furigana), furigana: normalizeName(p.furigana), team: String(p.team || "").trim(), teamKey: normalizeTeam(p.team), n: p.appearances || 0 })) };
   return _suggestCache;
 }
 function __resetSuggestCache() { _suggestCache = { at: 0, teams: [], players: [] }; }   // テスト用
@@ -10564,13 +10564,13 @@ function suggestPlayers(q, team, limit) {
   for (const p of _suggestSource().players) {
     const byName = p.nameKey.startsWith(nk), byFuri = !!fk && p.furiKey.startsWith(fk);
     if (!byName && !byFuri) continue;
-    const dedupe = p.name + "|" + p.furigana;
+    const dedupe = p.name + "|" + p.furigana + "|" + p.team;   // 同姓同名でも所属が違えば別の人として並べる
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
-    hits.push({ name: p.name, furigana: p.furigana, teamHit: tk && p.teamKey && (p.teamKey === tk || p.teamKey.includes(tk) || tk.includes(p.teamKey)) ? 1 : 0, n: p.n });
+    hits.push({ name: p.name, furigana: p.furigana, team: p.team, teamHit: tk && p.teamKey && (p.teamKey === tk || p.teamKey.includes(tk) || tk.includes(p.teamKey)) ? 1 : 0, n: p.n });
   }
   hits.sort((a, b) => (b.teamHit - a.teamHit) || (b.n - a.n) || a.furigana.localeCompare(b.furigana, "ja"));
-  return hits.slice(0, Math.max(1, Math.min(5, parseInt(limit) || 5))).map(h => ({ name: h.name, furigana: h.furigana }));
+  return hits.slice(0, Math.max(1, Math.min(5, parseInt(limit) || 5))).map(h => ({ name: h.name, furigana: h.furigana, team: h.team }));
 }
 
 // 申込の一覧(本部の「申込の一覧」画面)。金銭の収受は運営アプリでは扱わない(オーナー方針 2026-11-03)ので、

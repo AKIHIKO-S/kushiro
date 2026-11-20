@@ -2708,7 +2708,7 @@ document.getElementById("entryForm").addEventListener("change", ttFormSync);
 
 // ══ 入力補助: チーム名・選手名の候補(任意) ══
 // 候補は選ぶ前の「ヒント」で、無視して自由に入力できる(所属を自由に決められる大会がある)。
-// 選手名の候補は氏名とふりがなだけ。所属・学年などは出さない/入れない。候補が出ない環境でも入力は普通にできる。
+// 選手名の候補は氏名・ふりがな・所属。選ぶと、氏名・ふりがなと所属が入る(所属は後から消す・直すのも自由)。学年などは出さない/入れない。候補が出ない環境でも入力は普通にできる。
 var TT_SUG = { base: SUBMIT_URL.replace(/submit-team-entry$/, ""), ticket: "", players: false, seq: 0, timer: null, box: null, cur: null, items: [], idx: -1 };
 function ttSugFetchTicket() {
   return fetch(TT_SUG.base + "suggest-ticket", { method: "POST" })
@@ -2727,15 +2727,21 @@ function ttSugKind(inp) {
   return "";
 }
 // 氏名の入力欄から、その行の所属(並べ替えのヒントに使う)を探す
-function ttSugTeamOf(inp) {
+function ttSugTeamEl(inp) {
   var row = inp.closest(".entry-row") || document;
   var n = inp.getAttribute("data-join") || inp.name || "";
   var m;
-  var el = null;
-  if ((m = /^(ev\\d+_p\\d+)_/.exec(n))) el = row.querySelector('input[name="' + m[1] + '_team"]');
-  else if ((m = /^(ev\\d+_pair\\d+)_n([12])/.exec(n))) el = row.querySelector('input[name="' + m[1] + '_t' + m[2] + '"]');
-  else if ((m = /^(ev\\d+_team\\d+)_m/.exec(n))) el = row.querySelector('input[name="' + m[1] + '_name"]');
-  if (!el || !String(el.value || "").trim()) el = document.querySelector('input[name="team_name"]');
+  if ((m = /^(ev\\d+_p\\d+)_/.exec(n))) return row.querySelector('input[name="' + m[1] + '_team"]');
+  if ((m = /^(ev\\d+_pair\\d+)_n([12])/.exec(n))) return row.querySelector('input[name="' + m[1] + '_t' + m[2] + '"]');
+  return null;   // 団体のメンバーには、その選手の所属欄がない
+}
+function ttSugTeamOf(inp) {
+  var el = ttSugTeamEl(inp);
+  if (!el || !String(el.value || "").trim()) {
+    var n = inp.getAttribute("data-join") || inp.name || "", row = inp.closest(".entry-row") || document, m;
+    if ((m = /^(ev\\d+_team\\d+)_m/.exec(n))) el = row.querySelector('input[name="' + m[1] + '_name"]');
+    if (!el || !String(el.value || "").trim()) el = document.querySelector('input[name="team_name"]');
+  }
   return el ? String(el.value || "").trim() : "";
 }
 function ttSugQuery(inp) {
@@ -2765,7 +2771,7 @@ function ttSugRender(inp, kind, items) {
     var main = document.createElement("span");
     main.textContent = kind === "team" ? it : it.name;
     b.appendChild(main);
-    if (kind === "player" && it.furigana) { var s = document.createElement("small"); s.textContent = it.furigana; b.appendChild(s); }
+    if (kind === "player" && (it.furigana || it.team)) { var s = document.createElement("small"); s.textContent = [it.furigana, it.team].filter(Boolean).join("  "); b.appendChild(s); }
     b.addEventListener("mousedown", function (e) { e.preventDefault(); ttSugPick(i); });
     b.addEventListener("touchstart", function (e) { e.preventDefault(); ttSugPick(i); }, { passive: false });
     box.appendChild(b);
@@ -2800,6 +2806,12 @@ function ttSugPick(i) {
     ttJoin(parts[0] || inp);
   } else {
     ttSugSet(inp, it.name);
+  }
+  // 所属も入れる。空欄か、前に候補から入れたままの値のときだけ(自分で書き換えた所属は上書きしない)
+  var tel = ttSugTeamEl(inp);
+  if (tel && it.team && (!String(tel.value || "").trim() || tel.getAttribute("data-sug-team") === tel.value)) {
+    tel.setAttribute("data-sug-team", it.team);
+    ttSugSet(tel, it.team);
   }
   if (furiTarget && it.furigana) {
     var fparts = scope.querySelectorAll('[data-join="' + furiTarget + '"]');
