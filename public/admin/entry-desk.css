@@ -280,3 +280,14 @@ html.desk-on .ed-backbar { display: none; }
 .ed-file { max-width: 100%; font-size: 14px; }
 .ed-check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; min-height: 44px; }
 a.ed-btn { text-decoration: none; }
+
+/* 大会運営モード(ベータ版): 既存の画面(進行・選手DB・監督)の上は、新しいヘッダーだけを出す */
+html.desk-head-only body > .admin-hero, html.desk-head-only body > .tabs { display: none !important; }
+html.desk-head-only #entryDesk { display: block; min-height: 0; }
+html.desk-head-only .ed-backbar { display: none; }
+@media (max-width: 560px) {
+  /* 大会運営モードは項目が6つなので、狭い画面では詰めて1行に収める */
+  .ed-top__nav a { padding: 0 5px; font-size: 13px; }
+  .ed-top__nav a::after { left: 5px; right: 5px; }
+  .ed-top__nav { overflow-x: auto; scrollbar-width: none; }
+}

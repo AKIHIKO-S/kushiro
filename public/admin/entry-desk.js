@@ -81,10 +81,11 @@
     const last = S.tid || store.get("ktta.desk.last");
     const nav = isFull()
       ? [h("a", { href: "#list", "aria-current": active === "list" || active === "tour" ? "page" : null }, "大会"),
-         h("a", { href: "#operations" }, "進行"),
-         h("a", { href: "#players" }, "選手DB"),
-         h("a", { href: "#coaches" }, "監督・申請"),
-         h("a", { href: "/viewer", target: "_blank", rel: "noopener" }, "観戦画面")]
+         h("a", { href: "#operations", "aria-current": active === "operations" ? "page" : null }, "進行"),
+         h("a", { href: "#players", "aria-current": active === "players" ? "page" : null }, "選手DB"),
+         h("a", { href: "#coaches", "aria-current": active === "coaches" ? "page" : null }, "監督・申請"),
+         h("a", { href: "/viewer", target: "_blank", rel: "noopener" }, "観戦画面"),
+         h("a", { href: "#more", "aria-current": active === "more" ? "page" : null }, "その他")]
       : [h("a", { href: "#list", "aria-current": active === "list" ? "page" : null }, "大会"),
          h("a", { href: last ? "#desk/" + last : "#list", "aria-current": active === "desk" ? "page" : null }, "受付"),
          h("a", { href: "#players" }, "選手DB"),
@@ -112,6 +113,7 @@
   function frame(active, body) {
     ensureRoot();
     doc.documentElement.classList.add("desk-on");
+    doc.documentElement.classList.remove("desk-head-only");
     if (S.backBar) { S.backBar.remove(); S.backBar = null; }
     S.root.textContent = "";
     S.main = h("main", {}, body);
@@ -255,17 +257,20 @@
     const go = (tab) => () => { leaveTo(tab); };
     const item = (title, note, fn) => h("button", { class: "ed-more__row", type: "button", onclick: fn }, h("b", {}, title), h("span", {}, note));
     const s = app().session;
+    const items = isFull()
+      ? [item("システム管理（オーナー）", "バックアップ・運営アカウント・選手登録台帳との統合", () => app().openOwnerPanel())]
+      : [
+        item("選手の名寄せ", "選手データベースで、同じ人の登録をまとめる・所属を整える", go("players")),
+        item("データの書き出し・取り込み", "Excel・CSVの書き出しと、名簿の取り込み", go("import")),
+        item("外部の申込フォーム", "他団体・外部大会の申込フォームへのリンク一覧", go("external-forms")),
+        item("以前の申込一覧", "これまでの申込一覧の画面", go("entries")),
+        item("システム管理（オーナー）", "バックアップ・運営アカウント・選手登録台帳との統合", () => app().openOwnerPanel())];
     frame("more", [
       h("div", { class: "ed-head" }, h("h1", {}, "その他")),
       s ? h("div", { class: "ed-account" },
         h("span", {}, "ログイン中: ", h("b", {}, s.label), "（" + s.role + "）"),
         h("button", { class: "ed-btn", type: "button", onclick: () => app().logout() }, "ログアウト")) : null,
-      h("div", { class: "ed-more" },
-        item("選手の名寄せ", "選手データベースで、同じ人の登録をまとめる・所属を整える", go("players")),
-        item("データの書き出し・取り込み", "Excel・CSVの書き出しと、名簿の取り込み", go("import")),
-        item("外部の申込フォーム", "他団体・外部大会の申込フォームへのリンク一覧", go("external-forms")),
-        item("以前の申込一覧", "これまでの申込一覧の画面", go("entries")),
-        item("システム管理（オーナー）", "バックアップ・運営アカウント・選手登録台帳との統合", () => app().openOwnerPanel())),
+      h("div", { class: "ed-more" }, items),
     ]);
   }
 
@@ -274,14 +279,24 @@
     hide();
     location.hash = tab;
   }
-  function hide() {
+  function hide(type) {
     doc.documentElement.classList.remove("desk-on");
     S.view = "";
+    if (isFull()) {
+      // 大会運営モード(ベータ版): 既存の画面(進行・選手DB・監督)も、上は新しいヘッダー(協会サイト調)に揃える
+      if (S.backBar) { S.backBar.remove(); S.backBar = null; }
+      ensureRoot();
+      S.root.textContent = "";
+      S.root.append(top(type || ""));
+      doc.documentElement.classList.add("desk-head-only");
+      return;
+    }
+    doc.documentElement.classList.remove("desk-head-only");
     if (!S.backBar) {
       const last = S.tid || store.get("ktta.desk.last");
       S.backBar = h("div", { class: "ed-backbar" },
-        h("a", { href: isFull() ? "#list" : (last ? "#desk/" + last : "#list") }, isFull() ? "← 大会運営へ戻る" : "← 受付へ戻る"),
-        h("span", {}, isFull() ? "大会運営モード(ベータ版)の補助画面です" : "申込集計モードの補助画面です"));
+        h("a", { href: last ? "#desk/" + last : "#list" }, "← 受付へ戻る"),
+        h("span", {}, "申込集計モードの補助画面です"));
       doc.body.insertBefore(S.backBar, doc.body.firstChild);
     }
   }
@@ -698,7 +713,8 @@
     if (isFull()) {
       // 大会運営モード(ベータ版): 大会のページだけここで持つ。進行・選手DB・監督は既存の画面へ進む
       if ((type === "t" || type === "desk" || type === "tournament") && id) { showFullTournament(decodeURIComponent(id)); return true; }
-      hide();
+      if (type === "more") { showMore(); return true; }
+      hide(type);
       return false;
     }
     if (type === "more") { showMore(); return true; }
