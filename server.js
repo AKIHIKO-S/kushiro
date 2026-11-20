@@ -905,8 +905,9 @@ app.post("/api/auth/admin/password", requireSameOrigin, operatorLoginLimit, oper
   } catch (error) { next(error); }
 });
 // 役員の自己登録。メールアドレス・氏名・パスワードを送ると「承認待ち」で作られ、オーナーが承認するまでログインできない。
-// 登録済みのアドレスかどうかを推測させないため、形式が正しければ常に同じ応答を返す。迷惑登録は回数制限と
-// 承認待ちの上限(30件)で抑える。隠し欄(website)に値があればボットとみなし、受け付けたふりをして捨てる。
+// 既に登録のあるアドレスは、はっきり断る(オーナー指示 2026-11-20)。アドレスの登録有無が分かってしまう代わりに、
+// 迷惑登録・総当たりは回数制限(IP別1時間5回)と承認待ちの上限(30件)で抑える。
+// 隠し欄(website)に値があればボットとみなし、受け付けたふりをして捨てる。
 const operatorRegisterIpLimit = rateLimit({ windowMs: 60 * 60_000, max: 5, message: "登録の申込が多すぎます。しばらくしてからお試しください。" });
 app.post("/api/auth/admin/register", requireSameOrigin, operatorRegisterIpLimit, async (req, res, next) => {
   res.set("Cache-Control", "no-store");
@@ -922,6 +923,7 @@ app.post("/api/auth/admin/register", requireSameOrigin, operatorRegisterIpLimit,
     const r = await db.operatorAccounts.register(email, name, b.password);
     if (r.busy) return res.status(429).json({ error: "時間をおいて、もう一度お試しください" });
     if (r.full) return res.status(503).json({ error: "いまは登録を受け付けられません。オーナーにご連絡ください" });
+    if (!r.created) return res.status(409).json({ error: "このメールアドレスは既に登録されています。ログインするか、パスワードを忘れた場合は「パスワードを忘れた場合」からお手続きください。" });
     res.status(202).json(accepted);
     if (r.created) {
       db.logOwnerAction({ action: "運営アカウント:登録申請 " + accountAuditCode(db.operatorAccounts.list().find(a => a.email === email)?.id || "") });
@@ -1011,6 +1013,14 @@ app.post("/api/owner/operators/:id/reject", requireSameOrigin, requireOwnerStric
   if (!db.operatorAccounts.reject(req.params.id)) return res.status(404).json({ error: "承認待ちの登録が見つかりません" });
   auditOwner(req, "運営アカウント:登録を却下 " + accountAuditCode(req.params.id));
   res.json({ ok: true });
+});
+// ナビの鈴(通知)。「前に見た時刻」より後の申込・申込者による変更と、直るまで出す要対応(メール送信失敗・控えの未送信)を返す。
+// 役員の登録申請(承認待ち)の件数は、オーナーにだけ返す。個人情報は載せない。
+app.get("/api/admin/notifications", requireAdmin, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const r = db.listAdminNotifications(req.query.since);
+  const owner = sessionHas(req, "owner");
+  res.json({ ...r, pending_accounts: owner ? db.operatorAccounts.list().filter(a => a.status === "awaiting").length : 0, owner });
 });
 // 運営アカウントの氏名の登録・修正(右上の「ログイン中」表示に使う)。空欄で未登録に戻す。
 app.post("/api/owner/operators/:id/name", requireSameOrigin, requireOwnerStrict, (req, res) => {

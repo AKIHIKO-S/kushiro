@@ -20,6 +20,7 @@ const ENTRY_MODE_API = [
   [/^\/api\/auth\/session$/],
   [/^\/api\/auth\/(admin|owner|applicant)\/session$/],
   [/^\/api\/auth\/admin\/register$/, ["POST"]],
+  [/^\/api\/admin\/notifications$/, ["GET", "HEAD"]],
   [/^\/api\/auth\/admin\/(password|password-reset|activate)$/, ["POST"]],
   [/^\/api\/app-mode$/],
   [/^\/api\/health$/],

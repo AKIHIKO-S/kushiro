@@ -7,6 +7,7 @@
  "DELETE /api/registered-teams/:id",
  "DELETE /api/submissions/:id/pii",
  "DELETE /api/tournaments/:id",
+ "GET /api/admin/notifications",
  "GET /api/admin/qr",
  "GET /api/admin/snapshots",
  "GET /api/app-mode",

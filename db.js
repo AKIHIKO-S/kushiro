@@ -10573,6 +10573,37 @@ function suggestPlayers(q, team, limit) {
   return hits.slice(0, Math.max(1, Math.min(5, parseInt(limit) || 5))).map(h => ({ name: h.name, furigana: h.furigana, team: h.team }));
 }
 
+// ── 管理画面の通知(ナビの鈴) ─────────────────────────────────────
+// 「前に見た時刻(since)」より後に起きた出来事を返す。時刻はこの関数が返す now と同じ書式(サーバーの時計)で比べるので、
+// 端末の時計のずれに影響されない。個人情報は載せない(団体名・大会名・件数・種別だけ)。
+const _CHANGE_KIND_JA = { replace: "選手の差し替え", cancel: "取消", restore: "取消の取り消し", edit: "内容の修正", contact: "連絡先の修正", options: "オプションの変更" };
+function listAdminNotifications(since) {
+  const now = sqlite.prepare("SELECT datetime('now','localtime') AS t").get().t;
+  const s = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(String(since || "")) ? String(since) : now;   // 初回(または不正)は「いま」から数える
+  const items = [];
+  sqlite.prepare(`SELECT s.id, s.tournament_id, s.team_name, s.created_at, t.name AS tname,
+      (SELECT COUNT(*) FROM entrants e WHERE e.submission_id = s.id) AS n
+      FROM entry_submissions s JOIN tournaments t ON t.id = s.tournament_id
+      WHERE s.created_at > ? ORDER BY s.created_at DESC LIMIT 50`).all(s).forEach(r => items.push({
+    kind: "entry", at: r.created_at, tournament_id: r.tournament_id, submission_id: r.id,
+    title: "新しい申込", detail: `${r.team_name || "(団体名なし)"}（${r.tname}）${r.n ? " " + r.n + "件" : ""}` }));
+  // 申込者本人による修正・取消(本部の操作は自分たちで分かっているので出さない)。1回の修正は1件にまとめる
+  sqlite.prepare(`SELECT c.submission_id, c.tournament_id, MAX(c.created_at) AS at, GROUP_CONCAT(DISTINCT c.kind) AS kinds, t.name AS tname, COALESCE(sb.team_name,'') AS team
+      FROM entry_changes c JOIN tournaments t ON t.id = c.tournament_id LEFT JOIN entry_submissions sb ON sb.id = c.submission_id
+      WHERE c.actor = 'applicant' AND c.created_at > ?
+      GROUP BY COALESCE(NULLIF(c.change_group,''), c.id) ORDER BY MAX(c.created_at) DESC LIMIT 50`).all(s).forEach(r => {
+    const kinds = String(r.kinds || "").split(",").map(k => _CHANGE_KIND_JA[k] || "修正").filter((v, i, a) => a.indexOf(v) === i).join("・");
+    items.push({ kind: "change", at: r.at, tournament_id: r.tournament_id, submission_id: r.submission_id,
+      title: "申込者が申込を変更", detail: `${r.team || "(団体名なし)"}（${r.tname}）: ${kinds}` });
+  });
+  items.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  // 状態として残る「要対応」(見たら消えるのではなく、直るまで出す)
+  const mailFailed = sqlite.prepare("SELECT COUNT(*) AS n FROM entry_mail_jobs WHERE state = 'failed'").get().n;
+  let sheetFailed = 0;
+  try { sheetFailed = sqlite.prepare("SELECT COUNT(*) AS n FROM sheet_backup_log WHERE status IN ('failed','pending')").get().n; } catch (_) {}
+  return { now, since: s, items: items.slice(0, 50), alerts: { mail_failed: mailFailed, sheet_failed: sheetFailed } };
+}
+
 // 申込の一覧(本部の「申込の一覧」画面)。金銭の収受は運営アプリでは扱わない(オーナー方針 2026-11-03)ので、
 // 件数・修正・別団体との重複だけを返す。
 function getSubmissionList(tournamentId) {
@@ -15345,7 +15376,7 @@ module.exports = {
   getEntryCapacityState, entryDeadlineAt, entryDeadlineLabel, entryClosedReason: _entryClosedReason,
   getManualSubmissionView, createManualSubmission, publicEntryOperationId,
   applicantReplaceEntrant, applicantCancelEntrant, applicantReplaceEntrantBySubmission, applicantCancelEntrantBySubmission, listEntryChanges,
-  findCrossGroupDuplicates, getSubmissionEditView, editSubmission, recordAdminEntrantChange, getSubmissionList, suggestTeams, suggestPlayers, __resetSuggestCache, buildBackupRows, recordBackupAttempt, finishBackup, getBackupState, listBackupToResend,
+  findCrossGroupDuplicates, getSubmissionEditView, editSubmission, recordAdminEntrantChange, getSubmissionList, listAdminNotifications, suggestTeams, suggestPlayers, __resetSuggestCache, buildBackupRows, recordBackupAttempt, finishBackup, getBackupState, listBackupToResend,
   copyEntrySettings, listEntrySettingSources,
   claimEntryMail, finishEntryMail, retryEntryMail, getEntryMailContent,
   resolveEntryOptions, sanitizeEntryOptions, priceEntryOptions,
