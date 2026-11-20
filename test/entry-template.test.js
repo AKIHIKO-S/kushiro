@@ -143,3 +143,26 @@ test("本部の一括登録: 列は氏名・ふりがな・所属・区分だけ
   const cws = XLSX.read(base, { type: "buffer" }).Sheets["申込者"];
   assert.ok(!/必須/.test(cws["A6"].v), "責任者は本部登録では必須にしない: " + cws["A6"].v);
 });
+
+test("⑤ 学年の列はフォームと同じ並びのドロップダウン。選んだ値も自由入力も読める", () => {
+  const { unzipSync, strFromU8 } = require("fflate");
+  const buf = buildEntryTemplate({ tournament: T, events: EVENTS, fieldConfig: CFG });
+  const files = unzipSync(new Uint8Array(buf));
+  const sheetOf = (n) => strFromU8(files["xl/worksheets/sheet" + n + ".xml"]);
+  const GRADES = "小1,小2,小3,小4,小5,小6,中1,中2,中3,高1,高2,高3,一般";
+  // 中学男子シングルス(3枚目)は4列目(D)が学年
+  const s1 = sheetOf(3);
+  assert.ok(s1.includes('type="list"') && s1.includes(`<formula1>"${GRADES}"</formula1>`), "リストの並びはフォームと同じ");
+  assert.ok(s1.includes('sqref="D6:D25"'));
+  assert.ok(s1.indexOf("<dataValidations") > s1.indexOf("</sheetData>") && s1.indexOf("<dataValidations") < s1.indexOf("<pageMargins"), "入力規則はsheetDataのあと印刷設定の前");
+  // ダブルスは選手1・選手2の両方
+  assert.strictEqual((sheetOf(4).match(/<dataValidation /g) || []).length, 2);
+  // 団体戦・申込者には付けない
+  assert.ok(!sheetOf(5).includes("dataValidation") && !sheetOf(2).includes("dataValidation"));
+  // 壊れていない: SheetJSで読み直せて、選択値も自由入力も取り込める
+  const filled = fill(buf, { "中学男子シングルス": [["A6", "架空 太郎"], ["B6", "かくう たろう"], ["D6", "中2"], ["A7", "架空 次郎"], ["B7", "かくう じろう"], ["D7", "中学2年生"]] });
+  const r = readEntryTemplate(filled, { events: EVENTS, fieldConfig: CFG });
+  assert.ok(!r.error, r.error);
+  const rows = JSON.stringify(r);
+  assert.ok(rows.includes("中2") && rows.includes("中学2年生"));
+});

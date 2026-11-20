@@ -2202,7 +2202,7 @@ app.get("/api/tournaments/:id/reception.html", requireAdmin, (req, res) => {
 // ── 領収書の印刷(申込集計モード) ── 印刷物を作るだけ。入金記録・発行履歴は保存しない。
 // 印影の画像は、設置されていれば(SEAL_DIR/seal.png 等。通常のリポジトリには入れない)ページに埋め込む。
 function _sealUrl() {
-  // 通常モードの電子印鑑(管理設定からオーナーが登録)と同じ場所・同じURLを参照する。画像はリポジトリに入れない。
+  // 大会運営モードの電子印鑑(管理設定からオーナーが登録)と同じ場所・同じURLを参照する。画像はリポジトリに入れない。
   const cands = [];
   if (process.env.SEAL_DIR) cands.push([process.env.SEAL_DIR, "/uploads/seal"]);
   cands.push([path.join(__dirname, "public", "shared", "assets"), "/shared/assets/seal"]);
@@ -5216,7 +5216,7 @@ for (const docName of ["OPERATIONS.md", "UPDATE_WORKFLOW.md",
 
 // ── Phase4: 申込者本人の閲覧ページ /entry/status?token=… ───
 // 申込番号(トークン)で自分の申込内容を確認する(閲覧のみ)。:id ルートより前に置く。
-// 申込集計モードの公開の入口。受付中の大会だけを案内する。通常モードでは閲覧画面があるのでそちらへ。
+// 申込集計モードの公開の入口。受付中の大会だけを案内する。大会運営モードでは閲覧画面があるのでそちらへ。
 app.get("/entry", (req, res) => {
   if (currentAppMode() !== "entry") return res.redirect(302, "/viewer");
   res.type("html").send(entryForm.buildEntryLandingHTML(db.getOpenTournaments()));

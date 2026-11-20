@@ -32,7 +32,7 @@ html.desk-on #entryDesk { display: block; }
 .ed-top__org { display: grid; gap: 2px; font-weight: 700; font-size: 19px; line-height: 1.05; color: var(--st-navy); white-space: nowrap; }
 .ed-top__org small { font-family: var(--st-num); font-size: 10px; font-weight: 700; line-height: 1.1; letter-spacing: 0; }
 .ed-top__sub { font-size: 13px; font-weight: 700; color: var(--st-mute); white-space: nowrap; padding-left: 12px; border-left: 1px solid var(--st-line); }
-/* 申込集計 / 通常 の切替(通常モードへ戻る入口)。受付画面ではヘッダーが隠れるので、ここに置く */
+/* 申込集計 / 大会運営(ベータ版) の切替(大会運営モードへ戻る入口)。受付画面ではヘッダーが隠れるので、ここに置く */
 .ed-top .admin-bell { margin-left: auto; }
 .ed-top .admin-bell + .admin-mode { margin-left: 0; }
 .ed-top .admin-mode { flex: none; margin-left: auto; }
@@ -199,6 +199,9 @@ html.desk-on .ed-backbar { display: none; }
   .ed-table tbody tr { cursor: pointer; }
   .ed-table tbody tr:hover td { background: #f3f6f9; }
   .ed-table tbody tr[aria-selected="true"] td { background: var(--st-sky); box-shadow: inset 0 -2px 0 var(--st-navy); }
+  /* 種目の見出し: 略さず全部読めるよう折り返す(数値列は細いまま、数字は中央揃えのまま) */
+  .ed-table thead th.ed-ev { white-space: normal; min-width: 6.4em; max-width: 7.6em; padding: 8px 4px; line-height: 1.35; vertical-align: bottom; overflow-wrap: anywhere; font-size: 12.5px; }
+  .ed-table thead th { height: auto; }
   .ed-table td.zero { color: #a3a7ad; }
   .ed-table td.num { font-size: 16px; font-weight: 700; font-family: var(--st-num); }
   .ed-table td.sum { font-weight: 800; color: var(--st-navy); font-size: 17px; }

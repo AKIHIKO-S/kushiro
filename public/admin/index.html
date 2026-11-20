@@ -1252,7 +1252,7 @@
  .pdist-chip.l{ background:#fdecee; color:#9c0f1c; border-color:#f3d3d6; }
  .pdist-label.w{ color:#1a7a45; } .pdist-label.l{ color:#c01526; }
  .pstat-bar i.hi{ background:#1a7a45; } .pstat-rp.hi{ color:#1a7a45; }
-/* 申込集計モード: 閉じた機能の入口を出さない(切替は 画面上部の「申込集計 / 通常」) */
+/* 申込集計モード: 閉じた機能の入口を出さない(切替は 画面上部の「申込集計 / 大会運営(ベータ版)」) */
 html[data-app-mode="entry"] .tab[data-tab="bracket-mgmt"],
 html[data-app-mode="entry"] .tab[data-tab="coaches"],
 html[data-app-mode="entry"] .em-hide { display: none !important; }
@@ -1265,13 +1265,14 @@ html.auth-gate .admin-actions, html.auth-gate #connBadge { display: none !import
 .auth-gate h1 { font-size: 22px; margin: 0 0 10px; }
 .auth-gate p { margin: 0 0 20px; color: var(--st-ink-sub, #4b5563); line-height: 1.7; }
 .auth-gate .btn { min-height: 44px; min-width: 160px; }
-/* 運営アプリのモード切替(申込集計 / 通常)。ヘッダーは明るい地なので、墨の文字と罫線。いまのモードは墨ベタ+白文字 */
+/* 運営アプリのモード切替(申込集計 / 大会運営(ベータ版))。ヘッダーは明るい地なので、墨の文字と罫線。いまのモードは墨ベタ+白文字 */
 .admin-mode { display: inline-flex; border: 1.5px solid #211d18; background: #fff; }
 .admin-mode button { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 0 16px; background: #fff; color: #211d18; border: none; cursor: pointer; }
 .admin-mode button + button { border-left: 1.5px solid #211d18; }
 .admin-mode button[aria-pressed="false"]:hover { background: #f1ede4; }
 .admin-mode button[aria-pressed="true"] { background: #211d18; color: #fff; cursor: default; }
 .admin-mode button:disabled { opacity: .55; cursor: not-allowed; }
+.admin-mode__beta { display: block; font-size: 10px; font-weight: 700; line-height: 1.1; letter-spacing: 0; opacity: .8; }
 .admin-mode[hidden] { display: none; }
 /* 通知の鈴。新しい出来事の数が右上に出る */
 .admin-bell { position: relative; flex: none; width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; background: #fff; color: #211d18; border: 1.5px solid #211d18; cursor: pointer; }
@@ -1834,24 +1835,24 @@ const A = {
  // モード切替の2つのボタン。ヘッダーと、申込の受付画面(受付台帳)の上部の両方に置く(受付画面ではヘッダーが隠れるため)
  buildModeSwitch() {
    const box = h("span", { className: "admin-mode", role: "group", "aria-label": "運営アプリのモード" });
-   const mk = (mode, label) => {
+   const mk = (mode, label, beta) => {
      const on = (A.entryOnly ? "entry" : "full") === mode;
      const b = h("button", { type: "button", "aria-pressed": on ? "true" : "false",
-       title: A.appModeLocked ? "サーバーの設定で固定されているため、切り替えられません" : (on ? "いまのモードです" : label + "に切り替えます"),
+       title: A.appModeLocked ? "サーバーの設定で固定されているため、切り替えられません" : (on ? "いまのモードです" : label + "モード" + (beta ? "（" + beta + "）" : "") + "に切り替えます"),
        disabled: (A.appModeLocked && !on) ? "" : null,
        onClick: async () => {
          if (on || A.appModeLocked) return;
          const msg = mode === "entry"
            ? "申込集計モードに切り替えます。組合せ・試合・観戦などの画面を閉じ、申込の受付と集計だけにします。データは消えません。公開画面にもすぐ反映されます。"
-           : "通常モードに切り替えます。全機能が使えるようになります。公開画面にもすぐ反映されます。";
+           : "大会運営モード（ベータ版）に切り替えます。組合せ・試合・観戦などの全機能が使えるようになります。公開画面にもすぐ反映されます。";
          if (!window.confirm(msg + "\nよろしいですか？")) return;
          const r = await api.put("/api/app-mode", { mode });
          if (r && r.error) return toast(r.error, "err");
          location.href = "/admin";   // 開いている画面ごと新しいモードで組み直す
-       } }, label);
+       } }, label, beta ? h("small", { className: "admin-mode__beta" }, beta) : null);
      return b;
    };
-   box.append(mk("entry", "申込集計"), mk("full", "通常"));
+   box.append(mk("entry", "申込集計"), mk("full", "大会運営", "ベータ版"));
    return box;
  },
  renderModeSwitch() {
@@ -14017,7 +14018,7 @@ const O = {
      bar.appendChild(h("button", {
        className: "btn btn-sm" + (state.relinkMode ? "" : " btn-ghost"),
        style: state.relinkMode ? { background: "#b45309", color: "#fff", fontWeight: 700 } : {},
-       title: "罫線編集(上級): 勝ち上がり先(進出先)そのものを組み替える。表の形が変わります。単に選手2人を入れ替えたいだけなら、この機能ではなく通常モードで選手を2人タップしてください。",
+       title: "罫線編集(上級): 勝ち上がり先(進出先)そのものを組み替える。表の形が変わります。単に選手2人を入れ替えたいだけなら、この機能ではなく大会運営モードで選手を2人タップしてください。",
        onClick: () => {
          const entering = !state.relinkMode;
          state.relinkMode = entering; O._pbClear(); O._pbClearRelink();

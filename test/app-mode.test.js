@@ -176,7 +176,7 @@ test("実サーバ: 既定は申込集計モード。閉じた入口は案内さ
   assert.ok([401, 403].includes((await fetch(BASE + "/api/app-mode", { method: "PUT", headers: { "Content-Type": "application/json" }, body: '{"mode":"full"}' })).status), "ログインなしでは切り替えられない");
   assert.strictEqual((await fetch(BASE + "/api/app-mode", { method: "PUT", headers: adm, body: '{"mode":"bad"}' })).status, 400);
   assert.strictEqual((await fetch(BASE + "/api/app-mode", { method: "PUT", headers: adm, body: '{"mode":"full"}' })).status, 200);
-  assert.strictEqual((await noFollow("/viewer")).status, 200, "通常モードでは閲覧画面に戻る");
+  assert.strictEqual((await noFollow("/viewer")).status, 200, "大会運営モードでは閲覧画面に戻る");
   assert.strictEqual((await noFollow("/entry")).headers.get("location"), "/viewer");
   const pub = await fetch(BASE + "/api/public/tournaments");
   assert.strictEqual(pub.status, 200);

@@ -84,7 +84,7 @@
         h("span", { class: "ed-top__org" }, "釧路卓球協会", h("small", { lang: "en" }, "KUSHIRO TABLE TENNIS ASSOCIATION"))),
       h("span", { class: "ed-top__sub" }, "申込の受付"),
       (app().buildBell ? app().buildBell() : null),   // 通知の鈴(新しい申込・変更の数)
-      (app().buildModeSwitch ? app().buildModeSwitch() : null),   // 申込集計 / 通常 の切替(通常モードへ戻る入口)
+      (app().buildModeSwitch ? app().buildModeSwitch() : null),   // 申込集計 / 大会運営(ベータ版) の切替(大会運営モードへ戻る入口)
       h("nav", { class: "ed-top__nav", "aria-label": "主な画面" },
         h("a", { href: "#list", "aria-current": active === "list" ? "page" : null }, "大会"),
         h("a", { href: last ? "#desk/" + last : "#list", "aria-current": active === "desk" ? "page" : null }, "受付"),
@@ -334,7 +334,7 @@
       h("div", { class: "ed-table", tabindex: "0", "aria-label": "申込の台帳" },
         rows.length ? h("table", {},
           h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "団体"),
-            d.events.map(e => h("th", { scope: "col", title: e.name, "aria-label": e.name }, e.short)),
+            d.events.map(e => h("th", { scope: "col", class: "ed-ev", title: e.name, "aria-label": e.name }, e.name)),
             h("th", { scope: "col" }, "確定出場"), h("th", { scope: "col" }, "経路"), h("th", { scope: "col" }, "受付"), h("th", { scope: "col" }, "確認"))),
           h("tbody", {}, rows.map(tr)),
           h("tfoot", {}, h("tr", {}, h("td", {}, "確定申込 " + d.totals.teams + "件"),
