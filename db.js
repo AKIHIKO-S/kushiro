@@ -8,7 +8,7 @@ const fs = require("fs");
 const { mulberry32, shuffle, randomSeed } = require("./lib/rng");
 const TTTieOrder = require("./public/shared/tie-order");   // 団体戦オーダー検証 (admin と同一実装)
 const appMode = require("./app-mode");
-const { summarizeEntries, isConfirmedEntry } = require("./lib/entry-summary");
+const { summarizeEntries, isConfirmedEntry, savedEntryFee } = require("./lib/entry-summary");
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "tournament.db");
 // 新規に指定されたDB_PATHまで「空DBの破損」と扱うと、同じスナップショット置き場の
@@ -9456,9 +9456,9 @@ function copyEntrySettings(targetId, sourceId, opts) {
   const settings = {
     // 受付フラグは引き継がない(コピーした瞬間に受付が開くのを避ける)。現状を維持する。
     entries_open: dst.entries_open ? 1 : 0,
-    // 締切「日」は大会ごとに違うので引き継がない。時刻(17:00 等)は運用が同じなので引き継ぐ。
+    // 締切日は大会ごとに設定する。旧時刻は履歴としてコピー先に残す。
     entry_deadline: dst.entry_deadline || "",
-    entry_deadline_time: src.entry_deadline_time || "",
+    entry_deadline_time: dst.entry_deadline_time || "",
     entry_capacity: src.entry_capacity || 0,
     entry_max_events: src.entry_max_events || 0,
     entry_payment_note: src.entry_payment_note || "",
@@ -9499,7 +9499,6 @@ function copyEntrySettings(targetId, sourceId, opts) {
     copied: {
       項目設定: true,
       有料オプション: (settings.entry_options || []).length,
-      締切時刻: settings.entry_deadline_time || "(なし)",
       定員: settings.entry_capacity || 0,
       種目数上限: settings.entry_max_events || 0,
       種目: copyEvents ? (settings.event_config || []).length : 0,
@@ -9512,7 +9511,7 @@ function listEntrySettingSources(excludeId, limit) {
   const n = Math.max(1, Math.min(100, parseInt(limit) || 30));
   const rows = sqlite.prepare(
     `SELECT id, name, date, field_config, entry_options, entry_capacity, entry_max_events,
-            entry_deadline_time, event_config
+            event_config
        FROM tournaments
       WHERE id <> ? AND COALESCE(status,'') <> 'cancelled'
       ORDER BY date DESC LIMIT ?`).all(String(excludeId || ""), n);
@@ -9527,7 +9526,6 @@ function listEntrySettingSources(excludeId, limit) {
       options: optN, events: evN,
       capacity: r.entry_capacity || 0,
       max_events: r.entry_max_events || 0,
-      deadline_time: r.entry_deadline_time || "",
     };
   });
 }
@@ -10644,15 +10642,14 @@ function _deskLabel(e) {
 }
 function getEntryDeskList() {
   const ts = sqlite.prepare(`SELECT * FROM tournaments`).all();
-  const cnt = sqlite.prepare(`SELECT tournament_id AS tid, COUNT(*) AS n, COUNT(DISTINCT submission_id) AS subs
-    FROM entrants WHERE COALESCE(status,'confirmed')='confirmed' GROUP BY tournament_id`).all();
+  const cnt = sqlite.prepare(`SELECT e.tournament_id AS tid, COUNT(*) AS n, COUNT(DISTINCT s.id) AS subs
+    FROM entrants e LEFT JOIN entry_submissions s ON s.id=e.submission_id AND s.tournament_id=e.tournament_id
+    WHERE COALESCE(NULLIF(e.status,''),'confirmed')='confirmed' GROUP BY e.tournament_id`).all();
   const by = {}; cnt.forEach(r => { by[r.tid] = r; });
-  const subN = {}; sqlite.prepare(`SELECT tournament_id AS tid, COUNT(*) AS n FROM entry_submissions GROUP BY tournament_id`)
-    .all().forEach(r => { subN[r.tid] = r.n; });
   const items = ts.map(t => ({
     id: t.id, name: t.name, date: t.date || "", venue: t.venue || "", deadline: t.entry_deadline || "",
     entry_open: !!t.entries_open, state: _deskState(t), days_left: _deskDaysLeft(t),
-    entries: (by[t.id] && by[t.id].n) || 0, teams: subN[t.id] || 0,
+    entries: by[t.id]?.n || 0, teams: by[t.id]?.subs || 0,
   }));
   const rank = { open: 0, before: 1, closed: 2 };
   items.sort((a, b) => rank[a.state] - rank[b.state]
@@ -10687,8 +10684,12 @@ function getEntryDesk(tournamentId) {
     const cfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []);
     (Array.isArray(cfg) ? cfg : []).forEach(c => { if (c && c.name && !evNames.includes(String(c.name))) evNames.push(String(c.name)); });
   } catch (_) {}
-  all.forEach(e => { if (isConfirmedEntry(e) && e.event && !evNames.includes(e.event)) evNames.push(e.event); });
-  const evCount = {}; evNames.forEach(n => { evCount[n] = 0; });
+  const evCount = new Map();
+  all.filter(isConfirmedEntry).forEach(e => {
+    const name = e.event || "種目未設定";
+    if (!evNames.includes(name)) evNames.push(name);
+    evCount.set(name, (evCount.get(name) || 0) + 1);
+  });
 
   const byRoute = { web: 0, excel: 0, manual: 0 };
   let checks = 0;
@@ -10698,8 +10699,15 @@ function getEntryDesk(tournamentId) {
     const route = _deskRoute(s);
     byRoute[route]++;
     const byEvent = {};
-    live.forEach(e => { byEvent[e.event] = (byEvent[e.event] || 0) + 1; evCount[e.event] = (evCount[e.event] || 0) + 1; });
+    live.forEach(e => {
+      const name = e.event || "種目未設定";
+      byEvent[name] = (byEvent[name] || 0) + 1;
+    });
     const issues = [];
+    list.filter(e => e.status === "pending").forEach(e => {
+      issues.push({ key: `pending:${e.id}`, type: "other", title: "承認待ち", entrant_id: e.id,
+        detail: `${_deskLabel(e)}（${e.event}）は確定出場に含まれていません` });
+    });
     live.forEach(e => {
       (cross[e.id] || []).forEach(c => {
         const ids = [e.id, c.other_entrant_id].sort();
@@ -10740,7 +10748,7 @@ function getEntryDesk(tournamentId) {
   return {
     tournament: { id: t.id, name: t.name, date: t.date || "", venue: t.venue || "", deadline: t.entry_deadline || "",
       days_left: _deskDaysLeft(t), state: _deskState(t) },
-    events: evNames.map(n => ({ name: n, count: evCount[n] || 0 })),
+    events: evNames.map(n => ({ name: n, count: evCount.get(n) || 0 })),
     totals: { teams: rows.filter(r => r.entries > 0).length, entries: sumAll.confirmed, submissions: subs.length,
       checks, by_route: byRoute },
     unlinked: all.filter(e => isConfirmedEntry(e) && (!e.submission_id || !ents[e.submission_id] || !subTeam.hasOwnProperty(e.submission_id))).length,
@@ -10749,7 +10757,7 @@ function getEntryDesk(tournamentId) {
 }
 
 // 申込の集計Excel(lib/entry-workbook.js)の元データ。受付台帳と同じ「申込団体」単位でまとめる。
-// 取消・却下以外は全部入れる(承認待ち・重複の疑い・入力不備も名簿に載せ、確認事項に理由を書く)。
+// 確定のみを名簿・参加費集計に入れる。承認待ちなどは確認用の行へ分ける。
 // 生年月日・メール・電話は返さない。
 function getEntryExport(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
@@ -10775,20 +10783,10 @@ function getEntryExport(tournamentId) {
     if (entrantMembers(e).length) return "team";
     return e.is_doubles ? "doubles" : "singles";
   };
-  const events = [];
-  cfg.forEach(c => { if (c && c.name && !events.some(x => x.name === String(c.name))) events.push({ name: String(c.name), kind: "" }); });
-  all.forEach(e => { if (e.event && !events.some(x => x.name === e.event)) events.push({ name: e.event, kind: "" }); });
-  events.forEach(ev => { const e = all.find(x => x.event === ev.name); ev.kind = e ? kindOf(e) : ((cfgBy[ev.name] || {}).type || "singles"); });
-
-  const feeOf = e => {
-    const n = parseInt(e.fee, 10);
-    if (n > 0) return n;
-    const c = cfgBy[e.event];
-    if (!c) return 0;
-    const student = e.category && e.category !== "general";
-    const fs = parseInt(c.fee_student, 10), f = parseInt(c.fee, 10);
-    return (student && fs >= 0) ? fs : (f >= 0 ? f : 0);
-  };
+  const eventName = e => e.event || "種目未設定";
+  const confirmedByEvent = new Map(all.filter(isConfirmedEntry).map(e => [eventName(e), e]));
+  const events = [...new Set([...cfg.filter(c => c?.name).map(c => String(c.name)), ...confirmedByEvent.keys()])]
+    .filter(name => confirmedByEvent.has(name)).map(name => ({ name, kind: kindOf(confirmedByEvent.get(name)) }));
   const custom = (resolveFieldConfig(t).custom || []).filter(c => c && c.key && c.label && c.scope === "player")
     .map(c => ({ key: String(c.key), label: String(c.label).slice(0, 40) }));
   const join = arr => arr.filter(v => v !== "" && v != null).join("\n");
@@ -10816,7 +10814,9 @@ function getEntryExport(tournamentId) {
       if (vals.length) answers[c.key] = vals.join("\n");
     });
     const checks = [];
-    if ((e.status || "confirmed") === "pending") checks.push("承認待ち");
+    if (!isConfirmedEntry(e)) checks.push("承認待ち");
+    const fee = savedEntryFee(e);
+    if (fee === null) checks.push("参加費の保存額を確認");
     (cross[e.id] || []).forEach(c => {
       const other = subTeam[entSub[c.other_entrant_id]] || c.other_team || "別の団体";
       const msg = "重複の疑い：" + other + "からも申込";
@@ -10829,34 +10829,38 @@ function getEntryExport(tournamentId) {
     if (!String(e.name || "").trim() && kind !== "team") { if (!checks.includes("氏名が空欄です")) checks.push("氏名が空欄です"); }
     const lines = Math.max(1, name.split("\n").length);
     return {
-      id: e.id, event: e.event || "", kind, name_text: name, kana_text: kana, team_text: team,
+      id: e.id, event: eventName(e), kind, name_text: name, kana_text: kana, team_text: team,
       class_text: e.age_group || (e.division && e.division !== "student" ? e.division : ""),
       grade_text: join(people.map(p => p && p.grade ? String(p.grade) : "")),
       age_text: join(people.map(p => p && p.age != null && p.age !== "" ? String(p.age) : "")),
-      answers, fee: feeOf(e), checks, lines,
+      answers, fee, checks, lines,
     };
   };
   const evOrder = {}; events.forEach((ev, i) => { evOrder[ev.name] = i; });
   const groupsBy = new Map();
   subs.forEach(s => groupsBy.set("s:" + s.id, { name: s.team_name || "（団体名なし）", contact_name: s.contact_name || "", entries: [] }));
+  const review = [];
   all.forEach(e => {
     let key = e.submission_id && groupsBy.has("s:" + e.submission_id) ? "s:" + e.submission_id : "";
     if (!key) {
       key = "t:" + (e.team || "");
       if (!groupsBy.has(key)) groupsBy.set(key, { name: (e.team || "所属なし") + "（申込記録なし）", contact_name: "", entries: [] });
     }
-    groupsBy.get(key).entries.push(shape(e));
+    const group = groupsBy.get(key);
+    const row = shape(e);
+    if (isConfirmedEntry(e)) group.entries.push(row);
+    if (row.checks.length) review.push({ ...row, group: group.name, status: isConfirmedEntry(e) ? "確定" : "承認待ち" });
   });
   const groups = [...groupsBy.values()].filter(g => g.entries.length).map(g => {
     g.entries.sort((a, b) => (evOrder[a.event] ?? 999) - (evOrder[b.event] ?? 999));
     g.fee_total = g.entries.reduce((n, e) => n + (e.fee || 0), 0);
+    g.fee_unknown = g.entries.some(e => e.fee === null);
     return g;
   }).sort((a, b) => a.name.localeCompare(b.name, "ja"));
   const now = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
   return {
     tournament: { id: t.id, name: t.name || "", date: t.date || "", venue: t.venue || "" },
-    events: events.filter(ev => all.some(e => e.event === ev.name)),
-    custom_fields: custom, groups, generated_at: now,
+    events, custom_fields: custom, groups, review, generated_at: now,
   };
 }
 
@@ -11058,21 +11062,13 @@ function priceEntryOptions(tournament, rawQty) {
 function _nowJST() {
   return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
 }
-// 締切の締め切り時刻を "YYYY-MM-DD HH:MM" で返す。時刻未設定なら締切日の終日(23:59)。
+// 日本時間の締切日の最終分。運営画面の表示モード・旧時刻設定では変えない。
 function entryDeadlineAt(t) {
-  const d = String((t && t.entry_deadline) || "").trim();
-  if (!d) return "";
-  if (appMode.resolveMode(process.env.KTTA_APP_MODE, kvGet(appMode.KV_KEY)) === "entry") return d + " 23:59";
-  const tm = String((t && t.entry_deadline_time) || "").trim();
-  return d + " " + (/^\d{1,2}:\d{2}$/.test(tm) ? (tm.length === 4 ? "0" + tm : tm) : "23:59");
+  const d = entryDeadlineLabel(t);
+  return d ? d + " 23:59" : "";
 }
-// 締切の人間向け表記("2026-08-31 17:00" / 時刻未設定なら "2026-08-31")。
 function entryDeadlineLabel(t) {
-  const d = String((t && t.entry_deadline) || "").trim();
-  if (!d) return "";
-  if (appMode.resolveMode(process.env.KTTA_APP_MODE, kvGet(appMode.KV_KEY)) === "entry") return d;
-  const tm = String((t && t.entry_deadline_time) || "").trim();
-  return /^\d{1,2}:\d{2}$/.test(tm) ? d + " " + tm : d;
+  return String(t?.entry_deadline || "").trim();
 }
 
 // 種目ごと・大会全体の受付状況(受付済み枠数・上限・残り)を返す。
@@ -11226,8 +11222,7 @@ function _entryClosedReason(t) {
     return `申込締切（${entryDeadlineLabel(t)}）を過ぎています`;
   }
   // 締切の設定漏れや受付の閉じ忘れがあっても、開催済み大会は公開受付しない。
-  if (appMode.resolveMode(process.env.KTTA_APP_MODE, kvGet(appMode.KV_KEY)) === "entry"
-      && /^\d{4}-\d{2}-\d{2}$/.test(t.date || "") && t.date < _nowJST().slice(0, 10)) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t.date || "") && t.date < _nowJST().slice(0, 10)) {
     return "この大会は開催日を過ぎたため、申込は終了しました";
   }
   return null;
@@ -13046,9 +13041,9 @@ function updateEntrySettings(tournamentId, settings) {
   `).run(
     _openFlag,
     settings.entry_deadline || "",
-    // 締切時刻は "HH:MM" のみ受ける(不正値は空=終日扱いに落とす)
-    /^\d{1,2}:\d{2}$/.test(String(settings.entry_deadline_time || "").trim())
-      ? String(settings.entry_deadline_time).trim() : "",
+    // 旧データの時刻は保持するが、新旧どちらも受付判定には使わない。
+    settings.entry_deadline_time === undefined ? (t.entry_deadline_time || "") :
+      (/^\d{1,2}:\d{2}$/.test(String(settings.entry_deadline_time || "").trim()) ? String(settings.entry_deadline_time).trim() : ""),
     settings.entry_capacity !== undefined
       ? Math.max(0, Math.min(99999, parseInt(settings.entry_capacity) || 0))
       : (t.entry_capacity || 0),

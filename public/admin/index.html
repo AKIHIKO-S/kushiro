@@ -1265,12 +1265,14 @@ html.auth-gate .admin-actions, html.auth-gate #connBadge { display: none !import
 .auth-gate h1 { font-size: 22px; margin: 0 0 10px; }
 .auth-gate p { margin: 0 0 20px; color: var(--st-ink-sub, #4b5563); line-height: 1.7; }
 .auth-gate .btn { min-height: 44px; min-width: 160px; }
-/* 運営アプリのモード切替(申込集計 / 通常)。いまのモードが一目で分かる2択 */
-.admin-mode { display: inline-flex; border: 1px solid rgba(255,255,255,.35); }
-.admin-mode button { font: inherit; font-size: 13px; min-height: 36px; padding: 0 12px; background: transparent; color: #fff; border: none; cursor: pointer; }
-.admin-mode button + button { border-left: 1px solid rgba(255,255,255,.35); }
-.admin-mode button[aria-pressed="true"] { background: #fff; color: #211d18; font-weight: 700; cursor: default; }
+/* 運営アプリのモード切替(申込集計 / 通常)。ヘッダーは明るい地なので、墨の文字と罫線。いまのモードは墨ベタ+白文字 */
+.admin-mode { display: inline-flex; border: 1.5px solid #211d18; background: #fff; }
+.admin-mode button { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 0 16px; background: #fff; color: #211d18; border: none; cursor: pointer; }
+.admin-mode button + button { border-left: 1.5px solid #211d18; }
+.admin-mode button[aria-pressed="false"]:hover { background: #f1ede4; }
+.admin-mode button[aria-pressed="true"] { background: #211d18; color: #fff; cursor: default; }
 .admin-mode button:disabled { opacity: .55; cursor: not-allowed; }
+.admin-mode[hidden] { display: none; }
 .admin-who { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; max-width: 260px; min-width: 0; }
 .admin-who__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-who__role { flex: none; font-size: 11px; padding: 1px 7px; border: 1px solid currentColor; border-radius: 3px; }
