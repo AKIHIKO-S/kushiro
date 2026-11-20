@@ -53,6 +53,7 @@ function _formPreamble(tournament, opts, events) {
  *   deadline: 申込締切日 (表示用)
  *   payment_note: 支払方法の説明
  */
+const EVENT_GENDER_SRC = require("fs").readFileSync(require("path").join(__dirname, "public", "shared", "event-gender.js"), "utf8").replace(/<\/script/gi, "<\\/script");
 function buildEntryFormHTML(tournament, events, opts) {
   opts = opts || {};
   const submitUrl = opts.submit_url || "";
@@ -1209,6 +1210,14 @@ function buildEntryFormHTML(tournament, events, opts) {
   /* 見出しと区切りはサイトの2px太罫 */
   .form-section h2 { border-bottom: var(--st-rule); }
   .event-block { border-top: var(--st-rule); }
+  /* 種目の性別の色分け(男子=青・女子=赤・混合=緑・その他=無色)。淡い地+太い上端帯+濃い文字。判定は shared/event-gender.js */
+  .event-block[data-gx] summary { padding: 10px 10px 10px; }
+  .event-block[data-gx="male"] { border-top: 3px solid var(--st-gx-male-ink); }
+  .event-block[data-gx="male"] summary { background: var(--st-gx-male-tint); color: var(--st-gx-male-ink); }
+  .event-block[data-gx="female"] { border-top: 3px solid var(--st-gx-female-ink); }
+  .event-block[data-gx="female"] summary { background: var(--st-gx-female-tint); color: var(--st-gx-female-ink); }
+  .event-block[data-gx="mixed"] { border-top: 3px solid var(--st-gx-mixed-ink); }
+  .event-block[data-gx="mixed"] summary { background: var(--st-gx-mixed-tint); color: var(--st-gx-mixed-ink); }
   .form-row input:focus, .form-row select:focus, .form-row textarea:focus,
   .entry-row input:focus, .entry-row select:focus {
     border-color: var(--st-navy) !important; box-shadow: 0 0 0 3px rgba(30,95,168,.18) !important;
@@ -1395,6 +1404,7 @@ ${turnstileSitekey ? '<div class="cf-turnstile" data-sitekey="' + escapeHtml(tur
   <div>Powered by KTTA Platform</div>
 </div>
 
+<script>${EVENT_GENDER_SRC}</script>
 <script>
 const TOURNAMENT_ID = ${escapeJs(tournament.id)};
 const TOURNAMENT_NAME = ${escapeJs(tournament.name || "")};
@@ -1710,6 +1720,7 @@ function renderEvents() {
     const det = document.createElement("details");
     det.className = "event-block";
     det.dataset.idx = idx;
+    try { const g = window.KTTAEventGender ? window.KTTAEventGender.of(ev.name) : ""; if (g) det.dataset.gx = g; } catch (e) { /* 色分けなしで続行 */ }
     // 種目が多い大会では、出ない種目の入力欄まで最初から全部見えていると
     // 「これを全部埋めるのか」と誤解させ、画面も十数ページぶんに膨らむ。
     // 3種目までは全部開いたほうが早いので開き、4種目以上はたたんで「選んで開く」形にする。

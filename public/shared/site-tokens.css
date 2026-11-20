@@ -16,6 +16,10 @@
   --st-mute:#5c6068; --st-line:rgba(27,29,34,.14); --st-line2:rgba(27,29,34,.08); --st-wash:#f2f3f1;
   --st-warn:#8a6510; --st-warn-bg:#f6eedb; --st-dup:#8a1f26; --st-dup-bg:#f6e4e5;
   --st-ok:#256b52; --st-ok-bg:#e3f0ea;
+  /* 種目の性別の色分け(男子=青・女子=赤・混合=緑)。淡い地+濃い文字/上端帯。本文との比は4.5:1以上。判定は shared/event-gender.js */
+  --st-gx-male-ink:#1d4e89; --st-gx-male-tint:#eaf1fa;
+  --st-gx-female-ink:#a3182b; --st-gx-female-tint:#fcedef;
+  --st-gx-mixed-ink:#1e6b3a; --st-gx-mixed-tint:#e7f3ea;
   --st-jp:"Hiragino Sans","Yu Gothic UI","Yu Gothic","BIZ UDPGothic",Meiryo,sans-serif;
   --st-num:"Roboto Condensed","Arial Narrow",sans-serif;
   --st-rule:2px solid var(--st-ink);     /* 区切りの太罫(サイトの一覧と同じ2px) */

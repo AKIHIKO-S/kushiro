@@ -1265,6 +1265,14 @@ html.auth-gate .admin-actions, html.auth-gate #connBadge { display: none !import
 .auth-gate h1 { font-size: 22px; margin: 0 0 10px; }
 .auth-gate p { margin: 0 0 20px; color: var(--st-ink-sub, #4b5563); line-height: 1.7; }
 .auth-gate .btn { min-height: 44px; min-width: 160px; }
+/* 種目の性別の色分け(フォーム設定の種目一覧)。淡い地+上端帯。判定は shared/event-gender.js */
+.gx-row > td:first-child { background: var(--st-gx-neutral-tint, #fff); }
+.gx-male > td:first-child { background: var(--st-gx-male-tint); box-shadow: inset 0 3px 0 var(--st-gx-male-ink); }
+.gx-female > td:first-child { background: var(--st-gx-female-tint); box-shadow: inset 0 3px 0 var(--st-gx-female-ink); }
+.gx-mixed > td:first-child { background: var(--st-gx-mixed-tint); box-shadow: inset 0 3px 0 var(--st-gx-mixed-ink); }
+.gx-male > td:first-child input { color: var(--st-gx-male-ink); font-weight: 700; }
+.gx-female > td:first-child input { color: var(--st-gx-female-ink); font-weight: 700; }
+.gx-mixed > td:first-child input { color: var(--st-gx-mixed-ink); font-weight: 700; }
 /* 運営アプリのモード切替(申込集計 / 大会運営(ベータ版))。ヘッダーは明るい地なので、墨の文字と罫線。いまのモードは墨ベタ+白文字 */
 .admin-mode { display: inline-flex; border: 1.5px solid #211d18; background: #fff; }
 .admin-mode button { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 0 16px; background: #fff; color: #211d18; border: none; cursor: pointer; }
@@ -1297,6 +1305,7 @@ html body .toast { z-index: 100001; }
 .bulk-preview th:last-child, .bulk-preview td:last-child { white-space: normal; min-width: 11em; }
 </style>
 <link rel="stylesheet" href="/shared/site-tokens.css">
+<script src="/shared/event-gender.js"></script>
 <link rel="stylesheet" href="/shared/site-tone.css">
 <link rel="stylesheet" href="/admin/entry-desk.css">
 </head>
@@ -3995,10 +4004,11 @@ const A = {
  )));
  const tbody = h("tbody", {});
  events.forEach((ev, idx) => {
- tbody.appendChild(h("tr", {},
+ const gxOf = (n) => { const g = window.KTTAEventGender ? window.KTTAEventGender.of(n) : ""; return g ? "gx-row gx-" + g : ""; };
+ const row = h("tr", { className: gxOf(ev.name) },
  h("td", {}, h("input", { className: "input", value: ev.name,
  style: { width: "100%", boxSizing: "border-box", padding: "7px 8px" },
- onInput: (e) => { ev.name = e.target.value; } })),
+ onInput: (e) => { ev.name = e.target.value; row.className = gxOf(ev.name); } })),
  h("td", {},
  h("select", { className: "input",
  style: { width: "100%", boxSizing: "border-box", padding: "7px 6px" },
@@ -4053,7 +4063,8 @@ const A = {
  h("td", {}, h("button", { className: "btn btn-sm btn-danger",
  onClick: () => { events.splice(idx, 1); renderEventsTable(); } },
  "削除")),
- ));
+ );
+ tbody.appendChild(row);
  });
  eventsTable.appendChild(tbody);
  };

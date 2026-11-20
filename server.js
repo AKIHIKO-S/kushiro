@@ -2254,7 +2254,7 @@ function buildReceptionHTML(t, entrants, entryOnly = false) {
         ? (_escHtml(e.name) + " ・ " + _escHtml(e.partner_name)) : _escHtml(e.name);
       const furi = e.furigana ? `<span class="furi">${_escHtml(e.furigana)}</span>` : "";
       return `<tr><td class="chk"></td><td class="no">${e.bracket_number || ""}</td>` +
-        `<td class="nm">${nm}${furi}</td><td class="ev">${_escHtml(e.event || "")}</td>` +
+        `<td class="nm">${nm}${furi}</td><td class="ev${_gxClass(e.event)}">${_escHtml(e.event || "")}</td>` +
         (entryOnly ? "" : `<td class="fee">${fee === null ? "未確認" : yen(fee)}</td><td class="seal"></td>`) + "</tr>";
     }).join("");
     return `<section class="team-sec"><h3>${_escHtml(team)} <span class="tc">${list.length}件</span></h3>` +
@@ -2280,6 +2280,7 @@ h3{font-size:15px;margin:0 0 4px;border-bottom:2px solid #1c1917;padding-bottom:
 .sub-l{text-align:right;font-weight:700} tfoot td{background:#fafaf9}
 .print-btn{position:fixed;top:12px;right:12px;padding:8px 16px;background:#15803d;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer}
 @media print{.print-btn{display:none} body{padding:8px}}
+${_gxCss()}
 </style></head><body>
 <button class="print-btn" onclick="window.print()">印刷 / PDF保存</button>
 <h1>${_escHtml(t.name)} 受付名簿</h1>
@@ -2288,6 +2289,16 @@ h3{font-size:15px;margin:0 0 4px;border-bottom:2px solid #1c1917;padding-bottom:
 ${entryOnly ? "" : '<div class="note">参加費は受付時の保存額です。未確認は合計に含めません。入金・領収は別途確認してください。</div>'}
 ${sections || "<p>確定した出場はまだありません。</p>"}
 </body></html>`;
+}
+
+// 種目の性別の色(判定と値は public/shared/event-gender.js)。印刷物では単体のHTMLなので色の値を直接書く。
+const _EG = require("./public/shared/event-gender.js");
+function _gxClass(name) { const g = _EG.of(name); return g ? " gx-" + g : ""; }
+function _gxCss() {
+  return Object.keys(_EG.COLORS).map(k => {
+    const c = _EG.COLORS[k];
+    return `.gx-${k}{background:#${c.tint} !important;color:#${c.ink};box-shadow:inset 0 3px 0 #${c.ink};-webkit-print-color-adjust:exact;print-color-adjust:exact}`;
+  }).join("\n");
 }
 
 function _escHtml(s) {
@@ -2350,7 +2361,7 @@ function buildRosterHTML(data) {
 
   // 種目タブ
   const eventTabs = data.events.map((ev, i) =>
-    `<button class="tab" data-ev="${i}" onclick="pickEv('${i}',this)">${_escHtml(ev.name)} <b>${ev.count}</b></button>`).join("");
+    `<button class="tab${_gxClass(ev.name)}" data-ev="${i}" onclick="pickEv('${i}',this)">${_escHtml(ev.name)} <b>${ev.count}</b></button>`).join("");
 
   // 種目別 名簿 (支部色分け・ふりがな・男女属性つき)
   const eventSections = data.events.map((ev, i) => {
@@ -2377,7 +2388,7 @@ function buildRosterHTML(data) {
       </tr>`;
     }).join("");
     return `<section class="event-section" data-ev="${i}">
-      <h3>${_escHtml(ev.name)} <span class="count">${ev.count}${ev.type === "double" ? "組" : "名"}</span></h3>
+      <h3 class="${_gxClass(ev.name).trim()}">${_escHtml(ev.name)} <span class="count">${ev.count}${ev.type === "double" ? "組" : "名"}</span></h3>
       <table class="roster-table"><thead><tr><th class="no">No</th><th>氏名（ふりがな）</th><th>所属</th><th class="brc">支部</th></tr></thead><tbody>${rows}</tbody></table>
     </section>`;
   }).join("");
@@ -2469,6 +2480,7 @@ function buildRosterHTML(data) {
     .roster-table tr { break-inside: avoid; }
     @page { size: A4; margin: 11mm; }
   }
+${_gxCss()}
 </style></head><body>
 <div class="topbar">
   <button class="pr" onclick="window.print()">印刷 / PDF</button>

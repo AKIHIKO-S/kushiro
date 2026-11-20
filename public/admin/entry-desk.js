@@ -292,6 +292,11 @@
     renderList();
   }
 
+  // 種目の性別の色分けのクラス(判定は shared/event-gender.js の共通関数。判定できない種目は無色)
+  function gxClass(name) {
+    const g = root.KTTAEventGender ? root.KTTAEventGender.of(name) : "";
+    return g ? " ed-gx-" + g : "";
+  }
   function count(r, ev) { return (r.by_event && r.by_event[ev]) || 0; }
 
   function renderList() {
@@ -334,7 +339,7 @@
       h("div", { class: "ed-table", tabindex: "0", "aria-label": "申込の台帳" },
         rows.length ? h("table", {},
           h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "団体"),
-            d.events.map(e => h("th", { scope: "col", class: "ed-ev", title: e.name, "aria-label": e.name }, e.name)),
+            d.events.map(e => h("th", { scope: "col", class: "ed-ev" + gxClass(e.name), title: e.name, "aria-label": e.name }, e.name)),
             h("th", { scope: "col" }, "確定出場"), h("th", { scope: "col" }, "経路"), h("th", { scope: "col" }, "受付"), h("th", { scope: "col" }, "確認"))),
           h("tbody", {}, rows.map(tr)),
           h("tfoot", {}, h("tr", {}, h("td", {}, "確定申込 " + d.totals.teams + "件"),
@@ -411,7 +416,7 @@
       const kind = (list[0] && list[0].kind) || "singles";
       const unit = kind === "team" ? "チーム" : kind === "doubles" ? "組" : "名";
       return h("section", { class: "ed-group" },
-        h("h3", { class: "ed-group__h" }, ev, h("span", { class: "ed-num" }, live.length + unit)),
+        h("h3", { class: "ed-group__h" + gxClass(ev) }, ev, h("span", { class: "ed-num" }, live.length + unit)),
         h("ul", { class: "ed-plist" }, list.map(p => h("li", { class: p.status === "cancelled" ? "is-cancelled" : "" },
           kind === "team"
             ? [h("b", {}, (p.team_label || p.label)), h("small", {}, (p.members && p.members.length ? p.members.length + "名" : "") + (p.status === "cancelled" ? "・取り消し済み" : "") + (p.status === "pending" ? "・承認待ち" : "")),

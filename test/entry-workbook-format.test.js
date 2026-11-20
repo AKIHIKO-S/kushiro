@@ -57,3 +57,24 @@ test("No.は数値書式・区分は日本語・種目見出しに参加料を�
   assert.ok(texts.includes("一般") && texts.includes("中学生") && texts.includes("ホープス"), "区分は日本語: " + texts.filter(x => x.length < 8).join(","));
   assert.ok(!texts.some(x => /^(general|middle|high|hopes|student)$/.test(x)), "内部値が出ていない");
 });
+
+test("種目見出しの塗りは性別で変わる(男子=青・女子=赤・混合=緑・その他=無色)", () => {
+  const t = db.createTournament({ name: "色分け検証大会", date: "2099-12-06" });
+  db.updateEntrySettings(t.id, { entries_open: 1, entry_deadline: "", event_config: [
+    { name: "男子シングルス", type: "singles", fee: 1 }, { name: "女子シングルス", type: "singles", fee: 1 },
+    { name: "混合ダブルス", type: "doubles", fee: 1 }, { name: "ラージボール", type: "singles", fee: 1 } ] });
+  let n = 0;
+  const add = (ev, type, who) => { const r = db.createTeamEntry(t.id, { team_name: "色" + (++n), contact_name: "担当" + n, contact_tel: "1", contact_email: "a@b.co",
+    entries: [type === "doubles" ? { event: ev, type, name1: who + "一", name2: who + "二", furigana1: "あ い", furigana2: "う え", team1: "x", team2: "x" } : { event: ev, type, name: who, furigana: "あ い", team: "x" }] }, "g" + n, {}); assert.ok(!r.error, r.error); };
+  add("男子シングルス", "singles", "甲 一"); add("女子シングルス", "singles", "乙 一"); add("混合ダブルス", "doubles", "丙 "); add("ラージボール", "singles", "丁 一");
+  const buf = buildEntryWorkbook(db.getEntryExport(t.id));
+  const wb = XLSX.read(buf, { type: "buffer", cellStyles: true });
+  const sh = wb.Sheets["集計用"];
+  const fills = [3, 4, 5, 6].map(c => { const x = sh[XLSX.utils.encode_cell({ r: 3, c })]; return [x.v.split("\n")[0], x.s && x.s.fgColor && x.s.fgColor.rgb]; });
+  const by = Object.fromEntries(fills);
+  assert.strictEqual(by["男子"], "EAF1FA");
+  assert.strictEqual(by["女子"], "FCEDEF");
+  assert.strictEqual(by["混合ダブルス"] || by["混合"], "E7F3EA");
+  assert.notStrictEqual(by["ラージボール"], "EAF1FA");
+  assert.strictEqual(by["ラージボール"], "FFFFFF", "判定できない種目は白(無色)");
+});

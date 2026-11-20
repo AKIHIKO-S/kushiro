@@ -256,3 +256,11 @@ html.desk-on .ed-backbar { display: none; }
   #entryDesk.is-drawer .ed-top__nav { flex: 1 0 100%; margin-left: 0; border-top: 1px solid var(--st-line); order: 9; }
   #entryDesk.is-drawer .ed-top .admin-bell, #entryDesk.is-drawer .ed-top .admin-mode { margin-left: 0; }
 }
+
+/* 種目の性別の色分け: 男子=青・女子=赤・混合=緑・その他=無色。淡い地+太い上端帯+濃い文字(左縁の線は使わない) */
+.ed-gx-male { --gx-ink: var(--st-gx-male-ink); --gx-tint: var(--st-gx-male-tint); }
+.ed-gx-female { --gx-ink: var(--st-gx-female-ink); --gx-tint: var(--st-gx-female-tint); }
+.ed-gx-mixed { --gx-ink: var(--st-gx-mixed-ink); --gx-tint: var(--st-gx-mixed-tint); }
+.ed-table thead th.ed-ev[class*="ed-gx-"] { background: var(--gx-tint); color: var(--gx-ink); box-shadow: inset 0 3px 0 var(--gx-ink); }
+.ed-group__h[class*="ed-gx-"] { background: var(--gx-tint); color: var(--gx-ink); border-top-color: var(--gx-ink); padding-left: 8px; padding-right: 8px; }
+.ed-group__h[class*="ed-gx-"] span { color: var(--gx-ink); }
