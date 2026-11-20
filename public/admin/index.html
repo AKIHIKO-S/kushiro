@@ -1252,7 +1252,7 @@
  .pdist-chip.l{ background:#fdecee; color:#9c0f1c; border-color:#f3d3d6; }
  .pdist-label.w{ color:#1a7a45; } .pdist-label.l{ color:#c01526; }
  .pstat-bar i.hi{ background:#1a7a45; } .pstat-rp.hi{ color:#1a7a45; }
-/* 申込集計モード: 閉じた機能の入口を出さない(切替は オーナー管理 → 運営アプリのモード) */
+/* 申込集計モード: 閉じた機能の入口を出さない(切替は 画面上部の「申込集計 / 通常」) */
 html[data-app-mode="entry"] .tab[data-tab="bracket-mgmt"],
 html[data-app-mode="entry"] .tab[data-tab="api"],
 html[data-app-mode="entry"] .tab[data-tab="coaches"],
@@ -1266,6 +1266,12 @@ html.auth-gate .admin-actions, html.auth-gate #connBadge { display: none !import
 .auth-gate h1 { font-size: 22px; margin: 0 0 10px; }
 .auth-gate p { margin: 0 0 20px; color: var(--st-ink-sub, #4b5563); line-height: 1.7; }
 .auth-gate .btn { min-height: 44px; min-width: 160px; }
+/* 運営アプリのモード切替(申込集計 / 通常)。いまのモードが一目で分かる2択 */
+.admin-mode { display: inline-flex; border: 1px solid rgba(255,255,255,.35); }
+.admin-mode button { font: inherit; font-size: 13px; min-height: 36px; padding: 0 12px; background: transparent; color: #fff; border: none; cursor: pointer; }
+.admin-mode button + button { border-left: 1px solid rgba(255,255,255,.35); }
+.admin-mode button[aria-pressed="true"] { background: #fff; color: #211d18; font-weight: 700; cursor: default; }
+.admin-mode button:disabled { opacity: .55; cursor: not-allowed; }
 .admin-who { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; max-width: 260px; min-width: 0; }
 .admin-who__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-who__role { flex: none; font-size: 11px; padding: 1px 7px; border: 1px solid currentColor; border-radius: 3px; }
@@ -1309,6 +1315,7 @@ html body .toast { z-index: 100001; }
  <a href="/viewer/live/" target="_blank" rel="noopener" class="btn btn-ghost em-hide"
     style="background:rgba(255,255,255,.08); color:#fff; border-color:transparent">観戦</a>
  <span id="adminWho" class="admin-who" hidden></span>
+ <span id="adminMode" class="admin-mode" role="group" aria-label="運営アプリのモード" hidden></span>
  <button type="button" class="btn btn-ghost admin-setbtn" onclick="A.openSettings()">管理設定</button>
  <button type="button" id="adminLogout" class="btn btn-ghost admin-logout" onclick="A.logout()" hidden>ログアウト</button>
  </div>
@@ -1767,6 +1774,7 @@ const A = {
    A.entryOnly = m.mode === "entry";
    A.appModeLocked = !!m.locked;
    document.documentElement.dataset.appMode = m.mode;
+   A.renderModeSwitch();
    if (A.entryOnly) {   // 進行管理のうち台の割り当てだけを出す
      const opTab = document.querySelector('.tab[data-tab="operations"]');
      if (opTab) opTab.textContent = "台の割り当て";
@@ -1823,6 +1831,31 @@ const A = {
    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
  },
  // 右上に「誰で入っているか」と役割を出す
+ // ヘッダーのモード切替。運営アカウントの通常権限で切り替えられる(オーナー確認は要らない)。データは消えない
+ renderModeSwitch() {
+   const box = document.getElementById("adminMode");
+   if (!box) return;
+   box.textContent = "";
+   const mk = (mode, label) => {
+     const on = (A.entryOnly ? "entry" : "full") === mode;
+     const b = h("button", { type: "button", "aria-pressed": on ? "true" : "false",
+       title: A.appModeLocked ? "サーバーの設定で固定されているため、切り替えられません" : (on ? "いまのモードです" : label + "に切り替えます"),
+       disabled: (A.appModeLocked && !on) ? "" : null,
+       onClick: async () => {
+         if (on || A.appModeLocked) return;
+         const msg = mode === "entry"
+           ? "申込集計モードに切り替えます。組合せ・試合・観戦などの画面を閉じ、申込の受付と集計だけにします。データは消えません。公開画面にもすぐ反映されます。"
+           : "通常モードに切り替えます。全機能が使えるようになります。公開画面にもすぐ反映されます。";
+         if (!window.confirm(msg + "\nよろしいですか？")) return;
+         const r = await api.put("/api/app-mode", { mode });
+         if (r && r.error) return toast(r.error, "err");
+         location.href = "/admin";   // 開いている画面ごと新しいモードで組み直す
+       } }, label);
+     return b;
+   };
+   box.append(mk("entry", "申込集計"), mk("full", "通常"));
+   box.hidden = false;
+ },
  renderWho(session) {
    const box = document.getElementById("adminWho");
    const out = document.getElementById("adminLogout");
@@ -2097,8 +2130,10 @@ const A = {
        onClick: () => { modal.remove(); A.openLogin(); } }, "ログインに戻る")), null, { trapFocus: true });
    email.focus();
  },
- openSettings() {
+ async openSettings() {
  if (!api.adminKey) return A.openLogin();
+ // 管理設定(公開URL・ロゴ・印鑑・メール・システム管理)はオーナーだけ。オーナー権限の確認が済んでいなければ、ここで確認する
+ if (!(await A.ensureOwner())) return;
  // ─── 本番運用準備チェック ───
  const checks = A.runReadinessChecks();
  const checkSection = h("div", { className: "card",
@@ -9339,18 +9374,6 @@ const A = {
        h("button", { className: "btn btn-sm", onClick: () => {
          document.querySelector(".modal-bg")?.remove(); A.openOperatorAccounts();
        } }, "運営アカウントを管理")]),
-     card("運営アプリのモード",
-       (A.entryOnly ? "今は「申込集計モード」です。組合せ・試合・観戦・表彰・統計の画面と、公開の閲覧画面を閉じています。データは消えていません。"
-         : "今は「通常モード」です。全機能を使えます。") +
-       (A.appModeLocked ? "（サーバーの設定で固定されているため、ここでは切り替えられません）" : ""),
-       A.appModeLocked ? [] : [h("button", { className: "btn btn-sm", onClick: async () => {
-         const next = A.entryOnly ? "full" : "entry";
-         const label = next === "entry" ? "申込集計モード" : "通常モード";
-         if (!window.confirm(`${label}に切り替えます。公開画面にもすぐ反映されます。よろしいですか？`)) return;
-         const r = await A.ownerFetch("/api/owner/app-mode", { method: "PUT", body: { mode: next } });
-         if (!r.ok) return toast((r.json && r.json.error) || "切り替えに失敗しました", "err");
-         location.href = "/admin";   // 開いている画面ごと新しいモードで組み直す
-       } }, A.entryOnly ? "通常モードに戻す" : "申込集計モードにする")]),
      card("バックアップ / 復元", "今のデータをまるごと控え(バックアップ)として保存・PCへ保存・元に戻す。", [
        h("button", { className: "btn btn-sm", onClick: () => { document.querySelector(".modal-bg")?.remove(); A.openBackups(); } }, "開く")]),
      card("データをまるごとPCに保存（バックアップ用）", "今のデータをまるごと1つのファイルにしてPCに保存します（連絡先などの個人情報も含む手元の控えです）。", [

@@ -1525,11 +1525,11 @@ app.post("/api/tournaments/:id/entry-settings/copy", requireAdmin, (req, res) =>
 // SMTP 設定状態を返す + テスト送信エンドポイント (admin専用)
 // 送信サーバー名・アカウント・宛先などの値は画面へ出さない(運営の端末に内部情報を残さないため)。
 // 返すのは「使えるか」と「通知先が決まっているか」だけ。値の確認・変更はサーバー側で行う。
-app.get("/api/mail/status", requireAdmin, (req, res) => {
+app.get("/api/mail/status", requireOwner, (req, res) => {
   res.set("Cache-Control", "no-store");
   res.json({ enabled: mailer.isEnabled(), notify_configured: !!(mailer.config && mailer.config.ADMIN_EMAIL) });
 });
-app.post("/api/mail/test", requireAdmin, async (req, res) => {
+app.post("/api/mail/test", requireOwner, async (req, res) => {
   const to = req.body?.to || mailer.config.ADMIN_EMAIL;
   if (!to) return res.status(400).json({ error: "送信先メールアドレスが指定されていません" });
   try {
@@ -3598,7 +3598,7 @@ app.get("/api/tournaments/:id/receipts.json", requireAdmin, (req, res) => {
 const SEAL_DIR_PERSISTENT = process.env.SEAL_DIR || "";
 const SEAL_DIR_DEFAULT = path.join(__dirname, "public", "shared", "assets");
 
-app.post("/api/settings/seal", requireAdmin, upload.single("seal"), (req, res) => {
+app.post("/api/settings/seal", requireOwner, upload.single("seal"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "ファイルが添付されていません" });
   if (req.file.size < 100) {
     try { fs.unlinkSync(req.file.path); } catch {}
@@ -3622,7 +3622,7 @@ app.post("/api/settings/seal", requireAdmin, upload.single("seal"), (req, res) =
 });
 
 // ─── 協会ロゴ画像アップロード (領収書ヘッダ用) #272 ───
-app.post("/api/settings/logo", requireAdmin, upload.single("logo"), (req, res) => {
+app.post("/api/settings/logo", requireOwner, upload.single("logo"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "ファイルが添付されていません" });
   if (req.file.size < 100) {
     try { fs.unlinkSync(req.file.path); } catch {}
@@ -4039,14 +4039,15 @@ app.post("/api/admin/snapshots/restore", requireOwner, (req, res) => {
 // ─── オーナー (上級管理者) 専用ルート ───────────────────────────
 // 鍵検証だけを行う(UIのロック解除に使用)。成功で操作可能を示す。
 app.get("/api/owner/verify", requireOwner, (req, res) => res.json({ ok: true }));
-app.put("/api/owner/app-mode", requireOwner, (req, res) => {
+// 運営アプリのモード切替。運営アカウントの通常権限でできる(オーナー確認は要らない)。データは消えない。
+app.put("/api/app-mode", requireAdmin, (req, res) => {
   const mode = String((req.body && req.body.mode) || "");
   if (!appMode.MODES.includes(mode)) return res.status(400).json({ error: "mode は full / entry のどちらかです" });
   if (appMode.MODES.includes(process.env.KTTA_APP_MODE)) {
     return res.status(409).json({ error: "サーバーの環境変数 KTTA_APP_MODE で固定されているため、ここでは切り替えられません" });
   }
   db.kvSet(appMode.KV_KEY, mode);
-  auditOwner(req, "app_mode", mode);
+  auditOwner(req, "app_mode:" + mode, mode);
   res.json({ mode });
 });
 // オーナー機能が構成されているか(鍵不要・真偽のみ)。UIが入口を出すかの判定用。鍵自体は漏らさない。
