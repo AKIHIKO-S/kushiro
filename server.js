@@ -1396,6 +1396,25 @@ app.put("/api/submissions/:sid", requireAdmin, async (req, res) => {
     view: db.getSubmissionEditView(req.params.sid, { admin: true }) });
 });
 
+// 申込1件の削除(誤操作防止: 理由必須・削除前の中身を控えに残し、元に戻せる)。取り消しと同じ運営権限。
+function _opCode(req) { try { return ownerAuditCode(req) || String((req.auth && req.auth.principal_id) || "").slice(0, 40); } catch (_) { return ""; } }
+app.post("/api/submissions/:sid/delete", requireAdmin, (req, res) => {
+  const reason = String((req.body && req.body.reason) || "").trim();
+  if (!reason) return res.status(400).json({ error: "削除する理由を書いてください。" });
+  const r = db.deleteSubmission(req.params.sid, { reason, operator: _opCode(req) });
+  if (r.error) return res.status(r.error.includes("見つかりません") ? 404 : 409).json(r);
+  res.json(r);
+});
+app.get("/api/tournaments/:id/deleted-submissions", requireAdmin, (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ items: db.listDeletedSubmissions(req.params.id) });
+});
+app.post("/api/deleted-submissions/:bid/restore", requireAdmin, (req, res) => {
+  const r = db.restoreDeletedSubmission(req.params.bid);
+  if (r.error) return res.status(409).json(r);
+  res.json(r);
+});
+
 app.post("/api/submissions/:sid/mail-resend", requireAdmin, (req, res) => {
   const recipient = req.body?.recipient;
   if (recipient !== "applicant" && recipient !== "admin") return res.status(400).json({ error: "再送先を確認してください。" });

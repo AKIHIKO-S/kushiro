@@ -62,6 +62,9 @@ const ENTRY_MODE_API = [
   [new RegExp(`^${T}/entries$`)],
   [new RegExp(`^${T}/entries/[^/]+/(status|fix)$`)],
   [new RegExp(`^${T}/entry-issues(/bulk-fix)?$`)],
+  [/^\/api\/submissions\/[^/]+\/delete$/, ["POST"]],
+  [new RegExp(`^${T}/deleted-submissions$`), ["GET", "HEAD"]],
+  [/^\/api\/deleted-submissions\/[^/]+\/restore$/, ["POST"]],
   [new RegExp(`^${T}/player-matches(/rematch)?$`)],
   [new RegExp(`^${T}/entrants$`), ["GET", "HEAD"]],   // 一括削除は組合せのやり直し用なので閉じる
   [new RegExp(`^${T}/entrants/(stats|validate)$`)],

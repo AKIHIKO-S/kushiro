@@ -68,7 +68,7 @@
   }
 
   // ── 状態 ──
-  const S = { view: "", tid: "", data: null, q: "", only: "all", picked: "", backBar: null, root: null, main: null, listBox: null };
+  const S = { view: "", tid: "", data: null, q: "", only: "all", picked: "", drawer: null, backBar: null, root: null, main: null, listBox: null };
 
   function ensureRoot() {
     if (S.root) return;
@@ -190,7 +190,7 @@
   // ── 受付 ──
   async function showDesk(tid, keep) {
     S.view = "desk";
-    if (S.tid !== tid) { S.q = ""; S.only = "all"; S.picked = ""; S.data = null; }
+    if (S.tid !== tid) { closeDrawer(true); S.q = ""; S.only = "all"; S.picked = ""; S.data = null; }
     S.tid = tid;
     store.set("ktta.desk.last", tid);
     const scrollY = keep ? root.scrollY : 0;
@@ -206,6 +206,10 @@
     d.events.forEach(e => { e.short = shortEventName(e.name, names); });
     S.data = d;
     renderDesk();
+    if (S.drawer) {
+      const cur = d.rows.find(x => x.submission_id === S.picked);
+      if (cur) { showDrawer(cur); markPicked(); } else closeDrawer(true);
+    }
     if (keep) root.scrollTo(0, scrollY);
   }
 
@@ -260,6 +264,7 @@
       h("button", { class: "ed-btn ed-btn--main", type: "button", onclick: () => app().downloadAggregation(t) }, "集計表をExcelで保存"),
       h("button", { class: "ed-btn", type: "button",
         onclick: () => app().openAuthedHtmlWindow("/api/tournaments/" + t.id + "/reception.html", "受付名簿_" + (t.name || "")) }, "名簿を印刷"),
+      h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: deletedSheet }, "削除した申込"),
     ];
   }
 
@@ -316,7 +321,7 @@
     const picked = d.rows.find(r => r.submission_id === S.picked);
     const tr = (r) => {
       const sel = () => openSub(r.submission_id);
-      return h("tr", { tabindex: "0", "aria-selected": picked === r ? "true" : "false", onclick: sel,
+      return h("tr", { tabindex: "0", "data-sid": r.submission_id, "aria-selected": picked === r ? "true" : "false", onclick: sel,
         onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); sel(); } } },
         h("td", {}, r.team_name || "(団体名なし)"),
         d.events.map(e => { const c = count(r, e.name); return h("td", { class: "num" + (c ? "" : " zero") }, c || "−"); }),
@@ -333,17 +338,59 @@
           h("tfoot", {}, h("tr", {}, h("td", {}, "確定申込 " + d.totals.teams + "件"),
             d.events.map(e => h("td", { class: "num" }, e.count)), h("td", { class: "num" }, d.totals.entries), h("td", {}), h("td", {}), h("td", {}))))
           : h("div", { style: "padding:0 12px" }, empty)),
-      h("aside", { class: "ed-side", "aria-label": "申込の中身" },
-        picked ? [h("h2", {}, picked.team_name || "(団体名なし)"), detail(picked)] : h("p", { class: "ed-side__empty" }, "表の行を押すと、選手の名前と連絡者がここに出ます。"),
-        h("div", { class: "ed-side__out" }, outButtons()))));
+      h("div", { class: "ed-pc-out ed-btns" }, outButtons())));
   }
 
+  // 行を押すと右から大きな詳細パネルが滑り込む。同じ行をもう一度押す・閉じる・Esc で滑り出る。
+  // 左の台帳はパネルぶんだけ幅を絞って見え続ける(PC)。スマホは全幅のパネル。
   function openSub(sid) {
-    S.picked = sid;
     const r = S.data.rows.find(x => x.submission_id === sid);
     if (!r) return;
-    if (isPC()) renderList();
-    else sheet(r.team_name || "(団体名なし)", detail(r));
+    if (S.drawer && S.picked === sid) return closeDrawer();
+    S.picked = sid;
+    if (isPC()) markPicked();
+    showDrawer(r);
+  }
+  function markPicked() {
+    doc.querySelectorAll(".ed-table tbody tr").forEach(tr => tr.setAttribute("aria-selected", String(tr.dataset.sid === S.picked)));
+  }
+  function showDrawer(r) {
+    const title = r.team_name || "(団体名なし)";
+    if (S.drawer) {
+      S.drawer.title.textContent = title;
+      S.drawer.body.textContent = "";
+      S.drawer.body.append(...[].concat(detail(r)).filter(Boolean));
+      S.drawer.box.scrollTop = 0;
+      return;
+    }
+    const before = doc.activeElement;
+    const bg = h("div", { class: "ed-drawer-bg", onclick: () => closeDrawer() });
+    const titleEl = h("h2", {}, title);
+    const body = h("div", { class: "ed-drawer__body" }, [].concat(detail(r)).filter(Boolean));
+    const box = h("aside", { class: "ed-drawer", role: "dialog", "aria-label": "申込の中身" },
+      h("div", { class: "ed-drawer__head" }, titleEl,
+        h("button", { class: "ed-drawer__x", type: "button", onclick: () => closeDrawer() }, "閉じる")), body);
+    const esc = (e) => { if (e.key === "Escape" && !doc.querySelector(".ed-sheet")) closeDrawer(); };
+    doc.addEventListener("keydown", esc);
+    doc.body.append(bg, box);
+    doc.getElementById("entryDesk").classList.add("is-drawer");
+    root.requestAnimationFrame(() => root.requestAnimationFrame(() => { bg.classList.add("on"); box.classList.add("on"); }));
+    S.drawer = { box, bg, title: titleEl, body, esc, before };
+  }
+  function closeDrawer(now) {
+    const d = S.drawer;
+    if (!d) return;
+    S.drawer = null;
+    S.picked = "";
+    if (S.listBox && isPC()) markPicked();
+    const rootEl = doc.getElementById("entryDesk");
+    if (rootEl) rootEl.classList.remove("is-drawer");
+    doc.removeEventListener("keydown", d.esc);
+    const done = () => { d.bg.remove(); d.box.remove(); try { if (d.before && d.before.isConnected) d.before.focus(); } catch (_) {} };
+    if (now) return done();
+    d.box.classList.remove("on"); d.bg.classList.remove("on");
+    d.box.addEventListener("transitionend", done, { once: true });
+    root.setTimeout(done, 400);
   }
 
   // 申込1件の中身(PCの右・スマホの下から出るシートで共通)
@@ -363,6 +410,9 @@
       h("div", { class: "ed-btns" },
         h("button", { class: "ed-btn ed-btn--main", type: "button", onclick: () => { closeSheet(); app().openSubmissionEdit(t, r.submission_id, reload); } }, "内容を直す"),
         live.length ? h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: () => cancelAsk(r, live) }, "この申込を取り消す") : null),
+      h("div", { class: "ed-danger" },
+        h("p", { class: "ed-sub" }, "取り消しは出場を数から外すだけです。申込そのものを台帳から消すときは削除します（削除前の内容は控えに残り、あとで戻せます）。"),
+        h("button", { class: "ed-btn ed-btn--danger", type: "button", onclick: () => deleteAsk(r) }, "この申込を削除")),
     ];
   }
 
@@ -404,6 +454,52 @@
     });
   }
 
+  // 削除: 団体名・出場数を見せ、理由を書き、団体名を打ち直して確かめてから。削除前の中身は控えに残る
+  function deleteAsk(r) {
+    const name = r.team_name || "(団体名なし)";
+    const reason = h("input", { type: "text", maxlength: "200", placeholder: "例: 同じ団体から二重に届いたため" });
+    const confirmBox = h("input", { type: "text", autocomplete: "off", placeholder: r.team_name ? "団体名を入力" : "「削除」と入力" });
+    const word = r.team_name ? r.team_name : "削除";
+    const go = h("button", { class: "ed-btn ed-btn--danger", type: "button", disabled: "" }, "削除する");
+    confirmBox.addEventListener("input", () => { go.disabled = confirmBox.value.trim() !== word; });
+    sheet("この申込を削除する", [
+      h("p", { class: "ed-sub" }, name + " の申込（出場 " + r.players.length + " 件）を台帳から削除します。削除前の内容は控えに残り、「削除した申込」から元に戻せます。"),
+      h("label", { class: "ed-field" }, "削除する理由", reason),
+      h("label", { class: "ed-field" }, "確認のため「" + word + "」と入力してください", confirmBox),
+      h("div", { class: "ed-btns", style: "margin-top:14px" }, go,
+        h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: () => closeSheet() }, "やめる")),
+    ]);
+    go.addEventListener("click", async () => {
+      const why = reason.value.trim();
+      if (!why) { reason.focus(); return toast("削除する理由を書いてください", "err"); }
+      go.disabled = true;
+      let res = null;
+      try { res = await api().post("/api/submissions/" + r.submission_id + "/delete", { reason: why }); } catch (_) {}
+      if (!res || res.error) { go.disabled = false; return toast((res && res.error) || "削除できませんでした", "err"); }
+      toast("削除しました。「削除した申込」から戻せます", "ok");
+      closeSheet(); closeDrawer(true);
+      reload();
+    });
+  }
+
+  // 削除した申込の一覧と、元に戻す操作
+  async function deletedSheet() {
+    let res = null;
+    try { res = await api().get("/api/tournaments/" + encodeURIComponent(S.tid) + "/deleted-submissions"); } catch (_) {}
+    const items = (res && res.items) || [];
+    sheet("削除した申込", items.length ? h("ul", { class: "ed-plist" }, items.map(it => h("li", {},
+      h("b", {}, it.team_name || "(団体名なし)"),
+      h("small", {}, it.entrant_count + "件・" + String(it.deleted_at || "").slice(0, 16) + (it.operator ? "・担当 " + it.operator : "") + (it.reason ? "・" + it.reason : "")),
+      it.restored_at ? h("small", {}, "元に戻し済み")
+        : h("button", { class: "ed-btn", type: "button", style: "margin-top:6px;min-height:40px", onclick: async (e) => {
+          e.currentTarget.disabled = true;
+          let r2 = null;
+          try { r2 = await api().post("/api/deleted-submissions/" + it.id + "/restore", {}); } catch (_) {}
+          if (!r2 || r2.error) { e.currentTarget.disabled = false; return toast((r2 && r2.error) || "戻せませんでした", "err"); }
+          toast("元に戻しました", "ok"); closeSheet(); reload();
+        } }, "元に戻す")))) : h("p", { class: "ed-sub", style: "margin:10px 0" }, "削除した申込はありません。"));
+  }
+
   function addSheet() {
     const t = tournamentObj();
     sheet("申込を追加する", [
@@ -435,7 +531,7 @@
   function route(hash) {
     const parts = String(hash || "").replace(/^#/, "").split("/");
     const type = parts[0], id = parts[1];
-    closeSheet();
+    closeSheet(); closeDrawer(true);
     if (type === "list" || type === "" || type === "tournaments") { showList(); return true; }
     if (type === "more") { showMore(); return true; }
     if ((type === "desk" || type === "t" || type === "tournament") && id) { showDesk(decodeURIComponent(id)); return true; }

@@ -9,10 +9,10 @@ html.desk-on #entryDesk { display: block; }
   min-height: 100dvh; background: var(--st-paper); color: var(--st-ink);
   font-family: var(--st-jp); font-size: 16px; line-height: 1.7; font-weight: 500; font-feature-settings: "palt" 1;
 }
-#entryDesk *, #entryDesk *::before, #entryDesk *::after, .ed-sheet * { box-sizing: border-box; }
+#entryDesk *, #entryDesk *::before, #entryDesk *::after, .ed-sheet *, .ed-drawer, .ed-drawer * { box-sizing: border-box; }
 /* 部品の色より強くならないよう、基本の揃えは詳細度0(:where)で書く */
-:where(#entryDesk, .ed-sheet) :where(button, input) { font: inherit; color: inherit; }
-:where(#entryDesk, .ed-sheet) button { cursor: pointer; }
+:where(#entryDesk, .ed-sheet, .ed-drawer) :where(button, input) { font: inherit; color: inherit; }
+:where(#entryDesk, .ed-sheet, .ed-drawer) button { cursor: pointer; }
 :where(#entryDesk) a { color: inherit; }
 #entryDesk :focus-visible { outline: 3px solid var(--st-blue); outline-offset: 2px; }
 #entryDesk .ed-num { font-family: var(--st-num); font-variant-numeric: tabular-nums; font-feature-settings: normal; }
@@ -162,7 +162,8 @@ html.desk-on .ed-backbar { display: none; }
 .ed-routes { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 14px; color: var(--st-mute); padding: 0 var(--gut) 8px; }
 .ed-routes b { color: var(--st-navy); font-family: var(--st-num); font-weight: 800; }
 
-.ed-table, .ed-side { display: none; }
+.ed-table { display: none; }
+.ed-pc-out { display: none; }
 @media (max-width: 560px) {
   .ed-top { display: grid; gap: 0; height: auto; padding: 0; }
   .ed-top__brand { min-height: 56px; padding: 0 var(--gut); }
@@ -184,7 +185,8 @@ html.desk-on .ed-backbar { display: none; }
   .ed-tools { grid-template-columns: minmax(380px, 460px) 1fr; align-items: center; }
   .ed-filters { justify-content: flex-end; }
   .ed-ledger, .ed-totals, .ed-dock, .ed-mobile-links { display: none; }
-  .ed-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; padding: 0 var(--gut) 24px; align-items: start; }
+  .ed-wrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 0 var(--gut) 24px; align-items: start; }
+  .ed-pc-out { display: flex; }
   .ed-table { display: block; max-height: calc(100dvh - 280px); overflow: auto; border-top: 2px solid var(--st-ink); border-bottom: 2px solid var(--st-ink); }
   .ed-table table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 15px; }
   .ed-table th, .ed-table td { padding: 0 10px; height: 46px; border-bottom: 1px solid var(--st-line2); text-align: center; white-space: nowrap; background: var(--st-paper); }
@@ -200,11 +202,35 @@ html.desk-on .ed-backbar { display: none; }
   .ed-table td.zero { color: #a3a7ad; }
   .ed-table td.num { font-size: 16px; font-weight: 700; font-family: var(--st-num); }
   .ed-table td.sum { font-weight: 800; color: var(--st-navy); font-size: 17px; }
-  .ed-side { display: block; position: sticky; top: 96px; border-top: 2px solid var(--st-ink); padding-top: 12px; }
-  .ed-side h2 { margin: 0; font-size: 20px; font-weight: 700; }
-  .ed-side__out { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--st-line); display: grid; gap: 8px; }
-  .ed-side__empty { font-size: 15px; color: var(--st-mute); margin: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #entryDesk *, .ed-sheet * { animation: none !important; transition: none !important; }
+  #entryDesk *, .ed-sheet *, .ed-drawer *, .ed-drawer-bg { animation: none !important; transition: none !important; }
 }
+
+/* 右から滑り込む詳細パネル(行を押す)。PCは左の台帳をパネルぶん絞って見せ続け、スマホは全幅 */
+.ed-drawer-bg { position: fixed; inset: 0; z-index: 900; background: rgba(14,30,55,.42); opacity: 0; transition: opacity .28s ease; }
+.ed-drawer-bg.on { opacity: 1; }
+.ed-drawer { --gut: 16px; position: fixed; top: 0; right: 0; bottom: 0; z-index: 901; width: 100%; background: var(--st-paper);
+  border-left: 2px solid var(--st-ink); overflow: auto; overscroll-behavior: contain; font-family: var(--st-jp); color: var(--st-ink);
+  transform: translateX(104%); transition: transform .3s cubic-bezier(.2,.7,.2,1); padding-bottom: env(safe-area-inset-bottom); }
+.ed-drawer.on { transform: none; }
+.ed-drawer__head { position: sticky; top: 0; z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 16px var(--gut) 12px; background: var(--st-paper); border-bottom: 1px solid var(--st-line); }
+.ed-drawer__head h2 { margin: 0; font-size: 21px; line-height: 1.4; font-weight: 700; overflow-wrap: anywhere; }
+.ed-drawer__x { flex: none; min-width: 64px; min-height: 44px; border: 1px solid var(--st-line); border-radius: var(--st-radius); background: none;
+  font-size: 15px; font-weight: 700; color: var(--st-navy); }
+.ed-drawer__x:hover { background: var(--st-sky); }
+.ed-drawer__body { padding: 8px var(--gut) 28px; }
+.ed-drawer .ed-plist li { padding: 12px 0; font-size: 17px; }
+.ed-drawer .ed-plist small { font-size: 14px; }
+.ed-danger { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--st-line); display: grid; gap: 10px; }
+.ed-danger .ed-sub { margin: 0; font-size: 14px; }
+.ed-danger .ed-btn { justify-self: start; }
+@media (min-width: 960px) {
+  .ed-drawer { --gut: 28px; width: min(620px, 46vw); box-shadow: -14px 0 30px -18px rgba(14,30,55,.35); }
+  .ed-drawer-bg { display: none; }
+  #entryDesk { transition: padding-right .3s cubic-bezier(.2,.7,.2,1); }
+  #entryDesk.is-drawer { padding-right: min(620px, 46vw); }
+  .ed-drawer__head h2 { font-size: 24px; }
+}
+.ed-sheet-bg { z-index: 1000; }

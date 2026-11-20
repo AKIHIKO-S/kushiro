@@ -283,6 +283,21 @@ sqlite.exec(`
     updated_at TEXT DEFAULT (datetime('now','localtime'))
   );
   CREATE INDEX IF NOT EXISTS idx_sheet_backup_t ON sheet_backup_log(tournament_id, status);
+  -- 申込1件を削除したときの控え。削除前の中身(申込原本・出場者・変更履歴・閲覧トークン)をそのまま持ち、
+  -- 後から元に戻せる(restoreDeletedSubmission)。連絡先などPIIを含むので公開APIには出さない。
+  CREATE TABLE IF NOT EXISTS deleted_submissions (
+    id TEXT PRIMARY KEY,
+    tournament_id TEXT NOT NULL,
+    submission_id TEXT NOT NULL,
+    team_name TEXT DEFAULT '',
+    entrant_count INTEGER DEFAULT 0,
+    reason TEXT DEFAULT '',
+    operator TEXT DEFAULT '',
+    snapshot_json TEXT NOT NULL DEFAULT '{}',
+    deleted_at TEXT DEFAULT (datetime('now','localtime')),
+    restored_at TEXT DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_deleted_sub_t ON deleted_submissions(tournament_id, deleted_at);
   -- idx_submissions_opid(op_id列を使う索引)は、既存DBでは op_id を ALTER で足した後でないと
   -- 「no such column: op_id」で失敗するため、ここではなく移行ブロックで ALTER の直後に作成する。
 
@@ -9136,6 +9151,71 @@ function deleteSubmissionPII(submissionId, opts = {}) {
   return { ok: true, id: submissionId, anonymized: true };
 }
 
+// ── 申込1件の削除(受付台帳の「この申込を削除」) ──
+// 取り消し(出場を数から外すだけ)と違い、申込そのものを台帳から消す。誤操作に備え、削除前の中身を
+// deleted_submissions に丸ごと控え、restoreDeletedSubmission で元に戻せる。既存テーブルの列は変えない。
+// 組合せ(試合)に入っている出場がある申込は消さない(表が壊れるため)。
+function deleteSubmission(submissionId, opts = {}) {
+  const sub = sqlite.prepare("SELECT * FROM entry_submissions WHERE id=?").get(String(submissionId || ""));
+  if (!sub) return { error: "申込が見つかりません" };
+  const ents = sqlite.prepare("SELECT * FROM entrants WHERE submission_id=?").all(sub.id);
+  let ids = []; try { ids = JSON.parse(sub.entrant_ids || "[]") || []; } catch (_) { ids = []; }
+  const have = new Set(ents.map(e => e.id));
+  ids.forEach(id => { if (id && !have.has(id)) { const e = entrantStmts.get.get(id); if (e) { ents.push(e); have.add(id); } } });
+  const used = ents.length ? sqlite.prepare(
+    `SELECT COUNT(*) c FROM matches WHERE player1_entrant_id IN (${ents.map(() => "?").join(",")}) OR player2_entrant_id IN (${ents.map(() => "?").join(",")})`
+  ).get(...ents.map(e => e.id), ...ents.map(e => e.id)).c : 0;
+  if (used) return { error: "組合せに入っている出場があるため、この申込は削除できません。" };
+  const snap = {
+    submission: sub,
+    entrants: ents,
+    tokens: sqlite.prepare("SELECT * FROM submission_tokens WHERE submission_id=?").all(sub.id),
+    changes: sqlite.prepare("SELECT * FROM entry_changes WHERE submission_id=?").all(sub.id),
+    mail_jobs: sqlite.prepare("SELECT * FROM entry_mail_jobs WHERE submission_id=?").all(sub.id),
+  };
+  const backupId = uid();
+  sqlite.transaction(() => {
+    sqlite.prepare(`INSERT INTO deleted_submissions (id, tournament_id, submission_id, team_name, entrant_count, reason, operator, snapshot_json)
+      VALUES (?,?,?,?,?,?,?,?)`).run(backupId, sub.tournament_id, sub.id, sub.team_name || "", ents.length,
+      String(opts.reason || "").slice(0, 200), String(opts.operator || "").slice(0, 80), JSON.stringify(snap));
+    ents.forEach(e => entrantStmts.delete.run(e.id));
+    sqlite.prepare("DELETE FROM submission_tokens WHERE submission_id=?").run(sub.id);
+    sqlite.prepare("DELETE FROM entry_mail_jobs WHERE submission_id=?").run(sub.id);
+    sqlite.prepare("DELETE FROM entry_submissions WHERE id=?").run(sub.id);
+    _recordEntryChange({ tournament_id: sub.tournament_id, submission_id: sub.id, kind: "delete_submission",
+      before: { team: sub.team_name || "", entrants: ents.length }, reason: opts.reason, actor: "admin" });
+  })();
+  return { ok: true, backup_id: backupId, team_name: sub.team_name || "", entrants: ents.length, tournament_id: sub.tournament_id };
+}
+
+function listDeletedSubmissions(tournamentId) {
+  return sqlite.prepare(`SELECT id, submission_id, team_name, entrant_count, reason, operator, deleted_at, restored_at
+    FROM deleted_submissions WHERE tournament_id=? ORDER BY deleted_at DESC, rowid DESC LIMIT 50`).all(String(tournamentId || ""));
+}
+
+function restoreDeletedSubmission(backupId) {
+  const b = sqlite.prepare("SELECT * FROM deleted_submissions WHERE id=?").get(String(backupId || ""));
+  if (!b) return { error: "削除の控えが見つかりません" };
+  if (b.restored_at) return { error: "すでに元に戻してあります" };
+  let snap; try { snap = JSON.parse(b.snapshot_json); } catch (_) { return { error: "控えの中身を読めません" }; }
+  if (sqlite.prepare("SELECT 1 FROM entry_submissions WHERE id=?").get(b.submission_id)) return { error: "同じ申込がすでにあります" };
+  if (!stmts.getTournament.get(b.tournament_id)) return { error: "大会が見つかりません" };
+  const put = (table, row) => {
+    const cols = Object.keys(row);
+    sqlite.prepare(`INSERT OR REPLACE INTO ${table} (${cols.join(",")}) VALUES (${cols.map(c => "@" + c).join(",")})`).run(row);
+  };
+  sqlite.transaction(() => {
+    put("entry_submissions", snap.submission);
+    (snap.entrants || []).forEach(e => put("entrants", e));
+    (snap.tokens || []).forEach(t => put("submission_tokens", t));
+    (snap.mail_jobs || []).forEach(m => put("entry_mail_jobs", m));
+    sqlite.prepare("UPDATE deleted_submissions SET restored_at=datetime('now','localtime') WHERE id=?").run(b.id);
+    _recordEntryChange({ tournament_id: b.tournament_id, submission_id: b.submission_id, kind: "restore_delete",
+      after: { team: b.team_name, entrants: b.entrant_count }, reason: "削除を元に戻した", actor: "admin" });
+  })();
+  return { ok: true, submission_id: b.submission_id, team_name: b.team_name, tournament_id: b.tournament_id };
+}
+
 // 大会日が retentionDays より前の大会の申込原本PIIを一括匿名化(起動時 env PII_RETENTION_DAYS で有効化 / 手動)。
 function purgeOldSubmissionPII(retentionDays) {
   const days = parseInt(retentionDays);
@@ -10023,6 +10103,8 @@ function _changeSummary(kind, before, after) {
   if (kind === "restore") return `${a.name || ""} の取消を戻した`;
   if (kind === "add") return `${a.event || ""} に ${a.name || ""} を追加`;
   if (kind === "delete") return `${b.event || ""} の ${b.name || ""} を削除`;
+  if (kind === "delete_submission") return `${b.team || "(団体名なし)"} の申込（${b.entrants || 0}件）を削除`;
+  if (kind === "restore_delete") return `${a.team || "(団体名なし)"} の申込の削除を元に戻した`;
   if (kind === "replace") return `${b.target || b.name || ""} → ${a.target || a.name || ""}`;
   if (kind === "edit") return a.diff ? _diffSummary(a.diff) : "修正";
   if (kind === "contact") return Array.isArray(a.fields) ? a.fields.join("・") + "を変更" : "連絡先を変更";
@@ -15166,7 +15248,7 @@ module.exports = {
   createEntry, createTeamEntry, getEntries,
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
-  getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII,
+  getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII, deleteSubmission, listDeletedSubmissions, restoreDeletedSubmission,
   importPlayerRegistry, getEntryDeskList, getEntryDesk, syncPlayerRegistry, planPlayerRegistrySync, registryFromSheetRows,
   matchPersonToPlayers, getPlayerMatchReview, resolveEntrantPlayerMatch, rematchTournamentPlayers,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, fieldLabelOf, sanitizeFieldConfig,
