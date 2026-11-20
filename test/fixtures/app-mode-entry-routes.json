@@ -59,6 +59,7 @@
  "GET /api/tournaments/:id/entry-settings/sources",
  "GET /api/tournaments/:id/operations",
  "GET /api/tournaments/:id/player-matches",
+ "GET /api/tournaments/:id/receipt-print.html",
  "GET /api/tournaments/:id/reception.html",
  "GET /api/tournaments/:id/sheet-backup",
  "GET /api/tournaments/:id/submissions",

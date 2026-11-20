@@ -52,6 +52,7 @@ const ENTRY_MODE_API = [
   [new RegExp(`^${T}/desk$`), ["GET", "HEAD"]],
   [/^\/api\/entry-desk\/tournaments$/, ["GET", "HEAD"]],
   [new RegExp(`^${T}/reception\\.html$`), ["GET", "HEAD"]],
+  [new RegExp(`^${T}/receipt-print\\.html$`), ["GET", "HEAD"]],
   // 台の割り当て(進行管理のうち、コート配置の表示と「台へ呼ぶ・台から戻す」だけ)。結果入力・審判・組合せ・観戦は閉じたまま
   [new RegExp(`^${T}/operations$`), ["GET", "HEAD"]],
   [new RegExp(`^${T}/court-layout$`), ["PUT"]],

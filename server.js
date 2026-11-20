@@ -2199,6 +2199,33 @@ app.get("/api/tournaments/:id/reception.html", requireAdmin, (req, res) => {
   res.send(buildReceptionHTML(t, entrants.filter(isConfirmedEntry), entryOnly));
 });
 
+// ── 領収書の印刷(申込集計モード) ── 印刷物を作るだけ。入金記録・発行履歴は保存しない。
+// 印影の画像は、設置されていれば(SEAL_DIR/seal.png 等。通常のリポジトリには入れない)ページに埋め込む。
+function _sealDataUri() {
+  const dirs = [process.env.SEAL_DIR || "", path.join(__dirname, "public", "shared", "assets")].filter(Boolean);
+  for (const dir of dirs) for (const ext of [".png", ".jpg", ".jpeg"]) {
+    try {
+      const f = path.join(dir, "seal" + ext);
+      const st = fs.statSync(f);
+      if (st.isFile() && st.size > 0 && st.size < 1.5 * 1024 * 1024) {
+        return "data:image/" + (ext === ".png" ? "png" : "jpeg") + ";base64," + fs.readFileSync(f).toString("base64");
+      }
+    } catch (_) { /* なければ次へ */ }
+  }
+  return "";
+}
+app.get("/api/tournaments/:id/receipt-print.html", requireAdmin, (req, res) => {
+  const t = db.getTournament(req.params.id);
+  if (!t) return res.status(404).type("html").send("<h1>大会が見つかりません</h1>");
+  const rp = require("./lib/receipt-print");
+  const { teams, excluded } = db.getReceiptTeams(t.id);
+  const pick = String(req.query.team || "");
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  res.send(rp.buildReceiptPrintHTML(t, { teams, excluded, defaults: rp.defaultsFor(t), sealDataUri: _sealDataUri(), pick: teams.some(x => x.name === pick) ? pick : "" }));
+});
+
 function buildReceptionHTML(t, entrants, entryOnly = false) {
   const yen = (n) => "¥" + (parseInt(n) || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   const byTeam = Object.create(null);

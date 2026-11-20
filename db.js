@@ -9151,6 +9151,14 @@ function deleteSubmissionPII(submissionId, opts = {}) {
   return { ok: true, id: submissionId, anonymized: true };
 }
 
+// 領収書の印刷用: 申込団体ごとの金額(lib/receipt-print.js の receiptTeams)。入金の記録ではなく、申込時に保存した参加費の合計。
+function getReceiptTeams(tournamentId) {
+  const { receiptTeams } = require("./lib/receipt-print");
+  const subs = sqlite.prepare("SELECT id, team_name FROM entry_submissions WHERE tournament_id=?").all(String(tournamentId || ""));
+  const ents = entrantStmts.listByTournament.all(String(tournamentId || ""));
+  return receiptTeams(subs, ents, savedEntryFee);
+}
+
 // ── 申込1件の削除(受付台帳の「この申込を削除」) ──
 // 取り消し(出場を数から外すだけ)と違い、申込そのものを台帳から消す。誤操作に備え、削除前の中身を
 // deleted_submissions に丸ごと控え、restoreDeletedSubmission で元に戻せる。既存テーブルの列は変えない。
@@ -15251,7 +15259,7 @@ module.exports = {
   createEntry, createTeamEntry, getEntries,
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
-  getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII, deleteSubmission, listDeletedSubmissions, restoreDeletedSubmission,
+  getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII, deleteSubmission, getReceiptTeams, listDeletedSubmissions, restoreDeletedSubmission,
   importPlayerRegistry, getEntryDeskList, getEntryDesk, syncPlayerRegistry, planPlayerRegistrySync, registryFromSheetRows,
   matchPersonToPlayers, getPlayerMatchReview, resolveEntrantPlayerMatch, rematchTournamentPlayers,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, fieldLabelOf, sanitizeFieldConfig,

@@ -264,6 +264,8 @@
       h("button", { class: "ed-btn ed-btn--main", type: "button", onclick: () => app().downloadAggregation(t) }, "集計表をExcelで保存"),
       h("button", { class: "ed-btn", type: "button",
         onclick: () => app().openAuthedHtmlWindow("/api/tournaments/" + t.id + "/reception.html", "受付名簿_" + (t.name || "")) }, "名簿を印刷"),
+      h("button", { class: "ed-btn", type: "button",
+        onclick: () => app().openAuthedHtmlWindow("/api/tournaments/" + t.id + "/receipt-print.html", "領収書_" + (t.name || "")) }, "領収書を印刷"),
       h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: deletedSheet }, "削除した申込"),
     ];
   }
@@ -433,7 +435,9 @@
       eventGroups(r),
       h("div", { class: "ed-btns" },
         h("button", { class: "ed-btn ed-btn--main", type: "button", onclick: () => { closeSheet(); app().openSubmissionEdit(t, r.submission_id, reload); } }, "内容を直す"),
-        live.length ? h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: () => cancelAsk(r, live) }, "この申込を取り消す") : null),
+        live.length ? h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: () => cancelAsk(r, live) }, "この申込を取り消す") : null,
+        live.length ? h("button", { class: "ed-btn", type: "button",
+          onclick: () => app().openAuthedHtmlWindow("/api/tournaments/" + t.id + "/receipt-print.html?team=" + encodeURIComponent(r.team_name || ""), "領収書_" + (r.team_name || "")) }, "この団体の領収書を印刷") : null),
       h("div", { class: "ed-danger" },
         h("p", { class: "ed-sub" }, "取り消しは出場を数から外すだけです。申込そのものを台帳から消すときは削除します（削除前の内容は控えに残り、あとで戻せます）。"),
         h("button", { class: "ed-btn ed-btn--danger", type: "button", onclick: () => deleteAsk(r) }, "この申込を削除")),
