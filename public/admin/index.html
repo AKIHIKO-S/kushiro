@@ -2021,10 +2021,59 @@ const A = {
      legacySubmit));
  modal = openModal(askName ? "運営アカウントの登録" : inviteToken ? "パスワードを設定" : "運営ログイン",
    h("div", {}, form, legacy, feedback,
-     inviteToken ? null : h("button", { type: "button", className: "btn btn-ghost btn-sm", style: { minHeight: "44px", marginTop: "8px" },
-       onClick: () => { modal.remove(); A.openPasswordReset(email.value); } }, "パスワードを忘れた場合")),
+     inviteToken ? null : h("div", { className: "flex gap-2 flex-wrap", style: { marginTop: "8px" } },
+       h("button", { type: "button", className: "btn btn-ghost btn-sm", style: { minHeight: "44px" },
+         onClick: () => { modal.remove(); A.openPasswordReset(email.value); } }, "パスワードを忘れた場合"),
+       h("button", { type: "button", className: "btn btn-ghost btn-sm", style: { minHeight: "44px" },
+         onClick: () => { modal.remove(); A.openRegister(email.value); } }, "役員登録"))),
    null, { trapFocus: true });
  (askName ? fullName : inviteToken ? password : email).focus();
+ },
+ // 役員の自己登録。送ると「承認待ち」で作られ、オーナーが承認するまでログインできない
+ openRegister(prefill) {
+   const field = (label, attrs) => {
+     const input = h("input", { className: "input", required: true, "aria-describedby": "adminRegFeedback", ...attrs });
+     return [input, h("div", { className: "operator-auth-field" }, h("label", { className: "field-label", for: attrs.id }, label), input)];
+   };
+   const [email, emailField] = field("メールアドレス", { id: "adminRegEmail", type: "email", autocomplete: "username", autocapitalize: "none", maxlength: 254, value: prefill || "" });
+   const [fullName, nameField] = field("氏名", { id: "adminRegName", type: "text", autocomplete: "name", maxlength: 40 });
+   const [password, passField] = field("パスワード", { id: "adminRegPassword", type: "password", autocomplete: "new-password", maxlength: 256 });
+   const [confirm, confirmField] = field("パスワードの確認用", { id: "adminRegConfirm", type: "password", autocomplete: "new-password", maxlength: 256 });
+   // ボット対策の隠し欄(人は見えない・入力しない)
+   const trap = h("input", { type: "text", name: "website", tabindex: "-1", autocomplete: "off", "aria-hidden": "true", style: { position: "absolute", left: "-9999px", width: "1px", height: "1px" } });
+   const feedback = h("p", { id: "adminRegFeedback", role: "status", className: "text-sm", style: { overflowWrap: "anywhere" } });
+   const submit = h("button", { type: "submit", className: "btn", style: { width: "100%", minHeight: "44px" } }, "登録を申し込む");
+   let modal;
+   const form = h("form", { onSubmit: async event => {
+     event.preventDefault();
+     if (submit.disabled) return;
+     feedback.textContent = "";
+     if (password.value !== confirm.value) {
+       confirm.setAttribute("aria-invalid", "true");
+       feedback.textContent = "パスワードと確認用のパスワードが一致しません。";
+       confirm.focus();
+       return;
+     }
+     confirm.removeAttribute("aria-invalid");
+     submit.disabled = true;
+     feedback.textContent = "送信中…";
+     try {
+       const r = await api.post("/api/auth/admin/register", { email: email.value, name: fullName.value, password: password.value, password2: confirm.value, website: trap.value });
+       if (r?.ok) {
+         form.replaceChildren(h("p", { className: "text-sm" }, r.message || "登録を受け付けました。オーナーが承認すると、ログインできるようになります。"));
+         feedback.textContent = "";
+       } else feedback.textContent = r?.error || "登録できませんでした。時間をおいてお試しください。";
+     } catch { feedback.textContent = "通信できませんでした。もう一度お試しください。"; }
+     finally { submit.disabled = false; }
+   } },
+     h("p", { className: "text-sm text-sub" }, "役員の方の登録です。送信すると、オーナーに承認を依頼します。承認されるまでは、ログインできません。"),
+     nameField, emailField,
+     h("p", { className: "text-sm text-sub" }, "パスワードは6文字以上で、英字・数字・記号（! # $ % など）をそれぞれ1つ以上入れてください。"),
+     passField, confirmField, trap, submit);
+   modal = openModal("役員登録", h("div", {}, form, feedback,
+     h("button", { type: "button", className: "btn btn-ghost btn-sm", style: { minHeight: "44px", marginTop: "8px" },
+       onClick: () => { modal.remove(); A.openLogin(); } }, "ログインに戻る")), null, { trapFocus: true });
+   fullName.focus();
  },
  // 本人が登録メールアドレス宛てに再設定リンクを受け取る(オーナーの操作は不要)
  openPasswordReset(prefill) {
@@ -9125,7 +9174,7 @@ const A = {
    const feedback = h("p", { className: "text-sm", role: "status" }, "読み込み中…");
    const email = h("input", { id: "operatorInviteEmail", className: "input", type: "email", maxlength: 254, required: true, autocomplete: "off" });
    const send = h("button", { type: "submit", className: "btn", style: { minHeight: "44px" } }, "招待メールを送る");
-   const labels = { active: "利用中", invited: "招待済み", pending: "設定待ち", disabled: "停止中" };
+   const labels = { active: "利用中", invited: "招待済み", pending: "設定待ち", awaiting: "承認待ち", disabled: "停止中" };
    let busy = false;
    const change = async (path, data, success) => {
      if (busy) return;
@@ -9152,6 +9201,7 @@ const A = {
          const disabled = account.status === "disabled";
          // 確認の文面は氏名を先に(未登録ならメール)。操作の取り違えを防ぐためメールも併記する
          const who = account.name ? account.name + "（" + account.email + "）" : account.email;
+         const awaiting = account.status === "awaiting";
          const label = disabled ? "再招待" : account.status === "active" ? "再設定メール" : "招待を再送";
          const retry = h("button", { className: "btn btn-sm btn-ghost", style: { minHeight: "44px" },
            "aria-label": account.email + " の" + label, onClick: () => {
@@ -9180,11 +9230,25 @@ const A = {
              if (v === null) return;
              change("/api/owner/operators/" + encodeURIComponent(account.id) + "/name", { name: v.trim() }, "氏名を保存しました。");
            } }, account.name ? "氏名を直す" : "氏名を登録");
-         list.append(h("li", { style: { padding: "10px 0", borderBottom: "1px solid var(--border)" } },
+         // 役員の自己登録(承認待ち): 承認すると、本人が決めたパスワードでログインできる。心当たりがなければ却下する
+         const approveBtn = awaiting ? h("button", { className: "btn btn-sm btn-ok", style: { minHeight: "44px" },
+           "aria-label": account.email + " の登録を承認", onClick: () => {
+             if (!window.confirm(who + " の登録を承認しますか？ 承認すると、本人が決めたパスワードで運営ログインできるようになります。")) return;
+             change("/api/owner/operators/" + encodeURIComponent(account.id) + "/approve", {}, "登録を承認しました。");
+           } }, "承認する") : null;
+         const rejectBtn = awaiting ? h("button", { className: "btn btn-sm btn-danger", style: { minHeight: "44px" },
+           "aria-label": account.email + " の登録を却下", onClick: () => {
+             if (!window.confirm(who + " の登録を却下しますか？ 申請は消えます（同じアドレスで申し込み直せます）。")) return;
+             change("/api/owner/operators/" + encodeURIComponent(account.id) + "/reject", {}, "登録を却下しました。");
+           } }, "却下する") : null;
+         const item = h("li", { style: { padding: "10px 0", borderBottom: "1px solid var(--border)", ...(awaiting ? { background: "#fffbeb" } : {}) } },
            h("div", { style: { fontWeight: 700, overflowWrap: "anywhere" } }, account.name || "（氏名未登録）"),
            h("div", { className: "text-sm", style: { overflowWrap: "anywhere" } }, account.email),
-           h("div", { className: "text-xs text-sub" }, labels[account.status] + (account.owner ? "・オーナー権限あり" : "")),
-           h("div", { className: "flex gap-2 flex-wrap" }, nameBtn, retry, disabled ? null : stop, ownerBtn)));
+           h("div", { className: "text-xs", style: { color: awaiting ? "#92400e" : "var(--sub)", fontWeight: awaiting ? 700 : 400 } }, labels[account.status] + (account.owner ? "・オーナー権限あり" : "")),
+           awaiting
+             ? h("div", { className: "flex gap-2 flex-wrap" }, approveBtn, rejectBtn)
+             : h("div", { className: "flex gap-2 flex-wrap" }, nameBtn, retry, disabled ? null : stop, ownerBtn));
+         if (awaiting) list.prepend(item); else list.append(item);   // 承認待ちは一覧の先頭に出す
        }
        if (!r.json.accounts.length) list.append(h("li", { className: "text-sm text-sub" }, "まだ個別アカウントはありません。"));
        if (feedback.textContent === "読み込み中…") feedback.textContent = "";

@@ -50,7 +50,7 @@ test("閉じる機能の API は通さない", () => {
 test("申込・後日修正・選手DBの API は通す", () => {
   const kept = [
     ["GET", "/api/app-mode"], ["GET", "/api/health"], ["GET", "/api/auth/session"], ["POST", "/api/auth/admin/session"],
-    ["POST", "/api/auth/owner/session"], ["POST", "/api/auth/applicant/session"], ["PUT", "/api/app-mode"],
+    ["POST", "/api/auth/owner/session"], ["POST", "/api/auth/admin/register"], ["POST", "/api/auth/applicant/session"], ["PUT", "/api/app-mode"],
     ["GET", "/api/tournaments"], ["POST", "/api/tournaments"], ["GET", "/api/tournaments/t1"], ["PUT", "/api/tournaments/t1"],
     ["DELETE", "/api/tournaments/t1"], ["GET", "/api/tournaments/t1/submissions"], ["GET", "/api/tournaments/t1/entry-changes"],
     ["GET", "/api/tournaments/t1/entries"], ["PUT", "/api/tournaments/t1/entries/e1/status"], ["POST", "/api/tournaments/t1/entries/e1/fix"],

@@ -892,6 +892,7 @@ app.post("/api/auth/admin/password", requireSameOrigin, operatorLoginLimit, oper
   try {
     const login = await db.operatorAccounts.login(address, password);
     if (login.busy) return res.status(429).json({ error: "時間をおいて、もう一度お試しください" });
+    if (login.pending) return res.status(403).json({ error: "登録は承認待ちです。オーナーが承認すると、ログインできるようになります", pending: true });
     if (!login.id) return denied();
     const previous = cookieValue(req, SESSION_COOKIE);
     if (previous) {
@@ -901,6 +902,31 @@ app.post("/api/auth/admin/password", requireSameOrigin, operatorLoginLimit, oper
     setSessionCookie(res, login.token, login.expires_at);
     setPrincipal(req, "admin", login.id);
     res.json({ ok: true, principal_type: "admin", principal_id: login.id });
+  } catch (error) { next(error); }
+});
+// 役員の自己登録。メールアドレス・氏名・パスワードを送ると「承認待ち」で作られ、オーナーが承認するまでログインできない。
+// 登録済みのアドレスかどうかを推測させないため、形式が正しければ常に同じ応答を返す。迷惑登録は回数制限と
+// 承認待ちの上限(30件)で抑える。隠し欄(website)に値があればボットとみなし、受け付けたふりをして捨てる。
+const operatorRegisterIpLimit = rateLimit({ windowMs: 60 * 60_000, max: 5, message: "登録の申込が多すぎます。しばらくしてからお試しください。" });
+app.post("/api/auth/admin/register", requireSameOrigin, operatorRegisterIpLimit, async (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  const b = req.body || {};
+  const email = normalizeEmail(b.email), name = normalizeName(b.name);
+  if (!validEmail(email)) return res.status(400).json({ error: "メールアドレスを確認してください" });
+  if (!name || !validName(name)) return res.status(400).json({ error: "氏名を40文字以内で入力してください" });
+  if (!validPassword(b.password)) return res.status(400).json({ error: PASSWORD_RULE_MESSAGE });
+  if (b.password !== b.password2) return res.status(400).json({ error: "パスワードと確認用のパスワードが一致しません" });
+  const accepted = { ok: true, message: "登録を受け付けました。オーナーが承認すると、ログインできるようになります。" };
+  if (b.website) return res.status(202).json(accepted);
+  try {
+    const r = await db.operatorAccounts.register(email, name, b.password);
+    if (r.busy) return res.status(429).json({ error: "時間をおいて、もう一度お試しください" });
+    if (r.full) return res.status(503).json({ error: "いまは登録を受け付けられません。オーナーにご連絡ください" });
+    res.status(202).json(accepted);
+    if (r.created) {
+      db.logOwnerAction({ action: "運営アカウント:登録申請 " + accountAuditCode(db.operatorAccounts.list().find(a => a.email === email)?.id || "") });
+      if (mailer.isEnabled()) mailer.sendOperatorRegistrationNotice({ name, email }).catch(() => {});
+    }
   } catch (error) { next(error); }
 });
 // パスワードを忘れた本人が、登録メールアドレス宛てに再設定リンクを受け取る。オーナーの操作は要らない。
@@ -971,6 +997,19 @@ app.post("/api/owner/operators/:id/disable", requireSameOrigin, requireOwnerStri
   }
   if (!db.operatorAccounts.disable(req.params.id)) return res.status(404).json({ error: "アカウントが見つかりません" });
   auditOwner(req, "運営アカウント:停止 " + accountAuditCode(req.params.id));
+  res.json({ ok: true });
+});
+// 役員の自己登録の承認・却下(オーナー)。承認でログインできるようになる。却下は申請を消す(同じアドレスで申し込み直せる)。
+app.post("/api/owner/operators/:id/approve", requireSameOrigin, requireOwnerStrict, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!db.operatorAccounts.approve(req.params.id)) return res.status(404).json({ error: "承認待ちの登録が見つかりません" });
+  auditOwner(req, "運営アカウント:登録を承認 " + accountAuditCode(req.params.id));
+  res.json({ ok: true });
+});
+app.post("/api/owner/operators/:id/reject", requireSameOrigin, requireOwnerStrict, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!db.operatorAccounts.reject(req.params.id)) return res.status(404).json({ error: "承認待ちの登録が見つかりません" });
+  auditOwner(req, "運営アカウント:登録を却下 " + accountAuditCode(req.params.id));
   res.json({ ok: true });
 });
 // 運営アカウントの氏名の登録・修正(右上の「ログイン中」表示に使う)。空欄で未登録に戻す。

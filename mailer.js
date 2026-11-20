@@ -504,6 +504,19 @@ async function sendOperatorInvite(to, link) {
   if (!info.accepted?.length) throw new Error("招待メールを受け付けませんでした");
 }
 
+// 役員の自己登録があったとき、管理者宛てに知らせる(承認はオーナーが管理画面で行う)。パスワードは載せない。
+async function sendOperatorRegistrationNotice({ name, email }) {
+  if (!ADMIN_EMAIL) return { skipped: true };
+  const info = await getTransporter().sendMail({
+    from: SMTP_FROM || SMTP_USER, to: ADMIN_EMAIL,
+    subject: "KTTA Platform | 役員の登録申請があります",
+    text: "運営アカウントの登録申請がありました。\n\n氏名: " + name + "\nメールアドレス: " + email
+      + "\n\n管理画面の「管理設定」→「システム管理（オーナー）」→「運営アカウントを管理」で、承認または却下してください。"
+      + "\n心当たりのない申請は、却下してください。",
+  });
+  return { ok: !!info.accepted?.length };
+}
+
 async function sendOperatorReset(to, link) {
   const info = await getTransporter().sendMail({
     from: SMTP_FROM || SMTP_USER, to,
@@ -519,6 +532,7 @@ module.exports = {
   validRecipient,
   sendOperatorInvite,
   sendOperatorReset,
+  sendOperatorRegistrationNotice,
   sendConfirmationEmail,
   sendAdminNotification,
   sendEntryChangeNotification,
