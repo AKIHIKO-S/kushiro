@@ -6841,152 +6841,6 @@ function setLeagueTiebreak(tournamentId, event, ranks) {
   return { ok: true, updated: ids.length };
 }
 
-// ── 大会入賞者(表彰)の自動集計 ──
-// 種目ごとに 1位/2位/3位 を結果から機械導出する(表彰式・協会報告・選手DB登録の締め業務用)。
-//   ノックアウト: 決勝の勝者=1位/敗者=2位、準決勝の敗者2名=3位(KTTA慣例: 3位決定戦なし=3位2名)。
-//     準決勝は位置演算ではなく実配線(next_match_id)の逆引きで特定する=罫線の自由配線編集後も正しい。
-//   リーグのみ(1ブロック): computeLeagueStandings の 1..3位(全消化+同率抽選確定済みのときのみ確定)。
-//   複数ブロックのリーグのみ(決勝Tなし)は大会順位を機械では決められない=manual(参考にブロック1位を出す)。
-// 戻り: { tournament, year, events: [{ event, status:'final'|'pending'|'manual'|'none',
-//         items:[{place,name,team,entrant_id,player_ids:[..]}], note }] }
-// player_ids=選手DBへ登録できる本人(+ダブルスは相方)のID。未連携は空=登録対象外(表示のみ)。
-function computeTournamentPodium(tournamentId) {
-  const t = stmts.getTournament.get(tournamentId);
-  if (!t) return { error: "大会が見つかりません" };
-  const all = getMatchesByTournament(tournamentId);
-  const entById = new Map();
-  sqlite.prepare("SELECT id, name, team, player_id, partner_name, partner_player_id FROM entrants WHERE tournament_id=?")
-    .all(tournamentId).forEach(e => entById.set(e.id, e));
-  // 種目一覧は event_config 順(要項の順で表彰式に並ぶ)+設定にない生成種目(決勝T/順位別T)を出現順で後ろへ
-  const events = [];
-  const seen = new Set();
-  let cfg = [];
-  try { cfg = typeof t.event_config === "string" ? JSON.parse(t.event_config || "[]") : (t.event_config || []); } catch (e) { cfg = []; }
-  cfg.forEach(c => { if (c && c.name && !seen.has(c.name)) { seen.add(c.name); events.push(c.name); } });
-  all.forEach(m => { if (m.event && !seen.has(m.event)) { seen.add(m.event); events.push(m.event); } });
-
-  const playerIdsOf = (entrantId) => {
-    const e = entrantId ? entById.get(entrantId) : null;
-    if (!e) return [];
-    return [e.player_id, e.partner_player_id].filter(Boolean);
-  };
-  const nameTeamOf = (entrantId, fallbackName, fallbackTeam) => {
-    const e = entrantId ? entById.get(entrantId) : null;
-    const nm = e ? (e.partner_name ? e.name + "・" + e.partner_name : e.name) : (fallbackName || "");
-    return { name: nm, team: (e && e.team) || fallbackTeam || "" };
-  };
-
-  const out = [];
-  for (const ev of events) {
-    const ms = all.filter(m => m.event === ev);
-    if (!ms.length) continue;
-    const knock = ms.filter(m => (m.bracket_round || 0) >= 1 && !m.league_block);
-    const leagueRows = ms.filter(m => m.league_block);
-
-    if (knock.length) {
-      // ノックアウト(SS大会の決勝T・予選リーグ後の決勝T・順位別Tもここに載る)
-      const maxR = Math.max(...knock.map(m => m.bracket_round || 1));
-      const finals = knock.filter(m => (m.bracket_round || 1) === maxR)
-        .sort((a, b) => (a.bracket_pos || 0) - (b.bracket_pos || 0));
-      const fin = finals[0];
-      const finDone = fin && fin.status === "completed" && fin.winner_name && fin.winner_name !== "BYE";
-      if (!finDone) { out.push({ event: ev, status: "pending", items: [], note: "決勝が終わると確定します" }); continue; }
-      const items = [];
-      const wEnt = fin.winner_entrant_id ||
-        (fin.winner_name === fin.player1_name && fin.winner_name !== fin.player2_name ? fin.player1_entrant_id
-          : fin.winner_name === fin.player2_name && fin.winner_name !== fin.player1_name ? fin.player2_entrant_id : null);
-      const lEnt = wEnt ? (wEnt === fin.player1_entrant_id ? fin.player2_entrant_id : fin.player1_entrant_id) : null;
-      const w = nameTeamOf(wEnt, fin.winner_name, fin.winner_team);
-      items.push({ place: 1, name: w.name, team: w.team, entrant_id: wEnt, player_ids: playerIdsOf(wEnt) });
-      if (fin.loser_name && fin.loser_name !== "BYE") {
-        const l = nameTeamOf(lEnt, fin.loser_name, fin.loser_team);
-        items.push({ place: 2, name: l.name, team: l.team, entrant_id: lEnt, player_ids: playerIdsOf(lEnt) });
-      }
-      // 3位=決勝へ供給する2試合(準決勝)の敗者。実配線の逆引き(relink後も正しい)
-      const feeders = knock.filter(m => m.next_match_id === fin.id);
-      feeders.forEach(sf => {
-        if (sf.status !== "completed" || !sf.loser_name || sf.loser_name === "BYE") return;
-        const sfW = sf.winner_entrant_id ||
-          (sf.winner_name === sf.player1_name && sf.winner_name !== sf.player2_name ? sf.player1_entrant_id
-            : sf.winner_name === sf.player2_name && sf.winner_name !== sf.player1_name ? sf.player2_entrant_id : null);
-        const sfL = sfW ? (sfW === sf.player1_entrant_id ? sf.player2_entrant_id : sf.player1_entrant_id) : null;
-        const l3 = nameTeamOf(sfL, sf.loser_name, sf.loser_team);
-        items.push({ place: 3, name: l3.name, team: l3.team, entrant_id: sfL, player_ids: playerIdsOf(sfL) });
-      });
-      out.push({ event: ev, status: "final", items, note: finals.length > 1 ? "複数の山があるため先頭の山のみ自動判定" : "" });
-      continue;
-    }
-
-    if (leagueRows.length) {
-      const blocks = [...new Set(leagueRows.map(m => m.league_block))];
-      if (blocks.length > 1) {
-        // ブロック別リーグのみ=大会全体の順位は決められない(決勝Tを作る運用が正)。参考にブロック1位を出す
-        const st = computeLeagueStandings(tournamentId, ev);
-        const items = [];
-        Object.keys(st).sort().forEach(bk => {
-          const top = (st[bk] || [])[0];
-          if (top) items.push({ place: 0, name: top.team_name, team: "", entrant_id: top.entrant_id,
-            player_ids: playerIdsOf(top.entrant_id), label: bk + "ブロック1位" });
-        });
-        out.push({ event: ev, status: "manual", items,
-          note: "ブロック別リーグのため大会順位は自動判定できません(決勝トーナメント生成後はそちらで確定)" });
-        continue;
-      }
-      const results = getLeagueMatchResults(tournamentId, ev);
-      const allDone = results.length > 0 && results.every(r => r.status === "completed");
-      const st = computeLeagueStandings(tournamentId, ev);
-      const rows = st[blocks[0]] || [];
-      const top3 = rows.slice(0, 3);
-      const undecided = !allDone || top3.some(r => r.tiebreak === "抽選");
-      if (undecided) {
-        out.push({ event: ev, status: "pending", items: [],
-          note: !allDone ? "全試合が終わると確定します" : "同率があります(現地抽選を確定すると順位が決まります)" });
-        continue;
-      }
-      const items = top3.map((r, i) => {
-        const nt = nameTeamOf(r.entrant_id, r.team_name, "");
-        return { place: i + 1, name: nt.name || r.team_name, team: nt.team, entrant_id: r.entrant_id,
-          player_ids: playerIdsOf(r.entrant_id) };
-      });
-      out.push({ event: ev, status: "final", items, note: "" });
-      continue;
-    }
-    out.push({ event: ev, status: "none", items: [], note: "" });
-  }
-  const year = t.date ? parseInt(String(t.date).slice(0, 4)) || new Date().getFullYear() : new Date().getFullYear();
-  return { tournament: { id: t.id, name: t.name, date: t.date }, year, events: out };
-}
-
-// 入賞者を選手データベース(achievements)へ一括登録する。ktta-player-database の掟に従い、
-// 管理画面でプレビュー(computeTournamentPodium)→人が確認→本APIで確定、の順で使う。
-// 冪等: 同 player+種目+大会名+順位+年 の既存行はskip(押し直し・再実行で二重登録しない)。
-// 選手DB未連携(player_ids空)の入賞者は登録できない=unlinkedで返し、連携作業へ誘導する。
-function registerPodiumAchievements(tournamentId) {
-  const pod = computeTournamentPodium(tournamentId);
-  if (pod.error) return pod;
-  const dupStmt = sqlite.prepare(
-    "SELECT id FROM achievements WHERE player_id=? AND event=? AND tournament=? AND place=? AND year=?");
-  let registered = 0, skipped = 0;
-  const unlinked = [];
-  const typeOf = (ev) => /ダブルス/.test(ev) ? "ダブルス" : /団体/.test(ev) ? "団体" : "シングルス";
-  const txn = sqlite.transaction(() => {
-    for (const evb of pod.events) {
-      if (evb.status !== "final") continue;
-      for (const it of evb.items) {
-        if (!it.player_ids || !it.player_ids.length) { unlinked.push(evb.event + " " + it.place + "位 " + it.name); continue; }
-        for (const pid of it.player_ids) {
-          if (dupStmt.get(pid, evb.event, pod.tournament.name, it.place, pod.year)) { skipped++; continue; }
-          addAchievement(pid, { event: evb.event, tournament: pod.tournament.name,
-            place: it.place, type: typeOf(evb.event), year: pod.year });
-          registered++;
-        }
-      }
-    }
-  });
-  txn();
-  return { ok: true, registered, skipped, unlinked };
-}
-
 // 予選リーグ→決勝トーナメント通過処理(KTTA formats.md)。予選の順位から通過者を確定し、
 // 決勝Tを「新種目」として生成する=既存のブラケット機構(生成/進行/描画/Excel)にそのまま載る。
 //   mode='top'   : 各ブロック上位 advance_n 名を集めて1つの決勝T(srcEvent+" 決勝T")。
@@ -13395,62 +13249,6 @@ function swapDoublesOrder(tournamentId, event) {
 }
 
 // 全ブラケット書き出し（複数event対応）
-// ── クラウド公開ミラーへの一方向同期(本部ローカル=正本 → クラウド) ──
-// 会場WiFi断に無依存なローカル運用の結果を、ネット復帰時にクラウド公開ビューへ反映する。
-// 同期するのは「大会の公開フィールド + 全 matches(ブラケット/結果/tie内訳)」のみ。
-//   ・referee_token/entry_gas_url 等の秘匿列・申込設定・連絡先PII(entrants)は同期しない(クラウド側を温存)。
-//   ・matches の player/entrant/referee の id(FK)は null 化(クラウドに無い選手IDでのFK違反回避・PII連鎖防止)。
-//     公開ビューは player1_name 等の非正規化名で描画するので表示は成立する。
-const SYNC_T_FIELDS = ["id", "name", "date", "venue", "court_count", "status", "description", "state_json",
-  "category", "organizer", "court_rows", "court_cols", "event_config", "compare_tournament_id", "public_view_enabled"];
-const SYNC_MATCH_NULL_FK = ["winner_id", "loser_id", "player1_id", "player2_id",
-  "player1_entrant_id", "player2_entrant_id", "referee_id"];
-let _matchColCache = null;
-function _validMatchCols() {   // matches テーブルの実在列(同期受信時に列名をこれに制限=外部入力のSQL注入防止)
-  if (!_matchColCache) {
-    try { _matchColCache = new Set(sqlite.prepare("PRAGMA table_info(matches)").all().map(c => c.name)); }
-    catch (e) { _matchColCache = new Set(); }
-  }
-  return _matchColCache;
-}
-function exportPublicSnapshot(tournamentId) {
-  const t = stmts.getTournament.get(tournamentId);
-  if (!t) return null;
-  const tpub = {}; SYNC_T_FIELDS.forEach(f => { if (f in t) tpub[f] = t[f]; });
-  const matches = sqlite.prepare("SELECT * FROM matches WHERE tournament_id=?").all(tournamentId);
-  return { v: 1, exported_at: new Date().toISOString(), tournament: tpub, matches };
-}
-function applyPublicSnapshot(snap) {
-  if (!snap || !snap.tournament || !snap.tournament.id) return { error: "不正な同期データ" };
-  const tid = snap.tournament.id;
-  const tpub = {}; SYNC_T_FIELDS.forEach(f => { if (snap.tournament[f] !== undefined) tpub[f] = snap.tournament[f]; });
-  if (!tpub.name) tpub.name = "(同期)";
-  const tx = sqlite.transaction(() => {
-    const exists = stmts.getTournament.get(tid);
-    if (!exists) {
-      const cols = Object.keys(tpub);
-      sqlite.prepare(`INSERT INTO tournaments (${cols.map(c => `"${c}"`).join(",")}) VALUES (${cols.map(c => "@" + c).join(",")})`).run(tpub);
-    } else {
-      const setCols = Object.keys(tpub).filter(c => c !== "id");   // 公開フィールドのみ更新(秘匿/申込は触らない)
-      if (setCols.length) sqlite.prepare(`UPDATE tournaments SET ${setCols.map(c => `"${c}"=@${c}`).join(",")} WHERE id=@id`).run(tpub);
-    }
-    sqlite.prepare("DELETE FROM matches WHERE tournament_id=?").run(tid);   // 本部が正本=全置換
-    const validCols = _validMatchCols();                                    // 受信データの列を実テーブル列のみに制限(SQL注入防止)
-    for (const m of (snap.matches || [])) {
-      if (!m || !m.id) continue;
-      const row = {};
-      for (const k in m) if (validCols.has(k)) row[k] = m[k];               // 未知/悪意の列名を弾く
-      SYNC_MATCH_NULL_FK.forEach(c => { if (c in row) row[c] = null; });    // FK列をnull化
-      row.tournament_id = tid;                                              // 他大会への混入を防ぐ(常にこの大会)
-      const cols = Object.keys(row);
-      if (!cols.length) continue;
-      sqlite.prepare(`INSERT INTO matches (${cols.map(c => `"${c}"`).join(",")}) VALUES (${cols.map(c => "@" + c).join(",")})`).run(row);
-    }
-  });
-  tx();
-  return { ok: true, tournament_id: tid, matches: (snap.matches || []).length };
-}
-
 function exportAllBrackets(tournamentId) {
   const t = stmts.getTournament.get(tournamentId);
   if (!t) return null;
@@ -15345,7 +15143,6 @@ module.exports = {
   checkDrawReadiness, bracketRev, undoDraw, undoLast, getDrawLog, getBracketDrawDiff, importBracketRoundtrip,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   generateTeamLeague, generateLeaguePlayoff, setLeagueTiebreak, computeLeagueStandings, getLeagueMatchResults, listLeagueEvents, summarizeTie, computePromotionSuggestion,
-  computeTournamentPodium, registerPodiumAchievements,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,
   setCallCount, bumpCallCount,
   getPlayerRefereeLock, getPlayerPlayingLock,
@@ -15392,7 +15189,6 @@ module.exports = {
   recordPrintLog, importSheetRows, patchSheet, getSheetDiffBetween, previewSheetBracket,
   setEntrantSeedRound, rebuildSeededBracket,
   getBracketGrid, syncEntrantsToBracket, swapEntrantPartners, swapDoublesOrder,
-  exportPublicSnapshot, applyPublicSnapshot,
   // Entrants (大会参加選手) - マスタDBと分離
   createEntrant, updateEntrant, deleteEntrant, getEntrant, getEntrants,
   setEntrantBracketNumber, autoAssignDrawNumbers, buildRosterData,

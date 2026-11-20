@@ -33,7 +33,6 @@ const ENTRY_MODE_API = [
   [/^\/api\/export\/all$/],
   [/^\/api\/admin\/export-log$/, ["POST"]],
   [/^\/api\/import\/players$/],
-  [/^\/api\/sync\/(push|now|status)$/],
   // 公開の申込
   [/^\/api\/public\/open-tournaments$/],
   [/^\/api\/public\/tournaments\/[^/]+\/(entry|submit-team-entry|entry-template\.xlsx|entry-template\/read|suggest-ticket|suggest\/teams|suggest\/players)$/],
@@ -46,7 +45,6 @@ const ENTRY_MODE_API = [
   // 大会の作成と申込の集計
   [/^\/api\/tournaments$/],
   [new RegExp(`^${T}$`)],
-  [new RegExp(`^${T}/sync/now$`)],
   [new RegExp(`^${T}/(submissions|entry-changes|applicants|applicants\\.xlsx|aggregation\\.xlsx)$`)],
   [new RegExp(`^${T}/sheet-backup(/resend)?$`)],   // Googleスプレッドシートへの控えの状況と再送
   [new RegExp(`^${T}/desk/manual$`), ["GET", "HEAD", "POST"]],

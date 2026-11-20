@@ -30,7 +30,7 @@ test("閉じる機能の API は通さない", () => {
     ["GET", "/api/tournaments/t1/matches"], ["POST", "/api/matches/m1/finish"], ["POST", "/api/matches/m1/correct"],
     ["POST", "/api/matches/m1/referee"], ["PUT", "/api/matches/m1/referee-required"], ["POST", "/api/matches/m1/confirm-result"],
     ["GET", "/api/tournaments/t1/team-rosters"],
-    ["GET", "/api/tournaments/t1/podium"], ["GET", "/api/tournaments/t1/podium.xlsx"], ["GET", "/api/tournaments/t1/best8"],
+    ["GET", "/api/tournaments/t1/best8"],
     ["GET", "/api/tournaments/t1/standings.xlsx"], ["GET", "/api/tournaments/t1/match-cards.xlsx"],
     ["GET", "/api/tournaments/t1/receipts.html"],
     ["GET", "/api/stats"], ["GET", "/api/public/stats"], ["GET", "/api/public/stats/breakdowns"], ["GET", "/api/public/tournaments"],

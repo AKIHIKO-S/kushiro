@@ -232,48 +232,6 @@ function appOriginOf(req) {
 }
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
-// クラウド公開ミラー同期(本部ローカル=正本 → クラウド)。
-//   SYNC_KEY: 受信側(クラウド)に設定すると /api/sync/push を有効化。送信側(本部)にも同値を設定。
-//   SYNC_CLOUD_URL: 送信側(本部ローカル)に設定するクラウドのベースURL。設定時のみ push する。
-const SYNC_KEY = process.env.SYNC_KEY || "";
-const SYNC_CLOUD_URL = (process.env.SYNC_CLOUD_URL || "").replace(/\/$/, "");
-// 受信側(クラウド)の送信元IP allowlist(任意)。設定時はこのIPからのみ /api/sync/push を受理 (#3)。
-const SYNC_ALLOW_IPS = (process.env.SYNC_ALLOW_IPS || "").split(",").map(s => s.trim()).filter(Boolean);
-if (SYNC_KEY && SYNC_KEY.length < 32)
-  console.warn("[sync] SYNC_KEY が短い(<32文字)です。十分な長さのランダム値を推奨します (#3)。");
-// /api/sync/push の鍵総当たり対策: per-IP の連続失敗で一時ブロック (#3)。
-const _syncFail = new Map(); // ip -> { count, resetAt }
-const SYNC_FAIL_MAX = 10, SYNC_FAIL_WINDOW = 5 * 60000;
-setInterval(() => { const now = Date.now(); for (const [ip, e] of _syncFail) if (now > e.resetAt) _syncFail.delete(ip); }, SYNC_FAIL_WINDOW).unref();
-function syncFailBlocked(ip) { const e = _syncFail.get(ip); return !!(e && Date.now() <= e.resetAt && e.count >= SYNC_FAIL_MAX); }
-function syncFailMark(ip) { const now = Date.now(), e = _syncFail.get(ip); if (!e || now > e.resetAt) _syncFail.set(ip, { count: 1, resetAt: now + SYNC_FAIL_WINDOW }); else e.count++; }
-const _syncState = { last_ok_at: null, last_error: null, last_count: 0 };
-async function pushTournamentToCloud(tid) {
-  if (!SYNC_CLOUD_URL || !SYNC_KEY) return { error: "クラウド同期が未設定です(SYNC_CLOUD_URL / SYNC_KEY)" };
-  // 本番は平文HTTPでの同期を拒否(SYNC_KEY と公開スナップショットの平文流出を遮断 / #2)。
-  if (process.env.NODE_ENV === "production" && !/^https:\/\//i.test(SYNC_CLOUD_URL))
-    return { error: "クラウドURLはHTTPSが必要です(平文同期は不可)" };
-  const snap = db.exportPublicSnapshot(tid);
-  if (!snap) return { error: "大会が見つかりません" };
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 12000);
-  try {
-    const res = await fetch(SYNC_CLOUD_URL + "/api/sync/push", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sync-Key": SYNC_KEY },
-      body: JSON.stringify(snap), signal: ctrl.signal,
-    });
-    clearTimeout(to);
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) { _syncState.last_error = "HTTP " + res.status + (j.error ? " " + j.error : ""); return { error: _syncState.last_error }; }
-    _syncState.last_ok_at = new Date().toISOString(); _syncState.last_error = null; _syncState.last_count = (snap.matches || []).length;
-    return { ok: true, matches: snap.matches.length };
-  } catch (e) {
-    clearTimeout(to);
-    _syncState.last_error = (e && e.name === "AbortError") ? "タイムアウト(オフライン?)" : (e && e.message) || "失敗";
-    return { error: _syncState.last_error };
-  }
-}
 const IS_PROD = process.env.NODE_ENV === "production";
 // ブラウザはCookieセッションのみ使う。旧X-Admin-Key等は開発・自動テストの互換経路としてだけ残し、
 // 本番では明示的にALLOW_LEGACY_KEY_HEADERS=1を設定しない限り受け付けない。
@@ -315,7 +273,7 @@ app.use(express.json({ limit: "10mb" }));
 //   GEO_ALLOW_COUNTRIES=JP            許可国(カンマ区切り。未設定なら本機能は無効=従来どおり)
 //   GEO_ALLOW_IPS=1.2.3.4,...         国に関わらず常に許可するIP(運営PC・会場の固定IP等)
 //   GEO_REQUIRE_COUNTRY_HEADER=1      CF-IPCountry が無いリクエストも拒否(完全にCF配下の本番向け。既定は通す)
-// 既定で通すもの: /api/health(監視) と /api/sync/*(本部→クラウドのサーバ間同期。SYNC_KEY/IP制限で別途保護)。
+// 既定で通すもの: /api/health(監視)。
 // 本部のローカル/standalone は Cloudflare 非経由=CF-IPCountry 無し→既定で通る(GEO_STRICT を立てない限り)。
 const GEO_ALLOW_COUNTRIES = (process.env.GEO_ALLOW_COUNTRIES || "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
 const GEO_ALLOW_IPS = (process.env.GEO_ALLOW_IPS || "").split(",").map(s => s.trim()).filter(Boolean);
@@ -330,7 +288,7 @@ function geoDeny(res) {
 }
 if (GEO_ALLOW_COUNTRIES.length) {
   app.use((req, res, next) => {
-    if (req.path === "/api/health" || req.path.startsWith("/api/sync/")) return next();
+    if (req.path === "/api/health") return next();
     if (GEO_ALLOW_IPS.length && GEO_ALLOW_IPS.includes(clientIp(req))) return next();
     const cc = (req.get("cf-ipcountry") || "").toUpperCase();
     if (!cc) return GEO_STRICT ? geoDeny(res) : next();   // 判定ヘッダ無し: 既定は通す(オリジン限定が本来の対策)
@@ -3355,39 +3313,6 @@ app.get("/api/tournaments/:id/standings.xlsx", requireAdmin, (req, res) => {
   }
 });
 
-// ─── 入賞者(表彰)の集計・出力・選手DB登録(大会の締め業務) ───
-app.get("/api/tournaments/:id/podium", requireAdmin, (req, res) => {
-  const r = db.computeTournamentPodium(req.params.id);
-  if (r.error) return res.status(404).json(r);
-  res.json(r);
-});
-// 登録は「プレビュー→人が確認→確定」の確定側。冪等(再実行は skipped)。
-app.post("/api/tournaments/:id/podium/register", requireAdmin, (req, res) => {
-  const r = db.registerPodiumAchievements(req.params.id);
-  if (r.error) return res.status(400).json(r);
-  res.json(r);
-});
-app.get("/api/tournaments/:id/podium.xlsx", requireAdmin, (req, res) => {
-  try {
-    const tournament = db.getTournament(req.params.id);
-    if (!tournament) return res.status(404).json({ error: "大会が見つかりません" });
-    const pod = db.computeTournamentPodium(req.params.id);
-    if (pod.error) return res.status(404).json(pod);
-    const buf = reports.buildPodiumXlsx(tournament, pod);
-    const safeName = (tournament.name || "tournament").replace(/[^\w一-龯ぁ-んァ-ヶー]/g, "_");
-    const filename = encodeURIComponent(`入賞者一覧_${safeName}.xlsx`);
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=UTF-8''${filename}`);
-    res.setHeader("Content-Length", Buffer.byteLength(buf));
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.end(buf);
-  } catch (e) {
-    console.error("podium.xlsx error:", e);
-    res.status(500).json({ error: "入賞者一覧の生成失敗: " + e.message });
-  }
-});
-
 // ─── 対戦票 (審判用記録票) 一括 Excel 出力 ───
 app.get("/api/tournaments/:id/match-cards.xlsx", requireAdmin, (req, res) => {
   try {
@@ -5107,49 +5032,6 @@ app.get("/api/lan-info", requireAdmin, async (req, res) => {
   res.json({ port: Number(PORT) || PORT, ips, urls });
 });
 
-// クラウド受信(公開ミラー): 本部ローカルからのスナップショットを適用。X-Sync-Key で認証。
-// 大会の公開フィールドと matches のみ反映(秘匿列・申込PIIは温存)。本部が正本=全置換。
-app.post("/api/sync/push", (req, res) => {
-  if (!SYNC_KEY) return res.status(503).json({ error: "同期受信が無効です(SYNC_KEY 未設定)" });
-  const ip = clientIp(req);
-  if (syncFailBlocked(ip)) return res.status(429).json({ error: "試行回数が多すぎます。しばらく待ってから再試行してください。" });
-  // 本番は平文HTTPでのキー受信を拒否(X-Forwarded-Proto 準拠 / #2)。
-  const isHttps = req.secure || (req.get("x-forwarded-proto") || "").split(",")[0].trim() === "https";
-  if (IS_PROD && !isHttps) return res.status(400).json({ error: "同期はHTTPS必須です" });
-  // 送信元IP allowlist(設定時のみ)。本部固定IP/Tunnel からのみ受理 (#3)。
-  if (SYNC_ALLOW_IPS.length && !SYNC_ALLOW_IPS.includes(ip))
-    return res.status(403).json({ error: "許可されていない送信元です" });
-  const key = req.get("X-Sync-Key") || "";
-  if (!safeEqualStr(key, SYNC_KEY)) { syncFailMark(ip); return res.status(401).json({ error: "同期キーが不正です" }); }
-  try {
-    const r = db.applyPublicSnapshot(req.body);
-    if (r.error) return res.status(400).json(r);
-    res.json(r);
-  } catch (e) { console.error("sync/push error:", e); res.status(500).json({ error: "同期適用失敗: " + e.message }); }
-});
-// 本部ローカル: 今すぐクラウドへ同期(手動)。:id 指定でその大会、無指定は進行中/準備中の大会を一括。
-app.post("/api/tournaments/:id/sync/now", requireAdmin, async (req, res) => {
-  const r = await pushTournamentToCloud(req.params.id);
-  if (r.error) return res.status(r.error.includes("未設定") ? 400 : 502).json(r);
-  res.json(r);
-});
-app.post("/api/sync/now", requireAdmin, async (req, res) => {
-  if (!SYNC_CLOUD_URL || !SYNC_KEY) return res.status(400).json({ error: "クラウド同期が未設定です(SYNC_CLOUD_URL / SYNC_KEY)" });
-  const active = (db.getTournaments() || []).filter(t => t.status === "ongoing" || t.status === "preparation");
-  const results = [];
-  for (const t of active) { results.push({ id: t.id, name: t.name, ...(await pushTournamentToCloud(t.id)) }); }
-  res.json({ ok: results.every(r => r.ok), pushed: results.filter(r => r.ok).length, total: results.length, results });
-});
-// 同期の設定/状態(admin)。
-app.get("/api/sync/status", requireAdmin, (req, res) => {
-  res.json({
-    push_enabled: !!(SYNC_CLOUD_URL && SYNC_KEY),     // この機(本部)からクラウドへ送れるか
-    receive_enabled: !!SYNC_KEY,                       // この機がクラウド受信側か
-    cloud_host: SYNC_CLOUD_URL ? SYNC_CLOUD_URL.replace(/^https?:\/\//, "") : "",
-    last_ok_at: _syncState.last_ok_at, last_error: _syncState.last_error, last_count: _syncState.last_count,
-  });
-});
-
 // ═══ 診断 API (admin 専用) ═══
 // 直近のエラー・リクエスト・サーバー状態を返す
 // 動作状況(メモリ・ディスク・エラー履歴)は内部情報なのでオーナーだけが見る
@@ -5561,15 +5443,4 @@ setInterval(() => {
   } catch (e) { /* 進行中判定の失敗は無視 */ }
 }, SNAPSHOT_INTERVAL_MS).unref();
 
-// クラウド公開ミラーへの自動同期(本部ローカルのみ・SYNC_CLOUD_URL 設定時)。
-// インターネットが生きた間欠で、進行中/準備中の大会をクラウドへ push(失敗=オフラインは黙って次回再試行)。
-if (SYNC_CLOUD_URL && SYNC_KEY) {
-  setInterval(async () => {
-    try {
-      const active = (db.getTournaments() || []).filter(t => t.status === "ongoing" || t.status === "preparation");
-      for (const t of active) { await pushTournamentToCloud(t.id); }
-    } catch (e) { /* オフライン等は無視(次回再試行) */ }
-  }, 3 * 60 * 1000).unref();
-  console.log(`   クラウド同期: 有効(${SYNC_CLOUD_URL.replace(/^https?:\/\//, "")} へ進行中大会を自動push)`);
-}
 } // end if (require.main === module)
