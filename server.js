@@ -9,6 +9,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const crypto = require("crypto");
+const { moveFile } = require("./lib/move-file");
 const { isConfirmedEntry, summarizeEntries } = require("./lib/entry-summary");
 const { spawn } = require("child_process");
 // 子プロセス実行に上限を課す (#20): タイムアウトで SIGKILL し、stdout 肥大も打ち切る。
@@ -3612,7 +3613,7 @@ app.post("/api/settings/seal", requireAdmin, upload.single("seal"), (req, res) =
   fs.mkdirSync(targetDir, { recursive: true });
   const ext = path.extname(req.file.originalname || ".png").toLowerCase() || ".png";
   const dest = path.join(targetDir, "seal" + ext);
-  fs.renameSync(req.file.path, dest);
+  moveFile(req.file.path, dest);   // 一時フォルダと保存先が別のディスクでも保存できる(EXDEV対策)
   // 公開URL
   const url = SEAL_DIR_PERSISTENT
     ? "/uploads/seal" + ext
@@ -3636,7 +3637,7 @@ app.post("/api/settings/logo", requireAdmin, upload.single("logo"), (req, res) =
   fs.mkdirSync(targetDir, { recursive: true });
   const ext = path.extname(req.file.originalname || ".png").toLowerCase() || ".png";
   const dest = path.join(targetDir, "logo" + ext);
-  fs.renameSync(req.file.path, dest);
+  moveFile(req.file.path, dest);   // 一時フォルダと保存先が別のディスクでも保存できる(EXDEV対策)
   const url = SEAL_DIR_PERSISTENT
     ? "/uploads/logo" + ext
     : "/shared/assets/logo" + ext;
