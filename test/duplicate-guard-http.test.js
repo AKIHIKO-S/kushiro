@@ -12,7 +12,6 @@ const { once } = require("node:events");
 process.env.DB_PATH = ":memory:";
 process.env.KTTA_APP_MODE = "entry";
 process.env.ADMIN_KEY = "fixture-dup-guard";
-process.env.PUBLIC_BASE_URL = "https://platform.example.invalid";
 
 const db = require("../db");
 const { app } = require("../server");
