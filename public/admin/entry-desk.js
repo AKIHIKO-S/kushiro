@@ -266,6 +266,7 @@
         onclick: () => app().openAuthedHtmlWindow("/api/tournaments/" + t.id + "/reception.html", "受付名簿_" + (t.name || "")) }, "名簿を印刷"),
       h("button", { class: "ed-btn", type: "button",
         onclick: () => app().openAuthedHtmlWindow("/api/tournaments/" + t.id + "/receipt-print.html", "領収書_" + (t.name || "")) }, "領収書を印刷"),
+      h("button", { class: "ed-btn", type: "button", onclick: () => app().openPlayerMatch(t) }, "選手DBと照合・連携"),
       h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: deletedSheet }, "削除した申込"),
     ];
   }

@@ -1725,6 +1725,18 @@ app.delete("/api/players", requireOwnerStrict, (req, res) => {
 app.get("/api/player-merge/candidates", requireAdmin, (req, res) => {
   res.json(db.findDuplicatePlayerCandidates());
 });
+// 重複候補の「別人(統合しない)」判定: 押した組は以後候補に出さない。取り消しで戻る。
+app.get("/api/player-merge/not-same", requireAdmin, (req, res) => { res.setHeader("Cache-Control", "no-store"); res.json(db.listPlayersNotSame()); });
+app.post("/api/player-merge/not-same", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const r = db.markPlayersNotSame(b.a, b.b, _opCode(req));
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
+app.post("/api/player-merge/not-same/remove", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  res.json(db.unmarkPlayersNotSame(b.a, b.b));
+});
 app.post("/api/players/:id/merge", requireOwner, (req, res) => {
   const operator = ownerAuditCode(req);
   if (!operator) return res.status(400).json({ error: "操作担当コードを入力してください" });
@@ -5037,6 +5049,17 @@ app.get("/api/tournaments/:id/player-matches", requireAdmin, (req, res) => {
 });
 app.post("/api/tournaments/:id/player-matches/rematch", requireAdmin, (req, res) => {
   res.json(db.rematchTournamentPlayers(req.params.id));
+});
+// 申込された選手の選手DB連携(プレビュー→適用)。適用の直前にバックアップを取る。統合(マージ)はしない。
+app.get("/api/tournaments/:id/player-sync/plan", requireAdmin, (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(db.planEntrantPlayerSync(req.params.id));
+});
+app.post("/api/tournaments/:id/player-sync/apply", requireAdmin, backupBeforeBulk, (req, res) => {
+  const b = req.body || {};
+  const r = db.applyEntrantPlayerSync(req.params.id, { expected: b.expected, by: _opCode(req) });
+  if (r.error) return res.status(r.status || 400).json(r);
+  res.json(withBackup(req, r));
 });
 app.post("/api/entrants/:id/player-match", requireAdmin, (req, res) => {
   const b = req.body || {};

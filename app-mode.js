@@ -67,6 +67,8 @@ const ENTRY_MODE_API = [
   [new RegExp(`^${T}/deleted-submissions$`), ["GET", "HEAD"]],
   [/^\/api\/deleted-submissions\/[^/]+\/restore$/, ["POST"]],
   [new RegExp(`^${T}/player-matches(/rematch)?$`)],
+  [new RegExp(`^${T}/player-sync/(plan|apply)$`)],
+  [/^\/api\/player-merge\/(candidates|not-same|not-same\/remove)$/],
   [new RegExp(`^${T}/entrants$`), ["GET", "HEAD"]],   // 一括削除は組合せのやり直し用なので閉じる
   [new RegExp(`^${T}/entrants/(stats|validate)$`)],
   // 申込一覧からの出場者編集

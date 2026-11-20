@@ -3855,8 +3855,38 @@ const A = {
      toast(`${r.rematched}件を照合し直しました`, "ok");
      load();
    });
+   // 申込された選手を選手DBへ連携する(プレビュー→適用)。統合はしない。適用の直前に自動でバックアップを取る。
+   const syncBtn = h("button", { className: "btn", title: "漢字+ふりがなが一致する人は紐づけ、登録が無い人は新しく登録します。先に内容を確認できます" }, "選手DBへ連携(プレビュー)");
+   syncBtn.addEventListener("click", async () => {
+     syncBtn.disabled = true;
+     const p = await api.get(`/api/tournaments/${t.id}/player-sync/plan`);
+     syncBtn.disabled = false;
+     if (!p || p.error) return toast((p && p.error) || "プレビューを作れませんでした", "err");
+     const sm = p.summary || {};
+     const list = (title, items, fmt) => items.length ? h("div", { style: { margin: "10px 0" } },
+       h("div", { style: { fontWeight: "700", fontSize: "13px", marginBottom: "4px" } }, `${title}（${items.length}人）`),
+       h("ul", { style: { margin: 0, paddingLeft: "18px", fontSize: "12.5px", lineHeight: 1.7, maxHeight: "150px", overflow: "auto" } }, ...items.slice(0, 60).map(it => h("li", {}, fmt(it)))),
+       items.length > 60 ? h("div", { className: "text-xs text-sub" }, `ほか ${items.length - 60} 人`) : null) : null;
+     const pb = h("div", {},
+       h("p", { className: "text-sm", style: { lineHeight: 1.7 } },
+         `紐づけ ${sm.link}人・新規登録 ${sm.create}人・人の判断が必要 ${sm.review}人・ふりがななしで対象外 ${sm.no_furigana}人（連携済み ${sm.already}人${sm.team_skipped ? `・団体戦 ${sm.team_skipped}件は対象外` : ""}）`),
+       h("p", { className: "text-xs text-sub", style: { lineHeight: 1.6 } }, "適用すると、紐づけと新規登録だけを行います。似た名前の人・ふりがなのない人・統合(マージ)は行いません。適用の直前に、選手DBのバックアップを自動で取ります。"),
+       list("紐づける", p.link || [], it => `${it.name}（${it.team || "所属なし"}）→ 登録済みの選手 ${it.player_no || ""}`),
+       list("新規登録する", p.create || [], g => `${g.name}（${g.furigana}・${g.team || "所属なし"}）${g.slots.length > 1 ? ` ※${g.slots.length}件の申込を1人にまとめます` : ""}`),
+       list("人の判断が必要(自動では触りません)", p.review || [], it => `${it.name}：${it.reason}`));
+     const go = h("button", { className: "btn", disabled: (sm.link || sm.create) ? null : "" }, "この内容で適用する");
+     const pbg = openModal("選手DBへの連携 — プレビュー", pb, h("div", { className: "flex gap-2" }, go,
+       h("button", { className: "btn btn-ghost", onClick: () => pbg.remove() }, "やめる")), { size: "lg" });
+     go.addEventListener("click", async () => {
+       go.disabled = true;
+       const r = await api.post(`/api/tournaments/${t.id}/player-sync/apply`, { expected: { link: sm.link, create: sm.create } });
+       if (!r || r.error) { go.disabled = false; return toast((r && r.error) || "適用できませんでした", "err"); }
+       toast(`紐づけ ${r.linked}人・新規登録 ${r.created}人を反映しました（バックアップ済み）`, "ok");
+       pbg.remove(); load();
+     });
+   });
    bg = openModal(`選手の照合 — ${t.name}`, body, h("div", { className: "flex gap-2" },
-     again, h("button", { className: "btn btn-ghost", onClick: () => bg.remove() }, "閉じる")), { size: "lg" });
+     syncBtn, again, h("button", { className: "btn btn-ghost", onClick: () => bg.remove() }, "閉じる")), { size: "lg" });
    load();
  },
 
@@ -7875,6 +7905,21 @@ const A = {
  ? `確認待ちの候補が ${groups.length} 組あります。一字違い・所属違いは別人の場合があります。同じ選手だと確認できた組だけオーナーが統合してください。統合元のIDは残り、オーナーの「選手マージ履歴」から取り消せます。`
  : "確認待ちの候補は見つかりませんでした。"));
  groups.forEach((g, gi) => body.appendChild(A._renderMergeGroup(g, gi)));
+ // 「別人(統合しない)」と判断した組。取り消すと重複候補に戻る
+ const nsBox = h("div", { style: { marginTop: "16px", borderTop: "1px solid var(--border)", paddingTop: "10px" } });
+ const loadNs = async () => {
+   const ns = await api.get("/api/player-merge/not-same");
+   const items = (ns && ns.items) || [];
+   nsBox.replaceChildren(h("div", { style: { fontWeight: "700", fontSize: "13px", marginBottom: "6px" } }, `別人と判断済みの組（${items.length}組）`),
+     items.length ? h("div", {}, ...items.map(it => h("div", { className: "flex", style: { alignItems: "center", gap: "8px", padding: "5px 0", fontSize: "12.5px" } },
+       h("span", { style: { flex: "1", minWidth: "0" } }, `${it.a_name || "(削除済み)"}（${it.a_team || "所属なし"}）と ${it.b_name || "(削除済み)"}（${it.b_team || "所属なし"}）`),
+       h("button", { className: "btn btn-sm btn-ghost", title: "別人の判断を取り消し、重複候補に戻します", onClick: async () => {
+         await api.post("/api/player-merge/not-same/remove", { a: it.a, b: it.b });
+         toast("取り消しました。重複候補に戻ります", "ok"); loadNs();
+       } }, "別人の判断を取り消す"))))
+       : h("div", { className: "text-xs text-sub" }, "まだありません"));
+ };
+ body.appendChild(nsBox); loadNs();
  openModal("重複選手の結合", body,
  h("button", { className: "btn btn-ghost", onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる"));
  },
@@ -7955,7 +8000,17 @@ const A = {
  card.appendChild(row);
  });
  card.appendChild(h("div", { className: "text-xs text-sub", style: { margin: "4px 0 8px" } }, "↑ 残す選手 (先に登録された方=古いIDを既定選択)"));
- card.appendChild(h("button", { className: "btn btn-sm", onClick: () => A.doMergeGroup(gi, g) }, "同一選手として承認・統合"));
+ card.appendChild(h("div", { className: "flex gap-2", style: { flexWrap: "wrap" } },
+ h("button", { className: "btn btn-sm", onClick: () => A.doMergeGroup(gi, g) }, "同一選手として承認・統合"),
+ h("button", { className: "btn btn-sm btn-ghost", title: "この2人は別人として記録し、以後この組は重複候補に出しません。取り消しは下の一覧から行えます",
+   onClick: async () => {
+     const ids = g.players.map(p => p.id);
+     if (ids.length !== 2) return toast("2人の組だけ判定できます", "err");
+     const r = await api.post("/api/player-merge/not-same", { a: ids[0], b: ids[1] });
+     if (r && r.error) return toast(r.error, "err");
+     toast("別人として記録しました(統合しません)", "ok");
+     card.remove();
+   } }, "別人(統合しない)")));
  return card;
  },
  async doMergeGroup(gi, g) {

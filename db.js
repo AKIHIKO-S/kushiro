@@ -461,6 +461,15 @@ sqlite.exec(`
     FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
   );
   -- 選手DBの修正/削除 申請 (監督が提出→本部が承認/却下)
+  -- 選手の重複候補で「別人(統合しない)」と人が判断した組。以後その組は重複候補に出さない。取り消し(削除)で候補に戻る。
+  -- 選手の既存のデータ(playersの列)は変えない。a<b の順に並べて持つ。
+  CREATE TABLE IF NOT EXISTS player_not_same (
+    a TEXT NOT NULL,
+    b TEXT NOT NULL,
+    by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (a, b)
+  );
   CREATE TABLE IF NOT EXISTS player_requests (
     id TEXT PRIMARY KEY,
     coach_id TEXT NOT NULL,
@@ -2205,9 +2214,11 @@ function findDuplicatePlayerCandidates() {
     created_at: p.created_at || "", player_no: p.player_no || "" });
   const groups = [];
   const byName = new Map(), byMask = new Map(), seen = new Set();
+  // 「別人(統合しない)」と判断済みの組は候補に出さない
+  const notSame = new Set(sqlite.prepare("SELECT a, b FROM player_not_same").all().map(r => r.a + "|" + r.b));
   const addPair = (p, q, reason) => {
     const key = [p.id, q.id].sort().join("|");
-    if (seen.has(key)) return;
+    if (seen.has(key) || notSame.has(key)) return;
     seen.add(key);
     groups.push({ reason, players: [slim(p), slim(q)] });
   };
@@ -12408,7 +12419,7 @@ function resolveEntrantPlayerMatch(entrantId, slot, action, opts) {
   const pm = _readPlayerMatch(e);
   const m = pm[slot] || { name: isPartner ? e.partner_name : e.name, furigana: "" };
   const name = m.name || (isPartner ? e.partner_name : e.name);
-  const furi = String(m.furigana || "").trim();
+  const furi = String(m.furigana || (isPartner ? e.partner_furigana : e.furigana) || "").trim();
   let player = null;
   const tx = sqlite.transaction(() => {
     if (action === "link") {
@@ -12450,6 +12461,107 @@ function resolveEntrantPlayerMatch(entrantId, slot, action, opts) {
   catch (err) { return { error: err.message, status: err.status || 400 }; }
   return { ok: true, slot, match: pm[slot], player: player ? getPlayer(player.id) : null };
 }
+
+// ── 重複候補の「別人(統合しない)」判定 ──
+function markPlayersNotSame(idA, idB, by) {
+  const a = resolvePlayerId(String(idA || "")), b = resolvePlayerId(String(idB || ""));
+  if (!a || !b || a === b) return { error: "選手を2人指定してください" };
+  const have = id => sqlite.prepare("SELECT 1 FROM players WHERE id=?").get(id);
+  if (!have(a) || !have(b)) return { error: "選手が見つかりません" };
+  const [x, y] = [a, b].sort();
+  sqlite.prepare("INSERT OR IGNORE INTO player_not_same (a, b, by) VALUES (?,?,?)").run(x, y, String(by || "").slice(0, 40));
+  return { ok: true, a: x, b: y };
+}
+function unmarkPlayersNotSame(idA, idB) {
+  const [x, y] = [String(idA || ""), String(idB || "")].sort();
+  const r = sqlite.prepare("DELETE FROM player_not_same WHERE a=? AND b=?").run(x, y);
+  return { ok: true, removed: r.changes };
+}
+function listPlayersNotSame() {
+  const rows = sqlite.prepare(`SELECT n.a, n.b, n.by, n.created_at, pa.name AS a_name, pa.team AS a_team, pa.player_no AS a_no,
+      pb.name AS b_name, pb.team AS b_team, pb.player_no AS b_no
+    FROM player_not_same n LEFT JOIN players pa ON pa.id=n.a LEFT JOIN players pb ON pb.id=n.b
+    ORDER BY n.created_at DESC LIMIT 500`).all();
+  return { items: rows };
+}
+
+// ── 申込された選手の選手DBへの連携(プレビュー→適用) ──
+// ・確定済みの申込(取消・却下・承認待ちを除く)の、個人戦・ダブルスの選手だけが対象(団体戦のメンバーは読みが無いので対象外)
+// ・ふりがなが無い人は対象外(重複結合は「ふりがな+漢字の両方一致」だけという規則のため、読みの無い登録を増やさない)
+// ・照合: 漢字+ふりがなが1人だけ一致=紐づけ / 登録が見つからず近い名前もない=新規登録 / 近い候補がある・出場歴ありと回答=人が判断
+// ・統合(マージ)はしない。判断が要るものは既存の「選手照合」で人が決める
+function planEntrantPlayerSync(tournamentId) {
+  const rows = sqlite.prepare(`SELECT * FROM entrants WHERE tournament_id=? AND COALESCE(status,'confirmed')='confirmed'
+    AND (team_members IS NULL OR team_members='')`).all(String(tournamentId || ""));
+  const pool = _loadPlayerMatchPool();
+  const plan = { link: [], create: [], review: [], no_furigana: [], already: 0, team_skipped: 0 };
+  const createGroups = new Map();
+  for (const e of rows) {
+    if (entrantMembers(e).length) { plan.team_skipped++; continue; }
+    const pm = _readPlayerMatch(e);
+    const slots = [{ slot: "p1", name: e.name, furi: (pm.p1 && pm.p1.furigana) || e.furigana || "", team: e.team, region: e.region, linked: e.player_id }];
+    if (e.is_doubles && String(e.partner_name || "").trim()) {
+      slots.push({ slot: "p2", name: e.partner_name, furi: (pm.p2 && pm.p2.furigana) || e.partner_furigana || "", team: e.partner_team, region: e.partner_region, linked: e.partner_player_id });
+    }
+    for (const s of slots) {
+      if (s.linked) { plan.already++; continue; }
+      if (pm[s.slot] && PLAYER_MATCH_DONE.has(pm[s.slot].status)) { plan.already++; continue; }   // 人が判断済み
+      const item = { entrant_id: e.id, slot: s.slot, event: e.event, name: normalizeName(s.name), furigana: String(s.furi || "").trim(), team: s.team || "" };
+      if (!_normFuri(s.furi)) { plan.no_furigana.push(item); continue; }
+      const r = matchPersonToPlayers({ name: s.name, furi: s.furi, first_time: pm[s.slot] && pm[s.slot].first_time }, pool);
+      if (r.status === "matched") { plan.link.push({ ...item, player_id: r.player_id, player_no: (r.candidates[0] || {}).player_no || "" }); continue; }
+      const fresh = (r.status === "new") || (r.status === "review" && !(r.candidates || []).length && (r.first_time !== "no"));
+      if (fresh) {
+        const key = _playerNameKey(s.name) + "|" + _normFuri(s.furi);
+        if (!createGroups.has(key)) createGroups.set(key, { name: item.name, furigana: item.furigana, team: item.team, region: s.region || "", gender: "", category: e.category, slots: [] });
+        createGroups.get(key).slots.push({ entrant_id: e.id, slot: s.slot, event: e.event });
+        continue;
+      }
+      plan.review.push({ ...item, reason: r.reason || "", candidates: (r.candidates || []).slice(0, 3) });
+    }
+  }
+  plan.create = [...createGroups.values()];
+  return {
+    ok: true,
+    summary: { link: plan.link.length, create: plan.create.length, review: plan.review.length, no_furigana: plan.no_furigana.length,
+      already: plan.already, team_skipped: plan.team_skipped },
+    ...plan,
+  };
+}
+
+// 適用: プレビューと同じ内容を作り直して、その場で反映する。expected が違えば(プレビュー後に変わった)中止。
+// 呼び出し側(サーバー)が適用の直前にバックアップを取る。
+function applyEntrantPlayerSync(tournamentId, opts) {
+  opts = opts || {};
+  const plan = planEntrantPlayerSync(tournamentId);
+  const exp = opts.expected || {};
+  if (exp.link != null && (exp.link !== plan.summary.link || exp.create !== plan.summary.create)) {
+    return { error: "プレビューのあとで申込や選手DBが変わりました。もう一度プレビューしてから適用してください。", status: 409 };
+  }
+  let linked = 0, created = 0;
+  const by = String(opts.by || "").slice(0, 40);
+  const tx = sqlite.transaction(() => {
+    for (const it of plan.link) {
+      const r = resolveEntrantPlayerMatch(it.entrant_id, it.slot, "link", { player_id: it.player_id, by });
+      if (r.error) throw Object.assign(new Error(r.error), { status: r.status || 400 });
+      linked++;
+    }
+    for (const g of plan.create) {
+      const first = g.slots[0];
+      const r0 = resolveEntrantPlayerMatch(first.entrant_id, first.slot, "create", { by });
+      if (r0.error) throw Object.assign(new Error(r0.error), { status: r0.status || 400 });
+      created++;
+      const pid = r0.player && r0.player.id;
+      for (const s of g.slots.slice(1)) {
+        const r = resolveEntrantPlayerMatch(s.entrant_id, s.slot, "link", { player_id: pid, by });
+        if (r.error) throw Object.assign(new Error(r.error), { status: r.status || 400 });
+      }
+    }
+  });
+  try { tx(); } catch (e) { return { error: e.message, status: e.status || 400 }; }
+  return { ok: true, linked, created, review_left: plan.summary.review, no_furigana: plan.summary.no_furigana };
+}
+
 
 function findCrossGroupDuplicates(tournamentId) {
   const rows = sqlite.prepare(`SELECT e.*, s.team_name AS sub_team FROM entrants e
@@ -15369,7 +15481,7 @@ module.exports = {
   createEntry, createTeamEntry, getEntries,
   setEntrantStatus, setEntrantSeed, setEntrantEntryRound, suggestSeeds,
   // Phase4: 申込者本人の閲覧トークン + データ品質
-  getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII, deleteSubmission, divisionLabelFor, eventFeeText, findSameApplicantSubmission, isNameEnteredInEvent, getReceiptTeams, listDeletedSubmissions, restoreDeletedSubmission,
+  getSubmissionByToken, getSubmissionById, resolveSubmissionToken, deleteSubmissionPII, purgeOldSubmissionPII, deleteSubmission, markPlayersNotSame, unmarkPlayersNotSame, listPlayersNotSame, planEntrantPlayerSync, applyEntrantPlayerSync, divisionLabelFor, eventFeeText, findSameApplicantSubmission, isNameEnteredInEvent, getReceiptTeams, listDeletedSubmissions, restoreDeletedSubmission,
   importPlayerRegistry, getEntryDeskList, getEntryDesk, syncPlayerRegistry, planPlayerRegistrySync, registryFromSheetRows,
   matchPersonToPlayers, getPlayerMatchReview, resolveEntrantPlayerMatch, rematchTournamentPlayers,
   resolveFieldConfig, DEFAULT_FIELD_CONFIG, fieldLabelOf, sanitizeFieldConfig,
