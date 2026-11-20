@@ -85,8 +85,9 @@ test("運営アカウントの招待・ログイン・再設定・停止を本�
   assert.equal((await who(legacy)).kind, "key");
   assert.equal((await who(owner)).principal_type, "owner");
   assert.deepEqual(await who(""), { authenticated: false });
-  // メール設定の値(送信サーバー・アカウント等)は画面へ返さない
-  const mail = await (await request("/api/mail/status", { cookie: legacy })).json();
+  // メール設定の値(送信サーバー・アカウント等)は画面へ返さない。状態の確認も管理設定の一部なのでオーナーだけ
+  assert.equal((await request("/api/mail/status", { cookie: legacy })).status, 401);
+  const mail = await (await request("/api/mail/status", { cookie: owner })).json();
   assert.deepEqual(Object.keys(mail).sort(), ["enabled", "notify_configured"]);
   // 動作状況(診断)はオーナーだけ
   assert.equal((await request("/api/diagnostics", { cookie: legacy })).status, 401);
