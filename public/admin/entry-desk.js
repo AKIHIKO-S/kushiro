@@ -68,7 +68,7 @@
   }
 
   // ── 状態 ──
-  const S = { view: "", tid: "", data: null, q: "", only: "all", picked: "", sort: "", dir: 1, ev: "", drawer: null, backBar: null, root: null, main: null, listBox: null };
+  const S = { view: "", tid: "", data: null, q: "", only: "all", picked: "", sort: "", dir: 1, ev: "", lq: "", lsort: "", lstate: "all", drawer: null, backBar: null, root: null, main: null, listBox: null };
 
   function ensureRoot() {
     if (S.root) return;
@@ -138,16 +138,46 @@
       if (t.state === "before") return [day + "・受付はまだ始めていません"];
       return [day + "・受付を終えました"];
     };
+    // 大会の一覧: 名前で探す・状態で絞る・並べ替え(既定は受付中→受付前→終了の順)
+    const LSORTS = [["", "標準の順(受付中が先)"], ["date_desc", "大会日が新しい順"], ["date_asc", "大会日が古い順"], ["deadline", "締切が近い順"],
+      ["name", "大会名の順"], ["entries", "出場が多い順"]];
+    const listBox = h("div", {});
+    const renderTl = () => {
+      const q = S.lq.trim();
+      let items = d.items.filter(t => (S.lstate === "all" || t.state === S.lstate) && (!q || String(t.name || "").indexOf(q) >= 0));
+      const by = {
+        date_desc: (a, b) => String(b.date || "").localeCompare(String(a.date || "")),
+        date_asc: (a, b) => String(a.date || "9999").localeCompare(String(b.date || "9999")),
+        deadline: (a, b) => String(a.deadline || "9999").localeCompare(String(b.deadline || "9999")),
+        name: (a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ja"),
+        entries: (a, b) => (b.entries || 0) - (a.entries || 0),
+      }[S.lsort];
+      if (by) items = items.slice().sort(by);
+      listBox.textContent = "";
+      listBox.append(items.length
+        ? h("div", { class: "ed-tl" }, items.map(t => h("a", { class: "ed-tl__row", href: "#desk/" + encodeURIComponent(t.id) },
+          h("span", { class: "ed-tl__name" }, t.name || "(名前なし)"),
+          h("span", { class: "ed-tl__meta" }, meta(t)),
+          h("span", { class: "ed-tl__count" }, h("b", { class: "ed-num" }, t.entries), "出場・確定申込 " + t.teams + "件"))))
+        : h("div", { class: "ed-tl" }, h("p", { class: "ed-empty" }, d.items.length ? "条件に合う大会は見つかりません。" : "まだ大会がありません。「大会をつくる」から始めてください。")));
+    };
+    const count = (st) => d.items.filter(t => st === "all" || t.state === st).length;
+    const chip = (v, label) => { const b = h("button", { class: "ed-chip", type: "button", "aria-pressed": String(S.lstate === v),
+      onclick: () => { S.lstate = v; showList.chips.forEach(c => c.setAttribute("aria-pressed", String(c.dataset.v === v))); renderTl(); } }, label, h("b", { class: "ed-num" }, count(v))); b.dataset.v = v; return b; };
+    showList.chips = [chip("all", "すべて"), chip("open", "受付中"), chip("before", "受付前"), chip("closed", "終了")];
     S.main.textContent = "";
     S.main.append(
       h("div", { class: "ed-head" }, h("h1", {}, "受付する大会を選ぶ"),
         h("div", {}, h("button", { class: "ed-btn ed-btn--main", type: "button", onclick: () => app().newTournament() }, "大会をつくる"))),
-      d.items.length
-        ? h("div", { class: "ed-tl" }, d.items.map(t => h("a", { class: "ed-tl__row", href: "#desk/" + encodeURIComponent(t.id) },
-          h("span", { class: "ed-tl__name" }, t.name || "(名前なし)"),
-          h("span", { class: "ed-tl__meta" }, meta(t)),
-          h("span", { class: "ed-tl__count" }, h("b", { class: "ed-num" }, t.entries), "出場・確定申込 " + t.teams + "件"))))
-        : h("div", { class: "ed-tl" }, h("p", { class: "ed-empty" }, "まだ大会がありません。「大会をつくる」から始めてください。")));
+      d.items.length > 1 ? h("div", { class: "ed-tools" },
+        h("div", { class: "ed-find" }, h("input", { class: "ed-search", type: "search", value: S.lq, placeholder: "大会名で探す", "aria-label": "大会を探す",
+          oninput: (e) => { S.lq = e.target.value; renderTl(); } })),
+        h("div", { class: "ed-filters" }, showList.chips,
+          h("label", { class: "ed-sel" }, h("span", {}, "並び順"),
+            h("select", { "aria-label": "大会の並び順", onchange: (e) => { S.lsort = e.target.value; renderTl(); } },
+              LSORTS.map(o => h("option", { value: o[0], selected: S.lsort === o[0] ? "" : null }, o[1])))))) : null,
+      listBox);
+    renderTl();
   }
 
   // ── その他(既存の画面への入口) ──
