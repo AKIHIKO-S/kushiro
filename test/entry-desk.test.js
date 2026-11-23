@@ -116,8 +116,24 @@ test("存在しない大会は error", () => {
 test("種目の略称: 表の見出しに収まる短い名前。重なるときは先頭6字", () => {
   const { shortEventName } = require("../public/admin/entry-desk.js");
   const all = ["一般男子シングルス", "中学女子シングルス", "男子ダブルス", "混合ダブルス", "団体戦", "男子団体"];
-  assert.deepStrictEqual(all.map(n => shortEventName(n, all)), ["一般男", "中学女", "男D", "混D", "団体", "男団体"]);
+  assert.deepStrictEqual(all.map(n => shortEventName(n, all)), ["一般男", "中学女", "男D", "混D", "団体戦", "男団体戦"]);
   assert.strictEqual(shortEventName("ラージボール"), "ラージボー", "当たらないものは先頭5字");
   const clash = ["一般男子シングルスA", "一般男子シングルスB"];
   assert.deepStrictEqual(clash.map(n => shortEventName(n, clash)), ["一般男子シン", "一般男子シン"]);
+});
+
+test("取り消しは「元に戻す」で復元できる(確認ダイアログなしの取り消しの裏付け)", () => {
+  const t = tournament("取消戻し大会", true, "2099-11-20");
+  const sid = apply(t, "取消戻しクラブ", [
+    { event: "一般男子シングルス", type: "singles", name: "戻し 太郎", furigana: "もどし たろう", team: "取消戻しクラブ" },
+    { event: "一般女子シングルス", type: "singles", name: "戻し 花子", furigana: "もどし はなこ", team: "取消戻しクラブ" },
+  ]);
+  const ids = () => db.getSubmissionEditView(sid, { admin: true }).entries.map(e => e.entry_id);
+  const before = ids();
+  const c = db.editSubmission(sid, { entries: before.map(id => ({ entrant_id: id, cancel: true })), reason: "運営が取り消し" }, { actor: "admin" });
+  assert.ok(!c.error, c.error);
+  assert.strictEqual(db.getEntryDesk(t.id).totals.entries, 0);
+  const r = db.editSubmission(sid, { entries: before.map(id => ({ entrant_id: id, restore: true })), reason: "取り消しを元に戻した" }, { actor: "admin" });
+  assert.ok(!r.error, r.error);
+  assert.strictEqual(db.getEntryDesk(t.id).totals.entries, 2, "戻すと出場数が元に戻る");
 });

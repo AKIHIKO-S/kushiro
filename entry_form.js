@@ -25,7 +25,7 @@ function _formPreamble(tournament, opts, events) {
         + (m[4] || "");
     })(),
     paymentNote: opts.payment_note ||
-      "参加料は、大会当日の開会式前に受付でお支払いください。",
+      "参加料は、大会当日、本部席裏でお支払いください。",
     notes: opts.notes || "",
     tournName: escapeHtml(tournament.name || ""),
     tournDate: (() => {
@@ -1320,7 +1320,7 @@ ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v
 </div>
 ${closedNotice}
 <p><a href="/entry/status?tournament=${encodeURIComponent(tournament.id)}" target="_top" class="st-link" style="display:inline-flex;align-items:center;min-height:44px">申込済みの方：申込番号で追加・修正する</a></p>
-<p class="st-note" style="font-size:13px;line-height:1.7;margin:0 0 12px">送信すると申込番号(申込ID)を発行し、控えメールにも記載します。あとから修正・種目の追加をするときはこの番号が必要です。修正した内容は同じ申込に上書きされます。同じ選手を同じ種目に重ねて申し込むことはできません。</p>
+<p class="st-note" style="font-size:13px;line-height:1.7;margin:0 0 12px">送信すると申込番号を発行し、控えメールにも記載します。あとから修正・種目の追加をするときはこの番号が必要です。修正した内容は同じ申込に上書きされます。同じ選手を同じ種目に重ねて申し込むことはできません。</p>
 
 ${closedReason ? "" : `<div class="form-section xl-import" id="xlImport">
   <h2><span class="en" aria-hidden="true">EXCEL</span>Excelで一括入力</h2>
@@ -1337,11 +1337,11 @@ ${closedReason ? "" : `<div class="form-section xl-import" id="xlImport">
 <form id="entryForm" onsubmit="return submitForm(event)">
 
 <div class="form-section">
-  <h2><span class="en" aria-hidden="true">CONTACT</span>申込責任者・連絡先</h2>
+  <h2><span class="en" aria-hidden="true">CONTACT</span>申込者・連絡先</h2>
   <div class="form-row">
     ${stdTextField('team_name', '団体名', 'team_name', 'text', '例: ○○高校 / □□クラブ')}
     <div>
-      <label>申込責任者 (氏名) ${reqSpan}</label>
+      <label>申込者 (氏名) ${reqSpan}</label>
       <input type="text" name="contact_name" required>
     </div>
   </div>
@@ -2230,7 +2230,7 @@ function buildSummaryText(data) {
   lines.push("━━━━━━━━━━━━━━━━━━");
   lines.push("合計: ¥" + (data.total_amount || 0).toLocaleString("ja-JP"));
   lines.push("");
-  lines.push("※当日、開会式前に受付で参加料をお支払いください。");
+  lines.push("※当日、本部席裏で参加料をお支払いください。");
   return lines.join("\\n");
 }
 
@@ -2264,7 +2264,7 @@ function showConfirmModal(data) {
         '送信前に内容をご確認ください。修正する場合は「戻る」を押してください。</div>' +
       '<table>' +
       '<tr><td class="label">団体</td><td class="val">' + escapeHtml(data.team_name || "") + '</td></tr>' +
-      '<tr><td class="label">担当者</td><td class="val">' + escapeHtml(data.contact_name || "") + '</td></tr>' +
+      '<tr><td class="label">申込者</td><td class="val">' + escapeHtml(data.contact_name || "") + '</td></tr>' +
       (data.contact_tel ? '<tr><td class="label">電話</td><td class="val">' + escapeHtml(data.contact_tel) + '</td></tr>' : '') +
       (data.contact_email ? '<tr><td class="label">メール</td><td class="val">' + escapeHtml(data.contact_email) + '</td></tr>' : '') +
       '</table>' +
@@ -2367,7 +2367,7 @@ async function submitForm(e) {
       const statusUrl = token ? appOrigin + "/entry/status?tournament=" + encodeURIComponent(TOURNAMENT_ID) : "";
       const tokenBlock = token ? (
         '<div class="ticket">' +
-          '<div class="ticket-label">申込番号(申込ID)</div>' +
+          '<div class="ticket-label">申込番号</div>' +
           '<div class="ticket-code">' + escapeHtml(token) + '</div>' +
           '<div class="ticket-note">申込内容の確認・修正・種目の追加には、この申込番号が必要です。修正内容はこの申込に上書きされます。' +
             (statusUrl ? '' : '控えメールにも記載しています。') + '</div>' +
@@ -3184,7 +3184,7 @@ function buildApplicantStatusHTML() {
       <dl class="meta">
         <dt>大会</dt><dd id="rTournament"></dd>
         <dt>申込団体</dt><dd id="rTeam"></dd>
-        <dt>担当者</dt><dd id="rContact"></dd>
+        <dt>申込者</dt><dd id="rContact"></dd>
         <dt>申込日時</dt><dd id="rDate"></dd>
       </dl>
     </div>

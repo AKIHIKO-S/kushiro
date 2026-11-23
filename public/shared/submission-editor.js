@@ -179,7 +179,7 @@
 
     html += '<section class="se-sec"><h4>申込者・団体</h4>';
     html += input("c.team_name", L.team_name || "団体名", s.team_name || "");
-    html += input("c.contact_name", L.contact_name || "申込責任者", s.contact_name || "");
+    html += input("c.contact_name", L.contact_name || "申込者", s.contact_name || "");
     if (admin) {
       html += input("c.contact_tel", L.contact_tel || "電話番号", s.contact_tel || "", { type: "tel" });
       html += input("c.contact_email", L.contact_email || "メールアドレス", s.contact_email || "", { type: "email" });

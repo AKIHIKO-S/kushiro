@@ -1847,6 +1847,8 @@ const A = {
  // モード切替の2つのボタン。ヘッダーと、申込の受付画面(受付台帳)の上部の両方に置く(受付画面ではヘッダーが隠れるため)
  buildModeSwitch() {
    const box = h("span", { className: "admin-mode", role: "group", "aria-label": "運営アプリのモード" });
+   // モードの切替はオーナー権限のアカウントだけ。一般の運営アカウントには出さない(サーバー側でも拒否する)
+   if (!(A.session && A.session.owner)) { box.hidden = true; return box; }
    const mk = (mode, label, beta) => {
      const on = (A.entryOnly ? "entry" : "full") === mode;
      const b = h("button", { type: "button", "aria-pressed": on ? "true" : "false",
@@ -1870,8 +1872,9 @@ const A = {
  renderModeSwitch() {
    const box = document.getElementById("adminMode");
    if (!box) return;
-   box.replaceChildren(...A.buildModeSwitch().childNodes);
-   box.hidden = false;
+   const sw = A.buildModeSwitch();
+   box.replaceChildren(...sw.childNodes);
+   box.hidden = !!sw.hidden;
  },
  renderWho(session) {
    const box = document.getElementById("adminWho");
@@ -1884,6 +1887,8 @@ const A = {
    box.hidden = false;
    out.hidden = false;
    A.session = { kind: session.kind, label: name, role, owner: session.principal_type === "owner" };
+   A.renderModeSwitch();   // 権限が分かったので、切替の表示を作り直す
+   if (window.EntryDesk && window.EntryDesk.refresh) { try { window.EntryDesk.refresh(); } catch (_) {} }
  },
  // メールのアカウントでも管理キーでも、同じ DELETE でセッションを閉じる
  async logout() {

@@ -11,7 +11,7 @@
     const n = String(name || "").replace(/\s+/g, "");
     if (!n) return "";
     const sex = /混合|ミックス/.test(n) ? "混" : /女子|女性/.test(n) ? "女" : /男子|男性/.test(n) ? "男" : "";
-    if (/団体/.test(n)) return sex + "団体";
+    if (/団体/.test(n)) return sex + "団体戦";
     if (/ダブルス|複/.test(n)) return sex + "D";
     const lv = (n.match(/^(一般|中学|高校|小学|大学|シニア|ジュニア|カデット|ホープス|カブ|バンビ|ユース|ラージ|壮年|成年|教員|家庭婦人|レディース)/) || [])[1];
     if (/シングルス|単/.test(n) && sex) return (lv || "") + sex;
@@ -26,7 +26,7 @@
   if (typeof module === "object" && module.exports) { module.exports = { shortEventName }; return; }
 
   const doc = root.document;
-  const ROUTE = { web: "Web", excel: "Excel", manual: "手入力" };
+  const ROUTE = { web: "ウェブ申込", excel: "Excel取込", manual: "本部で入力" };
   const WD = "日月火水木金土";
   const isPC = () => root.matchMedia("(min-width:960px)").matches;
   const store = {
@@ -96,7 +96,7 @@
         h("span", { class: "ed-top__org" }, "釧路卓球協会", h("small", { lang: "en" }, "KUSHIRO TABLE TENNIS ASSOCIATION"))),
       h("span", { class: "ed-top__sub" }, isFull() ? "大会運営(ベータ版)" : "申込の受付"),
       (app().buildBell ? app().buildBell() : null),   // 通知の鈴(新しい申込・変更の数)
-      (app().buildModeSwitch ? app().buildModeSwitch() : null),   // 申込集計 / 大会運営(ベータ版) の切替
+      (app().buildModeSwitch ? (() => { const sw = app().buildModeSwitch(); return sw && sw.hidden ? null : sw; })() : null),   // 申込集計 / 大会運営(ベータ版) の切替
       h("nav", { class: "ed-top__nav", "aria-label": "主な画面" }, nav),
       who());
   }
@@ -167,7 +167,7 @@
         ? h("div", { class: "ed-tl" }, items.map(t => h("a", { class: "ed-tl__row", href: (isFull() ? "#t/" : "#desk/") + encodeURIComponent(t.id) },
           h("span", { class: "ed-tl__name" }, t.name || "(名前なし)"),
           h("span", { class: "ed-tl__meta" }, meta(t)),
-          h("span", { class: "ed-tl__count" }, h("b", { class: "ed-num" }, t.entries), "出場・確定申込 " + t.teams + "件"))))
+          h("span", { class: "ed-tl__count" }, h("b", { class: "ed-num" }, t.entries), "出場確定・" + t.teams + "団体"))))
         : h("div", { class: "ed-tl" }, h("p", { class: "ed-empty" }, d.items.length ? "条件に合う大会は見つかりません。" : (isFull() ? "まだ大会がありません。大会は「申込集計」モードでつくります。" : "まだ大会がありません。「大会をつくる」から始めてください。"))));
     };
     const count = (st) => d.items.filter(t => st === "all" || t.state === st).length;
@@ -375,7 +375,7 @@
     if (S.sort === key) { if (S.dir === first) S.dir = -first; else { S.sort = ""; S.dir = 1; } } else { S.sort = key; S.dir = first; }
     renderDesk();
   }
-  const SORTS = [["", "団体名の順"], ["name", "団体名"], ["entries", "確定出場の多い順"], ["received", "受付の新しい順"], ["issues", "確認事項の多い順"]];
+  const SORTS = [["", "団体名の順"], ["name", "団体名"], ["entries", "出場確定数の多い順"], ["received", "受付の新しい順"], ["issues", "要確認の多い順"]];
   const tagOf = (i) => h("span", { class: "ed-tag " + (i.type === "dup" ? "ed-tag--dup" : "ed-tag--warn") }, i.title);
 
   function headBox() {
@@ -411,9 +411,9 @@
     const routeN = (k) => d.rows.filter(r => r.route === k).length;
     const chip = (v, label, n, extra) => h("button", { class: "ed-chip" + (extra || ""), type: "button", "aria-pressed": String(S.only === v),
       onclick: () => { S.only = v; renderDesk(); } }, label, h("b", { class: "ed-num" }, n));
-    const chips = [chip("all", "すべて", d.rows.length), chip("warn", "確認", d.rows.filter(r => r.issues.length).length, " ed-chip--warn")];
-    if (routeN("excel")) chips.push(chip("excel", "Excel", routeN("excel")));
-    if (routeN("manual")) chips.push(chip("manual", "手入力", routeN("manual")));
+    const chips = [chip("all", "すべて", d.rows.length), chip("warn", "要確認", d.rows.filter(r => r.issues.length).length, " ed-chip--warn")];
+    if (routeN("excel")) chips.push(chip("excel", "Excel取込", routeN("excel")));
+    if (routeN("manual")) chips.push(chip("manual", "本部で入力", routeN("manual")));
     const search = h("input", { class: "ed-search", type: "search", value: S.q, placeholder: "団体名・氏名で探す", "aria-label": "申込を探す",
       oninput: (e) => { S.q = e.target.value; renderList(); } });
     S.listBox = h("div", {});
@@ -430,6 +430,7 @@
             h("select", { "aria-label": "並び順", onchange: (e) => { const v = e.target.value; S.sort = v; S.dir = (v === "name" || v === "") ? 1 : -1; renderDesk(); } },
               SORTS.map(o => h("option", { value: o[0], selected: S.sort === o[0] ? "" : null }, o[1])),
               S.sort.indexOf("ev:") === 0 ? h("option", { value: S.sort, selected: "" }, S.sort.slice(3) + "の多い順") : null)))),
+      h("p", { class: "ed-flow" }, h("b", {}, "申込の流れ"), " 受付（申込が届く）→ 確認（要確認を直す）→ 出場確定（出場数に入る）"),
       d.unlinked ? h("p", { class: "ed-routes" }, "申込番号のない出場（取込や以前の画面で入れた分）が " + d.unlinked + " 件あります。合計には入っていますが、団体の行には出ません。") : null,
       S.listBox,
     ]);
@@ -463,7 +464,7 @@
       rows.length ? null : empty));
     box.append(h("div", { class: "ed-totals ed-num" },
       d.events.map(e => h("div", {}, h("span", {}, e.short), h("b", {}, e.count))),
-      h("div", {}, h("span", {}, "確定出場 計"), h("b", {}, d.totals.entries))));
+      h("div", {}, h("span", {}, "出場確定 計"), h("b", {}, d.totals.entries))));
     box.append(h("div", { class: "ed-mobile-links ed-btns" },
       h("button", { class: "ed-btn", type: "button", onclick: copyUrl }, "申込URLをコピー"),
       h("button", { class: "ed-btn", type: "button", onclick: openForm }, "フォーム設定")));
@@ -477,16 +478,16 @@
         h("td", {}, r.team_name || "(団体名なし)"),
         d.events.map(e => { const c = count(r, e.name); return h("td", { class: "num" + (c ? "" : " zero") }, c || "−"); }),
         h("td", { class: "num sum" }, r.entries), h("td", {}, ROUTE[r.route] || ""), h("td", { class: "num" }, jpDate(r.received_at)),
-        h("td", {}, r.issues.length ? h("span", { class: "ed-tag " + (r.issues.some(i => i.type === "dup") ? "ed-tag--dup" : "ed-tag--warn") }, r.issues.length + "件") : ""));
+        h("td", { class: "ed-issuecell" }, r.issues.length ? h("span", { class: "ed-tag " + (r.issues.some(i => i.type === "dup") ? "ed-tag--dup" : "ed-tag--warn"), title: r.issues.map(i => i.title).join(" / ") }, r.issues[0].title + (r.issues.length > 1 ? " ほか" + (r.issues.length - 1) + "件" : "")) : ""));
     };
     box.append(h("div", { class: "ed-wrap" },
       h("div", { class: "ed-table", tabindex: "0", "aria-label": "申込の台帳" },
         rows.length ? h("table", {},
-          h("thead", {}, h("tr", {}, h("th", { scope: "col", class: "ed-sortable", "aria-sort": sortAria("name"), onclick: () => sortBy("name"), title: "押すと団体名で並べ替え" }, "団体" + sortMark("name")),
+          h("thead", {}, h("tr", {}, h("th", { scope: "col", class: "ed-sortable", "aria-sort": sortAria("name"), onclick: () => sortBy("name"), title: "押すと団体名で並べ替え" }, "団体名" + sortMark("name")),
             d.events.map(e => h("th", { scope: "col", class: "ed-ev ed-sortable" + gxClass(e.name), title: e.name + "(押すと、この種目の多い順に並べ替え)", "aria-label": e.name, "aria-sort": sortAria("ev:" + e.name), onclick: () => sortBy("ev:" + e.name) }, e.name + sortMark("ev:" + e.name))),
-            h("th", { scope: "col", class: "ed-sortable", "aria-sort": sortAria("entries"), onclick: () => sortBy("entries") }, "確定出場" + sortMark("entries")), h("th", { scope: "col" }, "経路"), h("th", { scope: "col", class: "ed-sortable", "aria-sort": sortAria("received"), onclick: () => sortBy("received") }, "受付" + sortMark("received")), h("th", { scope: "col", class: "ed-sortable", "aria-sort": sortAria("issues"), onclick: () => sortBy("issues") }, "確認" + sortMark("issues")))),
+            h("th", { scope: "col", class: "ed-sortable", "aria-sort": sortAria("entries"), onclick: () => sortBy("entries") }, "出場確定数" + sortMark("entries")), h("th", { scope: "col" }, "受付方法"), h("th", { scope: "col", class: "ed-sortable", "aria-sort": sortAria("received"), onclick: () => sortBy("received") }, "受付日" + sortMark("received")), h("th", { scope: "col", class: "ed-sortable", "aria-sort": sortAria("issues"), onclick: () => sortBy("issues") }, "要確認" + sortMark("issues")))),
           h("tbody", {}, rows.map(tr)),
-          h("tfoot", {}, h("tr", {}, h("td", {}, "確定申込 " + d.totals.teams + "件"),
+          h("tfoot", {}, h("tr", {}, h("td", {}, "申込 " + d.totals.teams + "団体"),
             d.events.map(e => h("td", { class: "num" }, e.count)), h("td", { class: "num" }, d.totals.entries), h("td", {}), h("td", {}), h("td", {}))))
           : h("div", { style: "padding:0 12px" }, empty)),
       h("div", { class: "ed-pc-out ed-btns" }, outButtons())));
@@ -574,7 +575,7 @@
     const t = tournamentObj();
     const live = r.players.filter(p => p.status !== "cancelled");
     return [
-      h("p", { class: "ed-sub" }, [r.contact_name ? "連絡者 " + r.contact_name : "", jpDate(r.received_at) + " 受付", ROUTE[r.route] || ""].filter(Boolean).join("・")),
+      h("p", { class: "ed-sub" }, [r.contact_name ? "申込者 " + r.contact_name : "", jpDate(r.received_at) + " 受付", ROUTE[r.route] || ""].filter(Boolean).join("・")),
       (r.mail || []).map(m => h("p", { class: "ed-sub" },
         (m.recipient === "admin" ? "運営通知" : "申込者控え") + "：" +
         ({ pending: "送信待ち", sending: "送信中", sent: "メールサーバー受付済み", failed: "送信失敗", skipped: "送信対象外" }[m.state] || "未確認"))),
@@ -584,7 +585,7 @@
       eventGroups(r),
       h("div", { class: "ed-btns" },
         h("button", { class: "ed-btn ed-btn--main", type: "button", onclick: () => { closeSheet(); app().openSubmissionEdit(t, r.submission_id, reload); } }, "内容を直す"),
-        live.length ? h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: () => cancelAsk(r, live) }, "この申込を取り消す") : null,
+        live.length ? h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: () => cancelNow(r, live) }, "この申込を取り消す") : null,
         live.length ? h("button", { class: "ed-btn", type: "button",
           onclick: () => app().openAuthedHtmlWindow("/api/tournaments/" + t.id + "/receipt-print.html?team=" + encodeURIComponent(r.team_name || ""), "領収書_" + (r.team_name || "")) }, "この団体の領収書を印刷") : null),
       h("div", { class: "ed-danger" },
@@ -593,70 +594,68 @@
     ];
   }
 
-  async function resend(r, i, btn) {
-    btn.disabled = true;
-    const url = "/api/submissions/" + r.submission_id + "/mail-resend";
-    let res = null;
-    try { res = await api().post(url, { recipient: i.recipient }); } catch (_) {}
-    if (!res || res.error) { btn.disabled = false; return toast((res && res.error) || "送れませんでした", "err"); }
-    toast("メールの再送を予約しました", "ok");
-    closeSheet();
-    reload();
+  // 元に戻せない操作だけ、対象の名前を入れた確認を出す。戻せる操作(取り消し・保存)は確認なしで行い、画面下に「元に戻す」を数秒出す。
+  function confirmSheet(title, text, okLabel, onOk, danger) {
+    const go = h("button", { class: "ed-btn" + (danger ? " ed-btn--danger" : " ed-btn--main"), type: "button" }, okLabel);
+    sheet(title, [
+      h("p", { class: "ed-sub", style: "margin:8px 0 14px" }, text),
+      h("div", { class: "ed-btns" }, go, h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: () => closeSheet() }, "やめる")),
+    ]);
+    go.addEventListener("click", async () => { go.disabled = true; const ok = await onOk(); if (ok === false) go.disabled = false; });
+  }
+  // 画面下の「◯◯しました [元に戻す]」。数秒で消える
+  let undoBox = null, undoTimer = null;
+  function undoToast(msg, onUndo) {
+    if (undoBox) { undoBox.remove(); clearTimeout(undoTimer); }
+    const b = h("button", { class: "ed-btn ed-btn--quiet", type: "button" }, "元に戻す");
+    undoBox = h("div", { class: "ed-undo", role: "status" }, h("span", {}, msg), b);
+    doc.body.append(undoBox);
+    const close = () => { if (undoBox) { undoBox.remove(); undoBox = null; } clearTimeout(undoTimer); };
+    b.addEventListener("click", async () => { b.disabled = true; const ok = await onUndo(); close(); if (ok !== false) toast("元に戻しました", "ok"); });
+    undoTimer = root.setTimeout(close, 9000);
   }
 
-  // 取り消し: 団体名と出場数を見せ、理由を書いてから。全出場を1つの変更として取り消す
-  function cancelAsk(r, live) {
-    const reason = h("input", { type: "text", maxlength: "200", placeholder: "例: 電話で取り消しの連絡あり" });
-    const go = h("button", { class: "ed-btn ed-btn--danger", type: "button" }, "取り消す");
-    const body = [
-      h("p", { class: "ed-sub" }, (r.team_name || "(団体名なし)") + " の出場 " + live.length + " 件をすべて取り消します。取り消した出場は数から外れ、シートにも「取消」と送ります。"),
-      h("label", { class: "ed-field" }, "取り消す理由", reason),
-      h("div", { class: "ed-btns", style: "margin-top:14px" }, go,
-        h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: () => closeSheet() }, "やめる")),
-    ];
-    sheet("この申込を取り消す", body);
-    go.addEventListener("click", async () => {
-      const why = reason.value.trim();
-      if (!why) { reason.focus(); return toast("取り消す理由を書いてください", "err"); }
-      go.disabled = true;
+  async function resend(r, i, btn) {
+    confirmSheet("メールを再送します", (r.team_name || "(団体名なし)") + " の" + (i.recipient === "admin" ? "運営通知" : "申込者控え") + "メールを、もう一度送ります。送ったメールは取り消せません。", "再送する", async () => {
+      btn.disabled = true;
+      const url = "/api/submissions/" + r.submission_id + "/mail-resend";
       let res = null;
-      try {
-        res = await api().put("/api/submissions/" + r.submission_id,
-          { entries: live.map(p => ({ entrant_id: p.entrant_id, cancel: true })), reason: why });
-      } catch (_) {}
-      if (!res || res.error) { go.disabled = false; return toast((res && res.error) || "取り消せませんでした", "err"); }
-      toast("取り消しました", "ok");
+      try { res = await api().post(url, { recipient: i.recipient }); } catch (_) {}
+      if (!res || res.error) { btn.disabled = false; toast((res && res.error) || "送れませんでした", "err"); return false; }
+      toast("メールの再送を予約しました", "ok");
       closeSheet();
       reload();
     });
   }
 
-  // 削除: 団体名・出場数を見せ、理由を書き、団体名を打ち直して確かめてから。削除前の中身は控えに残る
+  // 取り消し: 戻せる操作なので確認は出さず、すぐ取り消して「元に戻す」を出す。全出場を1つの変更として取り消す
+  async function cancelNow(r, live) {
+    const name = r.team_name || "(団体名なし)";
+    const ids = live.map(p => p.entrant_id);
+    let res = null;
+    try { res = await api().put("/api/submissions/" + r.submission_id, { entries: ids.map(id => ({ entrant_id: id, cancel: true })), reason: "運営が取り消し" }); } catch (_) {}
+    if (!res || res.error) return toast((res && res.error) || "取り消せませんでした", "err");
+    closeDrawer(true);
+    await reload();
+    undoToast(name + " の申込を取り消しました", async () => {
+      let r2 = null;
+      try { r2 = await api().put("/api/submissions/" + r.submission_id, { entries: ids.map(id => ({ entrant_id: id, restore: true })), reason: "取り消しを元に戻した" }); } catch (_) {}
+      if (!r2 || r2.error) { toast((r2 && r2.error) || "戻せませんでした", "err"); return false; }
+      reload();
+    });
+  }
+
+  // 削除: 元に戻せない操作として、対象名入りの確認を出す(削除前の中身は控えに残り「削除した申込」から戻せる)
   function deleteAsk(r) {
     const name = r.team_name || "(団体名なし)";
-    const reason = h("input", { type: "text", maxlength: "200", placeholder: "例: 同じ団体から二重に届いたため" });
-    const confirmBox = h("input", { type: "text", autocomplete: "off", placeholder: r.team_name ? "団体名を入力" : "「削除」と入力" });
-    const word = r.team_name ? r.team_name : "削除";
-    const go = h("button", { class: "ed-btn ed-btn--danger", type: "button", disabled: "" }, "削除する");
-    confirmBox.addEventListener("input", () => { go.disabled = confirmBox.value.trim() !== word; });
-    sheet("この申込を削除する", [
-      h("p", { class: "ed-sub" }, name + " の申込（出場 " + r.players.length + " 件）を台帳から削除します。削除前の内容は控えに残り、「削除した申込」から元に戻せます。"),
-      h("label", { class: "ed-field" }, "削除する理由", reason),
-      h("label", { class: "ed-field" }, "確認のため「" + word + "」と入力してください", confirmBox),
-      h("div", { class: "ed-btns", style: "margin-top:14px" }, go,
-        h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: () => closeSheet() }, "やめる")),
-    ]);
-    go.addEventListener("click", async () => {
-      const why = reason.value.trim();
-      if (!why) { reason.focus(); return toast("削除する理由を書いてください", "err"); }
-      go.disabled = true;
+    confirmSheet(name + " の申込を削除します", "出場 " + r.players.length + " 件を台帳から削除します。削除前の内容は控えに残り、「削除した申込」から元に戻せます。", "削除する", async () => {
       let res = null;
-      try { res = await api().post("/api/submissions/" + r.submission_id + "/delete", { reason: why }); } catch (_) {}
-      if (!res || res.error) { go.disabled = false; return toast((res && res.error) || "削除できませんでした", "err"); }
+      try { res = await api().post("/api/submissions/" + r.submission_id + "/delete", { reason: "運営が削除" }); } catch (_) {}
+      if (!res || res.error) { toast((res && res.error) || "削除できませんでした", "err"); return false; }
       toast("削除しました。「削除した申込」から戻せます", "ok");
       closeSheet(); closeDrawer(true);
       reload();
-    });
+    }, true);
   }
 
   // 削除した申込の一覧と、元に戻す操作

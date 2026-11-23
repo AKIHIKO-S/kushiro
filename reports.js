@@ -243,7 +243,7 @@ function buildAggregationXlsx(tournament, entrants, opts) {
 
   // ─── シート 2: 選手名簿 (申込団体ごとに種目別) ───
   const rosterRows = [
-    ["申請団体", "申込責任者", null, "団体",  null, null, null, null,
+    ["申請団体", "申込者", null, "団体",  null, null, null, null,
      "ダブルス", null, null, null, null, null, null, null,
      "ミックス", null, null, null],
     [null, null, null,

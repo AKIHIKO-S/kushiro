@@ -333,3 +333,12 @@ html[data-app-mode="full"] .op-tools-body { background: var(--st-paper); border:
   html[data-app-mode="full"] .ed-top__nav { flex: 1 0 100%; margin-left: 0; border-top: 1px solid var(--st-line); order: 9; }
   html[data-app-mode="full"] .ed-top__who { order: 5; }
 }
+
+.ed-flow { margin: 0; padding: 0 var(--gut) 8px; font-size: 13px; color: var(--st-mute); }
+.ed-flow b { color: var(--st-ink); margin-right: 6px; }
+.ed-issuecell { white-space: normal !important; text-align: left !important; min-width: 120px; }
+
+/* 画面下の「取り消しました [元に戻す]」 */
+.ed-undo { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 1100; display: flex; align-items: center; gap: 12px;
+  max-width: calc(100% - 24px); padding: 8px 8px 8px 16px; background: var(--st-ink); color: var(--st-paper); border-radius: 4px; box-shadow: 0 10px 30px -10px rgba(14,30,55,.5); font-size: 15px; }
+.ed-undo .ed-btn { min-height: 44px; background: var(--st-paper); color: var(--st-navy); border-color: var(--st-paper); font-weight: 800; }

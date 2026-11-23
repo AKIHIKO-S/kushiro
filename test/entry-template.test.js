@@ -57,7 +57,7 @@ test("① 列はフォーム設定どおり(隠した項目は出さない・必
   // 申込者シート: 隠した顧問・コーチは出さない
   const cws = XLSX.read(buf, { type: "buffer" }).Sheets["申込者"];
   const labels = [4, 5, 6, 7, 8, 9].map(r => (cws[XLSX.utils.encode_cell({ r, c: 0 })] || {}).v).filter(Boolean);
-  assert.deepStrictEqual(labels, ["団体名（必須）", "申込責任者（氏名）（必須）", "電話番号（必須）", "メールアドレス（必須）", "引率顧問"]);
+  assert.deepStrictEqual(labels, ["団体名（必須）", "申込者（氏名）（必須）", "電話番号（必須）", "メールアドレス（必須）", "引率顧問"]);
 });
 
 test("② 記入したテンプレを読むと種目ごとの行が返る(列の並べ替えにも強い)", () => {
@@ -165,4 +165,17 @@ test("⑤ 学年の列はフォームと同じ並びのドロップダウン。�
   assert.ok(!r.error, r.error);
   const rows = JSON.stringify(r);
   assert.ok(rows.includes("中2") && rows.includes("中学2年生"));
+});
+
+test("以前の呼び名「申込責任者（氏名）」のテンプレートも読める", () => {
+  const buf = buildEntryTemplate({ tournament: T, events: EVENTS, fieldConfig: CFG });
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const ws = wb.Sheets["申込者"];
+  const addr = Object.keys(ws).find(k => k[0] !== "!" && String(ws[k].v).startsWith("申込者（氏名）"));
+  assert.ok(addr, "新しい呼び名の見出し");
+  ws[addr].v = "申込責任者（氏名）（必須）";
+  const row = XLSX.utils.decode_cell(addr).r;
+  ws[XLSX.utils.encode_cell({ r: row, c: 1 })] = { t: "s", v: "旧 担当" };
+  const r = readEntryTemplate(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }), { events: EVENTS, fieldConfig: CFG });
+  assert.strictEqual(r.contact && r.contact.contact_name, "旧 担当");
 });

@@ -9745,7 +9745,7 @@ const _ENTRY_FIELD_LABELS = {
   partner_name: "氏名2", partner_team: "所属2", partner_furigana: "ふりがな2", status: "状態", age_group: "区分",
 };
 const _CONTACT_FIELD_LABELS = {
-  team_name: "団体名", contact_name: "申込責任者", contact_tel: "電話番号", contact_email: "メールアドレス",
+  team_name: "団体名", contact_name: "申込者", contact_tel: "電話番号", contact_email: "メールアドレス",
   supervisor: "引率顧問", advisor: "顧問", coach: "コーチ", answers: "申込全体の回答",
 };
 
@@ -10266,7 +10266,7 @@ function editSubmission(submissionId, patch, opts) {
         nx.answers[k] = typeof v === "string" ? v.slice(0, 300) : v;
       });
     }
-    if (!nx.contact_name && !(actor === "admin" && sub.source === "admin")) return { error: "申込責任者の氏名を入力してください" };
+    if (!nx.contact_name && !(actor === "admin" && sub.source === "admin")) return { error: "申込者の氏名を入力してください" };
     if (nx.contact_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nx.contact_email)) return { error: "メールアドレスの形式が正しくありません" };
     if (nx.contact_tel && !/^[0-9+\-() ]+$/.test(nx.contact_tel)) return { error: "電話番号は数字とハイフンで入力してください" };
     if (actor !== "admin") {
@@ -11342,7 +11342,7 @@ function _enforceRequiredFields(t, formData, entries) {
     return base;
   };
   // 連絡先は常に必須(責任者名・電話・メール)
-  if (miss(formData.contact_name)) return "申込責任者名を入力してください";
+  if (miss(formData.contact_name)) return "申込者名を入力してください";
   if (miss(formData.contact_tel)) return "連絡先(電話番号)を入力してください";
   if (miss(formData.contact_email)) return "メールアドレスを入力してください";
   if (F.team_name === "required" && miss(formData.team_name)) return "団体名を入力してください";

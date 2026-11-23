@@ -99,6 +99,12 @@ const signatureHtml = `<div style="margin-top:28px;font-size:13px;line-height:1.
   </div>
 </div>`;
 
+// 「2026-11-30」「2026-11-30 17:00」→「11月30日」。読めなければ空文字
+function jpMonthDay(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || "").trim());
+  return m ? `${Number(m[2])}月${Number(m[3])}日` : "";
+}
+const PAY_PLACE = "本部席裏";
 function formatYen(n) {
   const v = parseInt(n) || 0;
   return `¥${v.toLocaleString("ja-JP")}`;
@@ -261,14 +267,25 @@ async function sendConfirmationEmail(opts) {
 
   const subject = `【${tournName}】申込を受け付けました`;
 
+  // 冒頭の要点(3行)。詳細はこの下に続く。文字版とHTML版で同じ文言を使う
+  const deadlineMd = jpMonthDay(deadline);
+  const keyPoints = [
+    "申込を受け付けました。",
+    total > 0 ? `当日は${PAY_PLACE}で ${(parseInt(total) || 0).toLocaleString("ja-JP")}円 をお支払いください。` : `参加料は、当日${PAY_PLACE}でお支払いください。`,
+    token ? (deadlineMd ? `申込内容の変更は ${deadlineMd} まで、この申込番号で行えます。` : "申込内容の変更は、この申込番号で行えます。") : "",
+  ].filter(Boolean);
+
   const text = [
     `${contactName} 様`,
+    ``,
+    `【要点】`,
+    ...keyPoints.map(l => `  ・${l}`),
     ``,
     `この度は ${tournName} へお申込みいただきありがとうございます。`,
     `下記の内容で承りました。`,
     ``,
     token ? `─────────────────────` : "",
-    token ? `■ 申込番号: ${token}（申込ID）` : "",
+    token ? `■ 申込番号: ${token}` : "",
     token ? `  申込内容の確認・修正・種目の追加には、この申込番号が必要です。` : "",
     token ? `  修正した内容は、この申込番号の申込に上書きされます(新しい申込にはなりません)。` : "",
     token ? `  同じ選手を同じ種目に改めて申し込むと、重複のため受け付けられません。` : "",
@@ -282,8 +299,8 @@ async function sendConfirmationEmail(opts) {
     venue ? `  会場: ${venue}` : "",
     ``,
     `■ お申込者`,
-    `  所属: ${teamName}`,
-    `  担当者: ${contactName}`,
+    `  団体名: ${teamName}`,
+    `  申込者: ${contactName}`,
     contactTel ? `  電話: ${contactTel}` : "",
     `  メール: ${toEmail}`,
     supervisor ? `  引率顧問: ${supervisor}` : "",
@@ -302,7 +319,8 @@ async function sendConfirmationEmail(opts) {
     ``,
     `─────────────────────`,
     `■ 参加料お支払い`,
-    `  大会当日、開会式前に受付でお支払いください。`,
+    `  大会当日、${PAY_PLACE}でお支払いください。`,
+    `  ※当日のキャンセル・欠席による参加料の返金はできかねますのでご了承ください。`,
     ``,
     signatureText,
   ].filter(s => s !== undefined && s !== null).join("\n");
@@ -313,6 +331,10 @@ async function sendConfirmationEmail(opts) {
     <div style="font-size:12px;color:#a16207;letter-spacing:2px;font-weight:bold;">KUSHIRO TABLE TENNIS ASSOCIATION</div>
     <h1 style="font-size:20px;margin:4px 0 16px;color:#7c2d12;">申込を受け付けました</h1>
   </div>
+  <div style="margin:0 0 16px;padding:14px 16px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;">
+    <div style="font-size:12px;font-weight:bold;color:#9a3412;letter-spacing:1px;margin-bottom:6px;">要点</div>
+    <ul style="margin:0;padding-left:20px;font-size:15px;line-height:1.9;font-weight:bold;">${keyPoints.map(l => `<li>${esc(l)}</li>`).join("")}</ul>
+  </div>
   <p style="line-height:1.7;">
     <strong>${esc(contactName)}</strong> 様<br><br>
     この度は <strong>${esc(tournName)}</strong> へお申込みいただきありがとうございます。<br>
@@ -320,7 +342,7 @@ async function sendConfirmationEmail(opts) {
   </p>
 
   ${token ? `<div style="margin:18px 0;padding:16px;border:2px dashed #b91c1c;border-radius:10px;text-align:center;background:#fffdf8;">
-    <div style="font-size:11px;letter-spacing:2px;color:#b91c1c;font-weight:bold;">申込番号(申込ID)</div>
+    <div style="font-size:11px;letter-spacing:2px;color:#b91c1c;font-weight:bold;">申込番号</div>
     <div style="font-size:24px;font-weight:bold;letter-spacing:2px;font-family:monospace;margin:4px 0;">${esc(token)}</div>
     <div style="font-size:12px;color:#57534e;line-height:1.7;">申込内容の確認・修正・種目の追加には、この申込番号が必要です。<br>修正した内容はこの申込に上書きされます(新しい申込にはなりません)。大切に保管してください。</div>
     ${statusUrl ? `<div style="margin-top:10px;"><a href="${esc(statusUrl)}" style="display:inline-block;padding:9px 18px;background:#b91c1c;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold;font-size:13px;">申込内容を確認する →</a></div>` : ""}
@@ -335,8 +357,8 @@ async function sendConfirmationEmail(opts) {
 
   <h2 style="font-size:14px;border-left:4px solid #b91c1c;padding-left:8px;margin:24px 0 12px;">お申込者情報</h2>
   <table style="font-size:14px;line-height:1.8;">
-    <tr><td style="color:#78716c;padding-right:12px;">所属:</td><td>${esc(teamName)}</td></tr>
-    <tr><td style="color:#78716c;padding-right:12px;">担当:</td><td>${esc(contactName)}</td></tr>
+    <tr><td style="color:#78716c;padding-right:12px;">団体名:</td><td>${esc(teamName)}</td></tr>
+    <tr><td style="color:#78716c;padding-right:12px;">申込者:</td><td>${esc(contactName)}</td></tr>
     ${contactTel ? `<tr><td style="color:#78716c;padding-right:12px;">電話:</td><td>${esc(contactTel)}</td></tr>` : ""}
     <tr><td style="color:#78716c;padding-right:12px;">メール:</td><td>${esc(toEmail)}</td></tr>
     ${supervisor ? `<tr><td style="color:#78716c;padding-right:12px;">引率顧問:</td><td>${esc(supervisor)}</td></tr>` : ""}
@@ -365,7 +387,7 @@ async function sendConfirmationEmail(opts) {
 
   <h2 style="font-size:14px;border-left:4px solid #b91c1c;padding-left:8px;margin:24px 0 12px;">参加料お支払いについて</h2>
   <p style="font-size:14px;line-height:1.7;background:#fff7ed;padding:12px;border-radius:4px;">
-    大会当日、開会式前に受付でお支払いください。<br>
+    大会当日、${PAY_PLACE}でお支払いください。<br>
     ※当日のキャンセル・欠席による参加料の返金はできかねますのでご了承ください。
   </p>
 

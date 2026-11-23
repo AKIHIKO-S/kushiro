@@ -172,10 +172,12 @@ test("実サーバ: 既定は申込集計モード。閉じた入口は案内さ
   const list = await fetch(BASE + `/api/tournaments/${c.id}/submissions`, { headers: adm }).then(r => r.json());
   assert.strictEqual(list.rows.length, 1);
 
-  // 元に戻す: 運営の通常権限で切り替えられ、データはそのまま(オーナー確認は要らない)
+  // 元に戻す: オーナー権限だけが切り替えられ(一般の運営は不可)、データはそのまま
   assert.ok([401, 403].includes((await fetch(BASE + "/api/app-mode", { method: "PUT", headers: { "Content-Type": "application/json" }, body: '{"mode":"full"}' })).status), "ログインなしでは切り替えられない");
-  assert.strictEqual((await fetch(BASE + "/api/app-mode", { method: "PUT", headers: adm, body: '{"mode":"bad"}' })).status, 400);
-  assert.strictEqual((await fetch(BASE + "/api/app-mode", { method: "PUT", headers: adm, body: '{"mode":"full"}' })).status, 200);
+  const own = { ...adm, "X-Owner-Key": OWNER };
+  assert.ok([401, 403].includes((await fetch(BASE + "/api/app-mode", { method: "PUT", headers: adm, body: '{"mode":"full"}' })).status), "一般の運営(管理キーだけ)は切り替えられない");
+  assert.strictEqual((await fetch(BASE + "/api/app-mode", { method: "PUT", headers: own, body: '{"mode":"bad"}' })).status, 400);
+  assert.strictEqual((await fetch(BASE + "/api/app-mode", { method: "PUT", headers: own, body: '{"mode":"full"}' })).status, 200);
   assert.strictEqual((await noFollow("/viewer")).status, 200, "大会運営モードでは閲覧画面に戻る");
   assert.strictEqual((await noFollow("/entry")).headers.get("location"), "/viewer");
   const pub = await fetch(BASE + "/api/public/tournaments");

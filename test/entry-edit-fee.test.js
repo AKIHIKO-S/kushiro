@@ -75,7 +75,7 @@ test("申込者は連絡先を直せる。電話・メールは伏せ字で見�
   assert.strictEqual(a.submission.supervisor, "引率 次子");
   // 履歴は「どの項目を変えたか」だけ。値は残さない
   const ch = db.listEntryChanges(a.tournament.id).find(c => c.kind === "contact");
-  assert.ok(ch && ch.after.fields.includes("申込責任者"));
+  assert.ok(ch && ch.after.fields.includes("申込者"));
   assert.ok(!JSON.stringify(ch).includes("担当 二郎"), "連絡先の値は履歴に残さない");
 });
 

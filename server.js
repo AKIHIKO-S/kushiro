@@ -4087,8 +4087,8 @@ app.post("/api/admin/snapshots/restore", requireOwner, (req, res) => {
 // ─── オーナー (上級管理者) 専用ルート ───────────────────────────
 // 鍵検証だけを行う(UIのロック解除に使用)。成功で操作可能を示す。
 app.get("/api/owner/verify", requireOwner, (req, res) => res.json({ ok: true }));
-// 運営アプリのモード切替。運営アカウントの通常権限でできる(オーナー確認は要らない)。データは消えない。
-app.put("/api/app-mode", requireAdmin, (req, res) => {
+// 運営アプリのモード切替。オーナー権限のアカウント(またはオーナーキー)だけができる。一般の運営アカウントは不可(2026-11-23 オーナー決定)。データは消えない。
+app.put("/api/app-mode", requireOwner, (req, res) => {
   const mode = String((req.body && req.body.mode) || "");
   if (!appMode.MODES.includes(mode)) return res.status(400).json({ error: "mode は full / entry のどちらかです" });
   if (appMode.MODES.includes(process.env.KTTA_APP_MODE)) {
