@@ -23,6 +23,11 @@ function setup() {
   db.updateEntrySettings(t.id, { entries_open: 1, entry_deadline: "", event_config: EVENTS });
   return db.getTournament(t.id);
 }
+// 削除は取り消し済みの申込だけ(2段階)。テストでは出場をすべて取り消してから削除する
+function cancelAll(tid, sid) {
+  db.getEntryDesk(tid).rows.find(x => x.submission_id === sid)
+    .players.forEach(p => db.updateEntrant(p.entrant_id, { status: "cancelled" }));
+}
 function apply(t, team, names) {
   const r = db.createTeamEntry(t.id, {
     team_name: team, contact_name: "連絡 担当", contact_tel: "0154-00-0000", contact_email: "del@example.com",
@@ -38,6 +43,10 @@ test("削除→控えが残る→元に戻せる。他の団体は変わらな�
   const b = apply(t, "見本中学校", ["見本 花子"]);
   assert.strictEqual(db.getEntryDesk(t.id).rows.length, 2);
 
+  const early = db.deleteSubmission(a, { reason: "二重申込のため", operator: "OP1" });
+  assert.ok(early.error && early.need_cancel, "取り消す前は削除できない(2段階)");
+  assert.strictEqual(db.getEntryDesk(t.id).rows.length, 2, "拒否されたら何も消えない");
+  cancelAll(t.id, a);
   const r = db.deleteSubmission(a, { reason: "二重申込のため", operator: "OP1" });
   assert.ok(r.ok, r.error);
   assert.strictEqual(r.entrants, 2);
@@ -55,7 +64,7 @@ test("削除→控えが残る→元に戻せる。他の団体は変わらな�
   assert.ok(back.ok, back.error);
   const d2 = db.getEntryDesk(t.id);
   assert.strictEqual(d2.rows.length, 2);
-  assert.strictEqual(d2.rows.find(x => x.submission_id === a).entries, 2);
+  assert.strictEqual(d2.rows.find(x => x.submission_id === a).players.length, 2, "出場は取り消し済みのまま復元される");
   assert.ok(db.restoreDeletedSubmission(list[0].id).error, "二重に戻せない");
 });
 

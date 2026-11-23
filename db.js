@@ -9184,6 +9184,8 @@ function deleteSubmission(submissionId, opts = {}) {
     `SELECT COUNT(*) c FROM matches WHERE player1_entrant_id IN (${ents.map(() => "?").join(",")}) OR player2_entrant_id IN (${ents.map(() => "?").join(",")})`
   ).get(...ents.map(e => e.id), ...ents.map(e => e.id)).c : 0;
   if (used) return { error: "組合せに入っている出場があるため、この申込は削除できません。" };
+  // 2段階: 先に「取り消し」(出場を数から外す)をしてから削除する。生きている出場が残る申込は消さない
+  if (ents.some(e => e.status !== "cancelled")) return { error: "先に取り消してください。取り消し済みの申込だけ削除できます。", need_cancel: true };
   const snap = {
     submission: sub,
     entrants: ents,

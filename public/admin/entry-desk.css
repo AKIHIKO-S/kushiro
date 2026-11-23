@@ -357,3 +357,21 @@ html[data-app-mode="full"] .op-tools-body { background: var(--st-paper); border:
 .ed-foot { padding: 6px var(--gut) 40px; text-align: right; }
 .ed-link { min-height: 44px; padding: 0 4px; background: none; border: 0; color: var(--st-mute); font: inherit; font-size: 14px; text-decoration: underline; cursor: pointer; }
 .ed-link:hover { color: var(--st-navy); }
+
+/* まとめて操作(選ぶ → 取り消す → 取り消し済みだけ削除) */
+.ed-pick { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; cursor: pointer; flex: none; }
+.ed-pick input { width: 20px; height: 20px; accent-color: var(--st-navy); cursor: pointer; }
+.ed-rowwrap { display: flex; align-items: stretch; border-bottom: 1px solid var(--st-line); }
+.ed-rowwrap .ed-row { border-bottom: 0; flex: 1; min-width: 0; }
+.ed-rowwrap.is-sel { background: var(--st-sky); }
+.ed-tcell { display: inline-flex; align-items: center; gap: 2px; }
+.ed-tcell .ed-pick { min-width: 36px; min-height: 36px; margin-left: -8px; }
+.ed-cxl { margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--st-mute); }
+.is-cancelled-row .ed-row__team, .is-cancelled-row td:first-child { color: var(--st-mute); }
+.ed-table tr[aria-selected="true"] td { background: var(--st-sky); }
+.ed-bulk { margin: 0 var(--gut) 10px; padding: 10px 12px; border: 1px solid var(--st-navy); background: var(--st-sky); }
+.ed-bulk--idle { border: 0; background: none; padding: 0 0 6px; text-align: right; }
+.ed-bulk__n { font-size: 16px; color: var(--st-navy); }
+.ed-bulk .ed-btns { margin-top: 8px; }
+.ed-bulk__note { margin: 8px 0 0; }
+.ed-btn[disabled] { opacity: .45; cursor: not-allowed; }

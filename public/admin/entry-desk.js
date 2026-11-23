@@ -68,7 +68,7 @@
   }
 
   // ── 状態 ──
-  const S = { view: "", tid: "", data: null, q: "", only: "all", picked: "", sort: "", dir: 1, ev: "", lq: "", lsort: "", lstate: "all", drawer: null, backBar: null, root: null, main: null, listBox: null };
+  const S = { view: "", tid: "", data: null, q: "", only: "all", picked: "", sort: "", dir: 1, ev: "", lq: "", lsort: "", lstate: "all", drawer: null, backBar: null, root: null, main: null, listBox: null, sel: new Set() };
 
   function ensureRoot() {
     if (S.root) return;
@@ -469,10 +469,83 @@
   }
   function count(r, ev) { return (r.by_event && r.by_event[ev]) || 0; }
 
+  // ── まとめて操作(2段階): 選ぶ → 取り消す → 取り消し済みだけ削除できる ──
+  const liveOf = (r) => r.players.filter(p => p.status !== "cancelled");
+  const isCancelledRow = (r) => !liveOf(r).length;   // 生きている出場がない = 取り消し済み(削除できる)
+  const selRows = () => S.data.rows.filter(r => S.sel.has(r.submission_id));
+  function bulkBar(rows) {
+    const chosen = selRows();
+    const toCancel = chosen.filter(r => !isCancelledRow(r));
+    const toDelete = chosen.filter(isCancelledRow);
+    if (!chosen.length) {
+      return rows.length ? h("div", { class: "ed-bulk ed-bulk--idle" },
+        h("button", { class: "ed-link", type: "button", onclick: () => { rows.forEach(r => S.sel.add(r.submission_id)); renderList(); } }, "表示中の申込をまとめて選ぶ")) : h("span", {});
+    }
+    return h("div", { class: "ed-bulk", role: "region", "aria-label": "選んだ申込をまとめて操作" },
+      h("b", { class: "ed-bulk__n" }, chosen.length + "件を選択中"),
+      h("div", { class: "ed-btns" },
+        h("button", { class: "ed-btn ed-btn--quiet", type: "button", disabled: toCancel.length ? null : "", onclick: () => cancelMany(toCancel) },
+          toCancel.length ? "取り消す(" + toCancel.length + "件)" : "取り消せる申込なし"),
+        h("button", { class: "ed-btn ed-btn--danger", type: "button", disabled: toDelete.length ? null : "", onclick: () => deleteMany(toDelete) },
+          toDelete.length ? "削除する(" + toDelete.length + "件)" : "削除する"),
+        h("button", { class: "ed-btn", type: "button", onclick: () => { S.sel.clear(); renderList(); } }, "選択をやめる")),
+      h("p", { class: "ed-sub ed-bulk__note" }, toDelete.length === chosen.length
+        ? "選んだ申込は取り消し済みです。削除できます(削除前の内容は控えに残り、あとで戻せます)。"
+        : "削除できるのは、先に取り消した申込だけです。" + (toDelete.length ? "いま選んだ中の取り消し済み " + toDelete.length + " 件だけが削除の対象になります。" : "")));
+  }
+  const nameList = (rs) => rs.slice(0, 5).map(r => r.team_name || "(団体名なし)").join("、") + (rs.length > 5 ? " ほか" + (rs.length - 5) + "件" : "");
+  // まとめて取り消し: 戻せる操作なので確認は出さず、すぐ取り消して「元に戻す」を出す
+  async function cancelMany(rs) {
+    const done = [];
+    for (const r of rs) {
+      const ids = liveOf(r).map(p => p.entrant_id);
+      let res = null;
+      try { res = await api().put("/api/submissions/" + r.submission_id, { entries: ids.map(id => ({ entrant_id: id, cancel: true })), reason: "運営がまとめて取り消し" }); } catch (_) {}
+      if (res && !res.error) done.push({ sid: r.submission_id, ids });
+    }
+    S.sel.clear();
+    closeDrawer(true);
+    await reload();
+    if (done.length < rs.length) toast((rs.length - done.length) + "件は取り消せませんでした", "err");
+    if (!done.length) return;
+    undoToast(done.length + "件の申込を取り消しました", async () => {
+      let bad = 0;
+      for (const d of done) {
+        let r2 = null;
+        try { r2 = await api().put("/api/submissions/" + d.sid, { entries: d.ids.map(id => ({ entrant_id: id, restore: true })), reason: "取り消しを元に戻した" }); } catch (_) {}
+        if (!r2 || r2.error) bad++;
+      }
+      if (bad) { toast(bad + "件は戻せませんでした", "err"); return false; }
+      reload();
+    });
+  }
+  // まとめて削除: 元に戻せない操作として対象名入りの確認を出す。削除前の中身は申込ごとに控えへ残る(既存の控え・元に戻す機能)
+  function deleteMany(rs) {
+    confirmSheet(rs.length + "件の申込を削除します", nameList(rs) + " を台帳から削除します。削除前の内容は申込ごとに控えに残り、画面下の「削除した申込を見る」から元に戻せます。", "削除する", async () => {
+      let ok = 0, ng = 0, why = "";
+      for (const r of rs) {
+        let res = null;
+        try { res = await api().post("/api/submissions/" + r.submission_id + "/delete", { reason: "運営がまとめて削除" }); } catch (_) {}
+        if (res && !res.error) ok++; else { ng++; why = (res && res.error) || why; }
+      }
+      S.sel.clear();
+      closeSheet(); closeDrawer(true);
+      toast(ok + "件を削除しました。「削除した申込」から戻せます" + (ng ? "(" + ng + "件は削除できませんでした" + (why ? ": " + why : "") + ")" : ""), ng ? "err" : "ok");
+      reload();
+    }, true);
+  }
+
   function renderList() {
     const d = S.data, box = S.listBox;
     box.textContent = "";
     const rows = visible();
+    // 選択は、いま台帳にある申込だけ残す(削除・取り消しの後の取り残しを防ぐ)
+    const alive = new Set(d.rows.map(r => r.submission_id));
+    [...S.sel].forEach(id => { if (!alive.has(id)) S.sel.delete(id); });
+    const pick = (r) => h("label", { class: "ed-pick", title: "まとめて操作する申込を選ぶ", onclick: (e) => e.stopPropagation() },
+      h("input", { type: "checkbox", checked: S.sel.has(r.submission_id) ? "" : null, "aria-label": (r.team_name || "(団体名なし)") + " を選ぶ",
+        onchange: (e) => { if (e.target.checked) S.sel.add(r.submission_id); else S.sel.delete(r.submission_id); renderList(); } }));
+    box.append(bulkBar(rows));
     const empty = d.rows.length
       ? h("div", { class: "ed-empty" }, h("p", { style: "margin:0 0 8px" }, "条件に合う申込は見つかりません。"),
         h("button", { class: "ed-btn", type: "button", onclick: () => { S.q = ""; S.only = "all"; S.ev = ""; renderDesk(); } }, "条件を消す"))
@@ -480,12 +553,13 @@
         h("button", { class: "ed-btn", type: "button", onclick: copyUrl }, "申込URLをコピー"));
     // スマホの台帳
     box.append(h("div", { class: "ed-ledger" }, rows.map(r =>
-      h("button", { class: "ed-row", type: "button", onclick: () => openSub(r.submission_id) },
-        h("span", { class: "ed-row__team" }, r.team_name || "(団体名なし)"),
-        h("span", { class: "ed-row__sum ed-num" }, r.entries, h("small", {}, "出場")),
-        h("span", { class: "ed-row__by" }, d.events.filter(e => count(r, e.name)).map((e, i) =>
-          [i ? "・" : "", e.short + " ", h("b", { class: "ed-num" }, count(r, e.name))])),
-        r.issues.length ? h("span", { class: "ed-row__tags" }, r.issues.map(tagOf)) : null)),
+      h("div", { class: "ed-rowwrap" + (S.sel.has(r.submission_id) ? " is-sel" : "") + (isCancelledRow(r) ? " is-cancelled-row" : "") }, pick(r),
+        h("button", { class: "ed-row", type: "button", onclick: () => openSub(r.submission_id) },
+          h("span", { class: "ed-row__team" }, r.team_name || "(団体名なし)", isCancelledRow(r) ? h("small", { class: "ed-cxl" }, "取り消し済み") : null),
+          h("span", { class: "ed-row__sum ed-num" }, r.entries, h("small", {}, "出場")),
+          h("span", { class: "ed-row__by" }, d.events.filter(e => count(r, e.name)).map((e, i) =>
+            [i ? "・" : "", e.short + " ", h("b", { class: "ed-num" }, count(r, e.name))])),
+          r.issues.length ? h("span", { class: "ed-row__tags" }, r.issues.map(tagOf)) : null))),
       rows.length ? null : empty));
     box.append(h("div", { class: "ed-totals ed-num" },
       d.events.map(e => h("div", {}, h("span", {}, e.short), h("b", {}, e.count))),
@@ -494,9 +568,9 @@
     const picked = d.rows.find(r => r.submission_id === S.picked);
     const tr = (r) => {
       const sel = () => openSub(r.submission_id);
-      return h("tr", { tabindex: "0", "data-sid": r.submission_id, "aria-selected": picked === r ? "true" : "false", onclick: sel,
-        onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); sel(); } } },
-        h("td", {}, r.team_name || "(団体名なし)"),
+      return h("tr", { tabindex: "0", "data-sid": r.submission_id, "aria-selected": picked === r ? "true" : "false", class: isCancelledRow(r) ? "is-cancelled-row" : "", onclick: sel,
+        onkeydown: (e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); sel(); } } },
+        h("td", {}, h("span", { class: "ed-tcell" }, pick(r), h("span", {}, r.team_name || "(団体名なし)", isCancelledRow(r) ? h("small", { class: "ed-cxl" }, "取り消し済み") : null))),
         d.events.map(e => { const c = count(r, e.name); return h("td", { class: "num" + (c ? "" : " zero") }, c || "−"); }),
         h("td", { class: "num sum" }, r.entries), h("td", {}, ROUTE[r.route] || ""), h("td", { class: "num" }, jpDate(r.received_at)),
         h("td", { class: "ed-issuecell" }, r.issues.length ? h("span", { class: "ed-tag " + (r.issues.some(i => i.type === "dup") ? "ed-tag--dup" : "ed-tag--warn"), title: r.issues.map(i => i.title).join(" / ") }, r.issues[0].title + (r.issues.length > 1 ? " ほか" + (r.issues.length - 1) + "件" : "")) : ""));
@@ -608,9 +682,11 @@
         live.length ? h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: () => cancelNow(r, live) }, "この申込を取り消す") : null,
         live.length ? h("button", { class: "ed-btn", type: "button",
           onclick: () => app().openAuthedHtmlWindow("/api/tournaments/" + t.id + "/receipt-print.html?team=" + encodeURIComponent(r.team_name || ""), "領収書_" + (r.team_name || "")) }, "この団体の領収書を印刷") : null),
-      h("div", { class: "ed-danger" },
-        h("p", { class: "ed-sub" }, "取り消しは出場を数から外すだけです。申込そのものを台帳から消すときは削除します（削除前の内容は控えに残り、あとで戻せます）。"),
-        h("button", { class: "ed-btn ed-btn--danger", type: "button", onclick: () => deleteAsk(r) }, "この申込を削除")),
+      live.length
+        ? h("div", { class: "ed-danger" }, h("p", { class: "ed-sub" }, "取り消しは出場を数から外すだけで、あとで元に戻せます。申込そのものを台帳から消す削除は、取り消した申込だけできます。"))
+        : h("div", { class: "ed-danger" },
+          h("p", { class: "ed-sub" }, "この申込は取り消し済みです。台帳から消すときは削除します（削除前の内容は控えに残り、あとで戻せます）。"),
+          h("button", { class: "ed-btn ed-btn--danger", type: "button", onclick: () => deleteAsk(r) }, "この申込を削除")),
     ];
   }
 
