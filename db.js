@@ -1326,10 +1326,15 @@ function _searchNorm(s) {
 // getPlayers/一覧表示・ソートで手動appearances列の代わりに使う=閲覧の「出場大会」と一致。
 const _appearanceCountStmt = sqlite.prepare(`
   SELECT pid, COUNT(DISTINCT tournament_id) AS n FROM (
-    SELECT winner_id AS pid, tournament_id FROM matches WHERE winner_id IS NOT NULL
+    SELECT winner_id AS pid, tournament_id FROM matches WHERE winner_id IS NOT NULL AND winner_name != 'BYE' AND loser_name != 'BYE'
     UNION ALL
-    SELECT loser_id AS pid, tournament_id FROM matches WHERE loser_id IS NOT NULL
+    SELECT loser_id AS pid, tournament_id FROM matches WHERE loser_id IS NOT NULL AND winner_name != 'BYE' AND loser_name != 'BYE'
   ) GROUP BY pid`);
+// 出場の数え方は一覧と詳細で同じ: 実選手どうしの試合(不戦勝=棄権も含む)がある大会。BYE(相手が実選手でない)は数えない。
+// 勝敗・Elo・戦績は従来どおり不戦勝を除く(別の集計)。
+const _appearanceOneStmt = sqlite.prepare(`
+  SELECT COUNT(DISTINCT tournament_id) AS n FROM matches
+  WHERE (winner_id = ? OR loser_id = ?) AND winner_name != 'BYE' AND loser_name != 'BYE' AND tournament_id IS NOT NULL`);
 function _appearanceMap() {
   const m = new Map();
   for (const r of _appearanceCountStmt.all()) if (r.pid) m.set(r.pid, r.n);
@@ -1395,13 +1400,7 @@ function getPlayer(id) {
   // 出場回数は試合データ由来の自動集計に一本化(オーナー決定 2026-07-18・手動appearances列は表示に使わない)。
   // = その選手が対戦した(winner/loser)大会の異なり数。閲覧・詳細の「出場大会」と同義になり、カードの
   //   「出場N回」と食い違わない。統合(merged_into)後はmatchesがsurvivorへ張り替わるので統合先で合算される。
-  {
-    const ts = new Set();
-    for (const m of player.matches) {
-      if ((m.winner_id === player.id || m.loser_id === player.id) && m.tournament_id) ts.add(m.tournament_id);
-    }
-    player.appearances = ts.size;
-  }
+  player.appearances = _appearanceOneStmt.get(player.id, player.id).n;   // 一覧(_appearanceMap)と同じ数え方。棄権の大会も出場に入る
   // 大会レベル別の勝敗内訳 (全道/全国の戦績を別記録)
   player.level_stats = getPlayerLevelStats(player.id);
   player.affiliations = listAffiliations(player.id);   // 所属履歴 (#298)
@@ -13386,6 +13385,7 @@ function exportBracket(tournamentId, event) {
         winner_sets: m.winner_sets,
         loser_sets: m.loser_sets,
         sets: JSON.parse(m.sets_json || "[]"),
+        ...(m.is_walkover && m.winner_name !== "BYE" && m.loser_name !== "BYE" ? { walkover: true } : {}),   // 棄権(不戦勝)の印。往復で保つ
       } : null,
     })),
   };
@@ -14330,6 +14330,7 @@ function importFromMatches(tournamentId, data) {
         sets: Array.isArray(m.result.sets) ? m.result.sets : [],
         winner_sets: m.result.winner_sets,
         loser_sets: m.result.loser_sets,
+        walkover: !!m.result.walkover,   // 棄権(不戦勝): 戦績・Eloには入れず、出場にだけ数える
       });
       withResult++;
     });
