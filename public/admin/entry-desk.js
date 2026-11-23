@@ -87,9 +87,7 @@
          h("a", { href: "/viewer", target: "_blank", rel: "noopener" }, "観戦画面"),
          h("a", { href: "#more", "aria-current": active === "more" ? "page" : null }, "その他")]
       : [h("a", { href: "#list", "aria-current": active === "list" ? "page" : null }, "大会"),
-         h("a", { href: last ? "#desk/" + last : "#list", "aria-current": active === "desk" ? "page" : null }, "受付"),
-         h("a", { href: "#players" }, "選手DB"),
-         h("a", { href: "#more", "aria-current": active === "more" ? "page" : null }, "その他")];
+         h("a", { href: last ? "#desk/" + last : "#list", "aria-current": active === "desk" ? "page" : null }, "受付")];
     return h("header", { class: "ed-top" },
       h("a", { class: "ed-top__brand", href: "#list" },
         h("img", { class: "ed-top__logo", src: "/shared/assets/ktta-logo-256.png", alt: "" }),
@@ -107,7 +105,17 @@
     return h("div", { class: "ed-top__who" },
       h("span", { class: "ed-top__name", title: s.label }, s.label),
       h("span", { class: "ed-top__role" }, s.role),
-      h("button", { class: "ed-top__out", type: "button", onclick: () => app().logout() }, "ログアウト"));
+      h("button", { class: "ed-top__out", type: "button", onclick: accountSheet }, "アカウント"));
+  }
+  // アカウントの操作(ログアウト・オーナーのシステム管理)。ナビには出さず、ここにまとめる
+  function accountSheet() {
+    const s = app().session;
+    sheet("アカウント", [
+      s ? h("p", { class: "ed-sub", style: "margin:8px 0 14px" }, "ログイン中: ", h("b", {}, s.label), "（" + s.role + "）") : null,
+      h("div", { class: "ed-btns" },
+        s && s.owner ? h("button", { class: "ed-btn", type: "button", onclick: () => { closeSheet(); app().openOwnerPanel(); } }, "システム管理（オーナー）") : null,
+        h("button", { class: "ed-btn ed-btn--danger", type: "button", onclick: () => app().logout() }, "ログアウト")),
+    ]);
   }
 
   function frame(active, body) {
@@ -387,22 +395,33 @@
         h("h1", {}, t.name, st[0] ? h("span", { class: "ed-state" + st[1] }, st[0]) : null),
         h("div", { class: "ed-head__meta" },
           [t.date ? jpDate(t.date, true) : "", t.venue, t.deadline ? "締切 " + jpDate(t.deadline, true) : "締切 未設定"].filter(Boolean).join("・"),
-          l ? " " : "", l ? h("b", {}, l) : null)),
-      h("div", { class: "ed-btns ed-head-btns--pc" },
-        h("button", { class: "ed-btn", type: "button", onclick: copyUrl }, "申込URLをコピー"),
-        h("button", { class: "ed-btn", type: "button", onclick: openForm }, "フォーム設定")));
+          l ? " " : "", l ? h("b", {}, l) : null)));
   }
 
-  function outButtons() {
+  // 申込の流れ(準備→受付中→締切後)ごとの区切り。いまの段階(大会の状態)を濃く出す
+  function phase(n, title, note, now, kids) {
+    return h("section", { class: "ed-phase" + (now ? " is-now" : ""), "aria-label": title },
+      h("div", { class: "ed-phase__head" }, h("span", { class: "ed-phase__n" }, String(n)), h("h2", {}, title),
+        note ? h("span", { class: "ed-phase__note" }, note) : null, now ? h("span", { class: "ed-phase__now" }, "いまここ") : null),
+      kids);
+  }
+  function prepButtons() {
+    return h("div", { class: "ed-btns" },
+      h("button", { class: "ed-btn ed-btn--main", type: "button", onclick: copyUrl }, "申込URLをコピー"),
+      h("button", { class: "ed-btn", type: "button", onclick: openForm }, "フォーム設定"));
+  }
+  // 締め切ったあと: 出力(主ボタン)と、確認・整理(控えめ)を分ける
+  function closeButtons() {
     const t = tournamentObj();
     return [
-      h("button", { class: "ed-btn ed-btn--main", type: "button", onclick: () => app().downloadAggregation(t) }, "集計表をExcelで保存"),
-      h("button", { class: "ed-btn", type: "button",
-        onclick: () => app().openAuthedHtmlWindow("/api/tournaments/" + t.id + "/reception.html", "受付名簿_" + (t.name || "")) }, "名簿を印刷"),
-      h("button", { class: "ed-btn", type: "button",
-        onclick: () => app().openAuthedHtmlWindow("/api/tournaments/" + t.id + "/receipt-print.html", "領収書_" + (t.name || "")) }, "領収書を印刷"),
-      h("button", { class: "ed-btn", type: "button", onclick: () => app().openPlayerMatch(t) }, "選手DBと照合・連携"),
-      h("button", { class: "ed-btn ed-btn--quiet", type: "button", onclick: deletedSheet }, "削除した申込"),
+      h("div", { class: "ed-btns" },
+        h("button", { class: "ed-btn ed-btn--main", type: "button", onclick: () => app().downloadAggregation(t) }, "集計表をExcelで保存"),
+        h("button", { class: "ed-btn ed-btn--main", type: "button",
+          onclick: () => app().openAuthedHtmlWindow("/api/tournaments/" + t.id + "/reception.html", "受付名簿_" + (t.name || "")) }, "名簿を印刷"),
+        h("button", { class: "ed-btn ed-btn--main", type: "button",
+          onclick: () => app().openAuthedHtmlWindow("/api/tournaments/" + t.id + "/receipt-print.html", "領収書_" + (t.name || "")) }, "領収書を印刷")),
+      h("div", { class: "ed-btns ed-btns--sub" },
+        h("button", { class: "ed-btn", type: "button", onclick: () => app().openPlayerMatch(t) }, "選手DBと照合・連携")),
     ];
   }
 
@@ -417,22 +436,28 @@
     const search = h("input", { class: "ed-search", type: "search", value: S.q, placeholder: "団体名・氏名で探す", "aria-label": "申込を探す",
       oninput: (e) => { S.q = e.target.value; renderList(); } });
     S.listBox = h("div", {});
+    const st = d.tournament.state;
     frame("desk", [
       headBox(),
-      h("div", { class: "ed-tools" },
-        h("div", { class: "ed-find" }, search, h("button", { class: "ed-btn", type: "button", onclick: addSheet }, "申込を追加")),
-        h("div", { class: "ed-filters" }, chips,
-          h("label", { class: "ed-sel" }, h("span", {}, "種目"),
-            h("select", { "aria-label": "種目で絞る", onchange: (e) => { S.ev = e.target.value; renderDesk(); } },
-              h("option", { value: "" }, "すべての種目"),
-              d.events.map(e => h("option", { value: e.name, selected: S.ev === e.name ? "" : null }, e.name)))),
-          h("label", { class: "ed-sel" }, h("span", {}, "並び順"),
-            h("select", { "aria-label": "並び順", onchange: (e) => { const v = e.target.value; S.sort = v; S.dir = (v === "name" || v === "") ? 1 : -1; renderDesk(); } },
-              SORTS.map(o => h("option", { value: o[0], selected: S.sort === o[0] ? "" : null }, o[1])),
-              S.sort.indexOf("ev:") === 0 ? h("option", { value: S.sort, selected: "" }, S.sort.slice(3) + "の多い順") : null)))),
-      h("p", { class: "ed-flow" }, h("b", {}, "申込の流れ"), " 受付（申込が届く）→ 確認（要確認を直す）→ 出場確定（出場数に入る）"),
-      d.unlinked ? h("p", { class: "ed-routes" }, "申込番号のない出場（取込や以前の画面で入れた分）が " + d.unlinked + " 件あります。合計には入っていますが、団体の行には出ません。") : null,
-      S.listBox,
+      phase(1, "準備", "申込フォームを用意して、URLを配る", st === "before", prepButtons()),
+      phase(2, "受付中", "届いた申込を見て、要確認を直す", st === "open", [
+        h("div", { class: "ed-tools" },
+          h("div", { class: "ed-find" }, search, h("button", { class: "ed-btn", type: "button", onclick: addSheet }, "申込を追加")),
+          h("div", { class: "ed-filters" }, chips,
+            h("label", { class: "ed-sel" }, h("span", {}, "種目"),
+              h("select", { "aria-label": "種目で絞る", onchange: (e) => { S.ev = e.target.value; renderDesk(); } },
+                h("option", { value: "" }, "すべての種目"),
+                d.events.map(e => h("option", { value: e.name, selected: S.ev === e.name ? "" : null }, e.name)))),
+            h("label", { class: "ed-sel" }, h("span", {}, "並び順"),
+              h("select", { "aria-label": "並び順", onchange: (e) => { const v = e.target.value; S.sort = v; S.dir = (v === "name" || v === "") ? 1 : -1; renderDesk(); } },
+                SORTS.map(o => h("option", { value: o[0], selected: S.sort === o[0] ? "" : null }, o[1])),
+                S.sort.indexOf("ev:") === 0 ? h("option", { value: S.sort, selected: "" }, S.sort.slice(3) + "の多い順") : null)))),
+        h("p", { class: "ed-flow" }, h("b", {}, "申込の流れ"), " 受付（申込が届く）→ 確認（要確認を直す）→ 出場確定（出場数に入る）"),
+        d.unlinked ? h("p", { class: "ed-routes" }, "申込番号のない出場（取込や以前の画面で入れた分）が " + d.unlinked + " 件あります。合計には入っていますが、団体の行には出ません。") : null,
+        S.listBox,
+      ]),
+      phase(3, "締切後", "集計と書類を出す", st === "closed", closeButtons()),
+      h("div", { class: "ed-foot" }, h("button", { class: "ed-link", type: "button", onclick: deletedSheet }, "削除した申込を見る（元に戻せます）")),
     ]);
     renderList();
   }
@@ -465,10 +490,6 @@
     box.append(h("div", { class: "ed-totals ed-num" },
       d.events.map(e => h("div", {}, h("span", {}, e.short), h("b", {}, e.count))),
       h("div", {}, h("span", {}, "出場確定 計"), h("b", {}, d.totals.entries))));
-    box.append(h("div", { class: "ed-mobile-links ed-btns" },
-      h("button", { class: "ed-btn", type: "button", onclick: copyUrl }, "申込URLをコピー"),
-      h("button", { class: "ed-btn", type: "button", onclick: openForm }, "フォーム設定")));
-    box.append(h("div", { class: "ed-dock" }, outButtons()));
     // PCの台帳
     const picked = d.rows.find(r => r.submission_id === S.picked);
     const tr = (r) => {
@@ -489,8 +510,7 @@
           h("tbody", {}, rows.map(tr)),
           h("tfoot", {}, h("tr", {}, h("td", {}, "申込 " + d.totals.teams + "団体"),
             d.events.map(e => h("td", { class: "num" }, e.count)), h("td", { class: "num" }, d.totals.entries), h("td", {}), h("td", {}), h("td", {}))))
-          : h("div", { style: "padding:0 12px" }, empty)),
-      h("div", { class: "ed-pc-out ed-btns" }, outButtons())));
+          : h("div", { style: "padding:0 12px" }, empty))));
   }
 
   // 行を押すと右から大きな詳細パネルが滑り込む。同じ行をもう一度押す・閉じる・Esc で滑り出る。

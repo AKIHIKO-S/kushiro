@@ -342,3 +342,18 @@ html[data-app-mode="full"] .op-tools-body { background: var(--st-paper); border:
 .ed-undo { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 1100; display: flex; align-items: center; gap: 12px;
   max-width: calc(100% - 24px); padding: 8px 8px 8px 16px; background: var(--st-ink); color: var(--st-paper); border-radius: 4px; box-shadow: 0 10px 30px -10px rgba(14,30,55,.5); font-size: 15px; }
 .ed-undo .ed-btn { min-height: 44px; background: var(--st-paper); color: var(--st-navy); border-color: var(--st-paper); font-weight: 800; }
+
+/* 申込の流れ(準備→受付中→締切後)の区切り。いまの段階(大会の状態)の番号を濃くして「いまここ」を出す */
+.ed-phase { margin: 0 0 6px; padding: 14px 0 6px; border-top: 2px solid var(--st-ink); }
+.ed-phase__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 0 var(--gut) 10px; }
+.ed-phase__head h2 { margin: 0; font-size: 18px; font-weight: 700; }
+.ed-phase__n { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1.5px solid var(--st-mute); border-radius: 50%;
+  font-family: var(--st-num); font-weight: 800; font-size: 14px; color: var(--st-mute); }
+.is-now .ed-phase__n { background: var(--st-navy); border-color: var(--st-navy); color: var(--st-paper); }
+.ed-phase__note { font-size: 13px; color: var(--st-mute); }
+.ed-phase__now { margin-left: auto; font-size: 12px; font-weight: 800; color: var(--st-navy); background: var(--st-sky); padding: 3px 9px; border-radius: 3px; }
+.ed-phase > .ed-btns { padding: 0 var(--gut) 10px; }
+.ed-btns--sub { margin-top: -2px; }
+.ed-foot { padding: 6px var(--gut) 40px; text-align: right; }
+.ed-link { min-height: 44px; padding: 0 4px; background: none; border: 0; color: var(--st-mute); font: inherit; font-size: 14px; text-decoration: underline; cursor: pointer; }
+.ed-link:hover { color: var(--st-navy); }
