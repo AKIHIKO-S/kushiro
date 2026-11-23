@@ -104,6 +104,14 @@ function jpMonthDay(v) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || "").trim());
   return m ? `${Number(m[2])}月${Number(m[3])}日` : "";
 }
+const WEEKDAY = "日月火水木金土";
+// 「2027-03-07」→「3月7日(日)」。読めなければ空文字
+function jpMonthDayWd(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || "").trim());
+  if (!m) return "";
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return `${+m[2]}月${+m[3]}日(${WEEKDAY[d.getUTCDay()]})`;
+}
 const PAY_PLACE = "本部席裏";
 function formatYen(n) {
   const v = parseInt(n) || 0;
@@ -269,8 +277,12 @@ async function sendConfirmationEmail(opts) {
 
   // 冒頭の要点(3行)。詳細はこの下に続く。文字版とHTML版で同じ文言を使う
   const deadlineMd = jpMonthDay(deadline);
+  const eventLine = (() => {
+    const when = [jpMonthDayWd(tournDate), venue].filter(Boolean).join("・");   // 日付・会場が未設定なら省く
+    return tournName + (when ? `(${when})` : "");
+  })();
   const keyPoints = [
-    "申込を受け付けました。",
+    eventLine,
     total > 0 ? `当日は${PAY_PLACE}で ${(parseInt(total) || 0).toLocaleString("ja-JP")}円 をお支払いください。` : `参加料は、当日${PAY_PLACE}でお支払いください。`,
     token ? (deadlineMd ? `申込内容の変更は ${deadlineMd} まで、この申込番号で行えます。` : "申込内容の変更は、この申込番号で行えます。") : "",
   ].filter(Boolean);
@@ -278,7 +290,7 @@ async function sendConfirmationEmail(opts) {
   const text = [
     `${contactName} 様`,
     ``,
-    `【要点】`,
+    `【連絡事項】`,
     ...keyPoints.map(l => `  ・${l}`),
     ``,
     `この度は ${tournName} へお申込みいただきありがとうございます。`,
@@ -331,12 +343,12 @@ async function sendConfirmationEmail(opts) {
     <div style="font-size:12px;color:#a16207;letter-spacing:2px;font-weight:bold;">KUSHIRO TABLE TENNIS ASSOCIATION</div>
     <h1 style="font-size:20px;margin:4px 0 16px;color:#7c2d12;">申込を受け付けました</h1>
   </div>
+  <p style="line-height:1.7;margin:0 0 12px;"><strong>${esc(contactName)}</strong> 様</p>
   <div style="margin:0 0 16px;padding:14px 16px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;">
-    <div style="font-size:12px;font-weight:bold;color:#9a3412;letter-spacing:1px;margin-bottom:6px;">要点</div>
+    <div style="font-size:12px;font-weight:bold;color:#9a3412;letter-spacing:1px;margin-bottom:6px;">連絡事項</div>
     <ul style="margin:0;padding-left:20px;font-size:15px;line-height:1.9;font-weight:bold;">${keyPoints.map(l => `<li>${esc(l)}</li>`).join("")}</ul>
   </div>
   <p style="line-height:1.7;">
-    <strong>${esc(contactName)}</strong> 様<br><br>
     この度は <strong>${esc(tournName)}</strong> へお申込みいただきありがとうございます。<br>
     下記の内容で承りました。
   </p>
