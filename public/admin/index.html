@@ -9056,16 +9056,22 @@ const A = {
  },
  _renderMatchRecItem(playerId, m) {
    const won = m.winner_id === playerId;
+   const wo = !!m.is_walkover;   // 棄権・不戦勝: 勝敗数・セット数には入れず履歴にだけ出す
    const oppName = won ? (m.loser_name || "?") : (m.winner_name || "?");
    const myS = won ? m.winner_sets : m.loser_sets;
    const oppS = won ? m.loser_sets : m.winner_sets;
+   // セットの数字が無い試合は「0-0」を出さない
+   const hasScore = !wo && ((m.winner_sets || 0) + (m.loser_sets || 0) > 0);
+   const oppTeam = m.opp_team || (won ? m.loser_team : m.winner_team) || "所属不明";
    return h("div", { className: "ach-item",
-     style: { background: won ? "#f0fdf4" : "#fef2f2",
-       borderColor: won ? "#86efac" : "#fca5a5" } },
+     style: { background: wo ? "#f5f5f4" : won ? "#f0fdf4" : "#fef2f2",
+       borderColor: wo ? "#d6d3d1" : won ? "#86efac" : "#fca5a5" } },
      h("span", { className: "ach-place " + (won ? "" : ""),
-       style: { background: won ? "#16a34a" : "#dc2626", color: "#fff" } }, won ? "○勝" : "×負"),
+       style: { background: wo ? "#78716c" : won ? "#16a34a" : "#dc2626", color: "#fff" } }, wo ? (won ? "不戦勝" : "棄権") : won ? "○勝" : "×負"),
      h("span", { style: { fontWeight: "600" } }, oppName),
-     h("span", { style: { fontFamily: "monospace", fontWeight: "700" } }, myS + "-" + oppS),
+     h("span", { style: { color: "#78716c", fontSize: "11px" } }, "(" + oppTeam + ")"),
+     h("span", { style: { color: "#57534e", fontSize: "11px" } }, m.tournament_label || m.tournament_name || ""),
+     hasScore ? h("span", { style: { fontFamily: "monospace", fontWeight: "700" } }, myS + "-" + oppS) : null,
      h("span", { style: { color: "#78716c", fontSize: "11px" } }, m.event || ""),
      m.is_manual
        ? h("button", { className: "ach-del", type: "button", title: "削除",

@@ -1403,6 +1403,8 @@ body{ background:#fbfaf7; }
  .tournament-icon{ background:var(--st-sky); color:var(--st-navy); }
  .num, .mono, .match-sets, .rank-rating, .sbar2-val{ font-family:var(--st-num); font-variant-numeric:tabular-nums; }
 
+ .pm-row.wo .pm-result{ background:transparent; color:var(--sub); }
+ .pm-row.wo .pm-opp-name{ color:var(--sub); }
 </style>
 </head>
 <body>
@@ -2378,9 +2380,15 @@ const V = {
  // 選手視点の試合行 (○勝ち / ×負け を色とラベルで明快に)
  renderPlayerMatchRow(m, playerId) {
  const won = m.winner_id === playerId;
- const oppTeam = won ? m.loser_team : m.winner_team;
+ // 棄権・不戦勝(is_walkover): 勝敗数・セット数には入れず、履歴にだけ「棄権」「不戦勝」で載せる
+ const wo = !!m.is_walkover;
+ const withdrew = wo && !won;
+ // 対戦相手の所属は必ず出す。空ならサーバーが大会時点の所属履歴で補い、それでも無ければ「所属不明」
+ const oppTeam = m.opp_team || (won ? m.loser_team : m.winner_team) || "所属不明";
  const myScore = won ? (m.winner_sets || 0) : (m.loser_sets || 0);
  const oppScore = won ? (m.loser_sets || 0) : (m.winner_sets || 0);
+ // セットの数字が無い試合は「0 - 0」や空の括弧を出さず、スコア欄ごと省く
+ const hasScore = !wo && ((m.winner_sets || 0) + (m.loser_sets || 0) > 0 || (Array.isArray(m.sets) && m.sets.some(s => Array.isArray(s) && s.length === 2)));
  // 各セットの点数 (自分視点)
  const setsStr = Array.isArray(m.sets) && m.sets.length
    ? m.sets.map(s => Array.isArray(s) && s.length === 2
@@ -2395,17 +2403,17 @@ const V = {
      : h("span", {}, mem.name || "?");
    return i === 0 ? linkEl : [h("span", { style: { color: "var(--sub)", margin: "0 3px" } }, "/"), linkEl];
  }));
- return h("div", { className: "pm-row " + (won ? "win" : "loss") },
- h("div", { className: "pm-result" }, won ? "○\n勝ち" : "×\n負け"),
+ return h("div", { className: "pm-row " + (wo ? "wo" : won ? "win" : "loss") },
+ h("div", { className: "pm-result" }, wo ? (withdrew ? "棄権" : "不戦\n勝") : won ? "○\n勝ち" : "×\n負け"),
  h("div", { className: "pm-opp" },
    h("div", { className: "pm-opp-label" }, "対戦相手"),
    h("div", { className: "pm-opp-name" }, oppNameEl,
-     oppTeam ? h("span", { className: "pm-opp-team" }, " (" + oppTeam + ")") : null),
+     h("span", { className: "pm-opp-team" }, " (" + oppTeam + ")")),
    (m.event || m.round) ? h("div", { className: "pm-opp-ev" },
      [m.event, m.round].filter(Boolean).join(" ")) : null,
  ),
- h("div", { className: "pm-score" }, myScore + " - " + oppScore,
-   setsStr ? h("span", { className: "pm-score-sets" }, setsStr) : null),
+ hasScore ? h("div", { className: "pm-score" }, myScore + " - " + oppScore,
+   setsStr ? h("span", { className: "pm-score-sets" }, setsStr) : null) : null,
  );
  },
 
@@ -2696,7 +2704,7 @@ const V = {
  h("div", { className: "player-guide-stat-label" }, "勝率")),
  h("div", { className: "player-guide-stat" },
  h("div", { className: "player-guide-stat-value" },
- String((new Set((p.matches || []).map(m => m.tournament_id)).size))),
+ String((new Set((p.matches || []).concat(p.walkovers || []).map(m => m.tournament_id)).size))),
  h("div", { className: "player-guide-stat-label" }, "出場大会数")),
  ));
 
@@ -2812,13 +2820,15 @@ const V = {
  }
 
  // 試合履歴 — 選手視点で「○勝ち / ×負け」を明快に
- if (p.matches && p.matches.length) {
- body.appendChild(h("div", { className: "section-title" }, `試合の記録 (${p.matches.length}試合)`));
+ const _woList = Array.isArray(p.walkovers) ? p.walkovers : [];
+ if ((p.matches && p.matches.length) || _woList.length) {
+ body.appendChild(h("div", { className: "section-title" }, `試合の記録 (${(p.matches || []).length}試合` + (_woList.length ? `・棄権/不戦勝 ${_woList.length}件` : "") + `)`));
  const groupByTournament = {};
- p.matches.forEach(m => {
+ (p.matches || []).concat(_woList).sort((a, b) => String(b.tournament_date || "").localeCompare(String(a.tournament_date || ""))
+   || (a.round_order || 0) - (b.round_order || 0) || (a.match_no || 0) - (b.match_no || 0)).forEach(m => {
  const key = m.tournament_id;
  if (!groupByTournament[key]) {
- groupByTournament[key] = { name: m.tournament_name || "大会", date: m.tournament_date, matches: [] };
+ groupByTournament[key] = { name: m.tournament_label || m.tournament_name || "大会", date: m.tournament_date, matches: [] };
  }
  groupByTournament[key].matches.push(m);
  });

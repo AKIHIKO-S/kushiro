@@ -1247,6 +1247,16 @@ const stmts = {
       AND COALESCE(t.level,'district') NOT IN ('hokkaido','national')
     ORDER BY t.date DESC, m.round_order ASC, m.match_no ASC
   `),
+  // 棄権・不戦勝(is_walkover=1。BYEは除く)の試合。勝敗履歴にだけ載せる(勝敗数・Elo・セット数には入れない)
+  getWalkoversByPlayer: sqlite.prepare(`
+    SELECT m.*, t.name AS tournament_name, t.date AS tournament_date
+    FROM matches m
+      LEFT JOIN tournaments t ON m.tournament_id = t.id
+    WHERE (m.winner_id = ? OR m.loser_id = ?)
+      AND m.loser_name != 'BYE' AND m.winner_name != 'BYE' AND COALESCE(m.is_walkover,0) = 1
+      AND COALESCE(t.level,'district') NOT IN ('hokkaido','national')
+    ORDER BY t.date DESC, m.round_order ASC, m.match_no ASC
+  `),
   insertMatch: sqlite.prepare(`
     INSERT INTO matches (id, tournament_id, event, round, round_order, match_no,
       winner_id, loser_id, winner_name, loser_name, winner_team, loser_team,
@@ -1385,6 +1395,33 @@ function resolvePlayerId(id) {
   return cur;
 }
 
+// 戦績に出す大会名: 「2026年度 中学新人戦」。年度は大会日付から学校年度(4月始まり)。
+// 大会名にすでに年(2026年・2026年度・令和8年度・R8 など)が入っていれば足さない。日付が読めなければ大会名のまま。
+function tournamentLabel(name, date) {
+  const n = String(name || "").trim() || "大会";
+  if (/(19|20)\d{2}\s*年|令和\s*\d+\s*年|平成\s*\d+\s*年|(?:^|[^0-9A-Za-z])R\s*\d+\s*年度|(?:19|20)\d{2}/.test(n)) return n;
+  const m = String(date || "").match(/^(\d{4})[-/.](\d{1,2})/);
+  if (!m) return n;
+  const y = +m[1], mo = +m[2];
+  if (mo < 1 || mo > 12) return n;
+  return (mo >= 4 ? y : y - 1) + "年度 " + n;
+}
+
+// 対戦相手の所属。試合に書かれた所属が空なら、その大会の日付時点の所属履歴(affiliationAt)で補う。
+// それでも分からなければ空文字(表示側が「所属不明」と出す)。
+function _oppTeamOf(m, playerId) {
+  const won = m.winner_id === playerId;
+  const own = String((won ? m.loser_team : m.winner_team) || "").trim();
+  if (own) return own;
+  const oppId = won ? m.loser_id : m.winner_id;
+  if (!oppId) return "";
+  try {
+    const a = affiliationAt(oppId, m.tournament_date || m.played_at || "");
+    const hit = (a || []).find(x => String(x.team || "").trim());
+    return hit ? String(hit.team).trim() : "";
+  } catch (_) { return ""; }
+}
+
 function getPlayer(id) {
   let player = stmts.getPlayer.get(id);
   if (player && player.merged_into) {
@@ -1395,7 +1432,11 @@ function getPlayer(id) {
   if (!player) return null;
   player.achievements = stmts.getAchievements.all(player.id);
   player.matches = stmts.getMatchesByPlayer.all(player.id, player.id).map(m => ({
-    ...m, sets: JSON.parse(m.sets_json || "[]")
+    ...m, sets: JSON.parse(m.sets_json || "[]"), opp_team: _oppTeamOf(m, player.id), tournament_label: tournamentLabel(m.tournament_name, m.tournament_date)
+  }));
+  // 棄権・不戦勝は勝敗履歴にだけ載せる別の並び。勝敗数・Elo・セット数の元(player.matches)には混ぜない
+  player.walkovers = stmts.getWalkoversByPlayer.all(player.id, player.id).map(m => ({
+    ...m, sets: [], opp_team: _oppTeamOf(m, player.id), withdrew: m.loser_id === player.id, tournament_label: tournamentLabel(m.tournament_name, m.tournament_date)
   }));
   // 出場回数は試合データ由来の自動集計に一本化(オーナー決定 2026-07-18・手動appearances列は表示に使わない)。
   // = その選手が対戦した(winner/loser)大会の異なり数。閲覧・詳細の「出場大会」と同義になり、カードの
@@ -2665,10 +2706,17 @@ function createManualMatch(playerId, data) {
 
 // 選手の試合一覧 (手動戦績の編集用)
 function getPlayerMatchesForEdit(playerId) {
-  return stmts.getMatchesByPlayer.all(playerId, playerId).map(m => ({
+  const mk = (m) => ({
     ...m, sets: JSON.parse(m.sets_json || "[]"),
     is_manual: m.tournament_id === MANUAL_TID,
-  }));
+    opp_team: _oppTeamOf(m, playerId), withdrew: !!m.is_walkover && m.loser_id === playerId,
+    tournament_label: tournamentLabel(m.tournament_name, m.tournament_date),
+  });
+  const real = stmts.getMatchesByPlayer.all(playerId, playerId).map(mk);
+  const wo = stmts.getWalkoversByPlayer.all(playerId, playerId).map(mk);
+  // 日付の新しい順に、棄権・不戦勝も並べる(同じ大会の中は回戦順)
+  return real.concat(wo).sort((a, b) => String(b.tournament_date || "").localeCompare(String(a.tournament_date || ""))
+    || (a.round_order || 0) - (b.round_order || 0) || (a.match_no || 0) - (b.match_no || 0));
 }
 
 function getTournament(id) {
@@ -15411,6 +15459,7 @@ try {
 } catch (e) { console.error("bracket_sheets migration error:", e.message); }
 
 module.exports = {
+  tournamentLabel,
   // 審判結果入力 (テスト環境付き)
   setRefereeToken, setRefereeInputEnabled, getRefereeConfig,
   getTournamentByRefereeToken, getRefereeView, markResultSource,
