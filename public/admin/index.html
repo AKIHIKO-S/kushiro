@@ -9479,6 +9479,41 @@ const A = {
      h("h3", { className: "text-sm", style: { margin: "16px 0 0" } }, "アカウント一覧"), list), null, { trapFocus: true });
    await load();
  },
+ // 選手DBの一般公開(/players)の入り切り。既定は非公開。押す前に確認を出し、誰がいつ変えたかを残す(オーナーのみ)
+ async openPublicPlayersPanel() {
+   if (!(await A.ensureOwner())) return;
+   const box = h("div", {}, h("p", { className: "text-sm text-sub" }, "読み込み中…"));
+   const draw = async () => {
+     const r = await A.ownerFetch("/api/owner/public-players");
+     const st = r.ok && r.json ? r.json : null;
+     box.replaceChildren();
+     if (!st) { box.append(h("p", { className: "text-sm", style: { color: "#b91c1c" } }, "公開の状態を取得できませんでした。")); return; }
+     const when = (iso) => { try { return new Date(iso).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }); } catch (e) { return iso; } };
+     box.append(
+       h("div", { style: { border: "1px solid var(--border)", borderRadius: "10px", padding: "12px", marginBottom: "12px", background: st.enabled ? "#f0fdf4" : "#f8fafc" } },
+         h("div", { style: { fontWeight: 700, fontSize: "16px" } }, st.enabled ? "いま: 一般公開中(だれでも見られます)" : "いま: 非公開(ログインした運営だけが見られます)"),
+         st.changed_at ? h("div", { className: "text-xs text-sub", style: { marginTop: "4px" } }, "最後に変えた人: " + (st.changed_by || "不明") + " / " + when(st.changed_at)) : h("div", { className: "text-xs text-sub", style: { marginTop: "4px" } }, "まだ切り替えたことはありません(初期設定の非公開です)")),
+       h("p", { className: "text-xs text-sub", style: { lineHeight: 1.7 } },
+         "公開すると、/players のページが、URLを知っていればだれでも見られます。出るのは氏名・所属・支部・区分・年度別の成績と勝敗履歴だけです(ふりがな・連絡先・備考は出ません)。検索エンジンには出ません。いつでも非公開にもどせます。"),
+       h("div", { className: "flex gap-2 flex-wrap", style: { margin: "10px 0" } },
+         h("button", { className: "btn btn-sm", style: { minHeight: "44px" }, onClick: () => window.open("/players", "_blank", "noopener") }, "公開ページを開いて確かめる"),
+         h("button", { className: "btn btn-sm " + (st.enabled ? "btn-danger" : "btn-ok"), style: { minHeight: "44px" }, onClick: async (ev) => {
+           const to = !st.enabled;
+           const msg = to
+             ? "選手DBを一般公開しますか？\n\nURLを知っている人はだれでも、選手の氏名・所属・成績を見られるようになります。いつでも非公開にもどせます。"
+             : "選手DBの一般公開をやめて、非公開にもどしますか？\n\nログインしていない人には、ページが見えなくなります。";
+           if (!window.confirm(msg)) return;
+           ev.target.disabled = true;
+           const rr = await A.ownerFetch("/api/owner/public-players", { method: "POST", body: { enabled: to } });
+           if (rr.ok) toast(to ? "一般公開しました" : "非公開にもどしました", "ok"); else toast("切り替えできませんでした: " + ((rr.json && rr.json.error) || rr.status), "err");
+           draw();
+         } }, st.enabled ? "非公開にもどす" : "一般公開する")),
+       st.history && st.history.length ? h("div", { className: "text-xs text-sub", style: { lineHeight: 1.7 } }, h("div", { style: { fontWeight: 700 } }, "切り替えの記録"),
+         ...st.history.map(x => h("div", {}, when(x.at) + "  " + (x.enabled ? "公開" : "非公開") + "  " + (x.by || "")))) : null);
+   };
+   openModal("選手DBの一般公開", box, null);
+   draw();
+ },
  async openOwnerPanel() {
    if (!(await A.ensureOwner())) return;
    const card = (title, desc, btns) => h("div", { style: { border: "1px solid var(--border)", borderRadius: "10px", padding: "12px", marginBottom: "10px" } },
@@ -9492,6 +9527,8 @@ const A = {
        h("button", { className: "btn btn-sm", onClick: () => {
          document.querySelector(".modal-bg")?.remove(); A.openOperatorAccounts();
        } }, "運営アカウントを管理")]),
+     card("選手DBの一般公開", "選手DBの公開ページ(/players)を、一般に見せるかどうかを切り替えます。初期設定は非公開で、押す前に確認が出ます。", [
+       h("button", { className: "btn btn-sm", onClick: () => { document.querySelector(".modal-bg")?.remove(); A.openPublicPlayersPanel(); } }, "公開の状態を見る・切り替える")]),
      card("バックアップ / 復元", "今のデータをまるごと控え(バックアップ)として保存・PCへ保存・元に戻す。", [
        h("button", { className: "btn btn-sm", onClick: () => { document.querySelector(".modal-bg")?.remove(); A.openBackups(); } }, "開く")]),
      card("データをまるごとPCに保存（バックアップ用）", "今のデータをまるごと1つのファイルにしてPCに保存します（連絡先などの個人情報も含む手元の控えです）。", [

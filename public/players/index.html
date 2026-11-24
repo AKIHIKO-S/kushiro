@@ -116,6 +116,12 @@ h1{font-size:28px;margin:30px 0 14px;line-height:1.4}
     return fetch("/api/pub/" + path + (s ? "?" + s : ""), { headers: { Accept: "application/json" } }).then(function (r) {
       if (r.status === 429) throw new Error("アクセスが多すぎます。少し待ってからもう一度お試しください。");
       if (!r.ok) throw new Error(r.status === 404 ? "見つかりませんでした。" : "読み込めませんでした。時間をおいてもう一度お試しください。");
+      if (r.headers.get("X-Pub-Preview") === "1" && !document.getElementById("previewBar")) {
+        var b = document.createElement("div"); b.id = "previewBar"; b.setAttribute("role", "status");
+        b.style.cssText = "background:#fff4d6;color:#5b3a00;border-bottom:1px solid #e6c36a;padding:10px 16px;font-size:15px;text-align:center";
+        b.textContent = "いまは非公開です。ログインしている運営だけに見えています(確認用)。";
+        document.body.insertBefore(b, document.body.firstChild);
+      }
       return r.json();
     });
   }

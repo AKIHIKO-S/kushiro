@@ -1065,24 +1065,56 @@ app.get("/robots.txt", (req, res) => {
 const publicPlayers = require("./lib/public-players").create(db);
 const pubRateLimit = rateLimit({ windowMs: 60000, max: parseInt(process.env.PUBLIC_PLAYERS_MAX) || 90,
   message: "アクセスが多すぎます。少し待ってからもう一度お試しください。" });
+// 一般公開の入り切り(2026-11-24 オーナー指示)。既定は非公開。非公開の間は、ログイン中の運営だけが見られる。
+// 押した人と日時は app_kv に残す(直近20件)。戻せる(「非公開にもどす」)。
+const PUB_PLAYERS_KEY = "public_players_enabled", PUB_PLAYERS_LOG_KEY = "public_players_log";
+function pubPlayersEnabled() { try { return db.kvGet(PUB_PLAYERS_KEY) === "1"; } catch { return false; } }
+function pubPlayersLog() { try { const v = JSON.parse(db.kvGet(PUB_PLAYERS_LOG_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } }
+function pubPlayersStatus() {
+  const log = pubPlayersLog(), last = log[0] || null;
+  return { enabled: pubPlayersEnabled(), changed_at: last ? last.at : null, changed_by: last ? last.by : null, history: log.slice(0, 10) };
+}
+// 公開前は 404(ログインしていない人には、ページがあることも分からない)。ログイン中の運営は確認のため通す。
+function pubGate(req, res, next) {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+  if (pubPlayersEnabled()) return next();
+  if (isAdminAuthed(req)) { req.pubPreview = true; return next(); }
+  res.setHeader("Cache-Control", "no-store");
+  if (req.path.startsWith("/api/")) return res.status(404).json({ error: "見つかりません" });
+  return res.status(404).type("text/plain; charset=utf-8").send("Not Found");
+}
 function pubHeaders(req, res, next) {
   res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
-  res.setHeader("Cache-Control", "public, max-age=30");
+  // 運営の確認用に見せている間(未公開)は、共有キャッシュに残さない
+  res.setHeader("Cache-Control", req.pubPreview ? "private, no-store" : "public, max-age=30");
+  if (req.pubPreview) res.setHeader("X-Pub-Preview", "1");   // ページ側で「非公開(確認用)」の帯を出す
   next();
 }
-app.get("/api/pub/players", pubRateLimit, pubHeaders, (req, res) => res.json(publicPlayers.listPlayers(req.query || {})));
-app.get("/api/pub/schools", pubRateLimit, pubHeaders, (req, res) => res.json(publicPlayers.listSchools(req.query || {})));
-app.get("/api/pub/tournaments", pubRateLimit, pubHeaders, (req, res) => res.json(publicPlayers.listTournaments(isPublicTournament)));
-app.get("/api/pub/players/:pid", pubRateLimit, pubHeaders, (req, res) => {
+app.get("/api/owner/public-players", requireOwner, (req, res) => res.json(pubPlayersStatus()));
+app.post("/api/owner/public-players", requireSameOrigin, requireOwner, (req, res) => {
+  const want = req.body && req.body.enabled;
+  if (want !== true && want !== false) return res.status(400).json({ error: "enabled に true か false を指定してください" });
+  const by = ownerAuditCode(req) || "(担当コード未設定)";
+  const log = pubPlayersLog();
+  log.unshift({ enabled: want, by, at: new Date().toISOString() });
+  db.kvSet(PUB_PLAYERS_LOG_KEY, JSON.stringify(log.slice(0, 20)));
+  db.kvSet(PUB_PLAYERS_KEY, want ? "1" : "0");
+  auditOwner(req, want ? "選手DBを一般公開" : "選手DBの一般公開をやめる");
+  res.json(pubPlayersStatus());
+});
+app.get("/api/pub/players", pubGate, pubRateLimit, pubHeaders, (req, res) => res.json(publicPlayers.listPlayers(req.query || {})));
+app.get("/api/pub/schools", pubGate, pubRateLimit, pubHeaders, (req, res) => res.json(publicPlayers.listSchools(req.query || {})));
+app.get("/api/pub/tournaments", pubGate, pubRateLimit, pubHeaders, (req, res) => res.json(publicPlayers.listTournaments(isPublicTournament)));
+app.get("/api/pub/players/:pid", pubGate, pubRateLimit, pubHeaders, (req, res) => {
   const r = publicPlayers.playerPage(req.params.pid);
   if (!r) return res.status(404).json({ error: "選手が見つかりません" });
   res.json(r);
 });
-app.get(["/players", "/players/", "/players/index.html"], pubRateLimit, (req, res, next) => {
+app.get(["/players", "/players/", "/players/index.html"], pubGate, pubRateLimit, (req, res, next) => {
   res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   _serveVersionedHtml(path.join(publicDir, "players", "index.html"))(req, res, next);
 });
-app.get("/players/*", (req, res) => res.redirect(302, "/players"));
+app.get("/players/*", pubGate, (req, res) => res.redirect(302, "/players"));
 
 // ═══ 公開API（閲覧画面用・認証なし） ═══════════════════
 // 選手名簿・対戦履歴の横断検索は本人以外の行を列挙できるため公開しない。

@@ -7,6 +7,7 @@
 //   ④ 選手ページ: 棄権・不戦勝の別表示、相手の所属(不明は「所属不明」)、年度つきの大会名、年度別成績
 //   ⑤ pid は内部IDに戻せない不透明な値
 //   ⑥ HTTP: noindex(ヘッダー・メタタグ)、回数制限、申込集計モードでも読める、/players が申込案内へ飛ばない
+//   ⑧ HTTP: 既定は非公開。未ログインには /players と /api/pub/ が404。ログイン中の運営は見られる。オーナーが切り替えると全員が見られ、記録が残る
 // 実行: node --test test/public-players.test.js
 const { test, after } = require("node:test");
 const assert = require("node:assert/strict");
@@ -135,6 +136,7 @@ test("⑦ 「個人」「○○個人」は所属なしの人。クラブとし�
 
 // ── HTTP(サーバーを起動するので、待ち受けできる環境=CIで動く) ──
 test("⑥ HTTP: noindex・申込集計モードで読める・回数制限・一括取得できない", async t => {
+  db.kvSet("public_players_enabled", "1");   // 公開した状態での挙動(既定は非公開。⑧で確かめる)
   const { app } = require("../server");
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -159,4 +161,51 @@ test("⑥ HTTP: noindex・申込集計モードで読める・回数制限・一
   let limited = 0;
   for (let i = 0; i < 40; i++) if ((await get("/api/pub/schools")).status === 429) limited++;
   assert.ok(limited > 0, "回数制限がかかる");
+});
+
+test("⑧ HTTP: 既定は非公開(未ログインは404)・運営は確認できる・オーナーの切り替えと記録・戻せる", async t => {
+  db.kvSet("public_players_enabled", "");   // 既定=非公開に戻す
+  const { app } = require("../server");
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => new Promise(r => server.close(r)));
+  const base = "http://127.0.0.1:" + server.address().port;
+  const get = (p, headers) => fetch(base + p, { redirect: "manual", headers: headers || {}, signal: AbortSignal.timeout(5000) });
+  const adm = { "X-Admin-Key": process.env.ADMIN_KEY };
+  const pid = pp.listPlayers({}).items[0].pid;
+  // 非公開: 未ログインには、ページも API も「無い」ものとして返す(URLを知っていても見られない)
+  for (const p of ["/players", "/players/", "/players/index.html", "/players/x", "/api/pub/players", "/api/pub/schools", "/api/pub/tournaments", "/api/pub/players/" + pid]) {
+    const r = await get(p);
+    assert.equal(r.status, 404, p + " は非公開の間は404");
+    assert.equal(r.headers.get("cache-control"), "no-store");
+  }
+  assert.equal((await (await get("/api/pub/players")).json()).error, "見つかりません", "選手の情報を一切含まない");
+  // ログイン中の運営は、公開前でも確認できる(共有キャッシュには残さない)
+  const pv = await get("/api/pub/players", adm);
+  assert.equal(pv.status, 200); assert.equal(pv.headers.get("cache-control"), "private, no-store");
+  assert.equal(pv.headers.get("x-pub-preview"), "1", "確認用の帯を出す目印");
+  assert.match(pv.headers.get("x-robots-tag") || "", /noindex/);
+  assert.equal((await get("/players", adm)).status, 200);
+  // 切り替えは管理者以外には出来ない。確認用の状態も見えない
+  const post = (body, headers) => fetch(base + "/api/owner/public-players", { method: "POST", headers: { "Content-Type": "application/json", Origin: base, ...(headers || {}) }, body: JSON.stringify(body) });
+  assert.ok([401, 403].includes((await post({ enabled: true })).status), "未ログインでは切り替えられない");
+  assert.ok([401, 403].includes((await get("/api/owner/public-players")).status), "状態も未ログインには見せない");
+  assert.equal((await get("/api/pub/players")).status, 404, "失敗した切り替えで公開されていない");
+  assert.equal((await post({ enabled: "yes" }, adm)).status, 400, "true/false 以外は受け付けない");
+  // 公開する: 全員が見られる。noindex・公開項目はそのまま
+  const on = await post({ enabled: true, operator: "own01" }, adm);
+  assert.equal(on.status, 200);
+  const st = await on.json();
+  assert.equal(st.enabled, true); assert.ok(st.changed_at); assert.equal(st.changed_by, "own01"); assert.equal(st.history.length, 1);
+  const pub = await get("/api/pub/players");
+  assert.equal(pub.status, 200); assert.match(pub.headers.get("x-robots-tag") || "", /noindex/); assert.equal(pub.headers.get("cache-control"), "public, max-age=30"); assert.equal(pub.headers.get("x-pub-preview"), null);
+  assert.equal((await get("/players")).status, 200);
+  assert.ok(!JSON.stringify(await (await get("/api/pub/players?page=1")).json()).includes(SECRET_KANA), "公開しても、ふりがな等は出ない");
+  // 非公開にもどす: 直ちに404、記録は2件
+  const off = await (await post({ enabled: false, operator: "own02" }, adm)).json();
+  assert.equal(off.enabled, false); assert.equal(off.changed_by, "own02"); assert.equal(off.history.length, 2);
+  assert.equal(off.history[1].by, "own01", "前の切り替えの記録が残る");
+  assert.equal((await get("/api/pub/players")).status, 404);
+  assert.equal((await get("/players")).status, 404);
+  assert.equal(JSON.parse(db.kvGet("public_players_log")).length, 2);
 });

@@ -304,14 +304,17 @@
     const go = (tab) => () => { leaveTo(tab); };
     const item = (title, note, fn) => h("button", { class: "ed-more__row", type: "button", onclick: fn }, h("b", {}, title), h("span", {}, note));
     const s = app().session;
+    // 選手DBの公開ページ。公開前は、ログイン中の運営だけが開ける(確認用)。一般公開の切り替えはオーナーだけ
+    const pubItems = [item("選手DB(公開ページの確認)", "選手の成績ページを、見る側の画面で確かめる(公開前はログイン中の運営だけが見られます)", () => window.open("/players", "_blank", "noopener"))]
+      .concat(s && s.owner ? [item("選手DBの一般公開", "公開する・非公開にもどす(オーナーのみ・押す前に確認が出ます)", () => app().openPublicPlayersPanel())] : []);
     const items = isFull()
-      ? [item("システム管理（オーナー）", "バックアップ・運営アカウント・選手登録台帳との統合", () => app().openOwnerPanel())]
-      : [
+      ? pubItems.concat([item("システム管理（オーナー）", "バックアップ・運営アカウント・選手登録台帳との統合", () => app().openOwnerPanel())])
+      : pubItems.concat([
         item("選手の名寄せ", "選手データベースで、同じ人の登録をまとめる・所属を整える", go("players")),
         item("データの書き出し・取り込み", "Excel・CSVの書き出しと、名簿の取り込み", go("import")),
         item("外部の申込フォーム", "他団体・外部大会の申込フォームへのリンク一覧", go("external-forms")),
         item("以前の申込一覧", "これまでの申込一覧の画面", go("entries")),
-        item("システム管理（オーナー）", "バックアップ・運営アカウント・選手登録台帳との統合", () => app().openOwnerPanel())];
+        item("システム管理（オーナー）", "バックアップ・運営アカウント・選手登録台帳との統合", () => app().openOwnerPanel())]);
     frame("more", [
       h("div", { class: "ed-head" }, h("h1", {}, "その他")),
       s ? h("div", { class: "ed-account" },
