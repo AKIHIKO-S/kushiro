@@ -241,7 +241,7 @@ h1{font-size:28px;margin:30px 0 14px;line-height:1.4}
       });
       var side = el("aside", { class: "side" }, el("h3", { text: "同じ学校の選手" }),
         d.same_school.map(function (m) { return el("a", { href: "#/p/" + m.pid, text: m.name }); }),
-        d.team ? el("a", { href: "#/?group=" + (d.category === "middle" ? "middle" : d.category === "high" ? "high" : d.category === "elementary" ? "elementary" : "club") + "&school=" + encodeURIComponent(d.team), text: d.team + " の一覧へ" }) : null);
+        d.team && d.team.indexOf("所属なし") !== 0 ? el("a", { href: "#/?group=" + (d.category === "middle" ? "middle" : d.category === "high" ? "high" : d.category === "elementary" ? "elementary" : "club") + "&school=" + encodeURIComponent(d.team), text: d.team + " の一覧へ" }) : null);
       app.appendChild(el("div", { class: "crumb" }, el("a", { href: "#/", text: "選手をさがす" }), " > " + d.name));
       app.appendChild(el("div", { class: "cols" }, main, side));
     }).catch(fail);

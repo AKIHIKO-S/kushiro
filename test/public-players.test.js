@@ -117,6 +117,22 @@ test("④⑤ 選手ページ: 棄権・不戦勝・相手の所属・年度つ�
   assert.equal(w.tournaments[0].rows.find(r => r.result === "walkover_win").opp_name, "棄権 二郎");
 });
 
+test("⑦ 「個人」「○○個人」は所属なしの人。クラブとして一覧に出さず、同じ学校の選手にも並べない", () => {
+  const mk = (name, team) => db.createPlayer({ name, furigana: SECRET_KANA, team, branch: "釧路", gender: "male", category: "general", note: SECRET_NOTE });
+  mk("個人 甲", "個人"); mk("個人 乙", "個人"); mk("個人 丙", "苫小牧個人");
+  pp._reset();
+  const teams = pp.listSchools({}).items.map(x => x.team);
+  assert.ok(!teams.includes("個人") && !teams.includes("苫小牧個人"), "学校・クラブ一覧に出さない");
+  assert.equal(pp.listPlayers({ school: "個人" }).total, 0, "「個人」を学校として指定しても出ない");
+  const kou = pp.listPlayers({ q: "個人 甲" }).items[0];
+  assert.equal(kou.team, PP.INDIVIDUAL_LABEL, "所属は「所属なし(個人)」と表示");
+  assert.equal(pp.playerPage(kou.pid).team, PP.INDIVIDUAL_LABEL);
+  assert.deepEqual(pp.playerPage(kou.pid).same_school, [], "同じ学校の選手は出さない");
+  assert.equal(pp.listPlayers({ q: "個人 丙" }).items[0].team, PP.INDIVIDUAL_LABEL, "苫小牧個人も同じ");
+  assert.ok(pp.listPlayers({ sort: "kana" }).total >= 137, "全員の一覧には残る");
+  assert.ok(!JSON.stringify(pp.listPlayers({ q: "個人" })).includes('"team":"個人"'), "「個人」の文字列を所属として返さない");
+});
+
 // ── HTTP(サーバーを起動するので、待ち受けできる環境=CIで動く) ──
 test("⑥ HTTP: noindex・申込集計モードで読める・回数制限・一括取得できない", async t => {
   const { app } = require("../server");
