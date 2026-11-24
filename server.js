@@ -2300,7 +2300,14 @@ app.get("/api/tournaments/:id/reception.html", requireAdmin, (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   const entryOnly = currentAppMode() === "entry";
-  res.send(buildReceptionHTML(t, entrants.filter(isConfirmedEntry), entryOnly));
+  const confirmed = entrants.filter(isConfirmedEntry);
+  // 申込集計モードは、印刷専用の組版(案2・番号欄つき・詰めて印刷)。大会運営モードは、参加料・領収印の欄がある従来の表のまま
+  // (?layout=matrix で新しい組版、?layout=old で従来の表を、モードに関わらず選べる)
+  const layout = String(req.query.layout || "");
+  if (layout === "matrix" || (entryOnly && layout !== "old")) {
+    return res.send(require("./lib/reception-print").buildReceptionPrintHTML(t, confirmed, { pack: req.query.break !== "team" }).html);
+  }
+  res.send(buildReceptionHTML(t, confirmed, entryOnly));
 });
 
 // ── 領収書の印刷(申込集計モード) ── 印刷物を作るだけ。入金記録・発行履歴は保存しない。
