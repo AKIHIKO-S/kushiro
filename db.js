@@ -776,6 +776,12 @@ try {
   addMCol("live_score_rev", "INTEGER DEFAULT 0");
   addMCol("match_label", "TEXT DEFAULT ''");  // "1-1", "2-1" 形式の試合番号 (R-N)
   addMCol("is_walkover", "INTEGER DEFAULT 0");  // 1=不戦勝/BYE (DB戦績・参加記録に算入しない)
+  // 取込で勝者を確定できなかった対戦(曖昧・読み違いの疑い)の「要確認」印。'pending'=運営の確定待ち(勝敗に入れない) /
+  // 'resolved'=運営が確定済み / ''=通常の試合。review_note=読み取りの候補など(JSON)。review_by/at=確定した人(担当コード)と日時。
+  addMCol("review_state", "TEXT DEFAULT ''");
+  addMCol("review_note", "TEXT DEFAULT ''");
+  addMCol("review_by", "TEXT DEFAULT ''");
+  addMCol("review_at", "TEXT DEFAULT ''");
   // finish 時に適用したElo差分を保存し、訂正/undo/編集で厳密に逆算する (#3/#4/#6/#10/#12/#22)。
   addMCol("winner_rating_delta", "INTEGER DEFAULT 0");
   addMCol("loser_rating_delta", "INTEGER DEFAULT 0");
@@ -7477,6 +7483,70 @@ function correctResult(matchId, data) {
     return finishMatchInternal(matchId, data);
   });
   return apply();
+}
+
+// ─── 取込の「要確認(手動推奨)」対戦: 一覧・確定・取り消し ─────────────────
+// 確定するまで試合は未実施のまま(勝敗・Elo・選手の履歴に入らない)。確定は誰がいつ行ったかを試合に残す。
+function _reviewRow(m) {
+  let note = {}; try { note = JSON.parse(m.review_note || "{}") || {}; } catch (e) { note = {}; }
+  return {
+    id: m.id, event: m.event, round: m.round, match_label: m.match_label || "",
+    state: m.review_state, p1: m.player1_name || "", p1_team: m.player1_team || "", p2: m.player2_name || "", p2_team: m.player2_team || "",
+    note: note.note || "", guess: note.guess_winner ? { winner: note.guess_winner, winner_sets: note.guess_winner_sets, loser_sets: note.guess_loser_sets, walkover: !!note.guess_walkover } : null,
+    winner: m.review_state === "resolved" ? (m.winner_name || "") : "", winner_sets: m.winner_sets || 0, loser_sets: m.loser_sets || 0,
+    walkover: !!m.is_walkover, by: m.review_by || "", at: m.review_at || "",
+  };
+}
+function getReviewMatches(tournamentId) {
+  return sqlite.prepare("SELECT * FROM matches WHERE tournament_id=? AND review_state IN ('pending','resolved') ORDER BY (review_state='pending') DESC, event, bracket_round, bracket_pos")
+    .all(tournamentId).map(_reviewRow);
+}
+// data: { winner_slot: 1|2, winner_sets?, loser_sets?, walkover?, by }
+function resolveReviewMatch(tournamentId, matchId, data) {
+  data = data || {};
+  const m = stmts.getMatch.get(matchId);
+  if (!m || m.tournament_id !== tournamentId) return { error: "試合が見つかりません" };
+  if (m.review_state !== "pending") return { error: m.review_state === "resolved" ? "この試合は、すでに確定済みです" : "この試合は「要確認」ではありません" };
+  if (data.winner_slot !== 1 && data.winner_slot !== 2) return { error: "どちらが勝ったかを選んでください" };
+  if (!(m.player1_name && m.player2_name) || m.player1_name === "BYE" || m.player2_name === "BYE") return { error: "対戦の2人が揃っていないため確定できません" };
+  const winnerName = data.winner_slot === 1 ? m.player1_name : m.player2_name;
+  // 先の試合にすでに別の人が入っていれば、食い違うので止める(先の組合せは変えない)
+  if (m.next_match_id) {
+    const nm = stmts.getMatch.get(m.next_match_id);
+    const slotName = nm ? (m.next_slot === 1 ? nm.player1_name : nm.player2_name) : "";
+    if (slotName && slotName !== winnerName) {
+      return { error: "この勝者だと、先の試合(" + (nm.round || "") + ")の組合せと食い違います。先の試合には " + slotName + " が入っています。", conflict_next: true };
+    }
+  }
+  const num = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) && n >= 0 && n <= 9 ? n : null; };
+  const ws = num(data.winner_sets), ls = num(data.loser_sets);
+  if ((ws === null) !== (ls === null)) return { error: "セット数は、勝った側と負けた側の両方を入れてください(分からなければ両方空欄)" };
+  if (ws !== null && !data.walkover && !(ws > ls)) return { error: "セット数は、勝った側が多くなる数を入れてください" };
+  const by = String(data.by || "").slice(0, 40), at = new Date().toISOString();
+  const tx = sqlite.transaction(() => {
+    const fin = finishMatchInternal(matchId, { winner_slot: data.winner_slot, sets: [], walkover: !!data.walkover,
+      winner_sets: data.walkover ? 0 : (ws === null ? 0 : ws), loser_sets: data.walkover ? 0 : (ls === null ? 0 : ls) });
+    if (!fin || fin.error || fin.conflict) throw Object.assign(new Error((fin && fin.error) || "確定できませんでした"), { _review: true });
+    sqlite.prepare("UPDATE matches SET review_state='resolved', review_by=?, review_at=? WHERE id=?").run(by, at, matchId);
+  });
+  try { tx(); } catch (e) { if (e._review) return { error: e.message }; throw e; }
+  return { ok: true, match: _reviewRow(stmts.getMatch.get(matchId)) };
+}
+// 確定の取り消し: 勝敗・セット数・Eloを外して「要確認」へ戻す。先の試合の並びは変えない。
+function undoReviewMatch(tournamentId, matchId, by) {
+  const m = stmts.getMatch.get(matchId);
+  if (!m || m.tournament_id !== tournamentId) return { error: "試合が見つかりません" };
+  if (m.review_state !== "resolved") return { error: "この試合は、確定済みの「要確認」ではありません" };
+  const tx = sqlite.transaction(() => {
+    reverseEloForMatch(m);
+    opStmts.setResult.run({ id: matchId, winner_id: null, loser_id: null, winner_name: "", loser_name: "", winner_team: "", loser_team: "",
+      sets_json: "[]", winner_sets: 0, loser_sets: 0 });
+    sqlite.prepare("UPDATE matches SET tie_results='', is_walkover=0, review_state='pending', review_by=?, review_at=? WHERE id=?")
+      .run("取消:" + String(by || "").slice(0, 36), new Date().toISOString(), matchId);
+    opStmts.setStatus.run("pending", matchId);
+  });
+  tx();
+  return { ok: true, match: _reviewRow(stmts.getMatch.get(matchId)) };
 }
 
 function finishMatchOp(matchId, data) {
@@ -14453,8 +14523,24 @@ function importFromMatches(tournamentId, data) {
       }
     });
 
+    // 疑義のある対戦(needs_review): 自動で確定せず「要確認(手動推奨)」の印だけ付ける。結果は入れない
+    // (読み取りの候補は review_note に残す)。運営が画面で勝者を選んで確定するまで、勝敗・Eloに入れない。
+    data.matches.forEach(m => {
+      if (m.needs_review !== true) return;
+      const id = idByPos[`${m.bracket_round || 1}-${m.bracket_pos || 0}`];
+      const r = m.result || {};
+      const note = JSON.stringify({
+        note: String(m.review_note || r.review_note || "").slice(0, 300),
+        guess_winner: String(r.winner_name || "").slice(0, 80),
+        guess_winner_sets: Number.isFinite(+r.winner_sets) ? +r.winner_sets : null,
+        guess_loser_sets: Number.isFinite(+r.loser_sets) ? +r.loser_sets : null,
+        guess_walkover: !!r.walkover,
+      });
+      sqlite.prepare("UPDATE matches SET review_state='pending', review_note=? WHERE id=?").run(note, id);
+    });
     // 結果ありの試合を反映（finish→自動advance）
     data.matches.forEach(m => {
+      if (m.needs_review === true) return;   // 要確認は確定しない
       if (!m.result || !m.result.winner_name) return;
       const id = idByPos[`${m.bracket_round || 1}-${m.bracket_pos || 0}`];
       // 勝者がどちらか判定 (名前で)
@@ -15591,7 +15677,7 @@ module.exports = {
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
   generateBracket, addBracketSeed, promoteToSeed, drawSingleBracket, computeDrawLeaves, bracketPositions,
-  checkDrawReadiness, bracketRev, undoDraw, undoLast, getDrawLog, getBracketDrawDiff, importBracketRoundtrip,
+  checkDrawReadiness, bracketRev, undoDraw, undoLast, getDrawLog, getBracketDrawDiff, importBracketRoundtrip, getReviewMatches, resolveReviewMatch, undoReviewMatch,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   generateTeamLeague, generateLeaguePlayoff, setLeagueTiebreak, computeLeagueStandings, getLeagueMatchResults, listLeagueEvents, summarizeTie, computePromotionSuggestion,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,

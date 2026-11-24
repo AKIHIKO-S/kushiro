@@ -1138,6 +1138,7 @@ const PUBLIC_MATCH_OMIT = new Set([
   // (自由配線の組み替え後を含む)どおりの山を描くために必要。
   "call_count", "call_count_p1", "call_count_p2", "recall_count", "called_at",
   "sets_json", "tournament_id", "created_at", "updated_at",
+  "review_note", "review_by", "review_at",   // 取込の「要確認」の候補と確定者は運営だけ
   "live_sets_json", "live_score_rev",   // 速報は /live 専用(下のLIVE射影でsets側を残す)。revは常に内部
 ]);
 function publicMatch(m) { const o = {}; for (const k in m) if (!PUBLIC_MATCH_OMIT.has(k)) o[k] = m[k]; return o; }
@@ -1150,6 +1151,7 @@ const LIVE_MATCH_OMIT = new Set([
   "winner_rating_delta", "loser_rating_delta",
   "next_match_id", "next_slot",
   "sets_json", "tournament_id", "created_at", "updated_at",
+  "review_note", "review_by", "review_at",
   // セットカウント速報は getOperationState がパース済み `live`({s1,s2}) を付与するため、
   // 生JSONと改訂カウンタは落とす(観戦フロントは m.live だけを見る規約)。
   "live_sets_json", "live_score_rev",
@@ -4897,6 +4899,29 @@ app.post("/api/tournaments/:id/bracket/import", requireAdmin, blockOngoingBracke
   if (r.error) return res.status(400).json(r);
   if (_ev) db.markSheetDirty(req.params.id, _ev);   // 旧経路の取込(共存フック)
   res.json(_ev ? { ...r, bracket_rev: db.bracketRev(req.params.id, _ev) } : r);
+});
+
+// ── 取込の「要確認(手動推奨)」対戦: 一覧と、運営が勝者を選んで確定・取り消し ──
+// 確定するまで勝敗に入れない。確定した人(担当コード)と日時を試合に残す。
+function reviewActor(req) {
+  const s = sessionOf(req);
+  if (s && s.kind === "account") return validOperatorCode(accountAuditCode(s.principal_id)) || "(アカウント)";
+  return validOperatorCode(req.body && req.body.operator) || "(担当コード未設定)";
+}
+app.get("/api/tournaments/:id/review-matches", requireAdmin, (req, res) => {
+  if (!db.getTournamentMeta(req.params.id)) return res.status(404).json({ error: "大会が見つかりません" });
+  res.json({ items: db.getReviewMatches(req.params.id) });
+});
+app.post("/api/tournaments/:id/review-matches/:mid/resolve", requireAdmin, requireSameOrigin, (req, res) => {
+  const b = req.body || {};
+  const r = db.resolveReviewMatch(req.params.id, req.params.mid, { winner_slot: b.winner_slot, winner_sets: b.winner_sets, loser_sets: b.loser_sets, walkover: b.walkover === true, by: reviewActor(req) });
+  if (r.error) return res.status(r.conflict_next ? 409 : 400).json(r);
+  res.json(r);
+});
+app.post("/api/tournaments/:id/review-matches/:mid/undo", requireAdmin, requireSameOrigin, (req, res) => {
+  const r = db.undoReviewMatch(req.params.id, req.params.mid, reviewActor(req));
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
 });
 
 // ドラッグ&ドロップ: 1回戦の選手位置を入れ替え

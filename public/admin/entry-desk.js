@@ -250,6 +250,7 @@
         h("div", { class: "ed-btns", style: "margin-top:10px" }, go),
         note),
       branchCard(t),
+      reviewCard(t),
       h("section", { class: "ed-card" },
         h("h2", {}, "試合を進める・見せる"),
         h("div", { class: "ed-btns" },
@@ -258,6 +259,71 @@
       h("section", { class: "ed-card" },
         h("h2", {}, "申込のこと"),
         h("p", { class: "ed-sub", style: "margin:4px 0 0" }, "申込フォームの作成・公開、申込の確認、名簿づくりは「申込集計」モードで行います(右上の切替から)。")));
+  }
+
+  // 取込で勝者を確定できなかった対戦(要確認・手動推奨)。運営が、どちらが勝ったか(分かればセット数・棄権)を選んで確定する。
+  // 確定するまで勝敗に入らない。確定は押す前に確認を出し、誰がいつ確定したかを残す。取り消せる。
+  function reviewCard(t) {
+    const box = h("div", {}, h("p", { class: "ed-sub" }, "読み込み中…"));
+    const base = "/api/tournaments/" + encodeURIComponent(t.id) + "/review-matches";
+    const opCode = () => { try { return (app().ownerOperator && app().ownerOperator()) || ""; } catch (_) { return ""; } };
+    const when = (iso) => { try { return new Date(iso).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }); } catch (_) { return iso || ""; } };
+    const pend = (x) => {
+      const name = "rv-" + x.id;
+      const r1 = h("input", { type: "radio", name, value: "1" }), r2 = h("input", { type: "radio", name, value: "2" });
+      const ws = h("input", { class: "ed-search", type: "number", min: "0", max: "9", inputmode: "numeric", "aria-label": "勝った側のセット数", style: "max-width:84px" });
+      const ls = h("input", { class: "ed-search", type: "number", min: "0", max: "9", inputmode: "numeric", "aria-label": "負けた側のセット数", style: "max-width:84px" });
+      const wo = h("input", { type: "checkbox" });
+      const g = x.guess;
+      const go = h("button", { class: "ed-btn ed-btn--main", type: "button" }, "この内容で確定する");
+      go.addEventListener("click", async () => {
+        const slot = r1.checked ? 1 : r2.checked ? 2 : 0;
+        if (!slot) return toast("どちらが勝ったかを選んでください", "err");
+        const wname = slot === 1 ? x.p1 : x.p2, lname = slot === 1 ? x.p2 : x.p1;
+        const sc = (ws.value !== "" || ls.value !== "") ? ("　セット " + (ws.value || "?") + "-" + (ls.value || "?")) : "　セット数なし";
+        if (!root.confirm(x.event + " " + x.round + "\n" + wname + " の勝ち、" + lname + " の負け" + (wo.checked ? "(" + lname + " は棄権・不戦勝)" : sc) + "\n\n確定すると、選手の勝敗と履歴に入ります。取り消すこともできます。確定しますか？")) return;
+        go.disabled = true;
+        const res = await api().post(base + "/" + encodeURIComponent(x.id) + "/resolve", { winner_slot: slot, winner_sets: wo.checked ? "" : ws.value, loser_sets: wo.checked ? "" : ls.value, walkover: wo.checked, operator: opCode() });
+        go.disabled = false;
+        if (res && res.ok) { toast("確定しました", "ok"); load(); } else toast((res && res.error) || "確定できませんでした", "err");
+      });
+      return h("div", { class: "ed-rv" },
+        h("div", { class: "ed-rv__t" }, x.event + "　" + x.round + (x.match_label ? "(" + x.match_label + ")" : "")),
+        h("div", { class: "ed-sub" }, x.note ? "確認が必要な理由: " + x.note : "確認が必要な対戦です。"),
+        g ? h("div", { class: "ed-sub" }, "読み取りの候補(確定ではありません): " + g.winner + " の勝ち" + (g.walkover ? "(棄権)" : g.winner_sets != null ? " " + g.winner_sets + "-" + g.loser_sets : "")) : null,
+        h("div", { class: "ed-rv__pick" },
+          h("label", { class: "ed-check" }, r1, " " + x.p1 + "(" + x.p1_team + ")が勝ち"),
+          h("label", { class: "ed-check" }, r2, " " + x.p2 + "(" + x.p2_team + ")が勝ち")),
+        h("div", { class: "ed-btns", style: "align-items:center" }, h("span", {}, "セット数(分かれば)"), ws, h("span", {}, "-"), ls,
+          h("label", { class: "ed-check" }, wo, " 棄権(相手の不戦勝)")),
+        h("div", { class: "ed-btns", style: "margin-top:8px" }, go));
+    };
+    const done = (x) => {
+      const undo = h("button", { class: "ed-btn ed-btn--quiet", type: "button" }, "取り消す");
+      undo.addEventListener("click", async () => {
+        if (!root.confirm(x.event + " " + x.round + "\n" + x.p1 + " 対 " + x.p2 + "\nこの確定を取り消して、「要確認」に戻しますか？(勝敗と履歴から外れます)")) return;
+        const res = await api().post(base + "/" + encodeURIComponent(x.id) + "/undo", { operator: opCode() });
+        if (res && res.ok) { toast("取り消しました", "ok"); load(); } else toast((res && res.error) || "取り消せませんでした", "err");
+      });
+      return h("div", { class: "ed-rv ed-rv--done" },
+        h("div", { class: "ed-rv__t" }, x.event + "　" + x.round),
+        h("div", {}, x.winner + " の勝ち(" + (x.p1 === x.winner ? x.p2 : x.p1) + " は" + (x.walkover ? "棄権" : "負け") + ")" + (!x.walkover && (x.winner_sets || x.loser_sets) ? "　" + x.winner_sets + "-" + x.loser_sets : "")),
+        h("div", { class: "ed-sub" }, "確定した人: " + (x.by || "不明") + "　" + when(x.at)), undo);
+    };
+    async function load() {
+      const d = await api().get(base).catch(() => null);
+      box.textContent = "";
+      if (!d || d.error) { box.append(h("p", { class: "ed-sub" }, (d && d.error) || "読み込めませんでした。")); return; }
+      const p = d.items.filter(x => x.state === "pending"), r = d.items.filter(x => x.state === "resolved");
+      if (!d.items.length) { box.append(h("p", { class: "ed-sub" }, "要確認の対戦はありません。")); return; }
+      box.append(h("p", { class: "ed-sub", style: "font-weight:700" }, "確定待ち " + p.length + " 件(勝敗には、まだ入っていません)"), ...p.map(pend));
+      if (r.length) box.append(h("p", { class: "ed-sub", style: "font-weight:700;margin-top:14px" }, "確定済み " + r.length + " 件"), ...r.map(done));
+    }
+    load();
+    return h("section", { class: "ed-card" },
+      h("h2", {}, "要確認の対戦(手動推奨)"),
+      h("p", { class: "ed-sub", style: "margin:4px 0 10px" }, "取り込みで、勝者を確定できなかった対戦です。どちらが勝ったか(分かればセット数・棄権)を選んで確定します。確定するまで、選手の勝敗と履歴には入りません。"),
+      box);
   }
 
   // この大会に出た選手の支部を、1つにそろえる(オーナー限定)。プレビュー → 適用。適用の直前に自動でバックアップ。

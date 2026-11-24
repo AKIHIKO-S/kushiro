@@ -375,3 +375,10 @@ html[data-app-mode="full"] .op-tools-body { background: var(--st-paper); border:
 .ed-bulk .ed-btns { margin-top: 8px; }
 .ed-bulk__note { margin: 8px 0 0; }
 .ed-btn[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* 要確認の対戦(取込で勝者を確定できなかった対戦)。罫線で区切る */
+.ed-rv { padding: 12px 0; border-bottom: 1px solid var(--st-line); }
+.ed-rv__t { font-weight: 700; font-size: 16px; margin-bottom: 4px; }
+.ed-rv__pick { display: grid; gap: 2px; margin: 6px 0; }
+.ed-rv--done { color: var(--st-mute); }
+.ed-rv--done .ed-rv__t { color: var(--st-ink); }
