@@ -134,35 +134,7 @@ test("⑦ 「個人」「○○個人」は所属なしの人。クラブとし�
   assert.ok(!JSON.stringify(pp.listPlayers({ q: "個人" })).includes('"team":"個人"'), "「個人」の文字列を所属として返さない");
 });
 
-// ── HTTP(サーバーを起動するので、待ち受けできる環境=CIで動く) ──
-test("⑥ HTTP: noindex・申込集計モードで読める・回数制限・一括取得できない", async t => {
-  db.kvSet("public_players_enabled", "1");   // 公開した状態での挙動(既定は非公開。⑧で確かめる)
-  const { app } = require("../server");
-  const server = app.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  t.after(() => new Promise(r => server.close(r)));
-  const base = "http://127.0.0.1:" + server.address().port;
-  const get = (p) => fetch(base + p, { redirect: "manual", signal: AbortSignal.timeout(5000) });
-  const page = await get("/players");
-  assert.equal(page.status, 200, "/players は申込案内へ飛ばさない");
-  assert.match(page.headers.get("x-robots-tag") || "", /noindex/);
-  assert.match(await page.text(), /<meta name="robots" content="noindex/);
-  const rb = await (await get("/robots.txt")).text();
-  assert.match(rb, /Disallow: \//);
-  const list = await get("/api/pub/players");
-  assert.equal(list.status, 200, "申込集計モードでも読める");
-  assert.match(list.headers.get("x-robots-tag") || "", /noindex/);
-  const body = await list.json();
-  assert.equal(body.items.length, 50);
-  assert.equal((await get("/api/pub/players/" + "f".repeat(20))).status, 404);
-  assert.ok([401, 403].includes((await get("/api/players")).status), "管理用の選手API(氏名・ふりがな入り)は、認証なしでは読めない");
-  assert.ok([401, 403].includes((await get("/api/players/" + "f".repeat(20))).status));
-  assert.equal((await fetch(base + "/api/pub/players", { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } })).status, 404, "読み取りだけ");
-  let limited = 0;
-  for (let i = 0; i < 40; i++) if ((await get("/api/pub/schools")).status === 429) limited++;
-  assert.ok(limited > 0, "回数制限がかかる");
-});
-
+// 回数制限(1分30回)は ⑥ が使い切るので、公開の入り切りを確かめる⑧を先に置く
 test("⑧ HTTP: 既定は非公開(未ログインは404)・運営は確認できる・オーナーの切り替えと記録・戻せる", async t => {
   db.kvSet("public_players_enabled", "");   // 既定=非公開に戻す
   const { app } = require("../server");
@@ -208,4 +180,33 @@ test("⑧ HTTP: 既定は非公開(未ログインは404)・運営は確認で�
   assert.equal((await get("/api/pub/players")).status, 404);
   assert.equal((await get("/players")).status, 404);
   assert.equal(JSON.parse(db.kvGet("public_players_log")).length, 2);
+});
+
+// ── HTTP(サーバーを起動するので、待ち受けできる環境=CIで動く) ──
+test("⑥ HTTP: noindex・申込集計モードで読める・回数制限・一括取得できない", async t => {
+  db.kvSet("public_players_enabled", "1");   // 公開した状態での挙動(既定は非公開。⑧で確かめる)
+  const { app } = require("../server");
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => new Promise(r => server.close(r)));
+  const base = "http://127.0.0.1:" + server.address().port;
+  const get = (p) => fetch(base + p, { redirect: "manual", signal: AbortSignal.timeout(5000) });
+  const page = await get("/players");
+  assert.equal(page.status, 200, "/players は申込案内へ飛ばさない");
+  assert.match(page.headers.get("x-robots-tag") || "", /noindex/);
+  assert.match(await page.text(), /<meta name="robots" content="noindex/);
+  const rb = await (await get("/robots.txt")).text();
+  assert.match(rb, /Disallow: \//);
+  const list = await get("/api/pub/players");
+  assert.equal(list.status, 200, "申込集計モードでも読める");
+  assert.match(list.headers.get("x-robots-tag") || "", /noindex/);
+  const body = await list.json();
+  assert.equal(body.items.length, 50);
+  assert.equal((await get("/api/pub/players/" + "f".repeat(20))).status, 404);
+  assert.ok([401, 403].includes((await get("/api/players")).status), "管理用の選手API(氏名・ふりがな入り)は、認証なしでは読めない");
+  assert.ok([401, 403].includes((await get("/api/players/" + "f".repeat(20))).status));
+  assert.equal((await fetch(base + "/api/pub/players", { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } })).status, 404, "読み取りだけ");
+  let limited = 0;
+  for (let i = 0; i < 40; i++) if ((await get("/api/pub/schools")).status === 429) limited++;
+  assert.ok(limited > 0, "回数制限がかかる");
 });
