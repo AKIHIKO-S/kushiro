@@ -1694,6 +1694,16 @@ app.post("/api/players/normalize-categories", requireAdmin, backupBeforeBulk, (r
 app.post("/api/players/normalize-branches", requireAdmin, backupBeforeBulk, (req, res) => {
   res.json(withBackup(req, db.normalizePlayerBranches({ dry_run: !!(req.body && req.body.dry_run) })));
 });
+// この大会の出場者の支部を1つにそろえる(オーナー限定)。dry_run でプレビュー、適用の直前に自動バックアップ。
+// overwrite=false は空欄の人だけ、true は別の支部の人も書き換える。所属(学校名)は変えない。
+app.post("/api/tournaments/:id/players-branch", requireOwner, backupBeforeBulk, (req, res) => {
+  const b = req.body || {};
+  const dry = !!b.dry_run;
+  const r = db.setTournamentPlayersBranch(req.params.id, b.branch, { dry_run: dry, overwrite: !!b.overwrite });
+  if (r.error) return res.status(r.error.includes("見つかりません") ? 404 : 400).json(r);
+  if (!dry) auditOwner(req, "tournament_players_branch", `${req.params.id}→${String(b.branch || "").slice(0, 20)} ${r.updated}件${b.overwrite ? "(上書きあり)" : ""}`);
+  res.json(withBackup(req, r));
+});
 // 空欄の支部を入力済みの選手(所属→支部の多数決)から推測補完。dry_run でプレビュー。
 app.post("/api/players/infer-branches", requireAdmin, (req, res) => {
   res.json(db.inferPlayerBranches({ dry_run: !!(req.body && req.body.dry_run) }));

@@ -249,6 +249,7 @@
           h("label", { class: "ed-check" }, force, " 結果入力済みの種目でも取り込む")),
         h("div", { class: "ed-btns", style: "margin-top:10px" }, go),
         note),
+      branchCard(t),
       h("section", { class: "ed-card" },
         h("h2", {}, "試合を進める・見せる"),
         h("div", { class: "ed-btns" },
@@ -257,6 +258,44 @@
       h("section", { class: "ed-card" },
         h("h2", {}, "申込のこと"),
         h("p", { class: "ed-sub", style: "margin:4px 0 0" }, "申込フォームの作成・公開、申込の確認、名簿づくりは「申込集計」モードで行います(右上の切替から)。")));
+  }
+
+  // この大会に出た選手の支部を、1つにそろえる(オーナー限定)。プレビュー → 適用。適用の直前に自動でバックアップ。
+  // 変えるのは支部だけ。所属(学校名・クラブ名)は変えない。
+  function branchCard(t) {
+    const input = h("input", { class: "ed-search", type: "text", value: "釧路", maxlength: "20", "aria-label": "そろえる支部", style: "max-width:140px" });
+    const over = h("input", { type: "checkbox" });
+    const go = h("button", { class: "ed-btn", type: "button" }, "変更内容を確かめる");
+    go.addEventListener("click", async () => {
+      const branch = input.value.trim();
+      if (!branch) return toast("支部を入力してください", "err");
+      if (!(await app().ensureOwner())) return;
+      const body = (dry) => ({ branch, overwrite: over.checked, dry_run: dry });
+      const url = "/api/tournaments/" + encodeURIComponent(t.id) + "/players-branch";
+      let pre = null;
+      try { pre = (await app().ownerFetch(url, { method: "POST", body: body(true) })).json; } catch (_) {}
+      if (!pre || pre.error) return toast((pre && pre.error) || "確かめられませんでした", "err");
+      const note = "出場者 " + pre.total + " 名のうち、すでに「" + branch + "」の人 " + pre.already_same + " 名"
+        + (pre.kept_other ? "、別の支部が入っていて今回は変えない人 " + pre.kept_other + " 名(上書きにチェックを付けると変わります)" : "") + "。";
+      app().previewBulk({
+        title: "出場者の支部を「" + branch + "」にそろえる(確認)",
+        intro: note + " 変えるのは支部だけで、所属(学校名・クラブ名)は変わりません。",
+        count: pre.changes.length, headers: ["氏名", "所属", "いまの支部", "変更後"],
+        rows: pre.changes.map(c => [c.name, c.team, c.from, c.to]),
+        applyLabel: "支部を変更する",
+        onApply: async () => {
+          const r = (await app().ownerFetch(url, { method: "POST", body: body(false) })).json || {};
+          if (r.error) throw new Error(r.error);
+          app().showBulkResult({ title: "支部をそろえました", summary: (r.updated || 0) + "名の支部を「" + branch + "」にしました。",
+            check: "大会運営の「選手DB」で、この大会の選手の支部を確かめてください。", backup: r.backup });
+        } });
+    });
+    return h("section", { class: "ed-card" },
+      h("h2", {}, "出場者の支部をまとめて指定"),
+      h("p", { class: "ed-sub", style: "margin:4px 0 10px" }, "この大会に出た選手の支部を、指定した1つにそろえます(オーナーのみ)。先に変更内容を確かめてから適用します。所属(学校名)は変えません。"),
+      h("div", { class: "ed-btns", style: "align-items:center" }, h("span", {}, "支部"), input,
+        h("label", { class: "ed-check" }, over, " 別の支部が入っている人も書き換える")),
+      h("div", { class: "ed-btns", style: "margin-top:10px" }, go));
   }
 
   // ── その他(既存の画面への入口) ──

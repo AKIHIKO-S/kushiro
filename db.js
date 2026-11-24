@@ -1632,6 +1632,36 @@ function normalizePlayerBranches(opts) {
   return { updated: changes.length, total: all.length, changes };
 }
 
+// 大会に出た選手(申込・組合せの出場者。ダブルスは相方も)の支部を、指定した1つにそろえる(オーナー依頼 2026-11-24)。
+// 支部(players.branch)だけを書き換え、所属(学校名・クラブ名)と所属履歴には触れない。
+// overwrite=false(既定)は支部が空欄の人だけ。true は別の支部が入っている人も書き換える(変更前の支部がプレビューに出る)。
+// opts.dry_run=true でプレビュー(DB不変)。統合済みの選手は統合先で数える。
+function setTournamentPlayersBranch(tournamentId, branch, opts) {
+  opts = opts || {};
+  const tid = String(tournamentId || "");
+  if (!sqlite.prepare("SELECT 1 FROM tournaments WHERE id=?").get(tid)) return { error: "大会が見つかりません" };
+  const to = normalizeShibuName(String(branch || "").trim());
+  if (!to) return { error: "支部を指定してください" };
+  const ids = new Set();
+  sqlite.prepare("SELECT player_id, partner_player_id FROM entrants WHERE tournament_id=?").all(tid)
+    .forEach(r => { [r.player_id, r.partner_player_id].forEach(x => { if (x) ids.add(resolvePlayerId(x)); }); });
+  const changes = []; let same = 0, kept = 0;
+  ids.forEach(id => {
+    const p = sqlite.prepare("SELECT id, name, team, branch FROM players WHERE id=? AND merged_into IS NULL").get(id);
+    if (!p) return;
+    const cur = String(p.branch || "").trim();
+    if (cur && normalizeShibuName(cur) === to) { same++; return; }
+    if (cur && !opts.overwrite) { kept++; return; }
+    changes.push({ id: p.id, name: p.name, team: p.team || "", from: cur, to });
+  });
+  changes.sort((a, b) => String(a.team).localeCompare(String(b.team), "ja") || String(a.name).localeCompare(String(b.name), "ja"));
+  const base = { total: ids.size, already_same: same, kept_other: kept, changes };
+  if (opts.dry_run) return { updated: 0, ...base };
+  const upd = sqlite.prepare("UPDATE players SET branch=?, updated_at=datetime('now','localtime') WHERE id=?");
+  sqlite.transaction(() => { changes.forEach(c => upd.run(c.to, c.id)); })();
+  return { updated: changes.length, ...base };
+}
+
 // 支部が空欄の選手に、【入力済みの選手からの推測】で支部を補完する(オーナー要望 2026-07-17)。
 // 手がかりは所属(team): 支部が入っている選手から「所属→支部」の多数決マップを作り、同じ所属で
 // 支部が空欄の選手に埋める。所属の表記ゆれは _normClub、支部の表記ゆれは normalizeShibuName で吸収。
@@ -15459,7 +15489,7 @@ try {
 } catch (e) { console.error("bracket_sheets migration error:", e.message); }
 
 module.exports = {
-  tournamentLabel,
+  tournamentLabel, setTournamentPlayersBranch,
   // 審判結果入力 (テスト環境付き)
   setRefereeToken, setRefereeInputEnabled, getRefereeConfig,
   getTournamentByRefereeToken, getRefereeView, markResultSource,
