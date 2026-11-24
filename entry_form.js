@@ -1304,13 +1304,78 @@ function buildEntryFormHTML(tournament, events, opts) {
   .xl-import .xl-result.ng { background: #fdf0f0; border-radius: 8px; padding: 10px 14px; color: #8a1c1c; }
   .xl-import .xl-note { font-size: 12.5px; color: var(--st-mute); margin: 10px 0 0; line-height: 1.7; }
 
+  /* ══ 3段の申込(2026-11-24 オーナー承認の見本): 連絡先 → 種目と選手 → 確認して送信 ══
+     年配の方・スマホでも読めるよう、文字は17px以上、入力欄・ボタンは高さ56px以上。 */
+  body.wz { padding-bottom: 150px; font-size: 17px; }
+  body.wz [data-wz]:not(.wz-on) { display: none; }
+  body.wz-done { padding-bottom: 0; }
+  body.wz-done #ttSteps, body.wz-done #ttBar { display: none !important; }
+  body.wz .st-brand { gap: 16px; margin: 0 0 16px; }
+  body.wz .st-brand img { width: 64px; height: 64px; flex: 0 0 64px; border: 1px solid var(--st-line); background: #fff; }
+  body.wz .st-brand span { font-size: 26px; font-weight: 800; letter-spacing: .05em; line-height: 1.3; }
+  body.wz .st-brand small { font-size: 11.5px; letter-spacing: .16em; }
+  body.wz .form-header h1 { font-size: 28px; }
+  body.wz .form-header .meta { font-size: 16px; }
+  body.wz .form-row label { font-size: 16.5px; }
+  body.wz .form-row input[type="text"], body.wz .form-row input[type="email"], body.wz .form-row input[type="tel"],
+  body.wz .form-row input[type="number"], body.wz .form-row select { min-height: 56px; font-size: 18px; }
+  body.wz .form-row textarea { font-size: 18px; min-height: 110px; }
+  body.wz .btn-add, body.wz .btn-remove { min-height: 48px; font-size: 16px; }
+  #ttSteps { list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); margin: 18px auto 0; padding: 0;
+    max-width: 760px; border: 2px solid var(--st-ink); background: #fff; }
+  #ttSteps li { margin: 0; padding: 0; border-right: 1px solid var(--st-ink); }
+  #ttSteps li:last-child { border-right: 0; }
+  #ttSteps button { width: 100%; min-height: 64px; padding: 8px 4px; border: 0; background: none; cursor: pointer; font: 700 14.5px/1.35 var(--st-jp); color: var(--st-mute); }
+  #ttSteps button b { display: block; font: 800 26px/1.1 var(--st-num); }
+  #ttSteps li.cur button { background: var(--st-navy); color: #fff; }
+  #ttSteps li.done button { background: var(--st-ok-bg); color: var(--st-ok); }
+  #ttSteps button:focus-visible { outline: 3px solid var(--st-blue); outline-offset: -3px; }
+  #ttBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 70; background: rgba(253, 252, 249, .97); border-top: 2px solid var(--st-ink); padding: 10px 0 calc(12px + env(safe-area-inset-bottom)); }
+  #ttBar .in { max-width: 760px; margin: 0 auto; padding: 0 16px; display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; }
+  #ttBar .sum { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; font-weight: 800; font-size: 16px; }
+  #ttBar .sum b { font: 800 26px/1 var(--st-num); color: var(--st-navy); }
+  #ttBar button, #ttBar .submit-btn { min-height: 58px; border-radius: 29px; font: 800 18px/1.2 var(--st-jp); cursor: pointer; margin: 0; }
+  #ttBar #ttBack { padding: 0 24px; border: 2px solid var(--st-navy); background: #fff; color: var(--st-navy); }
+  #ttBar #ttNext { width: 100%; border: 2px solid var(--st-navy); background: var(--st-navy); color: #fff; }
+  #ttBar #submitBtn { display: none; width: 100%; background: var(--st-navy); color: #fff; border: 2px solid var(--st-navy); box-shadow: none; transform: none; }
+  body.wz-s3 #ttBar #ttNext { display: none; }
+  body.wz-s3 #ttBar #submitBtn { display: inline-flex; align-items: center; justify-content: center; }
+  body.wz-s3 #ttBar .sum { display: none; }
+  body.wz-s1 #ttBar #ttBack { display: none; }
+  body.wz-s1 #ttBar .in { grid-template-columns: 1fr; }
+  body.wz-s1 #ttBar .sum { display: none; }
+  #ttStepMsg { max-width: 760px; margin: 0 auto 8px; padding: 0 16px; font-weight: 700; font-size: 15.5px; color: var(--st-red); }
+  #ttStepMsg:empty { display: none; }
+  #ttCheck .ck-head { display: flex; align-items: baseline; gap: 10px; margin: 18px 0 4px; padding-bottom: 8px; border-bottom: 2px solid var(--st-ink); }
+  #ttCheck .ck-head b { font-size: 19px; }
+  #ttCheck .ck-edit { margin-left: auto; min-height: 44px; padding: 0 16px; border: 1px solid var(--st-navy); border-radius: 22px; background: #fff; color: var(--st-navy); font: 800 15px/1 var(--st-jp); cursor: pointer; }
+  #ttCheck dl { margin: 0; display: grid; grid-template-columns: 140px 1fr; }
+  #ttCheck dt, #ttCheck dd { margin: 0; padding: 10px 4px; border-bottom: 1px solid var(--st-line); }
+  #ttCheck dt { color: var(--st-mute); font-weight: 700; font-size: 15.5px; }
+  #ttCheck dd { font-weight: 700; font-size: 18px; overflow-wrap: anywhere; }
+  #ttCheck .ck-ev { display: flex; justify-content: space-between; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--st-line); font-weight: 700; font-size: 18px; }
+  #ttCheck .ck-ev small { display: block; color: var(--st-mute); font-weight: 500; font-size: 14.5px; }
+  #ttCheck .ck-ev .amt { font: 800 18px/1.4 var(--st-num); white-space: nowrap; }
+  #ttCheck .ck-warn { margin: 0 0 6px; padding: 12px 14px; background: var(--st-warn-bg); border: 1px solid #e6d6ad; color: #5f4707; font-size: 15.5px; }
+  @media (max-width: 600px) {
+    body.wz { padding-left: 16px; padding-right: 16px; }   /* 頭の帯の負の余白(-16px)と合わせ、横に6pxはみ出すのを防ぐ */
+    body.wz .st-brand { gap: 12px; }
+    body.wz .st-brand span { font-size: 22px; min-width: 0; }
+    body.wz .st-brand small { font-size: 10px; letter-spacing: .05em; }
+    body.wz .form-header h1 { font-size: 22.5px; }
+    #ttSteps button { font-size: 12.5px; }
+    #ttSteps button b { font-size: 24px; }
+    #ttCheck dl { grid-template-columns: 1fr; }
+    #ttCheck dt { border-bottom: 0; padding-bottom: 0; }
+  }
+
 
 </style>
 ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : ''}
 </head>
 <body>
 <div class="form-header">
-  <div class="st-brand"><img src="${assetOrigin}/shared/assets/ktta-logo-256.png" alt="" width="34" height="34"><span>釧路卓球協会<small>KUSHIRO TABLE TENNIS ASSOCIATION</small></span></div>
+  <div class="st-brand"><img src="${assetOrigin}/shared/assets/ktta-logo-256.png" alt="" width="64" height="64"><span>釧路卓球協会<small>KUSHIRO TABLE TENNIS ASSOCIATION</small></span></div>
   <h1><span class="seal">大会申込</span>${tournName}</h1>
   <div class="meta">
     開催日 ${tournDate || "日程未定"}
@@ -1411,6 +1476,7 @@ ${turnstileSitekey ? '<div class="cf-turnstile" data-sitekey="' + escapeHtml(tur
 
 <script>${EVENT_GENDER_SRC}</script>
 <script>
+const TT_WIZARD = ${closedReason ? 'false' : 'true'};   // 3段の申込。受付終了のフォームでは使わない
 const TOURNAMENT_ID = ${escapeJs(tournament.id)};
 const TOURNAMENT_NAME = ${escapeJs(tournament.name || "")};
 const SUBMIT_URL = ${escapeJs(submitUrl)};  // 送信先。同一オリジン(自サーバー)
@@ -2325,13 +2391,14 @@ function ttOpId(data) {
 
 async function submitForm(e) {
   e.preventDefault();
+  if (TT_WIZ && !ttWizValidateAll()) return false;   // 3段: 問題のある段へ戻して知らせる
   const data = gatherFormData();
   if (data.entries.length === 0) {
     showMessage("少なくとも 1 種目に 1名以上の参加者を登録してください。", "err");
     return false;
   }
-  // ★ 確認モーダルを表示
-  const ok = await showConfirmModal(data);
+  // ★ 確認: 3段のときは3段目が確認なので、従来の確認画面は出さない
+  const ok = TT_WIZ ? true : await showConfirmModal(data);
   if (!ok) return false;
 
   const btn = document.getElementById("submitBtn");
@@ -2399,6 +2466,7 @@ async function submitForm(e) {
       // フォームを隠す
       document.getElementById("entryForm").querySelectorAll(".form-section").forEach(s => s.style.display = "none");
       document.getElementById("submitBtn").style.display = "none";
+      document.body.classList.add("wz-done");   // 3段の道しるべと操作バーを隠す
       // コピーボタン
       document.getElementById("ttCopyBtn").onclick = async function() {
         try {
@@ -2424,6 +2492,8 @@ async function submitForm(e) {
         document.getElementById("entryForm").querySelectorAll(".form-section").forEach(s => s.style.display = "");
         document.getElementById("submitBtn").style.display = "";
         document.getElementById("messageBox").innerHTML = "";
+        document.body.classList.remove("wz-done");
+        if (TT_WIZ) ttWizShow(1);
         renderEvents();
         recalcTotal();
         ttScrollTop();
@@ -2444,7 +2514,7 @@ async function submitForm(e) {
   } finally {
     btn.disabled = false;
     btn.classList.remove("is-sending");
-    btn.textContent = "申込内容を送信";   // innerHTML(スピナー)も textContent で上書きされ復元される
+    btn.textContent = TT_WIZ ? "この内容で送信する" : "申込内容を送信";   // innerHTML(スピナー)も textContent で上書きされ復元される
   }
   return false;
 }
@@ -2459,6 +2529,176 @@ function showMessage(text, type) {
 // 確認/完了の表示に切り替えた時、フォーム先頭へスクロールする。
 function ttScrollTop() {
   try { window.scrollTo(0, 0); } catch (_) {}
+}
+
+// ══ 3段の申込: 連絡先 → 種目と選手 → 確認して送信(2026-11-24 オーナー承認) ══
+// 段の切替は表示だけ(入力欄は消さない=戻っても入力が残る)。「次へ」で、その段の必須と形式を確かめる。
+// 3段目が送信前の確認なので、従来の確認画面(showConfirmModal)は出さない。
+var TT_WIZ = null;
+function ttWizBuild() {
+  var form = document.getElementById("entryForm");
+  if (!TT_WARD_OK()) return false;
+  var secs = Array.prototype.slice.call(form.querySelectorAll(".form-section"));
+  var contact = secs[0];
+  var events = secs.filter(function (s) { return s.querySelector("#eventsContainer"); })[0];
+  if (!contact || !events) return false;
+  var xl = document.getElementById("xlImport");
+  var link = document.querySelector("a.st-link");
+  var linkP = link ? link.closest("p") : null;
+  var noteP = document.querySelector("p.st-note");
+  var tag = function (el, n) { if (el) el.setAttribute("data-wz", String(n)); };
+  [contact, linkP, noteP].forEach(function (el) { tag(el, 1); });
+  [xl, events].forEach(function (el) { tag(el, 2); });
+  secs.forEach(function (s) { if (s !== contact && s !== events) tag(s, 3); });
+  Array.prototype.slice.call(form.querySelectorAll(".cf-turnstile")).forEach(function (el) { tag(el, 3); });
+  tag(document.getElementById("messageBox"), 3);
+  // 確認パネル(3段目の先頭)。入った時に作り直す
+  var check = document.createElement("div");
+  check.className = "form-section";
+  check.id = "ttCheck";
+  tag(check, 3);
+  var first3 = form.querySelector('.form-section[data-wz="3"]');
+  form.insertBefore(check, first3 || document.getElementById("messageBox"));
+  form.noValidate = true;   // 検査は段ごとに自前で行う(隠れた段の欄で送信が止まらないように)
+
+  var names = ["連絡先", "種目と選手", "確認して送信"];
+  var ol = document.createElement("ol");
+  ol.id = "ttSteps";
+  ol.setAttribute("aria-label", "申込の手順");
+  names.forEach(function (t, i) {
+    var li = document.createElement("li");
+    var b = document.createElement("button");
+    b.type = "button";
+    b.innerHTML = "<b>" + (i + 1) + "</b>" + t;
+    b.addEventListener("click", function () { ttWizTo(i + 1); });
+    li.appendChild(b); ol.appendChild(li);
+  });
+  var anchor = xl || form;
+  anchor.parentNode.insertBefore(ol, linkP || anchor);
+
+  var bar = document.createElement("div");
+  bar.id = "ttBar";
+  bar.innerHTML = '<div id="ttStepMsg" role="alert"></div><div class="in"><button type="button" id="ttBack">戻る</button>' +
+    '<button type="button" id="ttNext"></button><div class="sum"><span>参加料の合計</span><b id="ttSum">¥ 0</b></div></div>';
+  document.body.appendChild(bar);
+  var sb = document.getElementById("submitBtn");
+  if (sb) { sb.textContent = "この内容で送信する"; sb.setAttribute("form", "entryForm"); bar.querySelector(".in").insertBefore(sb, bar.querySelector(".sum")); }
+  document.getElementById("ttBack").addEventListener("click", function () { ttWizTo(TT_WIZ.cur - 1); });
+  document.getElementById("ttNext").addEventListener("click", function () { ttWizTo(TT_WIZ.cur + 1); });
+  var amt = document.getElementById("totalAmount");
+  var sum = document.getElementById("ttSum");
+  var syncSum = function () { if (amt && sum) sum.textContent = "¥ " + amt.textContent; };
+  if (amt && window.MutationObserver) new MutationObserver(syncSum).observe(amt, { childList: true, characterData: true, subtree: true });
+  syncSum();
+  document.body.classList.add("wz");
+  TT_WIZ = { cur: 1, form: form, names: names, ol: ol, check: check };
+  ttWizShow(1);
+  return true;
+}
+function TT_WARD_OK() { return typeof TT_WIZARD !== "undefined" && TT_WIZARD && document.getElementById("entryForm"); }
+function ttWizShow(n) {
+  var W = TT_WIZ;
+  W.cur = n;
+  Array.prototype.slice.call(document.querySelectorAll("[data-wz]")).forEach(function (el) {
+    el.classList.toggle("wz-on", el.getAttribute("data-wz") === String(n));
+  });
+  [1, 2, 3].forEach(function (k) { document.body.classList.toggle("wz-s" + k, k === n); });
+  Array.prototype.slice.call(W.ol.children).forEach(function (li, i) {
+    li.classList.toggle("cur", i + 1 === n);
+    li.classList.toggle("done", i + 1 < n);
+    var b = li.firstChild;
+    if (i + 1 === n) b.setAttribute("aria-current", "step"); else b.removeAttribute("aria-current");
+  });
+  var next = document.getElementById("ttNext");
+  if (next) next.textContent = n === 1 ? "次へ: 種目と選手" : "次へ: 確認する";
+  var msg = document.getElementById("ttStepMsg");
+  if (msg) msg.textContent = "";
+  if (n === 3) ttWizBuildCheck();
+  ttScrollTop();
+}
+// その段の必須・形式を確かめる。問題があれば、その欄へ移して知らせ、false を返す
+function ttWizCheck(n, quiet) {
+  var W = TT_WIZ;
+  var scope = Array.prototype.slice.call(W.form.querySelectorAll('[data-wz="' + n + '"]'));
+  var bad = null;
+  scope.forEach(function (box) {
+    if (bad) return;
+    var els = Array.prototype.slice.call(box.querySelectorAll("input,select,textarea")).filter(function (el) { return !el.disabled && el.type !== "hidden" && el.name !== "hp_url"; });
+    for (var i = 0; i < els.length; i++) { if (!els[i].checkValidity()) { bad = els[i]; break; } }
+  });
+  if (bad) {
+    if (quiet) return false;
+    if (W.cur !== n) ttWizShow(n);
+    try { bad.scrollIntoView({ block: "center" }); bad.focus(); bad.reportValidity(); } catch (e) {}
+    ttWizMsg("入力が足りない欄があります。赤く知らせている欄を直してください。");
+    return false;
+  }
+  if (n === 2) {
+    var picked = 0;
+    try { picked = gatherFormData().entries.length; } catch (e) { picked = 0; }
+    if (!picked) {
+      if (!quiet) {
+        if (W.cur !== n) ttWizShow(n);
+        ttWizMsg("少なくとも1つの種目に、選手を1人以上入れてください。");
+        var ec = document.getElementById("eventsContainer");
+        if (ec) ec.scrollIntoView({ block: "start" });
+      }
+      return false;
+    }
+  }
+  return true;
+}
+function ttWizMsg(t) { var m = document.getElementById("ttStepMsg"); if (m) m.textContent = t || ""; }
+// 段を移る。先へ進むときは、いまの段から順に確かめる
+function ttWizTo(k) {
+  var W = TT_WIZ;
+  if (!W || k < 1 || k > 3) return;
+  if (k > W.cur) {
+    for (var n = W.cur; n < k; n++) { if (!ttWizCheck(n)) return; }
+  }
+  ttWizShow(k);
+}
+// 送信の直前: 全部の段を確かめる(問題があればその段へ戻る)。問題なしなら true
+function ttWizValidateAll() {
+  for (var n = 1; n <= 3; n++) { if (!ttWizCheck(n)) return false; }
+  return true;
+}
+function ttWizBuildCheck() {
+  var W = TT_WIZ, data;
+  try { data = gatherFormData(); } catch (e) { return; }
+  var money = function (v) { return "¥" + (v || 0).toLocaleString("ja-JP"); };
+  var byEv = {}, order = [];
+  data.entries.forEach(function (e) {
+    if (!byEv[e.event]) { byEv[e.event] = []; order.push(e.event); }
+    byEv[e.event].push(e);
+  });
+  var rows = order.map(function (ev) {
+    var list = byEv[ev], fee = 0, who = [];
+    list.forEach(function (e) {
+      fee += e.fee || 0;
+      if (e.type === "team") who.push((e.team_name || "") + (e.members && e.members.length ? "(" + e.members.join("、") + ")" : ""));
+      else if (e.type === "doubles") who.push((e.name1 || "") + " / " + (e.name2 || "(空欄・ペア希望)"));
+      else who.push(e.name || "");
+    });
+    var unit = list[0].type === "team" ? "チーム" : list[0].type === "doubles" ? "組" : "人";
+    return '<div class="ck-ev"><span>' + escapeHtml(ev) + '<small>' + escapeHtml(who.join("、")) + '</small></span><span class="amt">' + list.length + unit + " " + money(fee) + '</span></div>';
+  }).join("");
+  var opts = (ENTRY_OPTIONS || []).map(function (o) {
+    var n = (data.options || {})[o.key] || 0;
+    return n ? '<div class="ck-ev"><span>' + escapeHtml(o.label) + '</span><span class="amt">' + n + escapeHtml(o.unit || "") + " " + money((o.price || 0) * n) + '</span></div>' : "";
+  }).join("");
+  var dt = function (k, v) { return v ? "<dt>" + k + "</dt><dd>" + escapeHtml(v) + "</dd>" : ""; };
+  W.check.innerHTML =
+    '<h2><span class="en" aria-hidden="true">CHECK</span>申込の内容</h2>' +
+    '<p class="ck-warn"><b>まだ申込は終わっていません。</b>内容を確かめて、画面の下の「この内容で送信する」を押してください。</p>' +
+    '<div class="ck-head"><b>連絡先</b><button type="button" class="ck-edit" data-go="1">直す</button></div>' +
+    "<dl>" + dt("団体名", data.team_name) + dt("申込者", data.contact_name) + dt("電話番号", data.contact_tel) + dt("メール", data.contact_email) +
+    dt("引率顧問", data.supervisor) + dt("顧問", data.advisor) + dt("コーチ", data.coach) + "</dl>" +
+    '<div class="ck-head"><b>種目と選手</b><button type="button" class="ck-edit" data-go="2">直す</button></div>' +
+    (rows || '<p class="ck-warn">出場する種目がまだありません。「直す」で入れてください。</p>') + opts;
+  Array.prototype.slice.call(W.check.querySelectorAll(".ck-edit")).forEach(function (b) {
+    b.addEventListener("click", function () { ttWizShow(parseInt(b.getAttribute("data-go"), 10)); });
+  });
 }
 
 // ══ 道しるべ(見本案2・2026-07-27 承認): 行程レールと残り必須の表示 ══
@@ -2967,7 +3207,7 @@ try {
 try {
   renderEvents();
   recalcTotal();
-  ttBuildRail();
+  if (!ttWizBuild()) ttBuildRail();
   ttFormSync();
 } catch (e) {
   if (window.__ttShowFatal) window.__ttShowFatal(e && e.message);
