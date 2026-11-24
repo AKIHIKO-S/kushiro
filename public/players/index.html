@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive">
+<title>選手データベース | 釧路卓球協会</title>
+<link rel="stylesheet" href="/shared/site-tokens.css">
+<style>
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--st-paper);color:var(--st-ink);font-family:var(--st-jp);font-size:17px;line-height:1.7}
+a{color:inherit}
+button,input,select{font:inherit}
+.num{font-family:var(--st-num);font-variant-numeric:tabular-nums}
+.wrap{max-width:1040px;margin:0 auto;padding:0 24px}
+.bar{background:var(--st-white);border-bottom:var(--st-rule)}
+.bar .wrap{display:flex;align-items:center;gap:14px;min-height:68px;flex-wrap:wrap;padding-top:8px;padding-bottom:8px}
+.brand{display:flex;align-items:center;gap:12px;text-decoration:none}
+.brand img{width:44px;height:44px;border:1px solid var(--st-line);background:#fff}
+.brand b{font-size:19px;letter-spacing:.04em;display:block;line-height:1.3}
+.brand small{display:block;font-family:var(--st-num);font-size:11px;letter-spacing:.14em;color:var(--st-mute);font-weight:700}
+.bar nav{margin-left:auto;display:flex;gap:4px}
+.bar nav a{display:inline-flex;align-items:center;min-height:46px;padding:0 14px;text-decoration:none;font-weight:700;font-size:16px;border-bottom:3px solid transparent}
+.bar nav a[aria-current]{border-color:var(--st-navy);color:var(--st-navy)}
+.foot{margin-top:56px;border-top:var(--st-rule);padding:18px 0 40px;color:var(--st-mute);font-size:14px;line-height:1.8}
+.tag{display:inline-block;font-size:13px;font-weight:700;padding:1px 9px;border:1px solid var(--st-line);background:var(--st-wash);white-space:nowrap}
+.tag.middle{background:var(--st-sky);border-color:#c9d8ea;color:var(--st-navy)}
+.tag.high{background:var(--st-ok-bg);border-color:#bfdccd;color:var(--st-ok)}
+.tag.elementary,.tag.university{background:var(--st-warn-bg);border-color:#e6d6ad;color:var(--st-warn)}
+h1{font-size:28px;margin:30px 0 14px;line-height:1.4}
+.find{display:flex;gap:8px;margin-bottom:14px}
+.find input{flex:1;min-width:0;height:56px;font-size:19px;padding:0 16px;border:2px solid var(--st-ink);background:#fff;border-radius:var(--st-radius)}
+.find button{height:56px;padding:0 24px;font-weight:800;font-size:17px;background:var(--st-navy);color:#fff;border:0;border-radius:var(--st-radius);cursor:pointer}
+.tabs{display:flex;border:2px solid var(--st-ink);border-radius:var(--st-radius);overflow:hidden;margin-bottom:14px}
+.tabs button{flex:1;min-height:52px;padding:0 6px;font-weight:800;font-size:16px;background:#fff;border:0;border-right:1px solid var(--st-ink);cursor:pointer}
+.tabs button:last-child{border-right:0}.tabs button[aria-pressed="true"]{background:var(--st-navy);color:#fff}
+.sel{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 12px}
+.sel label{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px}
+.sel select{height:48px;font-size:17px;padding:0 10px;border:1px solid var(--st-ink);background:#fff;border-radius:var(--st-radius);max-width:100%}
+.two{display:grid;grid-template-columns:minmax(0,360px) minmax(0,1fr);gap:36px;align-items:start}
+.sch{border-top:var(--st-rule)}
+.sch button{display:grid;grid-template-columns:1fr auto;align-items:center;width:100%;text-align:left;min-height:66px;padding:10px 4px;border:0;border-bottom:1px solid var(--st-line);background:none;cursor:pointer}
+.sch button b{font-size:20px}.sch button small{grid-column:1;color:var(--st-mute);font-size:14px}
+.sch button .n{grid-row:1/3;grid-column:2;font-size:24px;font-weight:800;color:var(--st-navy)}.sch button .n small{font-family:var(--st-jp);font-size:13px;color:var(--st-mute);font-weight:500}
+.sch button[aria-current]{background:var(--st-sky)}
+.pane{border-top:var(--st-rule)}
+.ph{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:14px 0 12px;border-bottom:1px solid var(--st-ink)}
+.ph h2{margin:0;font-size:26px}.ph span{color:var(--st-mute)}
+.pl{display:grid;grid-template-columns:1fr auto;gap:0 12px;align-items:center;min-height:64px;padding:8px 2px;border-bottom:1px solid var(--st-line);text-decoration:none}
+.pl b{font-size:21px;line-height:1.4}.pl small{grid-column:1;color:var(--st-mute);font-size:14px}.pl .tag{grid-column:2;grid-row:1/3;justify-self:end}
+.pg{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:16px 0 0}
+.pg button{min-height:52px;padding:0 20px;font-weight:800;background:#fff;border:2px solid var(--st-ink);border-radius:var(--st-radius);cursor:pointer}
+.pg button[disabled]{opacity:.4;cursor:default}.pg span{font-size:15px;color:var(--st-mute);text-align:center}
+.cnt{margin:6px 0 8px;font-weight:800}
+.empty{padding:22px 4px;color:var(--st-mute)}
+/* 選手 */
+.crumb{margin:22px 0 0;font-size:15px}
+.hero{margin:12px 0 0;padding:18px 20px;background:var(--st-white);border:1px solid var(--st-line);border-top:4px solid var(--st-navy)}
+.hero .sc{font-size:15px;color:var(--st-mute)}.hero h1{margin:2px 0 8px;font-size:38px}
+.hero .mm{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:36px;margin-top:8px}
+.side{margin-top:30px;border-top:var(--st-rule)}.side h3{margin:10px 0 4px;font-size:16px}.side a{display:block;padding:12px 2px;border-bottom:1px solid var(--st-line);text-decoration:none;font-weight:700;font-size:18px}
+.yr{display:flex;gap:10px;flex-wrap:wrap;margin:22px 0 4px}
+.yr div{flex:1;min-width:130px;padding:12px 14px;background:var(--st-wash)}.yr b{display:block;font-size:15px}.yr span{font-size:24px;font-weight:800}.yr small{display:block;font-size:13px;color:var(--st-mute)}
+.note{font-size:14px;color:var(--st-mute);margin:6px 0 0}
+.tt{margin:26px 0 0}.tt h3{margin:0;padding:8px 0;font-size:18px;border-top:2px solid var(--st-ink)}.tt h3 small{font-weight:500;font-size:14px;color:var(--st-mute);margin-left:8px}
+.hr{display:grid;grid-template-columns:70px 1fr auto;gap:12px;align-items:center;padding:12px 4px;border-bottom:1px solid var(--st-line)}
+.hr-res{text-align:center;padding:6px 0;background:var(--st-wash);line-height:1.2;font-size:15px;font-weight:800;color:var(--st-mute)}
+.hr-res.win{background:var(--st-ok-bg);color:var(--st-ok)}
+.hr-opp b{font-size:18px}.hr-opp a{text-decoration:underline}.hr-opp span{display:block;font-size:14px;color:var(--st-mute)}
+.hr-sc{font-size:22px;font-weight:800;text-align:right}.hr-sc small{display:block;font-family:var(--st-jp);font-size:12px;font-weight:500;color:var(--st-mute)}
+.yh{margin:26px 0 0;font-size:22px;border-top:var(--st-rule);padding-top:8px}
+.tr{padding:14px 2px;border-bottom:1px solid var(--st-line)}.tr b{font-size:19px}.tr span{display:block;color:var(--st-mute);font-size:15px}
+@media(max-width:900px){.two,.cols{grid-template-columns:1fr;gap:22px}}
+@media(max-width:600px){.wrap{padding:0 16px}.bar nav{margin-left:0;width:100%}.bar nav a{flex:1;justify-content:center}h1{font-size:24px}.hero h1{font-size:32px}.hr{grid-template-columns:58px 1fr}.hr-sc{grid-column:2;text-align:left}.find{flex-direction:column}.find input,.find button{height:56px}.find button{width:100%}.sel label{width:100%;justify-content:space-between}.sel select{flex:1;max-width:62%}}
+</style>
+</head>
+<body>
+<header class="bar"><div class="wrap">
+  <a class="brand" href="#/"><img src="/shared/assets/ktta-logo-256.png" alt=""><span><b>釧路卓球協会 選手データベース</b><small>KUSHIRO TABLE TENNIS ASSOCIATION</small></span></a>
+  <nav><a href="#/" id="nav1">選手をさがす</a><a href="#/t" id="nav2">大会からさがす</a></nav>
+</div></header>
+<main class="wrap" id="app" aria-live="polite"></main>
+<footer class="foot"><div class="wrap">このページは、釧路卓球協会が大会の結果と申込をもとに作っています。載せているのは、氏名・所属・支部・区分・大会の成績です。内容の訂正や掲載の取りやめは、協会へご連絡ください。</div></footer>
+<script>
+(function () {
+  "use strict";
+  var app = document.getElementById("app");
+  var CAT = { middle: "中学生", high: "高校生", elementary: "小学生", university: "大学生", general: "一般" };
+  var GROUPS = [["middle", "中学校"], ["high", "高校"], ["elementary", "小学校"], ["club", "クラブ・一般"]];
+  var RES = { win: ["勝ち", "win"], loss: ["負け", ""], walkover_win: ["不戦勝", ""], withdrew: ["棄権", ""] };
+
+  function el(tag, attrs) {
+    var e = document.createElement(tag);
+    for (var k in (attrs || {})) {
+      var v = attrs[k];
+      if (v == null || v === false) continue;
+      if (k === "class") e.className = v;
+      else if (k === "text") e.textContent = v;
+      else if (k.slice(0, 2) === "on") e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v === true ? "" : v);
+    }
+    for (var i = 2; i < arguments.length; i++) {
+      var c = arguments[i];
+      if (c == null || c === false) continue;
+      if (Array.isArray(c)) c.forEach(function (x) { if (x != null) e.appendChild(typeof x === "string" ? document.createTextNode(x) : x); });
+      else e.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+    }
+    return e;
+  }
+  function api(path, params) {
+    var q = new URLSearchParams();
+    for (var k in (params || {})) if (params[k] !== "" && params[k] != null) q.set(k, params[k]);
+    var s = q.toString();
+    return fetch("/api/pub/" + path + (s ? "?" + s : ""), { headers: { Accept: "application/json" } }).then(function (r) {
+      if (r.status === 429) throw new Error("アクセスが多すぎます。少し待ってからもう一度お試しください。");
+      if (!r.ok) throw new Error(r.status === 404 ? "見つかりませんでした。" : "読み込めませんでした。時間をおいてもう一度お試しください。");
+      return r.json();
+    });
+  }
+  function parseHash() {
+    var h = location.hash.replace(/^#/, "") || "/";
+    var i = h.indexOf("?");
+    var path = i < 0 ? h : h.slice(0, i);
+    var p = {};
+    new URLSearchParams(i < 0 ? "" : h.slice(i + 1)).forEach(function (v, k) { p[k] = v; });
+    return { path: path, p: p };
+  }
+  function go(path, p) {
+    var q = new URLSearchParams();
+    for (var k in (p || {})) if (p[k] !== "" && p[k] != null) q.set(k, p[k]);
+    var s = q.toString();
+    location.hash = path + (s ? "?" + s : "");
+  }
+  function setNav(n) {
+    document.getElementById("nav1").removeAttribute("aria-current");
+    document.getElementById("nav2").removeAttribute("aria-current");
+    if (n) document.getElementById("nav" + n).setAttribute("aria-current", "page");
+  }
+  function fail(e) { app.textContent = ""; app.appendChild(el("p", { class: "empty", text: (e && e.message) || "読み込めませんでした。" })); }
+  function tagOf(cat) { return el("span", { class: "tag " + cat, text: CAT[cat] || "一般" }); }
+  function pager(d, p, path) {
+    if (d.pages <= 1) return null;
+    function to(n) { var q = Object.assign({}, p); q.page = String(n); go(path, q); window.scrollTo(0, 0); }
+    return el("div", { class: "pg" },
+      el("button", { type: "button", disabled: d.page <= 1, onclick: function () { to(d.page - 1); } }, "前へ"),
+      el("span", { text: d.page + " / " + d.pages + " ページ(全 " + d.total + " 件)" }),
+      el("button", { type: "button", disabled: d.page >= d.pages, onclick: function () { to(d.page + 1); } }, "次へ"));
+  }
+  function playerRows(d) {
+    if (!d.items.length) return el("p", { class: "empty", text: "見つかりませんでした。" });
+    return d.items.map(function (x) {
+      return el("a", { class: "pl", href: "#/p/" + x.pid },
+        el("b", { text: x.name }), el("small", { text: (x.team || "所属なし") + (x.branch ? "・" + x.branch + "支部" : "") }), tagOf(x.category));
+    });
+  }
+
+  // ── 選手をさがす(学校から / 全員の一覧) ──
+  function home(p) {
+    setNav(1);
+    var mode = p.mode === "all" || p.q ? "all" : "school";
+    app.textContent = "";
+    var input = el("input", { type: "search", value: p.q || "", placeholder: "名前・学校名を入れる", "aria-label": "名前・学校名" });
+    function search() { var v = input.value.trim(); go("/", v ? { mode: "all", q: v, sort: p.sort } : { mode: p.mode === "all" ? "all" : "" }); }
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") search(); });
+    app.appendChild(el("h1", { text: "選手をさがす" }));
+    app.appendChild(el("div", { class: "find" }, input, el("button", { type: "button", onclick: search }, "さがす")));
+    app.appendChild(el("div", { class: "tabs", role: "group", "aria-label": "さがし方" },
+      el("button", { type: "button", "aria-pressed": String(mode === "school"), onclick: function () { go("/", {}); } }, "学校・クラブから"),
+      el("button", { type: "button", "aria-pressed": String(mode === "all"), onclick: function () { go("/", { mode: "all" }); } }, "全員の一覧")));
+    var box = el("div", {});
+    app.appendChild(box);
+    if (mode === "all") allList(box, p); else schoolPane(box, p);
+  }
+
+  function allList(box, p) {
+    var sort = p.sort === "kana" ? "kana" : "school";
+    api("players", { q: p.q, sort: sort, branch: p.branch, category: p.category, page: p.page }).then(function (d) {
+      function setP(k, v) { var q = Object.assign({}, p, { mode: "all", page: "" }); q[k] = v; go("/", q); }
+      var cat = el("select", { "aria-label": "区分", onchange: function (e) { setP("category", e.target.value); } }, el("option", { value: "" }, "すべて"));
+      ["elementary", "middle", "high", "university", "general"].forEach(function (c) { var o = el("option", { value: c }, CAT[c]); if (p.category === c) o.selected = true; cat.appendChild(o); });
+      var br = el("select", { "aria-label": "支部", onchange: function (e) { setP("branch", e.target.value); } }, el("option", { value: "" }, "すべて"));
+      (d.branches || []).forEach(function (b) { var o = el("option", { value: b }, b + "支部"); if (p.branch === b) o.selected = true; br.appendChild(o); });
+      var so = el("select", { "aria-label": "並び順", onchange: function (e) { setP("sort", e.target.value); } },
+        el("option", { value: "school" }, "学校の順"), el("option", { value: "kana" }, "50音順"));
+      so.value = sort;
+      box.appendChild(el("div", { class: "sel" }, el("label", {}, "並び順", so), el("label", {}, "区分", cat), el("label", {}, "支部", br)));
+      box.appendChild(el("p", { class: "cnt", text: (p.q ? "「" + p.q + "」で " : "登録されている選手は ") + d.total + " 人" + (p.q ? " 見つかりました" : "です") }));
+      box.appendChild(el("div", { class: "pane" }, playerRows(d)));
+      var pg = pager(d, Object.assign({}, p, { mode: "all" }), "/"); if (pg) box.appendChild(pg);
+    }).catch(fail);
+  }
+
+  function schoolPane(box, p) {
+    var group = p.group || "middle";
+    Promise.all([api("schools", { group: group, page: p.spage }), p.school ? api("players", { school: p.school, sort: "kana", page: p.page }) : Promise.resolve(null)]).then(function (r) {
+      var sd = r[0], pd = r[1];
+      var tabs = el("div", { class: "tabs", role: "group", "aria-label": "学校の種類" }, GROUPS.map(function (g) {
+        return el("button", { type: "button", "aria-pressed": String(g[0] === group), onclick: function () { go("/", { group: g[0] }); } }, g[1]);
+      }));
+      var list = el("div", { class: "sch" }, sd.items.length ? sd.items.map(function (s) {
+        return el("button", { type: "button", "aria-current": s.team === p.school ? "true" : null, onclick: function () { go("/", { group: group, school: s.team, spage: p.spage }); window.scrollTo(0, 0); } },
+          el("b", { text: s.team }), el("small", { text: s.branch ? s.branch + "支部" : "" }), el("span", { class: "n num" }, String(s.count), el("small", { text: "人" })));
+      }) : el("p", { class: "empty", text: "この種類の学校・クラブはありません。" }));
+      var left = el("div", {}, tabs, list);
+      var spg = pager(sd, { group: group, school: p.school }, "/");
+      if (spg) { var sp = spg; sp.querySelectorAll("button").forEach(function (b, i) { var n = sd.page + (i === 0 ? -1 : 1); b.onclick = function () { go("/", { group: group, school: p.school, spage: String(n) }); }; }); left.appendChild(sp); }
+      var right = el("div", {});
+      if (pd) {
+        right.appendChild(el("div", { class: "pane" }, el("div", { class: "ph" }, el("h2", { text: p.school }), el("span", { text: pd.total + " 人" })), playerRows(pd)));
+        var pg = pager(pd, { group: group, school: p.school, spage: p.spage }, "/"); if (pg) right.appendChild(pg);
+      } else right.appendChild(el("p", { class: "empty", text: "左の一覧から学校・クラブを選ぶと、その選手が出ます。名前や学校名でさがすときは、上の欄に入れてください。" }));
+      box.appendChild(el("div", { class: "two" }, left, right));
+    }).catch(fail);
+  }
+
+  // ── 選手のページ ──
+  function player(pid) {
+    setNav(1);
+    app.textContent = "";
+    api("players/" + encodeURIComponent(pid)).then(function (d) {
+      document.title = d.name + " | 選手データベース | 釧路卓球協会";
+      app.appendChild(el("div", { class: "hero" },
+        el("div", { class: "sc", text: (d.team || "所属なし") + (d.branch ? " ・ " + d.branch + "支部" : "") }),
+        el("h1", { text: d.name }), el("div", { class: "mm" }, tagOf(d.category))));
+      var main = el("div", {});
+      main.appendChild(el("div", { class: "yr" }, d.years.map(function (y) {
+        return el("div", {}, el("b", { text: y.year }), el("span", { class: "num", text: y.wins + "勝 " + y.losses + "敗" }), el("small", { text: "出場 " + y.tournaments + " 大会" }));
+      })));
+      main.appendChild(el("p", { class: "note", text: "棄権・不戦勝は、勝ち負けの数に入れていません。" }));
+      if (!d.tournaments.length) main.appendChild(el("p", { class: "empty", text: "まだ試合の記録がありません。" }));
+      d.tournaments.forEach(function (t) {
+        main.appendChild(el("div", { class: "tt" }, el("h3", {}, t.label, el("small", { text: t.event })),
+          t.rows.map(function (r) {
+            var rs = RES[r.result] || ["", ""];
+            return el("div", { class: "hr" }, el("div", { class: "hr-res " + rs[1], text: rs[0] }),
+              el("div", { class: "hr-opp" }, el("b", {}, r.opp_pid ? el("a", { href: "#/p/" + r.opp_pid, text: r.opp_name }) : r.opp_name), el("span", { text: "(" + r.opp_team + ")・" + r.round })),
+              r.score ? el("div", { class: "hr-sc num" }, r.score, el("small", { text: (r.sets || []).join("  ") })) : null);
+          })));
+      });
+      var side = el("aside", { class: "side" }, el("h3", { text: "同じ学校の選手" }),
+        d.same_school.map(function (m) { return el("a", { href: "#/p/" + m.pid, text: m.name }); }),
+        d.team ? el("a", { href: "#/?group=" + (d.category === "middle" ? "middle" : d.category === "high" ? "high" : d.category === "elementary" ? "elementary" : "club") + "&school=" + encodeURIComponent(d.team), text: d.team + " の一覧へ" }) : null);
+      app.appendChild(el("div", { class: "crumb" }, el("a", { href: "#/", text: "選手をさがす" }), " > " + d.name));
+      app.appendChild(el("div", { class: "cols" }, main, side));
+    }).catch(fail);
+  }
+
+  // ── 大会からさがす ──
+  function tournaments() {
+    setNav(2);
+    app.textContent = "";
+    app.appendChild(el("h1", { text: "大会からさがす" }));
+    api("tournaments").then(function (d) {
+      if (!d.items.length) return app.appendChild(el("p", { class: "empty", text: "表示できる大会はまだありません。" }));
+      var last = "";
+      d.items.forEach(function (t) {
+        if (t.year !== last) { app.appendChild(el("h2", { class: "yh", text: t.year })); last = t.year; }
+        app.appendChild(el("div", { class: "tr" }, el("b", { text: t.label }), el("span", { text: (t.date || "").replace(/^\d{4}-0?(\d{1,2})-0?(\d{1,2}).*$/, "$1月$2日") })));
+      });
+    }).catch(fail);
+  }
+
+  function route() {
+    document.title = "選手データベース | 釧路卓球協会";
+    var h = parseHash(), m;
+    if ((m = h.path.match(/^\/p\/([A-Za-z0-9]+)$/))) return player(m[1]);
+    if (h.path === "/t") return tournaments();
+    home(h.p);
+  }
+  window.addEventListener("hashchange", route);
+  route();
+})();
+</script>
+</body>
+</html>

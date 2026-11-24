@@ -1059,6 +1059,31 @@ app.get("/robots.txt", (req, res) => {
   res.type("text/plain").send("User-agent: *\nDisallow: /\n");
 });
 
+// ═══ 選手DBの一般公開 /players (2026-11-24 オーナー決定) ═══
+// 出す項目は lib/public-players.js が決める(氏名・所属・支部・区分・年度別成績・勝敗履歴だけ)。
+// 検索エンジンには出さない(X-Robots-Tag・メタタグ・robots.txt)。回数制限つき・1回の要求で全員は返さない(1ページ固定人数)。
+const publicPlayers = require("./lib/public-players").create(db);
+const pubRateLimit = rateLimit({ windowMs: 60000, max: parseInt(process.env.PUBLIC_PLAYERS_MAX) || 90,
+  message: "アクセスが多すぎます。少し待ってからもう一度お試しください。" });
+function pubHeaders(req, res, next) {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+  res.setHeader("Cache-Control", "public, max-age=30");
+  next();
+}
+app.get("/api/pub/players", pubRateLimit, pubHeaders, (req, res) => res.json(publicPlayers.listPlayers(req.query || {})));
+app.get("/api/pub/schools", pubRateLimit, pubHeaders, (req, res) => res.json(publicPlayers.listSchools(req.query || {})));
+app.get("/api/pub/tournaments", pubRateLimit, pubHeaders, (req, res) => res.json(publicPlayers.listTournaments(isPublicTournament)));
+app.get("/api/pub/players/:pid", pubRateLimit, pubHeaders, (req, res) => {
+  const r = publicPlayers.playerPage(req.params.pid);
+  if (!r) return res.status(404).json({ error: "選手が見つかりません" });
+  res.json(r);
+});
+app.get(["/players", "/players/", "/players/index.html"], pubRateLimit, (req, res, next) => {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+  _serveVersionedHtml(path.join(publicDir, "players", "index.html"))(req, res, next);
+});
+app.get("/players/*", (req, res) => res.redirect(302, "/players"));
+
 // ═══ 公開API（閲覧画面用・認証なし） ═══════════════════
 // 選手名簿・対戦履歴の横断検索は本人以外の行を列挙できるため公開しない。
 app.all("/api/public/players", (req, res) => res.status(404).json({ error: "公開選手名簿は提供していません" }));

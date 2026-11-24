@@ -33,6 +33,8 @@ const ENTRY_MODE_API = [
   [/^\/api\/export\/all$/],
   [/^\/api\/admin\/export-log$/, ["POST"]],
   [/^\/api\/import\/players$/],
+  // 選手DBの一般公開(/players)。読み取りだけ。出す項目は lib/public-players.js が限定する
+  [/^\/api\/pub\/(players|schools|tournaments)(\/[^/]+)?$/, ["GET", "HEAD"]],
   // 公開の申込
   [/^\/api\/public\/open-tournaments$/],
   [/^\/api\/public\/tournaments\/[^/]+\/(entry|submit-team-entry|entry-template\.xlsx|entry-template\/read|suggest-ticket|suggest\/teams|suggest\/players|check-duplicate)$/],
