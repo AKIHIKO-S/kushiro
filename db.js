@@ -1751,6 +1751,60 @@ function renameTeam(from, to, opts) {
   return { ok: true, from, to, counts, total };
 }
 
+// 所属名の一括統一(オーナー依頼 2026-11-24): 「変更前→変更後」の一覧を、1つの取引でまとめて反映する。
+// 1組あたりの書き換えは renameTeam と同じ(選手・参加記録・パートナー・所属履歴の表記だけ。所属の追加・削除・期間は変えない)。
+// 行の判定: same=変更前と変更後が同じ / missing=変更前の所属が見つからない / dup=同じ変更前が複数 /
+//           chain=変更後が、別の行の変更前になっている(順番で結果が変わるので実行しない) /
+//           merge=変更後がすでに存在する(統合になる。実行はするが印をつける) / rename=新しい表記への変更
+// opts.dry_run=true でプレビュー(DB不変)。適用は apply 対象の行だけを1つのトランザクションで行い、途中で失敗したら全体を戻す。
+function bulkRenameTeams(pairs, opts) {
+  opts = opts || {};
+  const list = (Array.isArray(pairs) ? pairs : []).map(p => ({ from: String(p && p.from != null ? p.from : "").trim(), to: String(p && p.to != null ? p.to : "").trim() }))
+    .filter(p => p.from || p.to);
+  if (!list.length) return { error: "変更前・変更後の一覧がありません" };
+  if (list.length > 2000) return { error: "行が多すぎます(2000行まで)" };
+  const n = (sql, ...a) => { try { return sqlite.prepare(sql).get(...a).n; } catch (e) { return 0; } };
+  const countsOf = (name) => ({
+    players: n("SELECT COUNT(*) n FROM players WHERE team=? AND merged_into IS NULL", name),
+    entrants: n("SELECT COUNT(*) n FROM entrants WHERE team=?", name),
+    partners: n("SELECT COUNT(*) n FROM entrants WHERE partner_team=?", name),
+    affiliations: n("SELECT COUNT(*) n FROM affiliations WHERE team=?", name),
+  });
+  const total = (c) => c.players + c.entrants + c.partners + c.affiliations;
+  const fromCount = new Map(); list.forEach(p => fromCount.set(p.from, (fromCount.get(p.from) || 0) + 1));
+  const fromSet = new Set(list.map(p => p.from));
+  const rows = list.map(p => {
+    const r = { from: p.from, to: p.to, status: "", counts: { players: 0, entrants: 0, partners: 0, affiliations: 0 }, total: 0, note: "" };
+    if (!p.from || !p.to) { r.status = "invalid"; r.note = "変更前または変更後が空です"; return r; }
+    if (p.from === p.to) { r.status = "same"; r.note = "変更前と変更後が同じ"; return r; }
+    if (fromCount.get(p.from) > 1) { r.status = "dup"; r.note = "同じ変更前が複数の行にあります"; return r; }
+    r.counts = countsOf(p.from); r.total = total(r.counts);
+    if (!r.total) { r.status = "missing"; r.note = "この所属名は見つかりません"; return r; }
+    if (fromSet.has(p.to)) { r.status = "chain"; r.note = "変更後が、別の行の変更前になっています(順番で結果が変わるため実行しません)"; return r; }
+    r.to_exists = n("SELECT COUNT(*) n FROM players WHERE team=? AND merged_into IS NULL", p.to) > 0;
+    r.status = r.to_exists ? "merge" : "rename";
+    r.note = r.to_exists ? "変更後の所属名がすでにあります(統合になります)" : "";
+    return r;
+  });
+  const run = rows.filter(r => r.status === "rename" || r.status === "merge");
+  const summary = { rows: rows.length, apply: run.length, rename: rows.filter(r => r.status === "rename").length, merge: rows.filter(r => r.status === "merge").length,
+    same: rows.filter(r => r.status === "same").length, missing: rows.filter(r => r.status === "missing").length,
+    chain: rows.filter(r => r.status === "chain").length, dup: rows.filter(r => r.status === "dup").length, invalid: rows.filter(r => r.status === "invalid").length,
+    players: run.reduce((a, r) => a + r.counts.players, 0), total: run.reduce((a, r) => a + r.total, 0) };
+  if (opts.dry_run) return { ok: true, dry_run: true, rows, summary };
+  const up = {
+    players: sqlite.prepare("UPDATE players SET team=?, updated_at=datetime('now','localtime') WHERE team=?"),
+    entrants: sqlite.prepare("UPDATE entrants SET team=? WHERE team=?"),
+    partners: sqlite.prepare("UPDATE entrants SET partner_team=? WHERE partner_team=?"),
+    affiliations: sqlite.prepare("UPDATE affiliations SET team=? WHERE team=?"),
+  };
+  // 1つの取引: 途中で失敗したら全体を戻す(better-sqlite3 の transaction は例外で自動ロールバック)
+  sqlite.transaction(() => {
+    run.forEach(r => { up.players.run(r.to, r.from); up.entrants.run(r.to, r.from); up.partners.run(r.to, r.from); try { up.affiliations.run(r.to, r.from); } catch (e) { if (!/no such table/i.test(String(e.message))) throw e; } });
+  })();
+  return { ok: true, rows, summary, applied: run.length };
+}
+
 // プレビューで人が選んだ行だけを書き込む(推測補完の確定側)。field は branch|furigana のみ許可
 // (文字列連結でSQLに埋めるためホワイトリスト必須)。空欄の選手だけ更新する(その後に誰かが
 // 入力していたら尊重して上書きしない=競合安全)。list=[{id,to},...]。
@@ -15489,7 +15543,7 @@ try {
 } catch (e) { console.error("bracket_sheets migration error:", e.message); }
 
 module.exports = {
-  tournamentLabel, setTournamentPlayersBranch,
+  bulkRenameTeams, tournamentLabel, setTournamentPlayersBranch,
   // 審判結果入力 (テスト環境付き)
   setRefereeToken, setRefereeInputEnabled, getRefereeConfig,
   getTournamentByRefereeToken, getRefereeView, markResultSource,

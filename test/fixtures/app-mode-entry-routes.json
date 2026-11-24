@@ -120,6 +120,8 @@
  "POST /api/players/normalize-branches",
  "POST /api/players/normalize-categories",
  "POST /api/players/rename-team",
+ "POST /api/players/rename-teams",
+ "POST /api/players/rename-teams/read",
  "POST /api/public/tournaments/:id/check-duplicate",
  "POST /api/public/tournaments/:id/entry",
  "POST /api/public/tournaments/:id/entry-template/read",

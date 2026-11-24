@@ -78,7 +78,7 @@ const ENTRY_MODE_API = [
   [new RegExp(`^${E}/(link|suggest-player|create-player|resolve-branch|member-from-player|player-match)$`)],
   // 選手データベース(名寄せ用)
   [/^\/api\/players$/],
-  [/^\/api\/players\/(cleanup-invalid|normalize-categories|normalize-branches|infer-branches|infer-furigana|apply-fill|rename-team)$/],
+  [/^\/api\/players\/(cleanup-invalid|normalize-categories|normalize-branches|infer-branches|infer-furigana|apply-fill|rename-team|rename-teams|rename-teams\/read)$/],
   [/^\/api\/players\/[^/]+$/],
   [/^\/api\/players\/[^/]+\/(merge|affiliations)$/],
   [/^\/api\/affiliations\/(backfill|[^/]+(\/end)?)$/],

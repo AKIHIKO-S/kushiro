@@ -1515,6 +1515,7 @@ html body .toast { z-index: 100001; }
  <button class="btn btn-sm btn-ghost" onclick="A.openTidyDialog()" title="所属(学校名)からカテゴリを判定し、支部名を正規化。変更内容をプレビューで確認してから一括適用します">支部・カテゴリを整える</button>
  <button class="btn btn-sm btn-ghost" onclick="A.openInferDialog()" title="空欄の支部を同じ所属の選手から、空欄のふりがなを名字辞書から推測して補完(プレビュー確認あり)">空欄を推測で補完</button>
  <button class="btn btn-sm btn-ghost" onclick="A.openRenameTeamDialog()" title="所属名の表記ゆれを一括で統一(例: 鳥取中学 → 鳥取中学校)。対象件数を確認してから適用します">所属名を統一</button>
+ <button class="btn btn-sm btn-ghost" onclick="A.openBulkRenameTeamsDialog()" title="変更前・変更後の一覧(CSV/Excel)を読み込み、所属名をまとめて統一します(オーナーのみ)。内容を確認してから適用します">所属名を一覧で一括統一</button>
  <button class="btn btn-sm btn-ghost" onclick="A.openMergeDialog()" title="氏名・ふりがなが近い重複選手を検出して1人に結合(戦績も統合)">重複の結合</button>
  <button class="btn btn-sm" onclick="A.newPlayer()">+ 新規選手</button>
  </div>
@@ -8616,6 +8617,70 @@ const A = {
      h("div", { className: "flex gap-2", style: { alignItems: "center" } }, applyBtn,
        h("button", { className: "btn btn-ghost", style: { marginLeft: "auto" },
          onClick: () => document.querySelector(".modal-bg")?.remove() }, "閉じる")));
+ },
+
+ // 所属名の一括統一(オーナーのみ): 一覧(CSV/Excel)を読み込む → 内容を確認(何も変わらない) → 適用。
+ // 適用の直前に自動でバックアップ。全体が1つの取引(途中で失敗したら全体を戻す)。所属履歴は表記だけを直す。
+ async openBulkRenameTeamsDialog() {
+   if (!(await A.ensureOwner())) return;
+   const file = h("input", { type: "file", accept: ".csv,.xlsx,.xls,text/csv", id: "brtFile", style: { maxWidth: "100%" } });
+   const out = h("div", { style: { marginTop: "12px" } });
+   const applyBtn = h("button", { className: "btn", disabled: "" }, "適用する");
+   let pairs = null, bg = null;
+   const ST = { rename: ["変更する", "#16a34a"], merge: ["統合になる", "#b45309"], same: ["同じ(変更なし)", "#78716c"], missing: ["見つからない", "#dc2626"], chain: ["連鎖(実行しない)", "#dc2626"], dup: ["重複(実行しない)", "#dc2626"], invalid: ["空欄(実行しない)", "#dc2626"] };
+   const render = (r) => {
+     const sm = r.summary;
+     out.replaceChildren(
+       h("p", { style: { margin: "0 0 8px", fontWeight: 700, lineHeight: 1.7 } }, `読み込み ${sm.rows} 行 → 適用する ${sm.apply} 組・選手 ${sm.players} 名・計 ${sm.total} 件`),
+       h("p", { className: "text-sm text-sub", style: { margin: "0 0 8px", lineHeight: 1.7 } },
+         `変更する ${sm.rename} 組 / 統合になる ${sm.merge} 組 / 変更なし ${sm.same} 組 / 見つからない ${sm.missing} 組 / 連鎖 ${sm.chain} 組 / 重複 ${sm.dup} 組 / 空欄 ${sm.invalid} 組。「統合になる」は、変更後の所属名がすでにあるものです(実行はされます)。`),
+       h("div", { style: { maxHeight: "45vh", overflow: "auto", border: "1px solid var(--st-line, #ddd)" } },
+         h("table", { className: "bulk-preview" },
+           h("thead", {}, h("tr", {}, ...["変更前", "変更後", "判定", "選手", "計"].map(x => h("th", {}, x)))),
+           h("tbody", {}, ...r.rows.map(x => h("tr", {},
+             h("td", {}, x.from), h("td", {}, x.to),
+             h("td", { style: { color: (ST[x.status] || ["", "#000"])[1], fontWeight: 700 }, title: x.note || "" }, (ST[x.status] || [x.status])[0]),
+             h("td", {}, String(x.counts.players)), h("td", {}, String(x.total))))))),
+       h("p", { className: "text-xs text-sub", style: { margin: "10px 0 0", lineHeight: 1.7 } },
+         "ここでは何も変わりません。「適用する」を押すと、直前に自動でバックアップを取り(取れなければ実行しません)、全体を1回の処理で変更します。所属の履歴は表記だけが直り、所属の追加・削除・期間は変わりません。"));
+     applyBtn.disabled = sm.apply ? null : "";
+     applyBtn.textContent = sm.apply ? `適用する(${sm.apply}組)` : "適用するものがありません";
+   };
+   file.addEventListener("change", async () => {
+     const f = file.files && file.files[0];
+     if (!f) return;
+     out.replaceChildren(h("p", { className: "text-sm text-sub" }, "読み込んでいます…")); applyBtn.disabled = ""; pairs = null;
+     try {
+       const hd = A._ownerHeaders({ "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(f.name) });
+       const rd = await fetch("/api/players/rename-teams/read", { method: "POST", headers: hd, body: await f.arrayBuffer() });
+       const j = await rd.json().catch(() => ({}));
+       if (!rd.ok || j.error) { out.replaceChildren(h("p", { style: { color: "#dc2626" } }, j.error || "読み込めませんでした")); return; }
+       pairs = j.pairs.map(x => ({ from: x.from, to: x.to }));
+       const pv = (await A.ownerFetch("/api/players/rename-teams", { method: "POST", body: { pairs, dry_run: true } })).json || {};
+       if (pv.error) { out.replaceChildren(h("p", { style: { color: "#dc2626" } }, pv.error)); return; }
+       render(pv);
+     } catch (e) { out.replaceChildren(h("p", { style: { color: "#dc2626" } }, "確認に失敗: " + e.message)); }
+   });
+   applyBtn.addEventListener("click", async () => {
+     if (!pairs) return;
+     applyBtn.disabled = ""; applyBtn.textContent = "実行しています…";
+     try {
+       const rr = await A.ownerFetch("/api/players/rename-teams", { method: "POST", body: { pairs } });
+       const r = rr.json || {};
+       if (!rr.ok || r.error) { toast(r.error || "適用できませんでした(何も変更していません)", "err"); applyBtn.disabled = null; applyBtn.textContent = "適用する"; return; }
+       bg && bg.remove();
+       await A.reload();
+       A.showBulkResult({ title: "所属名を一括で統一しました", summary: `${r.applied}組・選手${r.summary.players}名(計${r.summary.total}件)を統一しました。`,
+         check: "「選手」の一覧と公開ページ(/players)で、統一後の所属名になっていることを確かめてください。", backup: r.backup });
+     } catch (e) { toast("適用に失敗: " + e.message, "err"); applyBtn.disabled = null; applyBtn.textContent = "適用する"; }
+   });
+   const body = h("div", {},
+     h("div", { className: "text-sm text-sub", style: { marginBottom: "10px", lineHeight: 1.7 } },
+       "「変更前」「変更後」の2列がある一覧(CSVまたはExcel)を選びます。他の列(順・人数など)があっても構いません。先に内容を確認でき、確認の間は何も変わりません。"),
+     file, out);
+   bg = openModal("所属名を一覧で一括統一", body,
+     h("div", { className: "flex gap-2", style: { alignItems: "center" } }, applyBtn,
+       h("button", { className: "btn btn-ghost", style: { marginLeft: "auto" }, onClick: () => bg.remove() }, "閉じる")), { size: "lg" });
  },
 
  // 支部のドロップダウン(道内/道外のグループ)。素の地名(釧路・秋田)で統一=normalizeShibuNameと整合。

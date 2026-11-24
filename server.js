@@ -1744,6 +1744,23 @@ app.post("/api/players/apply-fill", requireAdmin, backupBeforeBulk, (req, res) =
   if (r.error) return res.status(400).json(r);
   res.json(withBackup(req, r));
 });
+// 所属名の一括統一(オーナー限定): 一覧(CSV/Excel)の読み取り → プレビュー(dry_run) → 適用。
+// 適用の直前に自動バックアップ(取れなければ実行しない)。全体を1つの取引で行う。所属履歴は表記だけを直す。
+const teamRenameSheet = require("./lib/team-rename-sheet");
+app.post("/api/players/rename-teams/read", requireOwner, express.raw({ type: () => true, limit: "3mb" }), (req, res) => {
+  const name = (() => { try { return decodeURIComponent(String(req.get("X-Filename") || "")); } catch (_) { return ""; } })();
+  const r = teamRenameSheet.parse(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), name);
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
+app.post("/api/players/rename-teams", requireOwner, backupBeforeBulk, (req, res) => {
+  const b = req.body || {};
+  const dry = !!b.dry_run;
+  const r = db.bulkRenameTeams(b.pairs, { dry_run: dry });
+  if (r.error) return res.status(400).json(r);
+  if (!dry) auditOwner(req, "players_rename_teams", `${r.applied}組・${r.summary.total}件`);
+  res.json(withBackup(req, r));
+});
 // 所属名の統一(表記ゆれの一括変更 例:鳥取中学→鳥取中学校)。dry_run で件数プレビュー。
 app.post("/api/players/rename-team", requireAdmin, backupBeforeBulk, (req, res) => {
   const b = req.body || {};
