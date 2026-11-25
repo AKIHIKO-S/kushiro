@@ -19,7 +19,7 @@ const EV = "男子シングルス";
 const mm = (r, pos, a, b, res, extra) => ({ bracket_round: r, bracket_pos: pos, player1_name: a, player1_team: "甲中学校", player2_name: b, player2_team: "乙中学校", result: res, ...(extra || {}) });
 let T;
 test("下ごしらえ: 4人のトーナメント(準決勝の1試合だけ要確認)", () => {
-  T = db.createTournament({ name: "検証の大会", date: "2026-11-22", venue: "体育館" });
+  T = db.createTournament({ name: "検証の大会", date: "2026-11-22", venue: "体育館", public_view_enabled: true });
   const r = db.importBracket(T.id, { format: "tabletennis-bracket-v1", event: EV, auto_create_players: true, matches: [
     mm(1, 0, "一番 太郎", "二番 次郎", { winner_name: "一番 太郎", loser_name: "二番 次郎", winner_sets: 3, loser_sets: 1, sets: [] }),
     // 疑義: 読み取りの候補は「三番 三郎の勝ち 3-0」だが、確定はしない

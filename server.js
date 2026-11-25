@@ -1062,7 +1062,7 @@ app.get("/robots.txt", (req, res) => {
 // ═══ 選手DBの一般公開 /players (2026-11-24 オーナー決定) ═══
 // 出す項目は lib/public-players.js が決める(氏名・所属・支部・区分・年度別成績・勝敗履歴だけ)。
 // 検索エンジンには出さない(X-Robots-Tag・メタタグ・robots.txt)。回数制限つき・1回の要求で全員は返さない(1ページ固定人数)。
-const publicPlayers = require("./lib/public-players").create(db);
+const publicPlayers = require("./lib/public-players").create(db, { isPublicTournament });
 const pubRateLimit = rateLimit({ windowMs: 60000, max: parseInt(process.env.PUBLIC_PLAYERS_MAX) || 90,
   message: "アクセスが多すぎます。少し待ってからもう一度お試しください。" });
 // 一般公開の入り切り(2026-11-24 オーナー指示)。既定は非公開。非公開の間は、ログイン中の運営だけが見られる。

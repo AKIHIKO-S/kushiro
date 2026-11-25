@@ -7197,6 +7197,16 @@ function advanceWinnerInline(nextMatchId, slot, player) {
   const pname = player.name || player.winner_name || "";
   const pteam = player.team || player.winner_team || "";
   const pentrant = player.entrant_id || player.player1_entrant_id || player.player2_entrant_id || null;
+  if (nm.status === "completed" || nm.status === "on_table") {
+    const existingId = slot === 1 ? nm.player1_id : nm.player2_id;
+    const existingEntrant = slot === 1 ? nm.player1_entrant_id : nm.player2_entrant_id;
+    const existingName = slot === 1 ? nm.player1_name : nm.player2_name;
+    const samePlayer = existingId && pid ? existingId === pid :
+      existingEntrant && pentrant ? existingEntrant === pentrant : existingName === pname;
+    // 紙の結果を先に取り込んだ次戦へ再進出しても、結果・Elo・進行状態を巻き戻さない。
+    if (samePlayer) return;
+    throw new Error("先の試合が進行中または終了済みのため、出場者を変更できません");
+  }
   if (slot === 1) {
     opStmts.setSlot1.run(pid, pname, pteam, nm.player2_name || "", nextMatchId);
     if (pentrant) sqlite.prepare(`UPDATE matches SET player1_entrant_id=? WHERE id=?`).run(pentrant, nextMatchId);
@@ -11118,93 +11128,107 @@ function getEntryExport(tournamentId) {
 }
 
 function createEntry(tournamentId, data) {
-  const t = stmts.getTournament.get(tournamentId);
-  if (!t) return { error: "大会が見つかりません" };
-  // 申込締切チェック(受付フラグ + 締切日時。時刻はJST基準)
-  const closed = _entryClosedReason(t);
-  if (closed) return { error: closed };
+  // 別接続が検証と保存の間に枠を取らないよう、最初の読取より前に書込ロックを取得する。
+  return sqlite.transaction(() => {
+    const t = stmts.getTournament.get(tournamentId);
+    if (!t) return { error: "大会が見つかりません" };
+    // 申込締切チェック(受付フラグ + 締切日時。時刻はJST基準)
+    const closed = _entryClosedReason(t);
+    if (closed) return { error: closed };
 
-  if (!data.name || !data.name.trim()) return { error: "氏名は必須です" };
-  // events は文字列の配列を期待。オブジェクト等が混入しても SQLite バインドエラー(500)に
-  // ならないよう文字列へ正規化し、空要素は除去・長さも制限する。
-  const events = (Array.isArray(data.events) ? data.events : (data.events != null ? [data.events] : []))
-    .map(e => (e && typeof e === "object") ? String(e.name || e.event || "") : String(e == null ? "" : e))
-    .map(s => s.trim().slice(0, 100))
-    .filter(Boolean);
-  if (!events.length) return { error: "出場種目を1つ以上選択してください" };
+    if (!data.name || !data.name.trim()) return { error: "氏名は必須です" };
+    // events は文字列の配列を期待。オブジェクト等が混入しても SQLite バインドエラー(500)に
+    // ならないよう文字列へ正規化し、空要素は除去・長さも制限する。
+    const events = (Array.isArray(data.events) ? data.events : (data.events != null ? [data.events] : []))
+      .map(e => (e && typeof e === "object") ? String(e.name || e.event || "") : String(e == null ? "" : e))
+      .map(s => s.trim().slice(0, 100))
+      .filter(Boolean);
+    if (!events.length) return { error: "出場種目を1つ以上選択してください" };
 
-  // 入力長を安全に制限 (createTeamEntry と同様の DoS/巨大データ対策。氏名は createPlayer 側で検証されるため除く) #QA-2026-05-30
-  const _clipEntry = (s, n) => String(s == null ? "" : s).slice(0, n);
-  data.team = _clipEntry(data.team, 200);
-  data.furigana = _clipEntry(data.furigana, 200);
-  data.note = _clipEntry(data.note, 500);
+    // 入力長を安全に制限 (createTeamEntry と同様の DoS/巨大データ対策。氏名は createPlayer 側で検証されるため除く) #QA-2026-05-30
+    const _clipEntry = (s, n) => String(s == null ? "" : s).slice(0, n);
+    data.team = _clipEntry(data.team, 200);
+    data.furigana = _clipEntry(data.furigana, 200);
+    data.note = _clipEntry(data.note, 500);
 
-  // 既存選手検索 → なければ新規作成
-  let player = findPlayerByName(data.name, data.team);
-  let isNewPlayer = false;
-  if (!player) {
-    try {
-      player = createPlayer({
-        name: data.name.trim(),
-        furigana: data.furigana || "",
-        team: data.team || "",
-        gender: data.gender || "male",
-        category: data.category || "general",
-        note: data.note || "",
-      });
-    } catch (e) {
-      // createPlayer は不正氏名(長すぎ/項目名/数値のみ等)で throw する。公開申込は500ではなく明確な400で返す #QA-2026-05-30
-      return { error: e.message || "氏名が正しくありません" };
-    }
-    isNewPlayer = true;
-  } else {
-    // 不足情報を補完（ふりがな等）
-    if (data.furigana && !player.furigana) {
-      updatePlayer(player.id, { ...player, furigana: data.furigana });
-    }
-  }
+    // 既存選手検索 → なければ新規作成
+    let player = findPlayerByName(data.name, data.team);
+    let isNewPlayer = false;
+    // 冪等再送は追加枠を消費しない。取消・却下を復帰させるときだけ再び枠を確保する。
+    const existingEntry = sqlite.prepare(
+      `SELECT id, status FROM entrants WHERE tournament_id=? AND event=? AND (player_id=? OR (name=? AND team=?)) LIMIT 1`
+    );
+    const adding = [...new Set(events)].filter(ev => {
+      const exists = existingEntry.get(tournamentId, ev, player ? player.id : null,
+        player ? player.name : data.name.trim(), player ? player.team || "" : data.team);
+      return !exists || exists.status === "rejected" || exists.status === "cancelled";
+    }).map(event => ({ event, name: data.name.trim() }));
+    const cmsg = _enforceCapacity(t, adding);
+    if (cmsg) return { error: cmsg, validation: true, full: true };
 
-  const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-  // 公開申込はいたずらスクリーニング(明らかなjunkは黙って受理扱い=作成しない)。admin直接追加は対象外。
-  if (!data.auto_confirm && looksLikeSpamText(`${data.name} ${data.team || ""}`)) {
-    return { ok: true, screened: true };
-  }
-  const status = "confirmed";   // 自動承認(無人運用)。事後の却下は本部が手動で。
-  events.forEach(ev => {
-    entryStmts.insertOrUpdateEntry.run({
-      tournament_id: tournamentId,
-      player_id: player.id,
-      event: ev,
-      seed: 0,
-      status,
-      applied_at: now,
-      entry_note: data.note || "",
-    });
-    // entrants(申込の唯一の正本)にも記録 → 申込管理一覧・件数に必ず出る (Phase1: 旧経路を entrants へ寄せる/H-1)。
-    // 同一(大会・種目・選手)の entrant が既にあれば status のみ更新し重複作成しない(冪等)。
-    const exists = sqlite.prepare(
-      `SELECT id FROM entrants WHERE tournament_id=? AND event=? AND (player_id=? OR (name=? AND team=?)) LIMIT 1`
-    ).get(tournamentId, ev, player.id, player.name, player.team || "");
-    if (exists) {
-      entrantStmts.setStatus.run(status, exists.id);
+    if (!player) {
+      try {
+        // 氏名エラー等を通常応答へ変換しても、作成途中の選手・所属をコミットしない。
+        player = sqlite.transaction(() => createPlayer({
+          name: data.name.trim(),
+          furigana: data.furigana || "",
+          team: data.team || "",
+          gender: data.gender || "male",
+          category: data.category || "general",
+          note: data.note || "",
+        }))();
+      } catch (e) {
+        // createPlayer は不正氏名(長すぎ/項目名/数値のみ等)で throw する。公開申込は500ではなく明確な400で返す #QA-2026-05-30
+        return { error: e.message || "氏名が正しくありません" };
+      }
+      isNewPlayer = true;
     } else {
-      // Phase4: 種目名から性別・カテゴリを自動推定する(admin直接追加/Excel取込も既定の male/general に落ちない)。
-      // 明示指定(data.gender/category)があればそれを優先。
-      const gc = inferGenderCategory(ev, data.gender, data.category);
-      createEntrant({
-        tournament_id: tournamentId, event: ev,
-        name: player.name, team: player.team || "",
-        furigana: player.furigana || data.furigana || "",
-        gender: gc.gender,
-        category: gc.category,
-        division: data.division || "",
-        fee: parseInt(data.fee) || 0,
-        applied_at: now,
-        status, player_id: player.id, note: data.note || "",
-      });
+      // 不足情報を補完（ふりがな等）
+      if (data.furigana && !player.furigana) {
+        updatePlayer(player.id, { ...player, furigana: data.furigana });
+      }
     }
-  });
-  return { ok: true, player_id: player.id, player_name: player.name, events, status, new_player: isNewPlayer };
+
+    const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+    // 公開申込はいたずらスクリーニング(明らかなjunkは黙って受理扱い=作成しない)。admin直接追加は対象外。
+    if (!data.auto_confirm && looksLikeSpamText(`${data.name} ${data.team || ""}`)) {
+      return { ok: true, screened: true };
+    }
+    const status = "confirmed";   // 自動承認(無人運用)。事後の却下は本部が手動で。
+    events.forEach(ev => {
+      entryStmts.insertOrUpdateEntry.run({
+        tournament_id: tournamentId,
+        player_id: player.id,
+        event: ev,
+        seed: 0,
+        status,
+        applied_at: now,
+        entry_note: data.note || "",
+      });
+      // entrants(申込の唯一の正本)にも記録 → 申込管理一覧・件数に必ず出る (Phase1: 旧経路を entrants へ寄せる/H-1)。
+      // 同一(大会・種目・選手)の entrant が既にあれば status のみ更新し重複作成しない(冪等)。
+      const exists = existingEntry.get(tournamentId, ev, player.id, player.name, player.team || "");
+      if (exists) {
+        entrantStmts.setStatus.run(status, exists.id);
+      } else {
+        // Phase4: 種目名から性別・カテゴリを自動推定する(admin直接追加/Excel取込も既定の male/general に落ちない)。
+        // 明示指定(data.gender/category)があればそれを優先。
+        const gc = inferGenderCategory(ev, data.gender, data.category);
+        createEntrant({
+          tournament_id: tournamentId, event: ev,
+          name: player.name, team: player.team || "",
+          furigana: player.furigana || data.furigana || "",
+          gender: gc.gender,
+          category: gc.category,
+          division: data.division || "",
+          fee: parseInt(data.fee) || 0,
+          applied_at: now,
+          status, player_id: player.id, note: data.note || "",
+        });
+      }
+    });
+    return { ok: true, player_id: player.id, player_name: player.name, events, status, new_player: isNewPlayer };
+  }).immediate();
 }
 
 // ── チーム/個人混在のフォーム送信を受け取って entrants + tournament_players 両方に記録
@@ -14408,6 +14432,17 @@ function importFromMatches(tournamentId, data) {
   let withResult = 0;
   let entrantsCreated = 0;
 
+  function importedWinnerSlot(m) {
+    const name = normalizeName(m.result && m.result.winner_name);
+    if (!name) return null;
+    const p1 = name === normalizeName(m.player1_name);
+    const p2 = name === normalizeName(m.player2_name);
+    return p1 === p2 ? null : (p1 ? 1 : 2);
+  }
+  function needsResultReview(m) {
+    return m.needs_review === true || !!(m.result && m.result.winner_name && importedWinnerSlot(m) === null);
+  }
+
   // 既存 entrants の削除も下記 txn 内で実施(挿入失敗時に巻き戻すため)。
 
   // 取込済 entrant 重複防止のキャッシュ (氏名+所属 → entrant_id)
@@ -14526,11 +14561,15 @@ function importFromMatches(tournamentId, data) {
     // 疑義のある対戦(needs_review): 自動で確定せず「要確認(手動推奨)」の印だけ付ける。結果は入れない
     // (読み取りの候補は review_note に残す)。運営が画面で勝者を選んで確定するまで、勝敗・Eloに入れない。
     data.matches.forEach(m => {
-      if (m.needs_review !== true) return;
+      if (!needsResultReview(m)) return;
       const id = idByPos[`${m.bracket_round || 1}-${m.bracket_pos || 0}`];
+      // BYEは対戦結果の推定とは別に進出が確定する。手動確定できない要確認を残さない。
+      const saved = stmts.getMatch.get(id);
+      if (saved.status === "completed" && saved.is_walkover &&
+          (saved.player1_name === "BYE" || saved.player2_name === "BYE" || !saved.player1_name || !saved.player2_name)) return;
       const r = m.result || {};
       const note = JSON.stringify({
-        note: String(m.review_note || r.review_note || "").slice(0, 300),
+        note: String(m.review_note || r.review_note || (m.needs_review === true ? "" : "勝者名を対戦者のどちらかに特定できません")).slice(0, 300),
         guess_winner: String(r.winner_name || "").slice(0, 80),
         guess_winner_sets: Number.isFinite(+r.winner_sets) ? +r.winner_sets : null,
         guess_loser_sets: Number.isFinite(+r.loser_sets) ? +r.loser_sets : null,
@@ -14540,13 +14579,13 @@ function importFromMatches(tournamentId, data) {
     });
     // 結果ありの試合を反映（finish→自動advance）
     data.matches.forEach(m => {
-      if (m.needs_review === true) return;   // 要確認は確定しない
+      if (needsResultReview(m)) return;   // 要確認は確定しない
       if (!m.result || !m.result.winner_name) return;
+      if (importedWinnerSlot(m) === null) return;
       const id = idByPos[`${m.bracket_round || 1}-${m.bracket_pos || 0}`];
       // 勝者がどちらか判定 (名前で)
-      const winnerIsP1 = m.result.winner_name === m.player1_name;
       finishMatchInternal(id, {
-        winner_slot: winnerIsP1 ? 1 : 2,
+        winner_slot: importedWinnerSlot(m),
         sets: Array.isArray(m.result.sets) ? m.result.sets : [],
         winner_sets: m.result.winner_sets,
         loser_sets: m.result.loser_sets,

@@ -8,7 +8,7 @@
 //   ⑤ pid は内部IDに戻せない不透明な値
 //   ⑥ HTTP: noindex(ヘッダー・メタタグ)、回数制限、申込集計モードでも読める、/players が申込案内へ飛ばない
 //   ⑧ HTTP: 既定は非公開。未ログインには /players と /api/pub/ が404。ログイン中の運営は見られる。オーナーが切り替えると全員が見られ、記録が残る
-// 実行: node --test test/public-players.test.js
+// 実行: NODE_OPTIONS='--require ./test/_setup.js' node --test test/public-players.test.js
 const { test, after } = require("node:test");
 const assert = require("node:assert/strict");
 const { once } = require("node:events");
@@ -43,7 +43,7 @@ test("下ごしらえ: 130人の登録+1大会", () => {
   const dup = db.createPlayer({ name: "統合 元", team: "検証中学校", branch: "釧路", gender: "male", category: "middle" });
   const keep = db.createPlayer({ name: "統合 先", team: "検証中学校", branch: "釧路", gender: "male", category: "middle" });
   const mg = db.mergePlayers(keep.id, dup.id, {}); assert.ok(mg.ok, mg.error);
-  T = db.createTournament({ name: "検証新人戦", date: "2026-11-22" });
+  T = db.createTournament({ name: "検証新人戦", date: "2026-11-22", public_view_enabled: true });
   const r = db.importBracket(T.id, { format: "tabletennis-bracket-v1", event: EV, bracket_size: 4, matches: [
     m(0, "本人 太郎", "検証中学校", "相手 一郎", "検証中学校", res("本人 太郎", "相手 一郎")),
     m(1, "棄権 二郎", "検証中学校", "不明 三郎", "", res("不明 三郎", "棄権 二郎", { winner_sets: 0, loser_sets: 0, sets: [], walkover: true })),
@@ -116,6 +116,62 @@ test("④⑤ 選手ページ: 棄権・不戦勝・相手の所属・年度つ�
   assert.deepEqual(q.years[0].tournaments, 1, "棄権の大会も出場に数える");
   const w = pp.playerPage(pp.listPlayers({ q: "不明 三郎" }).items[0].pid);
   assert.equal(w.tournaments[0].rows.find(r => r.result === "walkover_win").opp_name, "棄権 二郎");
+});
+
+test("⑨ 選手ページは非公開大会の通常勝敗・不戦勝・年度集計を除外する", async t => {
+  const privateMatch = db.createTournament({ name: "非公開検証戦", date: "2026-10-01" });
+  const imported = db.importBracket(privateMatch.id, { format: "tabletennis-bracket-v1", event: EV, bracket_size: 4, matches: [
+    m(0, "本人 太郎", "検証中学校", "相手 一郎", "検証中学校", res("本人 太郎", "相手 一郎")),
+    { bracket_round: 2, bracket_pos: 0, player1_name: "本人 太郎", player1_team: "検証中学校", player2_name: "不明 三郎", player2_team: "",
+      result: res("不明 三郎", "本人 太郎") } ] });
+  assert.ok(!imported.error, imported.error);
+  const privateWalkover = db.createTournament({ name: "非公開不戦勝戦", date: "2025-11-22" });
+  const wo = db.importBracket(privateWalkover.id, { format: "tabletennis-bracket-v1", event: EV, bracket_size: 2, matches: [
+    m(0, "本人 太郎", "検証中学校", "棄権 二郎", "検証中学校", res("本人 太郎", "棄権 二郎", { winner_sets: 0, loser_sets: 0, sets: [], walkover: true })) ] });
+  assert.ok(!wo.error, wo.error);
+  const full = db.getPlayer(A.id);
+  assert.equal(full.matches.filter(m => m.tournament_id === privateMatch.id).length, 2, "非公開の通常勝敗がDBに存在する");
+  assert.equal(full.walkovers.filter(m => m.tournament_id === privateWalkover.id).length, 1, "非公開の不戦勝がDBに存在する");
+  const pid = pp.pidOf(A.id);
+
+  await t.test("通常勝敗の詳細は公開大会だけ", () => {
+    const page = pp.playerPage(pid);
+    assert.deepEqual(page.tournaments.map(x => x.label), ["2026年度 検証新人戦"]);
+    assert.deepEqual(page.tournaments[0].rows.map(x => x.result), ["win", "loss"]);
+  });
+  await t.test("非公開の不戦勝と棄権は双方の詳細に出ない", () => {
+    assert.equal(pp.playerPage(pid).tournaments.flatMap(x => x.rows).some(x => x.result === "walkover_win"), false);
+    const withdrew = pp.playerPage(pp.listPlayers({ q: "棄権 二郎" }).items[0].pid);
+    assert.deepEqual(withdrew.tournaments.map(x => x.label), ["2026年度 検証新人戦"]);
+    assert.equal(withdrew.tournaments[0].rows.length, 1);
+  });
+  await t.test("年度別の大会数・勝敗と通算勝敗に非公開大会を数えない", () => {
+    const page = pp.playerPage(pid);
+    assert.deepEqual(page.years, [{ year: "2026年度", tournaments: 1, wins: 1, losses: 1 }]);
+    assert.deepEqual([page.wins, page.losses], [1, 1]);
+  });
+  await t.test("渡された大会公開判定を詳細と年度集計に適用する", () => {
+    const custom = PP.create(db, { isPublicTournament: tournament => tournament.id === privateWalkover.id });
+    const page = custom.playerPage(pid);
+    assert.deepEqual(page.tournaments.map(x => x.label), ["2025年度 非公開不戦勝戦"]);
+    assert.equal(page.tournaments[0].rows[0].result, "walkover_win");
+    assert.deepEqual(page.years, [{ year: "2025年度", tournaments: 1, wins: 0, losses: 0 }]);
+    const denied = PP.create(db, { isPublicTournament: () => false }).playerPage(pid);
+    assert.deepEqual(denied.tournaments, []);
+    assert.deepEqual(denied.years, []);
+    assert.deepEqual([denied.wins, denied.losses], [0, 0]);
+  });
+  await t.test("公開を取り消した大会は次の取得から詳細と年度集計に出ない", () => {
+    try {
+      db.updateTournament(T.id, { public_view_enabled: false });
+      const page = pp.playerPage(pid);
+      assert.deepEqual(page.tournaments, []);
+      assert.deepEqual(page.years, []);
+      assert.deepEqual([page.wins, page.losses], [0, 0]);
+    } finally {
+      db.updateTournament(T.id, { public_view_enabled: true });
+    }
+  });
 });
 
 test("⑦ 「個人」「○○個人」は所属なしの人。クラブとして一覧に出さず、同じ学校の選手にも並べない", () => {
@@ -202,6 +258,19 @@ test("⑥ HTTP: noindex・申込集計モードで読める・回数制限・一
   assert.match(list.headers.get("x-robots-tag") || "", /noindex/);
   const body = await list.json();
   assert.equal(body.items.length, 50);
+  const detailPath = "/api/pub/players/" + pp.pidOf(A.id);
+  const detail = await (await get(detailPath)).json();
+  assert.deepEqual(detail.tournaments.map(x => x.label), ["2026年度 検証新人戦"]);
+  assert.deepEqual(detail.years, [{ year: "2026年度", tournaments: 1, wins: 1, losses: 1 }]);
+  assert.ok(!JSON.stringify(detail).includes("非公開"), "HTTP応答にも非公開大会の結果を出さない");
+  try {
+    db.updateTournament(T.id, { public_view_enabled: false });
+    const hidden = await (await get(detailPath)).json();
+    assert.deepEqual(hidden.tournaments, []);
+    assert.deepEqual(hidden.years, []);
+  } finally {
+    db.updateTournament(T.id, { public_view_enabled: true });
+  }
   assert.equal((await get("/api/pub/players/" + "f".repeat(20))).status, 404);
   assert.ok([401, 403].includes((await get("/api/players")).status), "管理用の選手API(氏名・ふりがな入り)は、認証なしでは読めない");
   assert.ok([401, 403].includes((await get("/api/players/" + "f".repeat(20))).status));
