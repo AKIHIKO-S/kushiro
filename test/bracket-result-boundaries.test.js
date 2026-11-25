@@ -63,17 +63,19 @@ test("不一致・曖昧な取込勝者は要確認となり、勝敗へ加算�
 });
 
 test("BYEの誤った勝者候補は採用せず、実選手を進出させて要確認を残さない", () => {
-  const t = db.createTournament({ name: "不戦勝候補検証", date: "2026-11-25" });
-  const r = db.importBracket(t.id, { format: "tabletennis-bracket-v1", event, matches: [
-    match(1, 0, "試験 不戦", "BYE", result("別の 人", "BYE")),
-  ] });
-  assert.ok(!r.error);
-  const saved = db.getMatchesByTournament(t.id)[0];
-  assert.equal(saved.status, "completed");
-  assert.equal(saved.winner_name, "試験 不戦");
-  assert.equal(saved.is_walkover, 1);
-  assert.equal(db.getReviewMatches(t.id).length, 0);
-  assert.equal(r.matches_with_results, 0);
+  for (const round of [1, 2]) {
+    const t = db.createTournament({ name: "不戦勝候補検証", date: "2026-11-25" });
+    const r = db.importBracket(t.id, { format: "tabletennis-bracket-v1", event, matches: [
+      match(round, 0, "試験 不戦", "BYE", result("別の 人", "BYE")),
+    ] });
+    assert.ok(!r.error);
+    const saved = db.getMatchesByTournament(t.id)[0];
+    assert.equal(saved.status, "completed");
+    assert.equal(saved.winner_name, "試験 不戦");
+    assert.equal(saved.is_walkover, 1);
+    assert.equal(db.getReviewMatches(t.id).length, 0);
+    assert.equal(r.matches_with_results, 0);
+  }
 });
 
 test("名前が同じでも別の出場IDが次戦にあれば、確定を巻き戻して拒否する", () => {

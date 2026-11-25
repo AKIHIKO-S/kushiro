@@ -14565,8 +14565,9 @@ function importFromMatches(tournamentId, data) {
       const id = idByPos[`${m.bracket_round || 1}-${m.bracket_pos || 0}`];
       // BYEは対戦結果の推定とは別に進出が確定する。手動確定できない要確認を残さない。
       const saved = stmts.getMatch.get(id);
-      if (saved.status === "completed" && saved.is_walkover &&
-          (saved.player1_name === "BYE" || saved.player2_name === "BYE" || !saved.player1_name || !saved.player2_name)) return;
+      if ((saved.player1_name === "BYE" && saved.player2_name && saved.player2_name !== "BYE") ||
+          (saved.player2_name === "BYE" && saved.player1_name && saved.player1_name !== "BYE") ||
+          (saved.status === "completed" && saved.is_walkover && (!saved.player1_name || !saved.player2_name))) return;
       const r = m.result || {};
       const note = JSON.stringify({
         note: String(m.review_note || r.review_note || (m.needs_review === true ? "" : "勝者名を対戦者のどちらかに特定できません")).slice(0, 300),
