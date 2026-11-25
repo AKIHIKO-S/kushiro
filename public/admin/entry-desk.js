@@ -565,9 +565,98 @@
         S.listBox,
       ]),
       phase(3, "締切後", "集計と書類を出す", st === "closed", closeButtons()),
+      backupCard(),
       h("div", { class: "ed-foot" }, h("button", { class: "ed-link", type: "button", onclick: deletedSheet }, "削除した申込を見る（元に戻せます）")),
     ]);
     renderList();
+  }
+
+  // ── この大会の申込のバックアップ(保存)と、保存した申込の読み込み(復元)。オーナーだけ ──
+  // 保存: 復元用のJSONと、人が見るExcelの一覧を、ブラウザのダウンロードとして保存(サーバーには残さない)。
+  // 読み込み: 先にプレビュー(新規/すでにある/内容が違う の件数)→「この内容で復元する」。直前に現在のDBの自動バックアップを取る。
+  function backupCard() {
+    const s = app().session;
+    if (!(s && s.owner)) return null;
+    const t = S.data.tournament;
+    const base = "/api/tournaments/" + encodeURIComponent(t.id);
+    const opCode = () => { try { return (app().ownerOperator && app().ownerOperator()) || ""; } catch (_) { return ""; } };
+    const q = (extra) => "?operator=" + encodeURIComponent(opCode()) + (extra || "");
+    const nameOf = (res, fb) => { const m = /filename\*=UTF-8''([^;]+)/.exec(res.headers.get("Content-Disposition") || ""); try { return m ? decodeURIComponent(m[1]) : fb; } catch (_) { return fb; } };
+    const download = async (path, fb) => {
+      const res = await fetch(base + path, { headers: app()._ownerHeaders(), credentials: "same-origin" });
+      if (!res.ok) { let e = ""; try { e = (await res.json()).error; } catch (_) {} return { ok: false, error: e || ("HTTP " + res.status) }; }
+      const blob = await res.blob(), url = URL.createObjectURL(blob), a = doc.createElement("a");
+      a.href = url; a.download = nameOf(res, fb); doc.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
+      return { ok: true, name: a.download };
+    };
+    const saveBtn = h("button", { class: "ed-btn ed-btn--main", type: "button" }, "この大会の申込を保存する");
+    saveBtn.addEventListener("click", async () => {
+      if (!(await app().ensureOwner())) return;
+      if (!root.confirm("この大会の申込を、このパソコンに保存します。\n\n個人情報(連絡先・氏名)を含みます。共有やコミットをしないでください。\n保存するのは、復元用のファイル(JSON)と、見るための一覧(Excel)の2つです。保存しますか？")) return;
+      saveBtn.disabled = true;
+      const j = await download("/entry-backup.json", "申込バックアップ.json");
+      if (!j.ok) { saveBtn.disabled = false; return toast("保存できませんでした: " + j.error, "err"); }
+      await new Promise(r => setTimeout(r, 600));
+      const x = await download("/entry-backup.xlsx", "申込バックアップ(一覧).xlsx");
+      saveBtn.disabled = false;
+      toast(x.ok ? "保存しました(復元用のファイルと、見るための一覧)" : "復元用のファイルを保存しました(一覧のExcelは、申込がまだ無いため作っていません)", "ok");
+    });
+    const file = h("input", { type: "file", accept: ".json,application/json", style: "display:none" });
+    const loadBtn = h("button", { class: "ed-btn", type: "button" }, "保存した申込を読み込む");
+    loadBtn.addEventListener("click", async () => { if (await app().ensureOwner()) file.click(); });
+    file.addEventListener("change", async () => {
+      const f = file.files && file.files[0]; file.value = "";
+      if (!f) return;
+      if (f.size > 40 * 1024 * 1024) return toast("ファイルが大きすぎます", "err");
+      const text = await f.text();
+      const res = await fetch(base + "/entry-restore/preview" + q(), { method: "POST", headers: { ...app()._ownerHeaders(), "Content-Type": "text/plain" }, body: text, credentials: "same-origin" });
+      const p = await res.json().catch(() => ({}));
+      if (!res.ok || p.error) return toast((p && p.error) || "読み込めませんでした", "err");
+      restoreSheet(t, base, text, p, f.name);
+    });
+    const restoreSheet = (tour, b, text, p, fname) => {
+      const cnt = p.counts, lab = { entry_submissions: "申込", entrants: "出場者", entry_changes: "変更履歴", deleted_submissions: "削除した申込の控え", submission_tokens: "申込番号の対応" };
+      const rows = Object.keys(lab).map(k => cnt[k]).map((c, i) => h("tr", {}, h("th", { scope: "row" }, lab[Object.keys(lab)[i]]),
+        h("td", {}, h("b", {}, String(c.new)), " 件"), h("td", {}, String(c.same + c.skipped) + " 件"), h("td", {}, String(c.differs) + " 件")));
+      const other = h("input", { type: "checkbox" }), setting = h("input", { type: "checkbox" });
+      const go = h("button", { class: "ed-btn ed-btn--main", type: "button" }, "この内容で復元する");
+      const totalNew = Object.values(cnt).reduce((a, c) => a + c.new, 0);
+      const sync = () => { go.disabled = (p.other_tournament && !other.checked); };
+      other.addEventListener("change", sync);
+      const result = h("div", {});
+      go.addEventListener("click", async () => {
+        if (!root.confirm("この内容で、保存した申込を読み込みます。\n\n新規に入る: " + totalNew + " 件(申込" + cnt.entry_submissions.new + "件)\nすでにあるものは、上書きしません。\n読み込みの直前に、いまのデータの自動バックアップを取ります。\n\n復元しますか？")) return;
+        go.disabled = true;
+        const res = await fetch(b + "/entry-restore" + q((p.other_tournament && other.checked ? "&allow_other=1" : "") + (setting.checked ? "&apply_settings=1" : "")),
+          { method: "POST", headers: { ...app()._ownerHeaders(), "Content-Type": "text/plain" }, body: text, credentials: "same-origin" });
+        const r = await res.json().catch(() => ({}));
+        go.disabled = false;
+        if (!res.ok || r.error) return toast((r && r.error) || "復元できませんでした", "err");
+        result.textContent = "";
+        result.append(h("p", { class: "ed-sub", style: "font-weight:700;color:var(--st-ink)" }, "復元しました: 新しく入った行 " + r.inserted + " 件" + (r.settings_applied && r.settings_applied.length ? "(大会の申込設定も戻しました)" : "")),
+          h("p", { class: "ed-sub" }, "復元の直前の自動バックアップ: " + (r.backup || "(なし)")),
+          h("p", { class: "ed-sub" }, "取り消すとき: 「その他」→「システム管理（オーナー）」→「バックアップ / 復元」で、この名前のバックアップを「復元」すると、復元する前の状態に戻ります(それ以降の変更も戻ります)。"));
+        go.style.display = "none"; toast("復元しました", "ok"); reload();
+      });
+      sheet("保存した申込を読み込む(確認)", h("div", {},
+        h("p", { class: "ed-sub", style: "margin:6px 0" }, "ファイル: " + fname + "　保存した大会: " + (p.backup_tournament.name || "") + (p.exported_at ? "　保存日時: " + new Date(p.exported_at).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) : "")),
+        p.other_tournament ? h("div", { class: "ed-warn", role: "alert" }, h("b", {}, "この大会のバックアップではありません。"), " 読み込み先は「" + p.target.name + "」で、ファイルは「" + (p.backup_tournament.name || "別の大会") + "」のものです。",
+          h("label", { class: "ed-check" }, other, " 別の大会のファイルだと分かっていて、この大会へ読み込む")) : null,
+        h("p", { class: "ed-sub", style: "margin:8px 0 4px" }, "まだ何も変わっていません。内容を確かめてから、「この内容で復元する」を押してください。"),
+        h("table", { class: "ed-rtab" }, h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "新規で入る"), h("th", {}, "すでにあるので飛ばす"), h("th", {}, "内容が違うので飛ばす"))), h("tbody", {}, rows)),
+        p.differs.length ? h("details", {}, h("summary", {}, "内容が違うもの(" + p.differs.length + "件・上書きしません)"),
+          h("ul", { class: "ed-sub" }, p.differs.slice(0, 20).map(d => h("li", {}, d.table + " " + (d.label || d.id) + "(違う項目: " + d.fields.join("、") + ")")))) : null,
+        p.warnings.length ? h("ul", { class: "ed-sub" }, p.warnings.map(w => h("li", {}, w))) : null,
+        p.settings_differ.length ? h("label", { class: "ed-check" }, setting, " 大会の申込設定(" + p.settings_differ.length + "項目: 種目・参加費・項目など)も、保存した内容に戻す") : null,
+        h("p", { class: "ed-sub" }, "個人情報を含みます。読み込んだあとのファイルも、共有やコミットをしないでください。同じファイルを2回読み込んでも、二重にはなりません。"),
+        h("div", { class: "ed-btns", style: "margin-top:10px" }, go), result));
+      sync();
+    };
+    return h("section", { class: "ed-card" },
+      h("h2", {}, "この大会の申込のバックアップ"),
+      h("p", { class: "ed-sub", style: "margin:4px 0 6px" }, "この大会の申込(申込・出場者・申込番号・変更履歴・削除した申込・申込の設定)を、このパソコンに保存します。復元するときは、保存したファイルを読み込みます(オーナーのみ)。"),
+      h("p", { class: "ed-warn" }, h("b", {}, "個人情報を含みます。共有やコミットをしない。"), " ファイルはサーバーに残らず、ダウンロードとしてこのパソコンに保存されます。"),
+      h("div", { class: "ed-btns", style: "margin-top:8px" }, saveBtn, loadBtn, file));
   }
 
   // 種目の性別の色分けのクラス(判定は shared/event-gender.js の共通関数。判定できない種目は無色)

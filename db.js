@@ -14941,6 +14941,167 @@ try {
   sqlite.prepare("UPDATE draw_log SET drawn_by='' WHERE COALESCE(drawn_by,'')<>''").run();
   sqlite.prepare("UPDATE player_merges SET operator='', undo_operator='' WHERE COALESCE(operator,'')<>'' OR COALESCE(undo_operator,'')<>''").run();
 } catch (e) {}
+// ─── 大会ごとの申込バックアップ / 復元(2026-11-25 オーナー依頼) ─────────────────────────────
+// 1つの大会の「申込」だけを、機械可読の1ファイル(JSON)に書き出し、後から読み込んで戻せる。
+// 含める: 申込原本(entry_submissions)・申込由来の出場者(entrants。申込番号のあるもの)・申込番号の対応(submission_tokens。
+//   ハッシュのまま)・変更履歴(entry_changes)・削除した申込の控え(deleted_submissions)・大会の申込設定(種目・参加費・項目など)。
+// 含めない: 選手DBの成績・他の大会・組合せと試合・スプレッドシート控えの送信記録(sheet_backup_log)・メール送信待ち。
+// 復元の決まり: ①ID(申込ID。申込IDが違っても同じ op_id なら同じ申込)で、すでにあるものは飛ばす=同じファイルを2回読んでも二重にならない
+//   ②既存の行は上書きしない(内容が違うものは一覧に出し、既定は飛ばす) ③申込が新規のときだけ、その出場者・番号・履歴も入れる
+//   ④1つのトランザクション ⑤別の大会のファイルは既定で止める(確認すれば、読み込み先の大会として入れる)
+const ENTRY_BACKUP_FORMAT = "ktta-entry-backup-v1";
+const ENTRY_BK_TABLES = [
+  { name: "entry_submissions", key: "id" },
+  { name: "entrants", key: "id" },
+  { name: "submission_tokens", key: "token_hash" },
+  { name: "entry_changes", key: "id" },
+  { name: "deleted_submissions", key: "id" },
+];
+const ENTRY_BK_SETTING_COLS = ["entries_open", "entry_deadline", "entry_deadline_time", "entry_capacity", "entry_options", "entry_max_events",
+  "entry_payment_note", "entry_events", "event_config", "field_config", "entry_suggest_players"];
+const ENTRY_BK_VOLATILE = new Set(["gas_status", "gas_at", "gas_detail"]);   // スプレッドシート控えの状態は、比較に使わない
+const _tableCols = (t) => sqlite.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
+const _bkSha = (str) => require("crypto").createHash("sha256").update(str).digest("hex");
+
+function exportEntryBackup(tournamentId) {
+  const t = sqlite.prepare("SELECT * FROM tournaments WHERE id=?").get(String(tournamentId));
+  if (!t) return null;
+  const tables = {
+    entry_submissions: sqlite.prepare("SELECT * FROM entry_submissions WHERE tournament_id=? ORDER BY created_at, id").all(t.id),
+    entrants: sqlite.prepare("SELECT * FROM entrants WHERE tournament_id=? AND COALESCE(submission_id,'')<>'' ORDER BY created_at, id").all(t.id),
+    submission_tokens: sqlite.prepare("SELECT * FROM submission_tokens WHERE submission_id IN (SELECT id FROM entry_submissions WHERE tournament_id=?) ORDER BY token_hash").all(t.id),
+    entry_changes: sqlite.prepare("SELECT * FROM entry_changes WHERE tournament_id=? ORDER BY created_at, id").all(t.id),
+    deleted_submissions: sqlite.prepare("SELECT * FROM deleted_submissions WHERE tournament_id=? ORDER BY deleted_at, id").all(t.id),
+  };
+  const settings = {}; ENTRY_BK_SETTING_COLS.forEach(c => { if (c in t) settings[c] = t[c]; });
+  const tournament = { id: t.id, name: t.name, date: t.date, venue: t.venue, settings };
+  const body = { tournament, tables };
+  const counts = {}; ENTRY_BK_TABLES.forEach(x => { counts[x.name] = tables[x.name].length; });
+  return { format: ENTRY_BACKUP_FORMAT, exported_at: new Date().toISOString(),
+    note: "個人情報(連絡先・氏名)を含みます。共有やコミットをしないでください。申込番号は元々平文を持たないため、ハッシュのまま入っています。",
+    ...body, counts, checksum: _bkSha(JSON.stringify(body)) };
+}
+
+// ファイルの検査(壊れている・形が違うものは、ここで断る)
+function _validateEntryBackup(data) {
+  const bad = (m) => ({ error: m });
+  if (!data || typeof data !== "object" || Array.isArray(data)) return bad("ファイルの形式が違います(申込のバックアップではありません)");
+  if (data.format !== ENTRY_BACKUP_FORMAT) return bad("このアプリの申込バックアップではありません(形式: " + String(data.format || "なし").slice(0, 40) + ")");
+  if (!data.tournament || typeof data.tournament.id !== "string" || !data.tournament.id) return bad("バックアップに大会の情報がありません");
+  if (!data.tables || typeof data.tables !== "object") return bad("バックアップに申込のデータがありません");
+  for (const x of ENTRY_BK_TABLES) {
+    const rows = data.tables[x.name];
+    if (!Array.isArray(rows)) return bad("バックアップの「" + x.name + "」が読めません");
+    if (rows.length > 100000) return bad("バックアップが大きすぎます");
+    for (const r of rows) if (!r || typeof r !== "object" || typeof r[x.key] !== "string" || !r[x.key]) return bad("バックアップの「" + x.name + "」に、IDのない行があります");
+  }
+  if (typeof data.checksum !== "string" || data.checksum !== _bkSha(JSON.stringify({ tournament: data.tournament, tables: data.tables })))
+    return bad("ファイルが壊れているか、書き換えられています(照合コードが一致しません)");
+  const tid = data.tournament.id;
+  for (const r of data.tables.entry_submissions.concat(data.tables.entrants, data.tables.entry_changes, data.tables.deleted_submissions))
+    if (r.tournament_id !== tid) return bad("バックアップの中に、別の大会の行が混ざっています");
+  return { ok: true };
+}
+
+const _eqv = (a, b) => String(a == null ? "" : a) === String(b == null ? "" : b);
+// 復元の計画(何が新規で、何がすでにあり、何が違うか)。DBは変えない。applyEntryRestore も、同じ計画を作り直して使う
+function planEntryRestore(targetId, data, opts) {
+  opts = opts || {};
+  const v = _validateEntryBackup(data);
+  if (v.error) return v;
+  const target = sqlite.prepare("SELECT id, name FROM tournaments WHERE id=?").get(String(targetId));
+  if (!target) return { error: "読み込み先の大会が見つかりません" };
+  const other = data.tournament.id !== target.id;
+  const T = data.tables;
+  const colsOf = {}; ENTRY_BK_TABLES.forEach(x => { colsOf[x.name] = _tableCols(x.name); });
+  const plan = { other_tournament: other, backup_tournament: { id: data.tournament.id, name: data.tournament.name || "" }, target: { id: target.id, name: target.name },
+    exported_at: data.exported_at || "", counts: {}, differs: [], new_submissions: [], warnings: [], settings_differ: [], inserts: [] };
+  ENTRY_BK_TABLES.forEach(x => { plan.counts[x.name] = { total: T[x.name].length, new: 0, same: 0, differs: 0, skipped: 0 }; });
+  const get = (t, key, val) => sqlite.prepare(`SELECT * FROM ${t} WHERE ${key}=?`).get(val);
+  const diff = (t, row, cur) => colsOf[t].filter(c => c in row && c !== "tournament_id" && !ENTRY_BK_VOLATILE.has(c) && !_eqv(row[c], cur[c]));
+  let elsewhere = 0;
+  const subState = new Map();   // 申込ID → 'new' | 'same' | 'differs' | 'opid'
+  T.entry_submissions.forEach(r => {
+    const c = plan.counts.entry_submissions, cur = get("entry_submissions", "id", r.id);
+    if (cur && cur.tournament_id !== target.id) {   // 同じ申込IDが、別の大会にある(別の大会として入れようとしたとき)
+      subState.set(r.id, "elsewhere"); c.skipped++; elsewhere++; return;
+    }
+    if (cur) {
+      const d = diff("entry_submissions", r, cur);
+      if (!d.length) { subState.set(r.id, "same"); c.same++; }
+      else { subState.set(r.id, "differs"); c.differs++; plan.differs.push({ table: "申込", id: r.id, label: r.team_name || r.contact_name || "", fields: d.slice(0, 8) }); }
+      return;
+    }
+    if (r.op_id) {
+      const dup = sqlite.prepare("SELECT id FROM entry_submissions WHERE op_id=? AND tournament_id=? AND id<>?").get(r.op_id, target.id, r.id);
+      if (dup) { subState.set(r.id, "opid"); c.same++; return; }
+    }
+    subState.set(r.id, "new"); c.new++;
+    plan.new_submissions.push({ id: r.id, team: r.team_name || "", created_at: r.created_at || "" });
+    plan.inserts.push({ table: "entry_submissions", row: r });
+  });
+  const child = (t, subKey) => T[t].forEach(r => {
+    const c = plan.counts[t], st = subKey && r[subKey] ? subState.get(r[subKey]) : undefined;
+    if (st && st !== "new") { c.skipped++; return; }   // すでにある申込の出場者・番号・履歴は、触らない
+    const keyCol = ENTRY_BK_TABLES.find(x => x.name === t).key, cur = get(t, keyCol, r[keyCol]);
+    if (cur) {
+      const d = diff(t, r, cur);
+      if (!d.length) c.same++; else { c.differs++; plan.differs.push({ table: t === "entrants" ? "出場者" : t === "entry_changes" ? "変更履歴" : t === "deleted_submissions" ? "削除済みの申込" : "申込番号", id: r[keyCol], label: r.name || r.team_name || "", fields: d.slice(0, 8) }); }
+      return;
+    }
+    c.new++; plan.inserts.push({ table: t, row: r });
+  });
+  child("entrants", "submission_id"); child("submission_tokens", "submission_id"); child("entry_changes", "submission_id"); child("deleted_submissions", "submission_id");
+  if (elsewhere) plan.warnings.push("同じ申込IDの申込が、別の大会にすでにあるため、入れられない申込が " + elsewhere + " 件あります(同じ大会へ戻すときは、元の大会を選んでください)");
+  // 取り込み先に選手DBの登録が無いとき、出場者の選手DBとの紐づけは外す(取込後に、選手DBと照合し直せる)
+  let unlinked = 0;
+  plan.inserts.forEach(i => { if (i.table !== "entrants") return; ["player_id", "partner_player_id"].forEach(k => { if (i.row[k] && !get("players", "id", i.row[k])) unlinked++; }); });
+  if (unlinked) plan.warnings.push("選手DBに無い選手との紐づけ " + unlinked + " 件は、紐づけなしで入ります(あとで「選手DBと照合・連携」で付け直せます)");
+  const unknown = new Set();
+  ENTRY_BK_TABLES.forEach(x => T[x.name].forEach(r => Object.keys(r).forEach(k => { if (!colsOf[x.name].includes(k)) unknown.add(x.name + "." + k); })));
+  if (unknown.size) plan.warnings.push("このアプリに無い項目は読み飛ばします: " + [...unknown].slice(0, 6).join("、"));
+  const cur = sqlite.prepare("SELECT * FROM tournaments WHERE id=?").get(target.id), bs = (data.tournament.settings || {});
+  plan.settings_differ = ENTRY_BK_SETTING_COLS.filter(c => c in bs && !_eqv(bs[c], cur[c]));
+  plan.differs = plan.differs.slice(0, 200);
+  return plan;
+}
+function _publicPlan(plan) { const { inserts, ...rest } = plan; return rest; }
+function previewEntryRestore(targetId, data) { const p = planEntryRestore(targetId, data); return p.error ? p : { ok: true, ..._publicPlan(p) }; }
+// 復元の実行。opts: { allow_other(別の大会のファイルを入れてよい), apply_settings(大会の申込設定も戻す) }
+function applyEntryRestore(targetId, data, opts) {
+  opts = opts || {};
+  const result = { ok: true };
+  const run = sqlite.transaction(() => {
+    const plan = planEntryRestore(targetId, data);
+    if (plan.error) throw Object.assign(new Error(plan.error), { _restore: true });
+    if (plan.other_tournament && !opts.allow_other) throw Object.assign(new Error("別の大会(" + (plan.backup_tournament.name || plan.backup_tournament.id) + ")のバックアップです。この大会(" + plan.target.name + ")へ読み込むには、確認のチェックが必要です"), { _restore: true, code: "other_tournament" });
+    const colsOf = {};
+    const players = new Set(sqlite.prepare("SELECT id FROM players").all().map(r => r.id));
+    let inserted = 0;
+    plan.inserts.forEach(({ table, row }) => {
+      colsOf[table] = colsOf[table] || _tableCols(table);
+      const r = { ...row };
+      if (colsOf[table].includes("tournament_id")) r.tournament_id = plan.target.id;
+      if (table === "entrants") ["player_id", "partner_player_id"].forEach(k => { if (r[k] && !players.has(r[k])) r[k] = null; });
+      const cols = colsOf[table].filter(c => c in r);
+      sqlite.prepare(`INSERT INTO ${table} (${cols.join(",")}) VALUES (${cols.map(c => "@" + c).join(",")})`).run(Object.fromEntries(cols.map(c => [c, r[c] === undefined ? null : r[c]])));
+      inserted++;
+    });
+    let settingsApplied = [];
+    if (opts.apply_settings && plan.settings_differ.length) {
+      const bs = data.tournament.settings || {};
+      plan.settings_differ.forEach(c => sqlite.prepare(`UPDATE tournaments SET ${c}=?, updated_at=datetime('now','localtime') WHERE id=?`).run(bs[c], plan.target.id));
+      settingsApplied = plan.settings_differ.slice();
+    }
+    Object.assign(result, { inserted, counts: plan.counts, differs: plan.differs, warnings: plan.warnings, settings_applied: settingsApplied, other_tournament: plan.other_tournament, target: plan.target });
+  });
+  try { run(); } catch (e) {
+    if (e._restore) return { error: e.message, code: e.code || "" };
+    return { error: "復元できませんでした(途中で失敗したので、何も入っていません): " + String(e.message || e).slice(0, 160), code: "rolled_back" };   // 1つのトランザクション=全部戻る
+  }
+  return result;
+}
+
 function logOwnerAction({ action, operator } = {}) {
   try {
     sqlite.prepare(`INSERT INTO owner_audit (action, detail, operator, ip, privacy_v2) VALUES (?,?,?,?,1)`)
@@ -15717,7 +15878,7 @@ module.exports = {
   lookupFurigana, calcElo, getRoundOrder,
   // 進行管理
   generateBracket, addBracketSeed, promoteToSeed, drawSingleBracket, computeDrawLeaves, bracketPositions,
-  checkDrawReadiness, bracketRev, undoDraw, undoLast, getDrawLog, getBracketDrawDiff, importBracketRoundtrip, getReviewMatches, resolveReviewMatch, undoReviewMatch,
+  checkDrawReadiness, bracketRev, undoDraw, undoLast, getDrawLog, getBracketDrawDiff, importBracketRoundtrip, exportEntryBackup, previewEntryRestore, applyEntryRestore, getReviewMatches, resolveReviewMatch, undoReviewMatch,
   autoAdvanceByes, finishMatchOp, correctResult, callMatch, uncallMatch, assignReferee,
   generateTeamLeague, generateLeaguePlayoff, setLeagueTiebreak, computeLeagueStandings, getLeagueMatchResults, listLeagueEvents, summarizeTie, computePromotionSuggestion,
   assignAnyReferee, setRefereeRequired, setOperationSettings, editMatch,

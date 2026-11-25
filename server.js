@@ -3979,6 +3979,60 @@ app.get("/api/tournaments/:id/applicants.xlsx", requireAdmin, (req, res) => {
     res.status(500).json({ error: "申込一覧生成失敗: " + e.message });
   }
 });
+// ── 大会ごとの申込バックアップ(オーナー限定・2026-11-25 オーナー依頼) ──
+// 復元に使う機械可読のJSONと、人が開いて見る申込一覧のExcel(復元には使わない控え)。ブラウザのダウンロードとして返し、サーバには残さない。
+// 個人情報(連絡先・氏名)を含む。書き出しは監査ログに残す。
+function entryBackupFilename(t, ext) {
+  const ymd = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10).replace(/-/g, "");
+  const safe = String(t.name || "大会").replace(/[\\/:*?"<>|\r\n\t]/g, "_").slice(0, 60);
+  return `${ymd}_${safe}_申込バックアップ${ext}`;
+}
+function sendDownload(res, name, type, buf) {
+  const enc = encodeURIComponent(name);
+  res.setHeader("Content-Type", type);
+  res.setHeader("Content-Disposition", `attachment; filename="entry-backup${/\.xlsx$/.test(name) ? ".xlsx" : ".json"}"; filename*=UTF-8''${enc}`);
+  res.setHeader("Content-Length", Buffer.byteLength(buf));
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  res.end(buf);
+}
+app.get("/api/tournaments/:id/entry-backup.json", requireOwner, (req, res) => {
+  const t = db.getTournamentMeta(req.params.id);
+  if (!t) return res.status(404).json({ error: "大会が見つかりません" });
+  const b = db.exportEntryBackup(t.id);
+  auditOwner(req, "entry_backup_export:" + String(t.id).slice(0, 8));
+  sendDownload(res, entryBackupFilename(t, ".json"), "application/json; charset=utf-8", JSON.stringify(b));
+});
+app.get("/api/tournaments/:id/entry-backup.xlsx", requireOwner, (req, res) => {
+  try {
+    const t = db.getTournament(req.params.id);
+    if (!t) return res.status(404).json({ error: "大会が見つかりません" });
+    const entrants = db.getEntrants(t.id);
+    if (!entrants.length) return res.status(400).json({ error: "申込がまだありません" });
+    sendDownload(res, entryBackupFilename(t, "(一覧).xlsx"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", reports.buildApplicantsXlsx(t, entrants, {}));
+  } catch (e) { console.error("entry-backup.xlsx error:", e); res.status(500).json({ error: "申込一覧の生成に失敗しました" }); }
+});
+// 復元: ファイルを本文(テキスト)で受け取る。先にプレビュー(何も変えない)、確定は別の呼び出し(直前に自動バックアップ・オーナーのみ・監査ログ)
+const entryRestoreBody = express.text({ type: () => true, limit: "40mb" });
+function readRestoreFile(req, res, next) {
+  const raw = typeof req.body === "string" ? req.body : "";
+  req.restoreOperator = validOperatorCode(req.query.operator);
+  req.body = { operator: req.restoreOperator };   // 監査ログの担当コード(ownerAuditCode が本文を読む)
+  try { req.restoreData = JSON.parse(raw); } catch (e) { return res.status(400).json({ error: "ファイルを読めませんでした(申込バックアップのJSONではありません)" }); }
+  next();
+}
+app.post("/api/tournaments/:id/entry-restore/preview", requireOwner, entryRestoreBody, readRestoreFile, (req, res) => {
+  const r = db.previewEntryRestore(req.params.id, req.restoreData);
+  if (r.error) return res.status(400).json(r);
+  res.json(r);
+});
+app.post("/api/tournaments/:id/entry-restore", requireOwner, entryRestoreBody, readRestoreFile, backupBeforeBulk, (req, res) => {
+  const r = db.applyEntryRestore(req.params.id, req.restoreData, { allow_other: req.query.allow_other === "1", apply_settings: req.query.apply_settings === "1" });
+  if (r.error) return res.status(r.code === "other_tournament" ? 409 : 400).json(withBackup(req, r));
+  auditOwner(req, "entry_restore:" + String(req.params.id).slice(0, 8) + ":+" + r.inserted);
+  res.json(withBackup(req, r));
+});
 // 統計 (種目×ブロック分布)
 app.get("/api/tournaments/:id/entrants/stats", requireAdmin, (req, res) => {
   res.json(db.getEntrantStats(req.params.id));

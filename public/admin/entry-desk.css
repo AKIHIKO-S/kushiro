@@ -382,3 +382,9 @@ html[data-app-mode="full"] .op-tools-body { background: var(--st-paper); border:
 .ed-rv__pick { display: grid; gap: 2px; margin: 6px 0; }
 .ed-rv--done { color: var(--st-mute); }
 .ed-rv--done .ed-rv__t { color: var(--st-ink); }
+
+/* 申込バックアップ/復元 */
+.ed-warn { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--st-ink); background: var(--st-paper); font-size: 14px; }
+.ed-rtab { width: 100%; border-collapse: collapse; margin: 6px 0 10px; font-size: 14px; }
+.ed-rtab th, .ed-rtab td { border: 1px solid var(--st-line); padding: 6px 8px; text-align: left; }
+.ed-rtab thead th { background: var(--st-paper); font-weight: 700; }
