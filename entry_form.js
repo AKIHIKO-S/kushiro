@@ -1303,6 +1303,9 @@ function buildEntryFormHTML(tournament, events, opts) {
   .xl-import .xl-result.ok { background: var(--st-sky); border-radius: 8px; padding: 10px 14px; color: var(--st-navy); }
   .xl-import .xl-result.ng { background: #fdf0f0; border-radius: 8px; padding: 10px 14px; color: #8a1c1c; }
   .xl-import .xl-note { font-size: 12.5px; color: var(--st-mute); margin: 10px 0 0; line-height: 1.7; }
+  /* 最初の画面(1段目の一番上)の、テンプレートのダウンロード。入力しなくても押せる */
+  .xl-top .xl-top-btn { width: 100%; min-height: 58px; font-size: 17px; line-height: 1.5; text-align: center; padding: 8px 14px; white-space: normal; }
+  .xl-top .xl-top-lead { margin: 10px 0 0; }
 
   /* ══ 3段の申込(2026-11-24 オーナー承認の見本): 連絡先 → 種目と選手 → 確認して送信 ══
      年配の方・スマホでも読めるよう、文字は17px以上、入力欄・ボタンは高さ56px以上。 */
@@ -1384,6 +1387,11 @@ ${turnstileSitekey ? '<script src="https://challenges.cloudflare.com/turnstile/v
   </div>
 </div>
 ${closedNotice}
+${closedReason ? "" : `<div class="form-section xl-import xl-top" id="xlTop">
+  <a class="xl-btn primary xl-top-btn" id="xlTopDl" href="${assetOrigin}/api/public/tournaments/${encodeURIComponent(tournament.id)}/entry-template.xlsx" download>Excelの入力用テンプレートをダウンロード</a>
+  <p class="xl-lead xl-top-lead">入力しなくても受け取れます。Excelに記入したら、2段目の「記入したExcelを読み込む」で取り込めます。</p>
+</div>`}
+
 <p><a href="/entry/status?tournament=${encodeURIComponent(tournament.id)}" target="_top" class="st-link" style="display:inline-flex;align-items:center;min-height:44px">申込済みの方：申込番号で追加・修正する</a></p>
 <p class="st-note" style="font-size:13px;line-height:1.7;margin:0 0 12px">送信すると申込番号を発行し、控えメールにも記載します。あとから修正・種目の追加をするときはこの番号が必要です。修正した内容は同じ申込に上書きされます。同じ選手を同じ種目に重ねて申し込むことはできません。</p>
 
@@ -2547,7 +2555,7 @@ function ttWizBuild() {
   var linkP = link ? link.closest("p") : null;
   var noteP = document.querySelector("p.st-note");
   var tag = function (el, n) { if (el) el.setAttribute("data-wz", String(n)); };
-  [contact, linkP, noteP].forEach(function (el) { tag(el, 1); });
+  [contact, linkP, noteP, document.getElementById("xlTop")].forEach(function (el) { tag(el, 1); });
   [xl, events].forEach(function (el) { tag(el, 2); });
   secs.forEach(function (s) { if (s !== contact && s !== events) tag(s, 3); });
   Array.prototype.slice.call(form.querySelectorAll(".cf-turnstile")).forEach(function (el) { tag(el, 3); });
